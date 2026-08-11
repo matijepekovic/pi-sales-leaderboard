@@ -59,6 +59,7 @@ UPDATE_DIR = PERSISTENT_DATA_DIR / "updates"
 VERSION_FILE = APP_ROOT / "VERSION"
 
 GITHUB_API_ROOT = "https://api.github.com"
+HARD_CODED_GITHUB_REPO = "matijepekovic/pi-sales-leaderboard"
 GITHUB_CHECK_SECONDS = 15 * 60
 _GITHUB_UPDATE_LOCK = threading.Lock()
 _SOURCE_REFRESH_LOCK = threading.Lock()
@@ -135,6 +136,8 @@ def public_settings(settings=None):
     has_pin = bool(str(data.get("settings_pin_hash") or "").strip())
     for key in SECRET_SETTING_KEYS:
         data.pop(key, None)
+    # Update source is appliance-owned, not user-configurable.
+    data.pop("github_repo", None)
     data["tableau_pat_configured"] = configured
     data["settings_pin_set"] = has_pin
     return data
@@ -527,16 +530,12 @@ def download_github_repo_zip(repo, branch, destination):
 
 def check_github_update(install=False):
     """
-    Check the configured PUBLIC GitHub repository.
+    Check the built-in PUBLIC GitHub repository.
 
     Updates are driven by the VERSION file. If the GitHub VERSION is greater
     than the installed VERSION, the main/default branch archive is installed.
     """
-    settings = get_settings()
-    repo_value = settings.get("github_repo", "")
-
-    if not repo_value:
-        raise ValueError("Enter your public GitHub repository first.")
+    repo_value = HARD_CODED_GITHUB_REPO
 
     if not _GITHUB_UPDATE_LOCK.acquire(blocking=False):
         return {
@@ -632,7 +631,7 @@ def github_auto_update_worker():
     while True:
         try:
             settings = get_settings()
-            if settings.get("github_auto_update") and settings.get("github_repo"):
+            if settings.get("github_auto_update"):
                 result = check_github_update(install=True)
                 if result.get("installed"):
                     # No HTTP response needs flushing for a background update.
@@ -949,15 +948,6 @@ def api_save_config():
         current["title"] = incoming["title"][:80]
     if isinstance(incoming.get("subtitle"), str):
         current["subtitle"] = incoming["subtitle"][:120]
-
-    if isinstance(incoming.get("github_repo"), str):
-        repo_value = incoming["github_repo"].strip()
-        if repo_value:
-            try:
-                repo_value = normalize_github_repo(repo_value)
-            except ValueError as exc:
-                return jsonify({"ok": False, "error": str(exc)}), 400
-        current["github_repo"] = repo_value
 
     if isinstance(incoming.get("github_auto_update"), bool):
         current["github_auto_update"] = incoming["github_auto_update"]
@@ -1510,7 +1500,6 @@ def api_github_status():
     settings = get_settings()
     return jsonify({
         "ok": True,
-        "repo": settings.get("github_repo", ""),
         "auto_update": bool(settings.get("github_auto_update")),
         "installed_version": software_version(),
         "remote_version": get_meta("github_remote_version", ""),
