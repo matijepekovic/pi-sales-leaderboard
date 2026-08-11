@@ -112,7 +112,7 @@ def _parse_scope(scope, allow_inactive=False):
 
 def _default_base(team=None):
     # UNDISPUTED gets its matching design automatically the first time the
-    # theme system is installed. Every other team and Whole Office stay Classic.
+    # theme system is installed. Every other team starts Classic.
     if team and str(team.get("name") or "").strip().lower() == "undisputed":
         return "undisputed"
     return "classic"
@@ -413,4 +413,4 @@ def theme_asset(scope, asset_key):
     path = _asset_override_path(normalized_scope, assets.get(asset_key))
     if not path or not path.exists():
         abort(404)
-    return send_file(path, conditional=True)
+    return send_file(path)
