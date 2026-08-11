@@ -297,14 +297,142 @@ input[type=text],input[type=number],select{width:100%;padding:10px;background:#0
     </div>
   </div>
 
+  <div id="dataSelectionOverlay" class="builder-overlay" aria-hidden="true">
+    <div class="builder-panel" style="max-width:900px">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:center">
+        <div>
+          <h2 style="margin:0">Tableau Data Selection</h2>
+          <div class="small">Choose what the Pi pulls. These settings are saved on the Pi and survive reboots and updates.</div>
+        </div>
+        <button id="closeDataSelection" class="btn" type="button">Close</button>
+      </div>
+
+      <h3 style="margin:22px 0 6px">Connection</h3>
+      <div class="grid">
+        <div>
+          <label for="tabServer">Tableau server</label>
+          <input id="tabServer" type="text" placeholder="10ay.online.tableau.com">
+        </div>
+        <div>
+          <label for="tabSite">Site</label>
+          <input id="tabSite" type="text" placeholder="dabella">
+        </div>
+        <div>
+          <label for="tabPatName">Token name</label>
+          <input id="tabPatName" type="text" autocomplete="off" placeholder="pi-leaderboard">
+        </div>
+        <div>
+          <label for="tabPatSecret">Token secret</label>
+          <input id="tabPatSecret" type="password" autocomplete="new-password" placeholder="paste token">
+          <div id="tabSecretState" class="small"></div>
+        </div>
+        <div>
+          <label for="tabView">Custom view name</label>
+          <input id="tabView" type="text" placeholder="UNDISPUTED">
+        </div>
+      </div>
+      <p class="small" style="margin-top:8px">
+        Use a token created just for this Pi so it can be revoked on its own.
+        The secret is stored on the Pi and is never sent back to this page.
+      </p>
+
+      <h3 style="margin:22px 0 6px">Dates</h3>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+        <label style="display:flex;gap:8px;align-items:center">
+          <input type="radio" name="dateMode" id="dateModeMonth" value="current_month">
+          <span>This month (default, rolls over automatically)</span>
+        </label>
+        <label style="display:flex;gap:8px;align-items:center">
+          <input type="radio" name="dateMode" id="dateModeCustom" value="custom">
+          <span>Custom range</span>
+        </label>
+      </div>
+      <div id="customDateRow" class="grid" style="margin-top:12px">
+        <div>
+          <label for="dateStart">Start date</label>
+          <input id="dateStart" type="date">
+        </div>
+        <div>
+          <label for="dateEnd">End date</label>
+          <input id="dateEnd" type="date">
+        </div>
+      </div>
+      <div id="effectiveDates" class="small" style="margin-top:8px"></div>
+
+      <h3 style="margin:22px 0 6px">Office</h3>
+      <label for="officeInput">Office / branch (leave blank for every office)</label>
+      <input id="officeInput" type="text" list="officeOptions" placeholder="All offices">
+      <datalist id="officeOptions"></datalist>
+
+      <h3 style="margin:22px 0 6px">Always include these people</h3>
+      <div class="small">Pulled in even when they sit in a different office.</div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <input id="includeInput" type="text" list="peopleOptions" placeholder="Type or pick a name">
+        <button id="addInclude" class="btn" type="button">Add</button>
+      </div>
+      <div id="includeList" class="builder-list"></div>
+
+      <h3 style="margin:22px 0 6px">Always remove these people</h3>
+      <div class="small">Removed even if they match the office or the include list.</div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <input id="excludeInput" type="text" list="peopleOptions" placeholder="Type or pick a name">
+        <button id="addExclude" class="btn" type="button">Add</button>
+      </div>
+      <div id="excludeList" class="builder-list"></div>
+      <datalist id="peopleOptions"></datalist>
+
+      <div id="dataSelectionStatus" class="small" style="margin-top:16px"></div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:14px;flex-wrap:wrap">
+        <button id="testTableau" class="btn" type="button">Test Connection</button>
+        <button id="pullNow" class="btn" type="button">Pull From Tableau Now</button>
+        <button id="saveDataSelection" class="btn primary" type="button">Save Selection</button>
+      </div>
+    </div>
+  </div>
+
   <div class="card">
     <h2>Data Source</h2>
-    <p><strong>Sample data is active.</strong></p>
+    <p id="sourceStatusLine"><strong>Sample data is active.</strong></p>
+    <div id="dateOverrideBanner"
+         style="display:none;margin:10px 0;padding:10px 12px;border:1px solid #8a6d1f;background:#241d08">
+      <strong>Temporary date range active.</strong>
+      <span id="dateOverrideText" class="small"></span><br>
+      <button id="clearOverrideQuick" class="btn" type="button" style="margin-top:8px">Back to This Month</button>
+    </div>
     <p class="small">
-      When Tableau is connected, the Pi will pull office-level rep data, then apply these local team assignments.
-      We will not rely on Tableau's team filter for local team membership.
+      The Pi pulls the whole population Tableau exposes, then applies your local
+      selection and team assignments. Tableau's own team filter is never used for
+      team membership.
     </p>
-    <button id="loadDemo" class="btn">Reload Sample Data</button>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button id="openDataSelection" class="btn primary" type="button">Tableau Data Selection</button>
+      <button id="pullNowOutside" class="btn" type="button">Pull From Tableau Now</button>
+      <button id="loadDemo" class="btn">Reload Sample Data</button>
+    </div>
+    <div id="sourceStatusMsg" class="small" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <h2>Settings Lock</h2>
+    <p class="small">
+      Anyone on this network can open these settings unless you set a PIN.
+      The TV display is never locked.
+    </p>
+    <div class="grid">
+      <div>
+        <label for="pinCurrent">Current PIN (only if one is already set)</label>
+        <input id="pinCurrent" type="password" inputmode="numeric" autocomplete="off" placeholder="••••">
+      </div>
+      <div>
+        <label for="pinNew">New PIN (4+ digits, leave blank to remove)</label>
+        <input id="pinNew" type="password" inputmode="numeric" autocomplete="off" placeholder="••••">
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+      <button id="savePin" class="btn primary" type="button">Save PIN</button>
+      <button id="lockNow" class="btn" type="button">Lock Settings Now</button>
+    </div>
+    <div id="pinStatus" class="small" style="margin-top:10px"></div>
   </div>
 
   <div class="actions">
@@ -333,6 +461,8 @@ async function load(){
   $("refresh").value=config.display_refresh_seconds||5;
   $("githubRepo").value=config.github_repo||"";
   $("githubAutoUpdate").checked=!!config.github_auto_update;
+  applyDataSelectionToForm();
+  loadSourceOptions();
 
   $("activeMode").innerHTML=activeModeOptions();
   if(!$("activeMode").querySelector(`option[value="${CSS.escape(String(config.active_mode||""))}"]`)){
@@ -974,7 +1104,185 @@ $("save").addEventListener("click",async()=>{
 });
 
 $("openTV").addEventListener("click",()=>window.open("/","_blank"));
-$("loadDemo").addEventListener("click",async()=>{await fetch("/api/demo/load",{method:"POST"});await refreshOrg();});
+$("loadDemo").addEventListener("click",async()=>{await fetch("/api/demo/load",{method:"POST"});await refreshOrg();await loadSourceOptions();});
+
+/* ===================== Tableau data selection ===================== */
+let includePeople=[], excludePeople=[];
+
+function renderNameList(el, items, onRemove){
+  if(!items.length){ el.innerHTML=`<div class="small">None yet.</div>`; return; }
+  el.innerHTML=items.map((name,i)=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid #333;padding:8px 10px">
+      <span>${escapeHtml(name)}</span>
+      <button class="btn" type="button" data-idx="${i}">Remove</button>
+    </div>`).join("");
+  el.querySelectorAll("button[data-idx]").forEach(b=>{
+    b.addEventListener("click",()=>{ onRemove(Number(b.dataset.idx)); });
+  });
+}
+
+function renderPeopleLists(){
+  renderNameList($("includeList"), includePeople, i=>{includePeople.splice(i,1);renderPeopleLists();});
+  renderNameList($("excludeList"), excludePeople, i=>{excludePeople.splice(i,1);renderPeopleLists();});
+}
+
+function addName(which){
+  const input = which==="include" ? $("includeInput") : $("excludeInput");
+  const name=input.value.trim();
+  if(!name) return;
+  const list = which==="include" ? includePeople : excludePeople;
+  if(!list.some(n=>n.toLowerCase()===name.toLowerCase())) list.push(name);
+  input.value="";
+  renderPeopleLists();
+}
+$("addInclude").addEventListener("click",()=>addName("include"));
+$("addExclude").addEventListener("click",()=>addName("exclude"));
+$("includeInput").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();addName("include");}});
+$("excludeInput").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();addName("exclude");}});
+
+function syncDateMode(){
+  const custom = $("dateModeCustom").checked;
+  $("customDateRow").style.display = custom ? "" : "none";
+}
+$("dateModeMonth").addEventListener("change",syncDateMode);
+$("dateModeCustom").addEventListener("change",syncDateMode);
+
+function applyDataSelectionToForm(){
+  $("tabServer").value=config.tableau_server||"";
+  $("tabSite").value=config.tableau_site||"";
+  $("tabPatName").value=config.tableau_pat_name||"";
+  $("tabView").value=config.tableau_view||"";
+  $("tabPatSecret").value="";
+  $("tabSecretState").textContent = config.tableau_pat_configured
+    ? "A token is saved on the Pi. Leave blank to keep it."
+    : "No token saved yet.";
+  const custom = (config.data_date_mode||"current_month")==="custom";
+  $("dateModeCustom").checked=custom;
+  $("dateModeMonth").checked=!custom;
+  $("dateStart").value=config.data_date_start||"";
+  $("dateEnd").value=config.data_date_end||"";
+  $("officeInput").value=config.data_office||"";
+  includePeople=[...(config.data_include_people||[])];
+  excludePeople=[...(config.data_exclude_people||[])];
+  syncDateMode();
+  renderPeopleLists();
+  updateOverrideBanner();
+}
+
+function updateOverrideBanner(){
+  const custom=(config.data_date_mode||"current_month")==="custom";
+  const s=config.data_date_start||"", e=config.data_date_end||"";
+  $("dateOverrideBanner").style.display = (custom && s && e) ? "" : "none";
+  $("dateOverrideText").textContent = (custom && s && e) ? `Showing ${s} to ${e} instead of this month.` : "";
+}
+
+async function loadSourceOptions(){
+  try{
+    const r=await fetch("/api/source/options",{cache:"no-store"});
+    if(!r.ok) return;
+    const d=await r.json();
+    $("officeOptions").innerHTML=(d.offices||[]).map(o=>`<option value="${escapeAttr(o)}">`).join("");
+    $("peopleOptions").innerHTML=(d.names||[]).map(n=>`<option value="${escapeAttr(n)}">`).join("");
+    $("effectiveDates").textContent=`Next pull will use ${d.effective_start} to ${d.effective_end}.`;
+    if(d.source_status) $("sourceStatusLine").innerHTML=`<strong>${escapeHtml(d.source_status)}</strong>`;
+    if(d.last_source_refresh) $("sourceStatusMsg").textContent=`Last refreshed ${d.last_source_refresh}.`;
+  }catch(e){}
+}
+
+function collectDataSelection(){
+  const payload={
+    tableau_server:$("tabServer").value.trim(),
+    tableau_site:$("tabSite").value.trim(),
+    tableau_pat_name:$("tabPatName").value.trim(),
+    tableau_view:$("tabView").value.trim(),
+    data_office:$("officeInput").value.trim(),
+    data_date_mode:$("dateModeCustom").checked?"custom":"current_month",
+    data_date_start:$("dateStart").value,
+    data_date_end:$("dateEnd").value,
+    data_include_people:includePeople,
+    data_exclude_people:excludePeople,
+  };
+  const secret=$("tabPatSecret").value.trim();
+  if(secret) payload.tableau_pat_secret=secret;   // blank keeps the stored token
+  return payload;
+}
+
+async function saveDataSelection(){
+  const r=await fetch("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},
+                                     body:JSON.stringify({...config, ...collectDataSelection()})});
+  const d=await r.json();
+  if(!r.ok){ $("dataSelectionStatus").textContent=d.error||"Could not save."; return false; }
+  config=d.settings;
+  $("tabPatSecret").value="";
+  applyDataSelectionToForm();
+  $("dataSelectionStatus").textContent="Saved.";
+  await loadSourceOptions();
+  return true;
+}
+
+$("openDataSelection").addEventListener("click",async()=>{
+  applyDataSelectionToForm();
+  await loadSourceOptions();
+  $("dataSelectionOverlay").classList.add("open");
+  $("dataSelectionOverlay").setAttribute("aria-hidden","false");
+});
+function closeDataSelection(){
+  $("dataSelectionOverlay").classList.remove("open");
+  $("dataSelectionOverlay").setAttribute("aria-hidden","true");
+}
+$("closeDataSelection").addEventListener("click",closeDataSelection);
+$("saveDataSelection").addEventListener("click",async()=>{ if(await saveDataSelection()) closeDataSelection(); });
+
+$("clearOverrideQuick").addEventListener("click",async()=>{
+  config.data_date_mode="current_month";
+  const r=await fetch("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},
+                                     body:JSON.stringify(config)});
+  const d=await r.json();
+  if(r.ok){ config=d.settings; updateOverrideBanner(); await loadSourceOptions(); }
+});
+
+$("testTableau").addEventListener("click",async()=>{
+  $("dataSelectionStatus").textContent="Saving, then testing…";
+  if(!await saveDataSelection()) return;
+  $("dataSelectionStatus").textContent="Contacting Tableau…";
+  try{
+    const r=await fetch("/api/source/test",{method:"POST"});
+    const d=await r.json();
+    $("dataSelectionStatus").textContent = r.ok ? d.message : (d.error||"Test failed.");
+    if(r.ok){
+      $("officeOptions").innerHTML=(d.offices||[]).map(o=>`<option value="${escapeAttr(o)}">`).join("");
+      $("peopleOptions").innerHTML=(d.names||[]).map(n=>`<option value="${escapeAttr(n)}">`).join("");
+    }
+  }catch(e){ $("dataSelectionStatus").textContent="Could not reach the Pi."; }
+});
+
+async function pullFromTableau(statusEl){
+  statusEl.textContent="Pulling from Tableau…";
+  try{
+    const r=await fetch("/api/source/refresh",{method:"POST"});
+    const d=await r.json();
+    statusEl.textContent = r.ok ? `${d.message} (${d.total_rows} available)` : (d.error||"Pull failed.");
+    if(r.ok){ await refreshOrg(); await loadSourceOptions(); }
+  }catch(e){ statusEl.textContent="Could not reach the Pi."; }
+}
+$("pullNow").addEventListener("click",()=>pullFromTableau($("dataSelectionStatus")));
+$("pullNowOutside").addEventListener("click",()=>pullFromTableau($("sourceStatusMsg")));
+
+/* ===================== settings PIN ===================== */
+$("savePin").addEventListener("click",async()=>{
+  const body={current_pin:$("pinCurrent").value.trim(), new_pin:$("pinNew").value.trim()};
+  const r=await fetch("/api/auth/pin",{method:"POST",headers:{"Content-Type":"application/json"},
+                                       body:JSON.stringify(body)});
+  const d=await r.json();
+  $("pinStatus").textContent = r.ok
+    ? (d.pin_set ? "PIN saved. Settings are now protected." : "PIN removed. Settings are open again.")
+    : (d.error||"Could not save the PIN.");
+  if(r.ok){ $("pinCurrent").value=""; $("pinNew").value=""; }
+});
+$("lockNow").addEventListener("click",async()=>{
+  await fetch("/api/auth/lock",{method:"POST"});
+  location.reload();
+});
 
 async function loadVersion(){
   try{

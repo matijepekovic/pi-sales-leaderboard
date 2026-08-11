@@ -60,7 +60,37 @@ DEFAULT_SETTINGS = {
     # Example: "yourusername/pi-sales-leaderboard"
     "github_repo": "",
     "github_auto_update": False,
+
+    # ---- Tableau connection -------------------------------------------
+    # tableau_pat_secret is WRITE-ONLY: the API never returns it, it only
+    # reports tableau_pat_configured, so a stored token cannot be read back
+    # over the network.
+    "tableau_server": "",
+    "tableau_site": "",
+    "tableau_pat_name": "",
+    "tableau_pat_secret": "",
+    "tableau_view": "",
+
+    # ---- What to pull (persists across refreshes, reboots and updates) --
+    # Office "" means every office.
+    "data_office": "",
+    # "current_month" (default, auto-rolls) or "custom".
+    "data_date_mode": "current_month",
+    "data_date_start": "",
+    "data_date_end": "",
+    # Tableau parameter names that carry the date window.
+    "data_date_param_start": "Start",
+    "data_date_param_end": "End",
+    # Always included whatever office they sit in; exclusion always wins.
+    "data_include_people": [],
+    "data_exclude_people": [],
+
+    # Settings-page lock. Stores a salted PBKDF2 hash, never the PIN.
+    "settings_pin_hash": "",
 }
+
+# Values that must never appear in an API response.
+SECRET_SETTING_KEYS = ("tableau_pat_secret", "settings_pin_hash")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS reps (

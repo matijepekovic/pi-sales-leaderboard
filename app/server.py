@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 import base64
+import hashlib
+import hmac
 import json
 import re
 import os
+import secrets
 import shutil
 import subprocess
 import tempfile
@@ -14,10 +17,13 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, render_template, request, send_file
+from flask import (
+    Flask, abort, jsonify, redirect, render_template, request, send_file, session
+)
 
 from database import (
     DEFAULT_SETTINGS,
+    SECRET_SETTING_KEYS,
     METRIC_DEFS,
     set_team_lead,
     delete_team,
@@ -38,6 +44,7 @@ from database import (
     set_rep_team_assignments,
 )
 from sources.sample import SampleSource
+from sources.tableau import TableauSource, TableauError, resolve_dates
 
 app = Flask(__name__)
 app.config["JSON_SORT_KEYS"] = False
@@ -52,6 +59,82 @@ VERSION_FILE = APP_ROOT / "VERSION"
 GITHUB_API_ROOT = "https://api.github.com"
 GITHUB_CHECK_SECONDS = 15 * 60
 _GITHUB_UPDATE_LOCK = threading.Lock()
+_SOURCE_REFRESH_LOCK = threading.Lock()
+
+PIN_ITERATIONS = 200_000
+
+
+# --------------------------------------------------------------------------
+# Settings-page lock.
+#
+# The app listens on 0.0.0.0, so anyone on the office network can reach it.
+# The TV display stays open (the kiosk must never see a prompt); everything
+# that can change configuration or read back configuration detail requires
+# the PIN once one has been set.
+# --------------------------------------------------------------------------
+
+# Endpoints the kiosk/display needs, plus the lock screen itself.
+PUBLIC_ENDPOINTS = {
+    "display", "api_leaderboard", "api_config", "api_team_logo",
+    "health", "api_auth_status", "api_auth_unlock", "static",
+}
+
+
+def app_secret_key():
+    """Stable signing key so the unlock cookie survives a restart."""
+    key = get_meta("flask_secret_key", "")
+    if not key:
+        key = secrets.token_hex(32)
+        set_meta("flask_secret_key", key)
+    return key
+
+
+def hash_pin(pin, salt=None, iterations=PIN_ITERATIONS):
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", str(pin).encode(), bytes.fromhex(salt), iterations
+    ).hex()
+    return f"pbkdf2${iterations}${salt}${digest}"
+
+
+def verify_pin(pin, stored):
+    """Constant-time check. Returns False for anything malformed."""
+    try:
+        algo, iterations, salt, digest = str(stored).split("$")
+        if algo != "pbkdf2":
+            return False
+        candidate = hashlib.pbkdf2_hmac(
+            "sha256", str(pin).encode(), bytes.fromhex(salt), int(iterations)
+        ).hex()
+        return hmac.compare_digest(candidate, digest)
+    except Exception:
+        return False
+
+
+def pin_is_set():
+    return bool(str(get_settings().get("settings_pin_hash") or "").strip())
+
+
+def is_unlocked():
+    return not pin_is_set() or bool(session.get("settings_unlocked"))
+
+
+def public_settings(settings=None):
+    """
+    Settings safe to hand back over the network.
+
+    Secrets are removed entirely and replaced with booleans, so a stored
+    Tableau token can never be read out through the API even by someone
+    already on the network.
+    """
+    data = dict(settings if settings is not None else get_settings())
+    configured = bool(str(data.get("tableau_pat_secret") or "").strip())
+    has_pin = bool(str(data.get("settings_pin_hash") or "").strip())
+    for key in SECRET_SETTING_KEYS:
+        data.pop(key, None)
+    data["tableau_pat_configured"] = configured
+    data["settings_pin_set"] = has_pin
+    return data
 
 
 MODES = {
@@ -722,6 +805,78 @@ def install_update_zip(zip_path):
             raise
 
 
+@app.before_request
+def enforce_settings_lock():
+    """
+    Gate everything except the display/kiosk endpoints once a PIN is set.
+
+    Returns 401 for API calls so the settings page can show its unlock
+    prompt, and never touches the TV display.
+    """
+    if not pin_is_set() or is_unlocked():
+        return None
+    if request.endpoint in PUBLIC_ENDPOINTS:
+        return None
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "locked": True,
+                        "error": "Settings are locked. Enter your PIN."}), 401
+    return render_template("settings.html")
+
+
+@app.get("/api/auth/status")
+def api_auth_status():
+    return jsonify({"ok": True, "pin_set": pin_is_set(), "unlocked": is_unlocked()})
+
+
+@app.post("/api/auth/unlock")
+def api_auth_unlock():
+    body = request.get_json(force=True, silent=True) or {}
+    stored = str(get_settings().get("settings_pin_hash") or "")
+    if not stored:
+        return jsonify({"ok": True, "unlocked": True})
+    if not verify_pin(str(body.get("pin") or ""), stored):
+        return jsonify({"ok": False, "error": "Incorrect PIN."}), 401
+    session["settings_unlocked"] = True
+    session.permanent = True
+    return jsonify({"ok": True, "unlocked": True})
+
+
+@app.post("/api/auth/lock")
+def api_auth_lock():
+    session.pop("settings_unlocked", None)
+    return jsonify({"ok": True, "unlocked": False})
+
+
+@app.post("/api/auth/pin")
+def api_auth_set_pin():
+    """Set, change or clear the settings PIN."""
+    body = request.get_json(force=True, silent=True) or {}
+    settings = get_settings()
+    stored = str(settings.get("settings_pin_hash") or "")
+    new_pin = str(body.get("new_pin") or "").strip()
+
+    # Changing or clearing an existing PIN requires the current one, unless
+    # this session already unlocked with it.
+    if stored and not session.get("settings_unlocked"):
+        if not verify_pin(str(body.get("current_pin") or ""), stored):
+            return jsonify({"ok": False, "error": "Current PIN is incorrect."}), 401
+
+    if not new_pin:
+        settings["settings_pin_hash"] = ""
+        save_settings(settings)
+        session.pop("settings_unlocked", None)
+        return jsonify({"ok": True, "pin_set": False})
+
+    if len(new_pin) < 4 or not new_pin.isdigit():
+        return jsonify({"ok": False, "error": "PIN must be at least 4 digits."}), 400
+
+    settings["settings_pin_hash"] = hash_pin(new_pin)
+    save_settings(settings)
+    session["settings_unlocked"] = True
+    session.permanent = True
+    return jsonify({"ok": True, "pin_set": True})
+
+
 @app.get("/")
 def display():
     return render_template("display.html")
@@ -749,7 +904,7 @@ def api_state():
 
 @app.get("/api/config")
 def api_config():
-    settings = get_settings()
+    settings = public_settings()
     return jsonify({
         "settings": settings,
         "metrics": [
@@ -804,6 +959,66 @@ def api_save_config():
     if isinstance(incoming.get("github_auto_update"), bool):
         current["github_auto_update"] = incoming["github_auto_update"]
 
+    # ---- Tableau connection ------------------------------------------
+    if isinstance(incoming.get("tableau_server"), str):
+        server_value = incoming["tableau_server"].strip().rstrip("/")
+        if server_value and not server_value.startswith(("http://", "https://")):
+            server_value = "https://" + server_value
+        current["tableau_server"] = server_value[:300]
+    for key in ("tableau_site", "tableau_pat_name", "tableau_view"):
+        if isinstance(incoming.get(key), str):
+            current[key] = incoming[key].strip()[:200]
+
+    # Write-only: an empty string means "leave the stored token alone", so
+    # saving other settings never wipes the token the UI can't read back.
+    if isinstance(incoming.get("tableau_pat_secret"), str):
+        secret_value = incoming["tableau_pat_secret"].strip()
+        if secret_value:
+            current["tableau_pat_secret"] = secret_value
+    if incoming.get("tableau_pat_clear") is True:
+        current["tableau_pat_secret"] = ""
+
+    # ---- Data selection ----------------------------------------------
+    if isinstance(incoming.get("data_office"), str):
+        current["data_office"] = incoming["data_office"].strip()[:120]
+
+    mode = str(incoming.get("data_date_mode") or "").strip()
+    if mode in ("current_month", "custom"):
+        current["data_date_mode"] = mode
+
+    date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    for key in ("data_date_start", "data_date_end"):
+        if isinstance(incoming.get(key), str):
+            value = incoming[key].strip()
+            if value and not date_pattern.match(value):
+                return jsonify({
+                    "ok": False,
+                    "error": "Dates must look like YYYY-MM-DD.",
+                }), 400
+            current[key] = value
+
+    if (current.get("data_date_mode") == "custom"
+            and current.get("data_date_start") and current.get("data_date_end")
+            and current["data_date_start"] > current["data_date_end"]):
+        return jsonify({
+            "ok": False,
+            "error": "The start date must be on or before the end date.",
+        }), 400
+
+    for key in ("data_date_param_start", "data_date_param_end"):
+        if isinstance(incoming.get(key), str):
+            current[key] = incoming[key].strip()[:80]
+
+    for key in ("data_include_people", "data_exclude_people"):
+        if isinstance(incoming.get(key), list):
+            names, seen = [], set()
+            for value in incoming[key]:
+                name = str(value).strip()[:120]
+                if name and name.lower() not in seen:
+                    seen.add(name.lower())
+                    names.append(name)
+            current[key] = names[:200]
+
     if isinstance(incoming.get("team_vs_team_selected"), list):
         selected = []
         for value in incoming["team_vs_team_selected"]:
@@ -854,7 +1069,7 @@ def api_save_config():
     }
     save_settings(current)
     set_meta("settings_version", int(get_meta("settings_version", "0")) + 1)
-    return jsonify({"ok": True, "settings": current})
+    return jsonify({"ok": True, "settings": public_settings(current)})
 
 
 @app.get("/api/leaderboard")
@@ -1105,6 +1320,103 @@ def api_rep_team_assignments():
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 
+@app.get("/api/source/options")
+def api_source_options():
+    """Offices and rep names for the selection pickers, from the last pull."""
+    reps = list_reps()
+    offices = sorted({
+        str(r.get("home_branch") or "").strip()
+        for r in reps if str(r.get("home_branch") or "").strip()
+    })
+    names = sorted(
+        {str(r.get("rep_name") or "").strip() for r in reps if r.get("rep_name")},
+        key=str.lower,
+    )
+    settings = get_settings()
+    start, end = resolve_dates(settings)
+    return jsonify({
+        "ok": True,
+        "offices": offices,
+        "names": names,
+        "effective_start": start,
+        "effective_end": end,
+        "source_status": get_meta("source_status", ""),
+        "last_source_refresh": get_meta("last_source_refresh", ""),
+    })
+
+
+@app.post("/api/source/test")
+def api_source_test():
+    """Sign in and pull, reporting counts only. Nothing is written."""
+    try:
+        preview = TableauSource(get_settings()).preview()
+    except TableauError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Tableau test failed: {exc}"}), 400
+
+    return jsonify({
+        "ok": True,
+        "start": preview["start"],
+        "end": preview["end"],
+        "total_rows": preview["total_rows"],
+        "selected_rows": preview["selected_rows"],
+        "offices": preview["offices"],
+        "names": preview["names"],
+        "message": (
+            f"Connected. {preview['total_rows']} people in {preview['start']}"
+            f" to {preview['end']}; {preview['selected_rows']} match your selection."
+        ),
+    })
+
+
+@app.post("/api/source/refresh")
+def api_source_refresh():
+    """Pull from Tableau with the saved selection and store the result."""
+    if not _SOURCE_REFRESH_LOCK.acquire(blocking=False):
+        return jsonify({"ok": False, "error": "A refresh is already running."}), 409
+    try:
+        settings = get_settings()
+        source = TableauSource(settings)
+        rows = source.fetch()
+        if not rows:
+            set_meta("source_status", "Tableau returned no matching people")
+            return jsonify({
+                "ok": False,
+                "error": ("Tableau returned no people for this selection. "
+                          "Check the office name and date range."),
+                "total_rows": source.last_total_rows,
+                "offices": source.last_offices,
+            }), 400
+
+        # Sales metrics only. Pi team assignments are untouched by design.
+        replace_reps(rows)
+        start, end = resolve_dates(settings)
+        status = (f"Tableau — {len(rows)} people, {start} to {end}"
+                  + (f", office {settings.get('data_office')}"
+                     if settings.get("data_office") else ", all offices"))
+        set_meta("source_status", status)
+        set_meta("last_source_refresh", time.strftime("%Y-%m-%d %H:%M:%S"))
+        set_meta("data_version", int(get_meta("data_version", "0")) + 1)
+        return jsonify({
+            "ok": True,
+            "rows": len(rows),
+            "total_rows": source.last_total_rows,
+            "offices": source.last_offices,
+            "start": start,
+            "end": end,
+            "message": status,
+        })
+    except TableauError as exc:
+        set_meta("source_status", f"Tableau error: {exc}")
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        set_meta("source_status", f"Tableau error: {exc}")
+        return jsonify({"ok": False, "error": f"Tableau refresh failed: {exc}"}), 400
+    finally:
+        _SOURCE_REFRESH_LOCK.release()
+
+
 @app.post("/api/demo/load")
 def api_load_demo():
     rows = SampleSource().fetch()
@@ -1326,6 +1638,7 @@ def ensure_sample_data():
 
 # Initialize on import because production runs through Waitress.
 init_db()
+app.secret_key = app_secret_key()
 ensure_labwc_kiosk_autostart()
 ensure_sample_data()
 start_github_auto_update_worker()
