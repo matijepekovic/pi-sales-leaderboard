@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Validate display-only footer fix
         run: |
           node --check app/static/team-totals-table-footer-v54.js
