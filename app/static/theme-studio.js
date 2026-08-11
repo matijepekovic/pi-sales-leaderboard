@@ -191,8 +191,8 @@
 
   async function resetTheme(){
     if(!currentScope){byId("themeStatus").textContent="Create a team first.";return;}
-    byId("themeStatus").textContent="Resetting…";
-    try{await jsonFetch(`/api/themes/${encodeURIComponent(currentScope)}`,{method:"DELETE"});await refreshState();byId("themeStatus").textContent="Theme reset to Classic.";}catch(e){byId("themeStatus").textContent=e.message;}
+    if(!confirm("Reset this design to the Classic theme? Custom artwork for this theme will stop being used."))return;
+    try{await jsonFetch(`/api/themes/${encodeURIComponent(currentScope)}`,{method:"DELETE"});await refreshState();byId("themeStatus").textContent="Reset to Classic.";}catch(e){byId("themeStatus").textContent=e.message;}
   }
 
   async function uploadAsset(key,blob=null,filename=null){
