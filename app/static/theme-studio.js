@@ -14,7 +14,7 @@
   };
 
   let state=null;
-  let currentScope="office";
+  let currentScope="";
 
   function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
   function byId(id){return document.getElementById(id);}
@@ -65,7 +65,7 @@
     const overlay=document.createElement("div");overlay.id="themeStudioOverlay";overlay.className="overlay";overlay.setAttribute("aria-hidden","true");
     overlay.innerHTML=`<div class="panel" style="width:min(1180px,100%)">
       <div class="row" style="justify-content:space-between;align-items:flex-start">
-        <div><h2 style="margin:0">Theme Studio</h2><div class="small">Full themes apply to individual team views. Team vs Team / All Teams use each team's colors and artwork. Whole Office has its own separate theme.</div></div>
+        <div><h2 style="margin:0">Theme Studio</h2><div class="small">Themes belong to teams. Team view uses the full theme; Team vs Team and All Teams use each team's theme in their own sections; Whole Office automatically inherits the theme of the current #1 rep's team.</div></div>
         <button id="closeThemeStudio" class="btn" type="button">Close</button>
       </div>
       <div class="theme-studio-grid" style="margin-top:16px">
@@ -105,18 +105,23 @@
     state=await jsonFetch("/api/themes");
     const sel=byId("themeScope");
     const old=currentScope;
-    sel.innerHTML=`<option value="office">Whole Office Theme</option>`+(state.teams||[]).map(t=>`<option value="team-${t.team_id}">${esc(t.name)}</option>`).join("");
-    if([...sel.options].some(o=>o.value===old)) sel.value=old; else currentScope="office";
-    populateScope();
+    sel.innerHTML=(state.teams||[]).map(t=>`<option value="team-${t.team_id}">${esc(t.name)}</option>`).join("");
+    if([...sel.options].some(o=>o.value===old)){
+      currentScope=old;sel.value=old;
+    }else{
+      currentScope=sel.options.length?sel.options[0].value:"";
+      if(currentScope)sel.value=currentScope;
+    }
+    if(currentScope) populateScope();
+    else byId("themeStatus").textContent="Create a team before building a theme.";
   }
 
   function themeForScope(){
-    if(!state) return null;
-    if(currentScope==="office") return state.themes.office;
+    if(!state||!currentScope) return null;
     const id=currentScope.split("-")[1];return state.themes.teams?.[id]||null;
   }
   function teamForScope(){
-    if(currentScope==="office") return null;
+    if(!currentScope) return null;
     const id=Number(currentScope.split("-")[1]);return (state.teams||[]).find(t=>Number(t.team_id)===id)||null;
   }
 
@@ -176,6 +181,7 @@
   }
 
   async function saveTheme(){
+    if(!currentScope){byId("themeStatus").textContent="Create a team first.";return;}
     byId("themeStatus").textContent="Saving…";
     try{
       await jsonFetch(`/api/themes/${encodeURIComponent(currentScope)}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({base:byId("themePreset").value,enabled:byId("themeEnabled").checked,colors:currentColors()})});
@@ -184,6 +190,7 @@
   }
 
   async function resetTheme(){
+    if(!currentScope){byId("themeStatus").textContent="Create a team first.";return;}
     if(!confirm("Reset this design to the Classic theme? Custom artwork for this theme will stop being used."))return;
     try{await jsonFetch(`/api/themes/${encodeURIComponent(currentScope)}`,{method:"DELETE"});await refreshState();byId("themeStatus").textContent="Reset to Classic.";}catch(e){byId("themeStatus").textContent=e.message;}
   }
@@ -244,7 +251,7 @@
       const rows=(data.rows||[]).slice(0,4);const heroCustom=assets.hero&&String(assets.hero).includes("/api/theme-assets/");const hero=theme.enabled?(heroCustom?assets.hero:(team?.name?.toLowerCase()==="undisputed"?assets.hero:team?.logo_url)):team?.logo_url;
       const corners=theme.enabled?[["corner_tl","tl"],["corner_tr","tr"],["corner_bl","bl"],["corner_br","br"]]:[];
       box.innerHTML=`<div class="theme-preview-frame"></div>${corners.map(([k,p])=>assets[k]?`<img class="theme-preview-corner ${p}" src="${esc(assets[k])}" alt="">`:"").join("")}
-        <div class="theme-preview-head">${hero?`<img class="theme-preview-logo" src="${esc(hero)}" alt="">`:`<div class="theme-preview-title">${esc(team?.name||data.title||"WHOLE OFFICE")}</div>`}<div class="theme-preview-mode">${esc(team?"Team Leaderboard":"Whole Office")}</div></div>
+        <div class="theme-preview-head">${hero?`<img class="theme-preview-logo" src="${esc(hero)}" alt="">`:`<div class="theme-preview-title">${esc(team?.name||data.title||"TEAM")}</div>`}<div class="theme-preview-mode">Team Leaderboard</div></div>
         <div class="theme-preview-rows">${rows.map((r,i)=>`<div class="theme-preview-row ${i===0&&theme.enabled?"champ":""}" style="${i===0&&theme.enabled&&assets.champion?`background-image:linear-gradient(rgba(0,0,0,.35),rgba(0,0,0,.35)),url('${esc(assets.champion)}');background-size:100% 100%`:theme.enabled&&assets.row?`background-image:linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),url('${esc(assets.row)}');background-size:100% 100%`:""}"><div class="theme-preview-rank">${i===0&&theme.enabled&&assets.medallion?`<img src="${esc(assets.medallion)}" style="width:34px;height:34px;object-fit:contain">`:`#${i+1}`}</div><div class="theme-preview-name">${esc(r.rep_name)}</div><div class="theme-preview-stat"><span>Close</span><strong>${number(r.close_rate).toFixed(2)}%</strong></div><div class="theme-preview-stat"><span>Sold</span><strong>${number(r.sold_leads).toFixed(2).replace(/\.00$/,"")}</strong></div><div class="theme-preview-stat"><span>Net</span><strong>${money(r.net_split)}</strong></div></div>`).join("")||`<div style="padding:35px;color:#888">No assigned reps yet.</div>`}</div>`;
     }catch(e){box.innerHTML=`<div class="theme-preview-frame"></div><div style="padding:35px;color:#888">Preview unavailable: ${esc(e.message)}</div>`;}
   }
