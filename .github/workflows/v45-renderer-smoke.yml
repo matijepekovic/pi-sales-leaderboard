@@ -1,0 +1,30 @@
+name: v45 Renderer Smoke
+on:
+  push:
+    branches: [build/themed-renderer-v45]
+    paths:
+      - app/static/themed-team-layout.js
+      - app/templates/display.html
+      - VERSION
+      - .github/workflows/v45-renderer-smoke.yml
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: build/themed-renderer-v45
+      - name: JS syntax
+        run: node --check app/static/themed-team-layout.js
+      - name: Verify design-only integration
+        run: |
+          grep -q 'themed-team-layout.js?v=45' app/templates/display.html
+          test "$(tr -d '\n' < VERSION)" = "45"
+      - name: Verify no backend files changed
+        run: |
+          git fetch origin main
+          CHANGED="$(git diff --name-only origin/main...HEAD | grep -v '^.github/workflows/v45-renderer-smoke.yml$')"
+          printf '%s\n' "$CHANGED"
+          test -z "$(printf '%s\n' "$CHANGED" | grep -E '^(app/server.py|app/database.py|app/data_|app/tableau|app/templates/settings|app/themes.py)' || true)"
