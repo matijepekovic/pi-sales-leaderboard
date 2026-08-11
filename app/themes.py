@@ -52,7 +52,10 @@ CORNER_ASSET_KEYS = ("corner_tl", "corner_tr", "corner_bl", "corner_br")
 # the browser splits it into quadrants and applies those to the four corner
 # assets, so the sheet itself is never a theme asset.
 CORNER_SHEET_KEY = "corner_sheet"
-LIBRARY_KEYS = set(ASSETS) | {CORNER_SHEET_KEY}
+# team_logo is a library key too, so a logo can be re-used across teams the
+# same way as any other artwork. It is applied through the team logo endpoint,
+# never as a theme asset.
+LIBRARY_KEYS = set(ASSETS) | {CORNER_SHEET_KEY, "team_logo"}
 
 # Artwork the user has uploaded, tinted or recolored, kept so it can be reused
 # on any team later. It cannot live in the theme folder: _remove_old_asset_files

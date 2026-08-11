@@ -1,11 +1,12 @@
-/* v63 Team Design.
+/* v65 Team Design.
 
-   Replaces the standalone Theme Studio. There is no team picker: a design is
-   always opened FROM a specific team, so the team being edited is never in
-   doubt. Phone-first single column, a preview that is the real TV page at the
-   real TV aspect ratio, per-asset preset dropdowns backed by a library that
-   grows as you upload, and corner ornaments that seat themselves by measuring
-   their own transparent margin. */
+   There is no team picker: a design is always opened FROM a specific team, so
+   the team being edited is never in doubt. Phone-first single column. The
+   preview is the real TV page at the real TV aspect ratio, pinned under the
+   header, edge to edge, and pinch-zoomable. Artwork is chosen by looking at
+   it and added with one tap from the same strip, backed by a library that
+   grows as you upload. Corner ornaments seat themselves by measuring their
+   own transparent margin. */
 (function(){
   const CLASSIC={
     primary:"#d8b34a",primary_bright:"#e6c760",primary_dark:"#705b20",
@@ -76,27 +77,26 @@
       .td-foot .btn{flex:1 1 auto;min-height:48px}
       #teamDesignOverlay .btn{min-height:44px}
       #teamDesignOverlay select,#teamDesignOverlay input[type=text],#teamDesignOverlay input[type=number]{min-height:44px}
-      #teamDesignOverlay input[type=color]{width:100%;height:48px;padding:3px}
-      #teamDesignOverlay input[type=file]{padding:9px;font-size:13px}
 
       .td-confirm{margin:0;padding:13px 15px;border:1px solid #8a6d1f;background:#241d08}
       .td-confirm .btn{margin-top:10px}
 
-      .td-colors{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-      .td-color{border:1px solid #2e2e2e;background:#0d0d0d;padding:9px}
-      .td-color label{font-size:12px;margin-bottom:5px}
+      .td-colors{display:grid;grid-template-columns:1fr;gap:10px}
 
-      /* The preview rides along: it stays under the header for the whole
-         scroll, so no control is ever adjusted blind. */
+      /* The preview rides along under the header for the whole scroll, and
+         runs the full width of the screen. */
       .td-preview-sec{position:sticky;top:var(--td-head-h,72px);z-index:4;
-        background:#111;margin:0 -16px;padding:10px 16px 12px;border-bottom:1px solid #2a2a2a}
-      .td-tvline{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:7px;color:#9b9b9b;font-size:12px}
-      .td-zoom{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
-      .td-zoom .btn{min-height:38px;padding:6px 12px}
-      .td-zoom input[type=range]{flex:1 1 110px;min-width:100px;height:38px}
-      .td-stage{border:2px solid #444;background:#000;overflow:auto;-webkit-overflow-scrolling:touch;position:relative}
-      .td-sizer{position:relative}
-      .td-stage iframe{position:absolute;top:0;left:0;border:0;transform-origin:top left;background:#000}
+        background:#111;margin:0 -16px;padding:8px 0 0;border-bottom:1px solid #2a2a2a}
+      .td-tvline{display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+        margin:0 16px 7px;color:#9b9b9b;font-size:12px}
+      .td-stage{background:#000;position:relative;overflow:hidden;
+        border-top:1px solid #2a2a2a;border-bottom:1px solid #2a2a2a;
+        touch-action:none;cursor:grab;user-select:none}
+      .td-stage.td-grabbing{cursor:grabbing}
+      .td-sizer{position:absolute;top:0;left:0;transform-origin:top left}
+      .td-stage iframe,.td-stage img{position:absolute;top:0;left:0;border:0;
+        transform-origin:top left;background:#000;pointer-events:none}
+      .td-hint{margin:6px 16px 8px;color:#7d7d7d;font-size:11px}
 
       .td-asset{border:1px solid #303030;background:#0d0d0d;padding:12px;margin-bottom:10px}
       .td-asset-head{display:flex;gap:12px;align-items:center}
@@ -127,9 +127,34 @@
         padding:0 4px;color:#7d7d7d;font-size:10px;letter-spacing:.09em;text-transform:uppercase;
         writing-mode:vertical-rl;transform:rotate(180deg)}
 
+      /* Adding artwork is a tile, so it sits where artwork is chosen and a
+         section with no presets still has an obvious way in. */
+      .td-tile-add{border-style:dashed;border-color:#4a4a4a}
+      .td-tile-add .td-tile-art{display:grid;place-items:center;background-image:none;
+        color:var(--td-accent,#d8b34a);font-size:30px;font-weight:400;line-height:1}
+      .td-tile-wrap{position:relative;flex:0 0 auto}
+      .td-tile-del{position:absolute;top:3px;right:3px;width:30px;height:30px;padding:0;
+        border:1px solid #6b3333;background:rgba(10,10,10,.86);color:#ffb3b3;
+        border-radius:8px;font-size:15px;line-height:1;cursor:pointer;z-index:2}
+      .td-tile-del:hover{background:#2a1010}
+
       .td-asset-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;align-items:center}
       .td-asset-actions .btn{flex:1 1 auto}
-      .td-asset-actions input[type=color]{width:64px;height:44px;flex:0 0 auto;padding:2px}
+
+      /* A colour is shown as a colour: a rounded square chip and a real
+         button. The native input stays for the OS picker but is not seen. */
+      .td-color{display:flex;gap:11px;align-items:center;border:1px solid #2e2e2e;
+        background:#0d0d0d;padding:10px}
+      .td-color-chip{width:44px;height:44px;flex:0 0 auto;border-radius:10px;
+        border:1px solid #4a4a4a;box-shadow:inset 0 0 0 1px rgba(0,0,0,.55)}
+      .td-color-text{flex:1 1 auto;min-width:0}
+      .td-color-label{font-weight:700;font-size:13px}
+      .td-color-value{color:#8f8f8f;font-size:11px;font-variant-numeric:tabular-nums;text-transform:uppercase}
+      .td-color-btn{flex:0 0 auto}
+      /* The OS colour picker still needs a real input to open from, but it is
+         never seen: Chromium enforces a minimum box, so clip it as well. */
+      .td-hidden-color{position:absolute;width:1px;height:1px;opacity:0;
+        pointer-events:none;clip-path:inset(100%);overflow:hidden}
 
       .td-tune{margin-top:10px;border-top:1px dashed #333;padding-top:9px}
       .td-tune>summary{cursor:pointer;color:#9b9b9b;font-size:12px;padding:7px 0;list-style:none}
@@ -183,13 +208,8 @@
         <div id="tdMain" style="display:none;flex-direction:column;gap:22px">
           <section class="td-sec td-preview-sec">
             <div id="tdTvLine" class="td-tvline"></div>
-            <div class="td-zoom">
-              <button id="tdZoomFit" class="btn" type="button">Fit</button>
-              <button id="tdZoom100" class="btn" type="button">100%</button>
-              <input id="tdZoomRange" type="range" min="100" max="400" step="10" value="100" aria-label="Zoom">
-              <span id="tdZoomLabel" class="small">100%</span>
-            </div>
             <div id="tdStage" class="td-stage"><div id="tdSizer" class="td-sizer"><iframe id="tdFrame" title="TV preview" scrolling="no"></iframe></div></div>
+            <div class="td-hint">Pinch to zoom · drag to move · double-tap to fit</div>
           </section>
 
           <section class="td-sec">
@@ -206,26 +226,30 @@
 
           <section class="td-sec">
             <h3>Team Logo</h3>
-            <div class="td-asset">
-              <div class="td-asset-top">
-                <div id="tdLogoThumb" class="td-thumb empty">No logo</div>
-                <div style="flex:1;min-width:0">
-                  <input id="tdLogoFile" type="file" accept="image/png,image/jpeg,image/webp">
-                  <div class="td-asset-actions">
-                    <button id="tdLogoUpload" class="btn" type="button">Replace Logo</button>
-                    <button id="tdLogoReset" class="btn danger" type="button">Remove</button>
-                  </div>
-                </div>
+            <div class="td-asset" data-asset="team_logo">
+              <div class="td-asset-head">
+                <div id="tdLogoThumb" class="td-thumb empty">None</div>
+                <div class="td-asset-name">Team Logo</div>
+              </div>
+              <div id="tdLogoTiles" class="td-tiles"></div>
+              <div class="td-asset-actions">
+                <button id="tdLogoReset" class="btn danger" type="button">Reset</button>
               </div>
             </div>
           </section>
 
           <section class="td-sec">
             <h3>Frame</h3>
-            <div class="small">One PNG with all four ornaments. Choosing it cuts the corners and seats each one against its edge — nothing else to do.</div>
-            <div class="td-asset">
+            <div class="small">One PNG with all four ornaments. Adding it cuts the corners and seats each one against its edge — nothing else to do.</div>
+            <div class="td-asset" data-asset="corner_sheet">
+              <div class="td-asset-head">
+                <div id="tdSheetThumb" class="td-thumb empty">None</div>
+                <div class="td-asset-name">Corner Frame</div>
+              </div>
               <div id="tdSheetTiles" class="td-tiles"></div>
-              <input id="tdSheetFile" type="file" accept="image/png,image/webp" style="margin-top:4px">
+              <div class="td-asset-actions">
+                <button id="tdSheetReset" class="btn danger" type="button">Reset Corners</button>
+              </div>
             </div>
           </section>
 
@@ -249,21 +273,15 @@
       byId("tdConfirm").style.display="none";
       byId("tdMain").style.display="flex";
       measureHead();
+      installPreviewGestures();
       layoutPreview();
     });
     byId("tdPreset").addEventListener("change",presetChanged);
     byId("tdEnabled").addEventListener("change",()=>{saveTheme(true);});
     byId("tdSave").addEventListener("click",()=>saveTheme(false));
     byId("tdReset").addEventListener("click",resetTheme);
-    byId("tdLogoUpload").addEventListener("click",uploadLogo);
     byId("tdLogoReset").addEventListener("click",resetLogo);
-    // Choosing a frame IS the instruction; there is nothing to confirm.
-    byId("tdSheetFile").addEventListener("change",()=>{
-      if(byId("tdSheetFile").files?.[0])splitCornerSheet();
-    });
-    byId("tdZoomFit").addEventListener("click",()=>setZoom(1));
-    byId("tdZoom100").addEventListener("click",()=>setZoom(null));
-    byId("tdZoomRange").addEventListener("input",e=>setZoom(Number(e.target.value)/100));
+    byId("tdSheetReset").addEventListener("click",resetCornerArtwork);
     window.addEventListener("resize",()=>{measureHead();layoutPreview();});
   }
 
@@ -297,7 +315,7 @@
   async function openDesign(id){
     installUI();
     teamId=Number(id)||null;
-    zoomFactor=1;
+    zoomFactor=1;panX=0;panY=0;
     if(!teamId){alert("Save this team first, then design it.");return;}
 
     /* Name the team before anything is fetched. The whole point of this screen
@@ -353,10 +371,35 @@
 
   function renderColors(colors){
     const defs=state.manifest.colors||[];
-    byId("tdColors").innerHTML=defs.map(d=>
-      `<div class="td-color"><label for="tdColor_${d.key}">${esc(d.label)}</label>
-       <input class="tdColorInput" data-color-key="${d.key}" id="tdColor_${d.key}" type="color" value="${esc(colors[d.key]||"#000000")}"></div>`
-    ).join("");
+    byId("tdColors").innerHTML=defs.map(d=>{
+      const value=esc(colors[d.key]||"#000000");
+      return `<div class="td-color" data-color="${d.key}">
+        <span class="td-color-chip" data-chip="${d.key}" style="background:${value}"></span>
+        <span class="td-color-text">
+          <span class="td-color-label">${esc(d.label)}</span><br>
+          <span class="td-color-value" data-value="${d.key}">${value}</span>
+        </span>
+        <button class="btn td-color-btn" type="button" data-open-color="${d.key}">Change colour</button>
+        <input class="tdColorInput td-hidden-color" data-color-key="${d.key}"
+               id="tdColor_${d.key}" type="color" value="${value}" tabindex="-1" aria-hidden="true">
+      </div>`;
+    }).join("");
+
+    document.querySelectorAll("[data-open-color]").forEach(b=>{
+      b.addEventListener("click",()=>{
+        const input=document.getElementById(`tdColor_${b.dataset.openColor}`);
+        if(input){input.focus();input.click();}
+      });
+    });
+    document.querySelectorAll(".tdColorInput").forEach(i=>{
+      i.addEventListener("input",()=>{
+        const key=i.dataset.colorKey;
+        const chip=document.querySelector(`[data-chip="${CSS.escape(key)}"]`);
+        const label=document.querySelector(`[data-value="${CSS.escape(key)}"]`);
+        if(chip)chip.style.background=i.value;
+        if(label)label.textContent=i.value;
+      });
+    });
   }
 
   const currentColors=()=>{
@@ -373,9 +416,13 @@
 
   function renderLogo(){
     const t=teamFor();const box=byId("tdLogoThumb");
-    if(t?.logo_url){box.className="td-thumb";box.outerHTML=
-      `<img id="tdLogoThumb" class="td-thumb" src="${esc(t.logo_url)}" alt="">`;}
-    else{box.outerHTML=`<div id="tdLogoThumb" class="td-thumb empty">No logo</div>`;}
+    if(box){
+      if(t?.logo_url)box.outerHTML=`<img id="tdLogoThumb" class="td-thumb" src="${esc(t.logo_url)}" alt="">`;
+      else box.outerHTML=`<div id="tdLogoThumb" class="td-thumb empty">None</div>`;
+    }
+    // The logo is chosen the same way as any other artwork.
+    const tiles=byId("tdLogoTiles");
+    if(tiles){tiles.innerHTML=presetTiles("team_logo","");bindTiles(tiles);}
   }
 
   /* --------------------------------------------------------------- presets */
@@ -396,22 +443,76 @@
 
   function presetTiles(assetKey,selectedId){
     const items=library[assetKey]||[];
-    if(!items.length)return `<div class="small" style="padding:6px 2px">Nothing saved yet — upload artwork below.</div>`;
     const built=items.filter(i=>i.source!=="user");
     const mine=items.filter(i=>i.source==="user");
-    const tile=i=>`<button class="td-tile" type="button" data-key="${esc(assetKey)}"
+    const tile=i=>{
+      const button=`<button class="td-tile" type="button" data-key="${esc(assetKey)}"
         data-id="${esc(i.id)}" aria-pressed="${i.id===selectedId?"true":"false"}"
         title="${esc(i.label)}">${tileArt(i,assetKey)}<span class="td-tile-cap">${esc(i.label)}</span></button>`;
-    return built.map(tile).join("")
+      if(i.source!=="user")return button;
+      return `<span class="td-tile-wrap">${button}
+        <button class="td-tile-del" type="button" data-del-key="${esc(assetKey)}"
+          data-del-id="${esc(i.id)}" title="Delete ${esc(i.label)}"
+          aria-label="Delete ${esc(i.label)}">×</button></span>`;
+    };
+    // Adding is the first thing in the strip, always.
+    const add=`<button class="td-tile td-tile-add" type="button" data-add="${esc(assetKey)}"
+      title="Add your own artwork"><span class="td-tile-art">+</span>
+      <span class="td-tile-cap">Add</span></button>`;
+    return add+built.map(tile).join("")
       +(mine.length?`<span class="td-tile-group">Yours</span>${mine.map(tile).join("")}`:"");
   }
 
   function bindTiles(root){
-    (root||document).querySelectorAll(".td-tile").forEach(b=>{
+    const scope=root||document;
+    scope.querySelectorAll(".td-tile").forEach(b=>{
       if(b.dataset.bound)return;
       b.dataset.bound="1";
-      b.addEventListener("click",()=>applyPreset(b.dataset.key,b.dataset.id));
+      if(b.dataset.add!==undefined)b.addEventListener("click",()=>pickFileFor(b.dataset.add));
+      else b.addEventListener("click",()=>applyPreset(b.dataset.key,b.dataset.id));
     });
+    scope.querySelectorAll(".td-tile-del").forEach(b=>{
+      if(b.dataset.bound)return;
+      b.dataset.bound="1";
+      b.addEventListener("click",e=>{
+        e.stopPropagation();
+        deleteLibraryItem(b.dataset.delKey,b.dataset.delId);
+      });
+    });
+  }
+
+  /* One hidden file input, reused. Choosing a file uploads it — there is no
+     second step and nothing that says "No file chosen". */
+  function pickFileFor(assetKey){
+    let input=byId("tdPicker");
+    if(!input){
+      input=document.createElement("input");
+      input.type="file";input.id="tdPicker";
+      input.accept="image/png,image/jpeg,image/webp";
+      input.style.display="none";
+      document.body.appendChild(input);
+    }
+    input.onchange=async()=>{
+      const file=input.files?.[0];
+      input.value="";
+      if(!file)return;
+      if(assetKey===CORNER_SHEET)await splitCornerSheet(file);
+      else if(assetKey==="team_logo")await uploadLogo(file);
+      else await uploadAsset(assetKey,file,file.name);
+    };
+    input.click();
+  }
+
+  async function deleteLibraryItem(assetKey,id){
+    if(!id.startsWith("user:"))return;
+    if(!confirm("Remove this from your saved artwork? Teams already using it keep their copy."))return;
+    try{
+      await jsonFetch(`/api/asset-library/${encodeURIComponent(assetKey)}/${encodeURIComponent(id.slice(5))}`,
+        {method:"DELETE"});
+      library=(await jsonFetch("/api/asset-library")).items||library;
+      renderAssets();renderSheet();renderLogo();
+      status("Removed from your saved artwork.");
+    }catch(e){status(e.message);}
   }
 
   function renderAssets(){
@@ -429,12 +530,13 @@
           <div class="td-asset-name">${esc(d.label)}</div>
         </div>
         <div class="td-tiles" data-tiles="${d.key}">${presetTiles(d.key,"")}</div>
-        <input class="tdFile" data-key="${d.key}" type="file" accept="image/png,image/jpeg,image/webp">
         <div class="td-asset-actions">
-          <button class="btn tdUpload" data-key="${d.key}" type="button">Upload</button>
-          <input class="tdTint" data-key="${d.key}" type="color" value="${esc(theme.colors?.primary_bright||"#d8b34a")}" title="Recolor" aria-label="Recolor ${esc(d.label)}">
-          <button class="btn tdRecolor" data-key="${d.key}" type="button" ${src?"":"disabled"}>Recolor</button>
+          <span class="td-color-chip tdTintChip" data-tint-chip="${d.key}"
+                style="background:${esc(theme.colors?.primary_bright||"#d8b34a")};width:38px;height:38px"></span>
+          <button class="btn tdRecolor" data-key="${d.key}" type="button" ${src?"":"disabled"}>Recolour</button>
           <button class="btn danger tdResetAsset" data-key="${d.key}" type="button">Reset</button>
+          <input class="tdTint td-hidden-color" data-key="${d.key}" id="tdTint_${d.key}" type="color"
+                 value="${esc(theme.colors?.primary_bright||"#d8b34a")}" tabindex="-1" aria-hidden="true">
         </div>
         ${corner?`<details class="td-tune">
           <summary>Fine-tune position</summary>
@@ -459,7 +561,16 @@
     }).join("");
 
     bindTiles(byId("tdAssets"));
-    document.querySelectorAll(".tdUpload").forEach(b=>b.addEventListener("click",()=>uploadAsset(b.dataset.key)));
+    // Tapping the tint chip opens the OS picker; Recolour then applies it.
+    document.querySelectorAll(".tdTintChip").forEach(chip=>{
+      chip.addEventListener("click",()=>byId(`tdTint_${chip.dataset.tintChip}`)?.click());
+    });
+    document.querySelectorAll(".tdTint").forEach(i=>{
+      i.addEventListener("input",()=>{
+        const chip=document.querySelector(`[data-tint-chip="${CSS.escape(i.dataset.key)}"]`);
+        if(chip)chip.style.background=i.value;
+      });
+    });
     document.querySelectorAll(".tdRecolor").forEach(b=>b.addEventListener("click",()=>recolorAsset(b.dataset.key)));
     document.querySelectorAll(".tdResetAsset").forEach(b=>b.addEventListener("click",()=>resetAsset(b.dataset.key)));
     document.querySelectorAll(".tdSnap").forEach(b=>b.addEventListener("click",()=>snapFlush(b.dataset.key)));
@@ -486,6 +597,12 @@
   function renderSheet(){
     const box=byId("tdSheetTiles");
     if(box){box.innerHTML=presetTiles(CORNER_SHEET,"");bindTiles(box);}
+    const thumb=byId("tdSheetThumb");
+    const corner=(themeFor()||{}).assets?.corner_tl;
+    if(thumb){
+      if(corner)thumb.outerHTML=`<img id="tdSheetThumb" class="td-thumb" src="${esc(corner)}" alt="">`;
+      else thumb.outerHTML=`<div id="tdSheetThumb" class="td-thumb empty">None</div>`;
+    }
   }
 
   /* ------------------------------------------------------------- corner cfg */
@@ -638,6 +755,18 @@
 
   async function applyPreset(key,id){
     if(!id){status("Choose a preset first.");return;}
+    // The logo goes through the team endpoint, so fetch the saved file and
+    // send it the way an upload would.
+    if(key==="team_logo"){
+      const item=(library.team_logo||[]).find(i=>i.id===id);
+      if(!item){status("That logo is no longer available.");return;}
+      setBusy(true);status("Applying logo…");
+      try{
+        const blob=await (await fetch(item.url,{cache:"no-store"})).blob();
+        await uploadLogo(new File([blob],item.label||"logo.png",{type:blob.type||"image/png"}),true);
+      }catch(e){status(e.message);}finally{setBusy(false);}
+      return;
+    }
     // A frame tile means all four corners, cut from the one image.
     if(key===CORNER_SHEET){
       const item=(library[CORNER_SHEET]||[]).find(i=>i.id===id);
@@ -660,8 +789,7 @@
   }
 
   async function uploadAsset(key,blob=null,filename=null){
-    const input=document.querySelector(`.tdFile[data-key="${CSS.escape(key)}"]`);
-    const file=blob||input?.files?.[0];
+    const file=blob;
     if(!file){status("Choose an image first.");return false;}
     const form=new FormData();form.append("asset",file,filename||file.name||`${key}.png`);
     setBusy(true);status("Saving artwork…");
@@ -745,9 +873,18 @@
     reloadPreview();
   }
 
-  async function splitCornerSheet(){
-    const file=byId("tdSheetFile").files?.[0];
-    if(!file){status("Choose a corner sheet first.");return;}
+  async function resetCornerArtwork(){
+    if(!confirm("Remove the corner artwork from this team?"))return;
+    setBusy(true);status("Clearing corners…");
+    try{
+      for(const key of Object.keys(CORNERS))await postAsset(key,{method:"DELETE"});
+      await refreshState();renderAssets();reloadPreview();
+      status("Corners cleared.");
+    }catch(e){status(e.message);}finally{setBusy(false);}
+  }
+
+  async function splitCornerSheet(file){
+    if(!file){status("Choose a corner frame first.");return;}
     setBusy(true);status("Splitting the sheet into four corners…");
     try{
       const img=await loadImage(URL.createObjectURL(file));
@@ -792,12 +929,21 @@
     }catch(e){status(e.message);}
   }
 
-  async function uploadLogo(){
-    const file=byId("tdLogoFile").files?.[0];
+  async function uploadLogo(file,fromLibrary){
     if(!file){status("Choose a logo file first.");return;}
     const form=new FormData();form.append("logo",file,file.name);
     try{
       await jsonFetch(`/api/teams/${teamId}/logo`,{method:"POST",body:form});
+      // Keep it, so the same logo can be reused on another team later.
+      if(!fromLibrary){
+        try{
+          const saved=new FormData();
+          saved.append("asset",file,file.name);
+          saved.append("label",file.name||"Logo");
+          await jsonFetch("/api/asset-library/team_logo",{method:"POST",body:saved});
+          library=(await jsonFetch("/api/asset-library")).items||library;
+        }catch(e){/* the library is a convenience, never block the logo */}
+      }
       await refreshState();renderLogo();reloadPreview();
       const t=teamFor();
       byId("tdWhoLogo").innerHTML=t?.logo_url?`<img src="${esc(t.logo_url)}" alt="">`:"";
@@ -839,28 +985,105 @@
     return width/(geometry.width||1920);
   }
 
+  let panX=0,panY=0;
+
   function layoutPreview(){
     const stage=byId("tdStage"),sizer=byId("tdSizer"),frame=byId("tdFrame");
     if(!stage||!sizer||!frame)return;
-    const scale=fitScale()*zoomFactor;
+    const fit=fitScale();
     frame.style.width=`${geometry.width}px`;
     frame.style.height=`${geometry.height}px`;
-    frame.style.transform=`scale(${scale})`;
-    sizer.style.width=`${geometry.width*scale}px`;
-    sizer.style.height=`${geometry.height*scale}px`;
-    // At fit the stage shows the whole TV; zoomed in it becomes a pannable pane.
-    stage.style.height=`${(geometry.height*fitScale())}px`;
-    stage.style.overflow=zoomFactor>1?"auto":"hidden";
-    const label=byId("tdZoomLabel");
-    if(label)label.textContent=`${Math.round(zoomFactor*100)}%`;
+    frame.style.transform="none";
+    stage.style.height=`${geometry.height*fit}px`;
+    clampPan();
+    sizer.style.transform=`translate(${panX}px,${panY}px) scale(${fit*zoomFactor})`;
   }
 
-  function setZoom(factor){
-    // null = actual TV pixels, whatever that works out to against the fit.
-    zoomFactor=factor===null?clamp(1/fitScale(),1,4):clamp(factor,1,4);
-    const range=byId("tdZoomRange");
-    if(range)range.value=Math.round(zoomFactor*100);
+  /* Keep the board inside the window: at fit it is pinned, zoomed in it can
+     move but never past its own edges. */
+  function clampPan(){
+    const stage=byId("tdStage");
+    if(!stage)return;
+    const fit=fitScale();
+    const w=geometry.width*fit*zoomFactor, h=geometry.height*fit*zoomFactor;
+    const maxX=Math.max(0,w-stage.clientWidth), maxY=Math.max(0,h-stage.clientHeight);
+    panX=clamp(panX,-maxX,0);
+    panY=clamp(panY,-maxY,0);
+  }
+
+  function setZoom(next,originX,originY){
+    const before=zoomFactor;
+    zoomFactor=clamp(next,1,6);
+    if(originX!==undefined){
+      // Zoom about the point under the fingers rather than the top-left.
+      const ratio=zoomFactor/before;
+      panX=originX-(originX-panX)*ratio;
+      panY=originY-(originY-panY)*ratio;
+    }
+    if(zoomFactor===1){panX=0;panY=0;}
     layoutPreview();
+  }
+
+  function installPreviewGestures(){
+    const stage=byId("tdStage");
+    if(!stage||stage.dataset.gestures)return;
+    stage.dataset.gestures="1";
+
+    const points=new Map();
+    let startDist=0,startZoom=1,startMid=null,lastTap=0,panning=false,lastX=0,lastY=0;
+    const dist=([a,b])=>Math.hypot(a.x-b.x,a.y-b.y);
+    const mid=([a,b])=>{
+      const r=stage.getBoundingClientRect();
+      return {x:(a.x+b.x)/2-r.left,y:(a.y+b.y)/2-r.top};
+    };
+
+    stage.addEventListener("pointerdown",e=>{
+      stage.setPointerCapture(e.pointerId);
+      points.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      if(points.size===2){
+        const p=[...points.values()];
+        startDist=dist(p);startZoom=zoomFactor;startMid=mid(p);
+        panning=false;
+      }else if(points.size===1){
+        const now=Date.now();
+        if(now-lastTap<300){setZoom(1);lastTap=0;return;}   // double-tap = fit
+        lastTap=now;
+        panning=zoomFactor>1;
+        lastX=e.clientX;lastY=e.clientY;
+        if(panning)stage.classList.add("td-grabbing");
+      }
+    });
+
+    stage.addEventListener("pointermove",e=>{
+      if(!points.has(e.pointerId))return;
+      points.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      if(points.size>=2&&startDist){
+        const p=[...points.values()].slice(0,2);
+        setZoom(startZoom*(dist(p)/startDist),startMid.x,startMid.y);
+      }else if(panning){
+        panX+=e.clientX-lastX;panY+=e.clientY-lastY;
+        lastX=e.clientX;lastY=e.clientY;
+        layoutPreview();
+      }
+    });
+
+    const release=e=>{
+      points.delete(e.pointerId);
+      if(points.size<2)startDist=0;
+      if(!points.size){panning=false;stage.classList.remove("td-grabbing");}
+    };
+    stage.addEventListener("pointerup",release);
+    stage.addEventListener("pointercancel",release);
+
+    // Desktop: ctrl/cmd + wheel, the usual zoom convention.
+    stage.addEventListener("wheel",e=>{
+      if(!e.ctrlKey&&!e.metaKey)return;
+      e.preventDefault();
+      const r=stage.getBoundingClientRect();
+      setZoom(zoomFactor*(e.deltaY<0?1.12:0.89),e.clientX-r.left,e.clientY-r.top);
+    },{passive:false});
+
+    stage.addEventListener("dblclick",()=>setZoom(1));
   }
 
   /* ------------------------------------------------- entry points per team */
