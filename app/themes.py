@@ -7,6 +7,9 @@ persistent data directory so GitHub software updates never erase them.
 import json
 import os
 import re
+import shutil
+import time
+import uuid
 from pathlib import Path
 
 from flask import Blueprint, abort, jsonify, request, send_file
@@ -44,6 +47,28 @@ ASSETS = {
 }
 
 CORNER_ASSET_KEYS = ("corner_tl", "corner_tr", "corner_bl", "corner_br")
+
+# A whole-sheet upload holding all four ornaments. It is a library-only key:
+# the browser splits it into quadrants and applies those to the four corner
+# assets, so the sheet itself is never a theme asset.
+CORNER_SHEET_KEY = "corner_sheet"
+LIBRARY_KEYS = set(ASSETS) | {CORNER_SHEET_KEY}
+
+# Artwork the user has uploaded, tinted or recolored, kept so it can be reused
+# on any team later. It cannot live in the theme folder: _remove_old_asset_files
+# deletes the previous file every time an asset is replaced, which would erase
+# the library on the next upload.
+ASSET_LIBRARY_ROOT = (
+    Path.home() / ".local" / "share" / "pi-tableau-leaderboard" / "asset-library"
+)
+BUILTIN_LIBRARY_ROOT = APP_DIR / "static" / "asset-library"
+# The shipped catalog points at both the library folder and the theme packs,
+# so a built-in preset may live under either. Both are read-only app content.
+BUILTIN_URL_ROOTS = {
+    "/static/asset-library/": BUILTIN_LIBRARY_ROOT,
+    "/static/theme-packs/": APP_DIR / "static" / "theme-packs",
+}
+ITEM_ID_RE = re.compile(r"^[a-z0-9]{6,40}$")
 DEFAULT_CORNER_SETTINGS = {"size": 100.0, "crop_x": 0.0, "crop_y": 0.0}
 
 UNDISPUTED_COLORS = {
@@ -385,6 +410,211 @@ def _remove_old_asset_files(scope, asset_key):
                 pass
 
 
+def _checked_extension(filename):
+    ext = Path(filename or "").suffix.lower()
+    if ext not in VALID_EXTENSIONS:
+        raise ValueError("Theme assets must be PNG, JPG, or WEBP.")
+    return ext
+
+
+def _checked_upload(field="asset"):
+    upload = request.files.get(field)
+    if not upload or not upload.filename:
+        raise ValueError("Choose an image file.")
+    ext = _checked_extension(upload.filename)
+    upload.stream.seek(0, os.SEEK_END)
+    size = upload.stream.tell()
+    upload.stream.seek(0)
+    if size > MAX_ASSET_BYTES:
+        raise ValueError("Theme assets must be under 8 MB.")
+    return upload, ext
+
+
+# ------------------------------------------------------------------ library
+
+def _library_key(asset_key):
+    if asset_key not in LIBRARY_KEYS:
+        raise ValueError("Unknown theme asset.")
+    return asset_key
+
+
+def _library_dir(asset_key):
+    return ASSET_LIBRARY_ROOT / _library_key(asset_key)
+
+
+def _read_library_index(asset_key):
+    path = _library_dir(asset_key) / "index.json"
+    try:
+        rows = json.loads(path.read_text())
+        return [r for r in rows if isinstance(r, dict) and ITEM_ID_RE.match(str(r.get("id", "")))]
+    except Exception:
+        return []
+
+
+def _write_library_index(asset_key, rows):
+    folder = _library_dir(asset_key)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "index.json").write_text(json.dumps(rows, indent=2))
+
+
+def _library_item_path(asset_key, item_id):
+    if not ITEM_ID_RE.match(str(item_id or "")):
+        return None
+    for row in _read_library_index(asset_key):
+        if str(row.get("id")) == str(item_id):
+            candidate = _library_dir(asset_key) / f"{item_id}{row.get('ext', '.png')}"
+            return candidate if candidate.exists() else None
+    return None
+
+
+def _user_library_items(asset_key):
+    items = []
+    for row in _read_library_index(asset_key):
+        item_id = str(row.get("id"))
+        items.append({
+            "id": f"user:{item_id}",
+            "label": str(row.get("label") or item_id),
+            "url": f"/api/asset-library/{asset_key}/{item_id}",
+            "created": row.get("created", ""),
+            "source": "user",
+            "deletable": True,
+        })
+    items.sort(key=lambda r: str(r.get("created")), reverse=True)
+    return items
+
+
+def _builtin_library_items():
+    """The shipped catalog, regrouped by the asset key each entry targets."""
+    grouped = {}
+    try:
+        raw = json.loads((BUILTIN_LIBRARY_ROOT / "catalog.json").read_text())
+    except Exception:
+        return grouped
+    for collection in raw.get("collections") or []:
+        cname = str(collection.get("label") or collection.get("key") or "Built-in")
+        for item in collection.get("items") or []:
+            label = str(item.get("label") or item.get("key") or "Preset")
+            for target_key, url in (item.get("targets") or {}).items():
+                if target_key not in LIBRARY_KEYS or not str(url or "").strip():
+                    continue
+                grouped.setdefault(target_key, []).append({
+                    "id": f"builtin:{url}",
+                    "label": f"{cname} — {label}",
+                    "url": url,
+                    "source": "builtin",
+                    "deletable": False,
+                })
+    return grouped
+
+
+def _resolve_library_source(asset_key, library_id):
+    """A library id -> a readable file on disk. Never escapes its root."""
+    raw = str(library_id or "").strip()
+    if raw.startswith("user:"):
+        path = _library_item_path(asset_key, raw[5:])
+        if not path:
+            raise ValueError("That saved item is no longer available.")
+        return path
+    if raw.startswith("builtin:"):
+        url = raw[8:].split("?", 1)[0]
+        for prefix, root in BUILTIN_URL_ROOTS.items():
+            if not url.startswith(prefix):
+                continue
+            candidate = (root / url[len(prefix):]).resolve()
+            # Must sit inside its own root: blocks ../ escapes outright.
+            if root.resolve() not in candidate.parents:
+                break
+            if not candidate.exists() or candidate.suffix.lower() not in VALID_EXTENSIONS:
+                break
+            return candidate
+    raise ValueError("Unknown preset.")
+
+
+def _file_into_library(asset_key, source_path, label, ext):
+    """Keep a copy of artwork so it can be reused on any team, forever."""
+    try:
+        item_id = uuid.uuid4().hex[:16]
+        folder = _library_dir(asset_key)
+        folder.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_path, folder / f"{item_id}{ext}")
+        rows = _read_library_index(asset_key)
+        rows.insert(0, {
+            "id": item_id,
+            "label": str(label or "Untitled")[:120],
+            "ext": ext,
+            "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+        })
+        _write_library_index(asset_key, rows[:200])
+        return item_id
+    except Exception:
+        # The library is a convenience; never fail the actual save because of it.
+        return ""
+
+
+@themes_blueprint.get("/api/asset-library")
+def asset_library():
+    builtin = _builtin_library_items()
+    return jsonify({
+        "ok": True,
+        "items": {
+            key: builtin.get(key, []) + _user_library_items(key)
+            for key in sorted(LIBRARY_KEYS)
+        },
+    })
+
+
+@themes_blueprint.post("/api/asset-library/<asset_key>")
+def add_library_item(asset_key):
+    try:
+        _library_key(asset_key)
+        upload, ext = _checked_upload()
+        folder = _library_dir(asset_key)
+        folder.mkdir(parents=True, exist_ok=True)
+        item_id = uuid.uuid4().hex[:16]
+        upload.save(folder / f"{item_id}{ext}")
+        rows = _read_library_index(asset_key)
+        rows.insert(0, {
+            "id": item_id,
+            "label": str(request.form.get("label") or upload.filename or "Untitled")[:120],
+            "ext": ext,
+            "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+        })
+        _write_library_index(asset_key, rows[:200])
+        return jsonify({"ok": True, "id": f"user:{item_id}",
+                        "url": f"/api/asset-library/{asset_key}/{item_id}"})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@themes_blueprint.get("/api/asset-library/<asset_key>/<item_id>")
+def library_item(asset_key, item_id):
+    try:
+        _library_key(asset_key)
+    except Exception:
+        abort(404)
+    path = _library_item_path(asset_key, item_id)
+    if not path:
+        abort(404)
+    return send_file(path, conditional=True)
+
+
+@themes_blueprint.delete("/api/asset-library/<asset_key>/<item_id>")
+def delete_library_item(asset_key, item_id):
+    try:
+        _library_key(asset_key)
+        path = _library_item_path(asset_key, item_id)
+        if not path:
+            raise ValueError("That saved item is no longer available.")
+        path.unlink(missing_ok=True)
+        _write_library_index(
+            asset_key,
+            [r for r in _read_library_index(asset_key) if str(r.get("id")) != str(item_id)],
+        )
+        return jsonify({"ok": True})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
 @themes_blueprint.post("/api/themes/<scope>/assets/<asset_key>")
 def upload_theme_asset(scope, asset_key):
     try:
@@ -392,25 +622,28 @@ def upload_theme_asset(scope, asset_key):
         if asset_key not in ASSETS:
             raise ValueError("Unknown theme asset.")
 
-        upload = request.files.get("asset")
-        if not upload or not upload.filename:
-            raise ValueError("Choose an image file.")
-        ext = Path(upload.filename).suffix.lower()
-        if ext not in VALID_EXTENSIONS:
-            raise ValueError("Theme assets must be PNG, JPG, or WEBP.")
+        # Applying something already on the Pi is a server-side copy: the phone
+        # never re-uploads bytes it has already sent once.
+        body = request.get_json(silent=True) if not request.files else None
+        library_id = (body or {}).get("library_id") if isinstance(body, dict) else None
 
-        upload.stream.seek(0, os.SEEK_END)
-        size = upload.stream.tell()
-        upload.stream.seek(0)
-        if size > MAX_ASSET_BYTES:
-            raise ValueError("Theme assets must be under 8 MB.")
+        if library_id:
+            source = _resolve_library_source(asset_key, library_id)
+            ext = source.suffix.lower()
+        else:
+            upload, ext = _checked_upload()
+            source = None
 
         folder = PERSISTENT_THEME_ROOT / normalized_scope
         folder.mkdir(parents=True, exist_ok=True)
         _remove_old_asset_files(normalized_scope, asset_key)
         filename = f"{asset_key}{ext}"
         path = folder / filename
-        upload.save(path)
+        if source is not None:
+            shutil.copyfile(source, path)
+        else:
+            upload.save(path)
+            _file_into_library(asset_key, path, upload.filename, ext)
 
         settings = get_settings()
         current = _stored_config(settings, normalized_scope, team)

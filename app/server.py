@@ -82,6 +82,9 @@ PUBLIC_ENDPOINTS = {
     "display", "api_leaderboard", "api_config", "api_team_logo",
     "health", "api_auth_status", "api_auth_unlock", "static",
     "themes.theme_asset",
+    # The kiosk reports its own viewport and is deliberately unauthenticated.
+    # Reading the geometry back stays behind the settings lock.
+    "api_tv_geometry_report",
 }
 
 
@@ -1461,6 +1464,75 @@ def api_tv_fullscreen():
         })
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+def drm_native_mode():
+    """
+    The connected display's native mode straight from the kernel.
+
+    Every HDMI output publishes its supported modes, native first, at
+    /sys/class/drm/card*-HDMI-A-*/modes. No extra packages and no root, and it
+    still answers before the kiosk browser has ever reported in.
+    """
+    try:
+        for modes in sorted(Path("/sys/class/drm").glob("card*-HDMI-A-*/modes")):
+            status = modes.with_name("status")
+            if status.exists() and status.read_text().strip() != "connected":
+                continue
+            first = (modes.read_text().strip().splitlines() or [""])[0]
+            match = re.match(r"^(\d{3,5})x(\d{3,5})", first.strip())
+            if match:
+                return int(match.group(1)), int(match.group(2))
+    except Exception:
+        pass
+    return 0, 0
+
+
+@app.post("/api/tv/geometry")
+def api_tv_geometry_report():
+    """
+    The kiosk reports its own viewport.
+
+    Chromium runs fullscreen on the TV, so its viewport IS the usable TV shape,
+    overscan included — a better answer than any mode table. Public, because
+    the kiosk is deliberately unauthenticated.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        width = int(float(body.get("w") or 0))
+        height = int(float(body.get("h") or 0))
+    except (TypeError, ValueError):
+        width = height = 0
+    if not (320 <= width <= 16384 and 240 <= height <= 16384):
+        return jsonify({"ok": False, "error": "Unusable viewport size."}), 400
+
+    set_meta("tv_viewport_w", width)
+    set_meta("tv_viewport_h", height)
+    set_meta("tv_viewport_seen", time.strftime("%Y-%m-%d %H:%M:%S"))
+    return jsonify({"ok": True, "w": width, "h": height})
+
+
+@app.get("/api/tv/geometry")
+def api_tv_geometry():
+    """Best available TV shape: what the kiosk saw, else the kernel, else 16:9."""
+    width = int(get_meta("tv_viewport_w", "0") or 0)
+    height = int(get_meta("tv_viewport_h", "0") or 0)
+    source = "kiosk"
+
+    if not (width and height):
+        width, height = drm_native_mode()
+        source = "drm"
+    if not (width and height):
+        width, height, source = 1920, 1080, "default"
+
+    return jsonify({
+        "ok": True,
+        "width": width,
+        "height": height,
+        "aspect": round(width / height, 6) if height else 16 / 9,
+        "source": source,
+        "seen_at": get_meta("tv_viewport_seen", ""),
+    })
 
 
 @app.post("/api/tv/refresh")
