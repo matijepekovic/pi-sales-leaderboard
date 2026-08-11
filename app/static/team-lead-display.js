@@ -5,7 +5,6 @@
 (function(){
   if(typeof render!=="function") return;
   const previousRender=render;
-
   const norm=value=>String(value||"").trim().toLowerCase();
 
   function savedLeaderName(data){
@@ -25,6 +24,11 @@
 
     const rows=[...tbody.querySelectorAll("tr:not(.total-row)")];
     const dataRows=Array.isArray(data.rows)?data.rows:[];
+    rows.forEach((row,index)=>{
+      row.dataset.repName=String(dataRows[index]?.rep_name||"");
+      row.classList.remove("team-lead-row");
+    });
+
     const leaderIndex=dataRows.findIndex(row=>norm(row?.rep_name)===norm(leader));
     if(leaderIndex<0||leaderIndex>=rows.length) return;
 
@@ -44,6 +48,7 @@
           cell.classList.add("rank","team-lead-rank");
         }else{
           cell.textContent=String(rank++);
+          cell.classList.remove("team-lead-rank");
         }
       });
     }
