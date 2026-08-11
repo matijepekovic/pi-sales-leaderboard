@@ -104,7 +104,12 @@
 
       if(oldTeam){
         const logo=oldTeam.querySelector(".v55-office-team-logo");
-        if(logo) cell.appendChild(logo);
+        if(logo){
+          const src=String(logo.getAttribute("src")||"");
+          // v55 falls back to the Team Builder main logo when Logo Small is
+          // missing. Whole Office v58 intentionally shows Logo Small only.
+          if(!src.includes("/api/teams/")) cell.appendChild(logo);
+        }
         oldTeam.remove();
       }
 
