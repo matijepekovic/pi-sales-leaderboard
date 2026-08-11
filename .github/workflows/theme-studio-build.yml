@@ -1,0 +1,159 @@
+name: One-time Theme Studio build
+
+on:
+  push:
+    branches:
+      - build/theme-studio-v42
+    paths:
+      - .github/workflows/theme-studio-build.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build-theme-studio:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out leaderboard build branch
+        uses: actions/checkout@v4
+        with:
+          ref: build/theme-studio-v42
+          fetch-depth: 0
+
+      - name: Check out STATS design source
+        uses: actions/checkout@v4
+        with:
+          repository: matijepekovic/STATS
+          ref: claude/new-session-bczgqj
+          path: _stats_theme_source
+
+      - name: Copy UNDISPUTED design assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/static/theme-packs/undisputed
+          cp _stats_theme_source/bg.jpg app/static/theme-packs/undisputed/bg.jpg
+          cp _stats_theme_source/hero.png app/static/theme-packs/undisputed/hero.png
+          cp _stats_theme_source/medallion.png app/static/theme-packs/undisputed/medallion.png
+          cp _stats_theme_source/row.jpg app/static/theme-packs/undisputed/row.jpg
+          cp _stats_theme_source/champ.jpg app/static/theme-packs/undisputed/champ.jpg
+          cp _stats_theme_source/ctl.png app/static/theme-packs/undisputed/ctl.png
+          cp _stats_theme_source/ctr.png app/static/theme-packs/undisputed/ctr.png
+          cp _stats_theme_source/cbl.png app/static/theme-packs/undisputed/cbl.png
+          cp _stats_theme_source/cbr.png app/static/theme-packs/undisputed/cbr.png
+          cp _stats_theme_source/totmark.png app/static/theme-packs/undisputed/totmark.png
+          rm -rf _stats_theme_source
+
+      - name: Wire theme engine into app
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if new in text:
+                  return
+              if old not in text:
+                  raise SystemExit(f"Expected patch anchor not found in {path}: {old!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          server = Path("app/server.py")
+          text = server.read_text()
+          import_anchor = "from sources.tableau import TableauSource, TableauError, resolve_dates\n"
+          if "from themes import themes_blueprint, display_theme_state" not in text:
+              text = text.replace(
+                  import_anchor,
+                  import_anchor + "from themes import themes_blueprint, display_theme_state\n",
+                  1,
+              )
+          app_anchor = 'app.config["JSON_SORT_KEYS"] = False\n'
+          if "app.register_blueprint(themes_blueprint)" not in text:
+              text = text.replace(
+                  app_anchor,
+                  app_anchor + "app.register_blueprint(themes_blueprint)\n",
+                  1,
+              )
+          public_old = '    "health", "api_auth_status", "api_auth_unlock", "static",\n'
+          public_new = '    "health", "api_auth_status", "api_auth_unlock", "static",\n    "themes.theme_asset",\n'
+          if '"themes.theme_asset"' not in text:
+              if public_old not in text:
+                  raise SystemExit("PUBLIC_ENDPOINTS patch anchor missing")
+              text = text.replace(public_old, public_new, 1)
+          payload_old = '        "metric_types": metric_type_map(),\n    })\n    return jsonify(payload)\n'
+          payload_new = '        "metric_types": metric_type_map(),\n    })\n    payload["theme_state"] = display_theme_state(settings)\n    return jsonify(payload)\n'
+          if 'payload["theme_state"] = display_theme_state(settings)' not in text:
+              if payload_old not in text:
+                  raise SystemExit("Leaderboard payload patch anchor missing")
+              text = text.replace(payload_old, payload_new, 1)
+          server.write_text(text)
+
+          db = Path("app/database.py")
+          text = db.read_text()
+          theme_default = '    "theme_config": {"office": {}, "teams": {}},\n'
+          if theme_default not in text:
+              anchor = '    "currency_symbol": "$",\n'
+              if anchor not in text:
+                  raise SystemExit("Database settings patch anchor missing")
+              text = text.replace(anchor, anchor + theme_default, 1)
+              db.write_text(text)
+
+          settings = Path("app/templates/settings.html")
+          text = settings.read_text()
+          include = '<script src="/static/theme-studio.js?v=43"></script>\n'
+          if include not in text:
+              settings.write_text(text.rstrip() + "\n" + include)
+
+          display = Path("app/templates/display.html")
+          text = display.read_text()
+          include = '<script src="/static/theme-runtime.js?v=43"></script>\n'
+          if include not in text:
+              display.write_text(text.rstrip() + "\n" + include)
+
+          Path("VERSION").write_text("43\n")
+
+          readme = Path("README.md")
+          text = readme.read_text()
+          marker = "\n## Team Theme Studio\n"
+          if marker not in text:
+              text += marker + """
+
+          v43 adds a persistent theme system for the TV. The original Classic
+          leaderboard remains available, and the UNDISPUTED design from the STATS
+          repository is included as the first built-in theme pack. Team-specific
+          colors, replacement artwork, recolored artwork and logos are managed from
+          Settings -> Theme Studio. User-created theme assets are stored under
+          ~/.local/share/pi-tableau-leaderboard/themes and survive software updates.
+
+          Individual team views use the full theme. Team vs Team and All Teams use
+          each team's colors/artwork on that team's card. Whole Office has its own
+          separate theme so no single team brand takes over the office view.
+          """
+              readme.write_text(text)
+
+      - name: Remove one-time workflow from final tree
+        run: rm -f .github/workflows/theme-studio-build.yml
+
+      - name: Validate build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile app/server.py app/database.py app/themes.py app/sources/tableau.py
+          node --check app/static/theme-runtime.js
+          node --check app/static/theme-studio.js
+          test -s app/static/theme-packs/undisputed/hero.png
+          test -s app/static/theme-packs/undisputed/bg.jpg
+          grep -q 'theme_state' app/server.py
+          grep -q 'theme-studio.js' app/templates/settings.html
+          grep -q 'theme-runtime.js' app/templates/display.html
+          test "$(tr -d '\n' < VERSION)" = "43"
+
+      - name: Commit completed Theme Studio build
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "pi-sales-leaderboard build"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "v43: add persistent Team Theme Studio and UNDISPUTED assets"
+          git push origin HEAD:build/theme-studio-v42
