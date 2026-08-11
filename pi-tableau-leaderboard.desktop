@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Sales Leaderboard TV
+Comment=Automatically launch the office leaderboard in fullscreen kiosk mode
+Exec=__KIOSK__
+Terminal=false
+X-GNOME-Autostart-enabled=true
+Hidden=false
+NoDisplay=false
+StartupNotify=false

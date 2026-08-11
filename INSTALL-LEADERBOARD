@@ -1,0 +1,59 @@
+#!/bin/bash
+set -u
+
+# Always locate files relative to THIS installer, no matter where it was launched from.
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$HERE" || exit 1
+
+clear
+echo "============================================="
+echo "        PI SALES LEADERBOARD INSTALLER"
+echo "============================================="
+echo
+echo "This will install/update the leaderboard."
+echo "Your saved teams and settings will be preserved."
+echo
+
+if [ ! -f "$HERE/install.sh" ]; then
+    echo "ERROR: install.sh is missing from:"
+    echo "$HERE"
+    echo
+    echo "Make sure the ZIP was fully extracted before running this installer."
+    echo
+    read -r -p "Press Enter to close..."
+    exit 1
+fi
+
+chmod +x "$HERE/install.sh"
+
+"$HERE/install.sh"
+RC=$?
+
+echo
+if [ "$RC" -eq 0 ]; then
+    echo "============================================="
+    echo "          INSTALLATION COMPLETE"
+    echo "============================================="
+    echo
+    echo "Your saved settings and team data were preserved."
+    echo
+    read -r -p "Reboot Raspberry Pi now? [Y/n]: " ANSWER
+    case "${ANSWER:-Y}" in
+        Y|y)
+            sudo reboot
+            ;;
+        *)
+            echo
+            echo "Done. You can reboot later from the Raspberry Pi menu."
+            read -r -p "Press Enter to close..."
+            ;;
+    esac
+else
+    echo "============================================="
+    echo "           INSTALLATION FAILED"
+    echo "============================================="
+    echo
+    read -r -p "Press Enter to close..."
+fi
+
+exit "$RC"
