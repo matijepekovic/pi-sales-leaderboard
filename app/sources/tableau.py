@@ -1,191 +1,113 @@
-"""v38 Tableau parsing shim.
+"""v39 Tableau connector: pull the Sales Rep Totals worksheet directly.
 
-The Rep Totals dashboard can export a lower-level worksheet where the split
-count measures are sparse across rows. Reconstruct counts per unique LEAD-Id:
+Do not reconstruct rep totals from a dashboard/detail export. Tableau REST
+returns only one child worksheet when a dashboard is queried as CSV, so v39
+resolves the published worksheet named "Sales Rep Totals" and queries that
+view directly. Tableau's own calculated rep totals are then mapped into the
+leaderboard schema by the original wide-row parser.
 
-- issued credit = the lead's split credit (recoverable from issued/pitched/sold)
-- pitched credit = only when pitched is present for that lead
-- sold credit = only when sold is present for that lead
-- repeated job rows for the same LEAD-Id count once
-
-This matches Tableau's Sales Rep Totals logic without changing the full pull
-or the Pi-team-only TV eligibility rule.
+If the worksheet is hidden/not exposed as a REST view, fail clearly instead
+of falling back to detail data or guessing calculations.
 """
 from .tableau_v36_base import *
 from . import tableau_v36_base as _base
 
 
-def parse_rows(csv_text):
-    reader = _base.csv.DictReader(_base.io.StringIO(csv_text))
-    headers = reader.fieldnames or []
+TARGET_WORKSHEET_NAME = "Sales Rep Totals"
+TARGET_WORKSHEET_NORM = "salesreptotals"
 
-    def col_for(aliases):
-        return _base.find_column(headers, aliases)
+# Keep status/error text aligned with what we actually pull.
+_base.TABLEAU_VIEW_PATH = (
+    f"{_base.TABLEAU_WORKBOOK_CONTENT_URL}/sheets/SalesRepTotals"
+)
 
-    rep_col = col_for(_base.REP_ALIASES)
-    if not rep_col:
-        raise ValueError(
-            "Could not find a rep-name column in the Tableau data. "
-            f"Columns seen: {', '.join(headers) or '(none)'}"
+
+class TableauSource(_base.TableauSource):
+    VIEW_PATH = _base.TABLEAU_VIEW_PATH
+
+    def _view_id(self, base, token, site_id):
+        """Resolve the published Sales Rep Totals worksheet, never the dashboard."""
+        workbook_id = self._workbook_id(base, token, site_id)
+        status, raw = self._request(
+            f"{base}/sites/{site_id}/workbooks/{workbook_id}/views",
+            token=token,
         )
-
-    branch_col = col_for(_base.BRANCH_ALIASES)
-    title_col = col_for(_base.TITLE_ALIASES)
-    hire_col = col_for(_base.HIRE_ALIASES)
-    team_col = col_for(_base.TEAM_ALIASES)
-    lead_col = col_for(_base.LEAD_ID_ALIASES)
-    mn_col = col_for(_base.MEASURE_NAME_COLS)
-    mv_col = col_for(_base.MEASURE_VALUE_COLS)
-
-    wide_by_field = {}
-    for header in headers:
-        if header in (mn_col, mv_col):
-            continue
-        field = _base.match_field(_base.norm(header))
-        if field:
-            wide_by_field.setdefault(field, []).append(header)
-
-    def header_priority(header):
-        n = _base.norm(header)
-        return (
-            0 if "splitprep" in n else 1,
-            0 if "split" in n else 1,
-            -len(n),
-        )
-
-    for field in wide_by_field:
-        wide_by_field[field].sort(key=header_priority)
-
-    acc = {}
-    meta = {}
-    order = []
-    lead_counts = {}
-    current_rep = ""
-    current_lead = ""
-
-    def total_row(row):
-        vals = [str(v or "").strip().lower() for v in row.values()]
-        if lead_col:
-            return "total" in vals and not str(row.get(lead_col) or "").strip()
-        return "total" in vals
-
-    for row_index, row in enumerate(reader):
-        raw_name = str(row.get(rep_col) or "").strip()
-        if raw_name:
-            if raw_name != current_rep:
-                current_lead = ""
-            current_rep = raw_name
-        name = current_rep
-
-        if not name or name.lower() in ("all", "total"):
-            continue
-        if total_row(row):
-            continue
-
-        if name not in acc:
-            acc[name] = {}
-            meta[name] = {}
-            lead_counts[name] = {}
-            order.append(name)
-
-        raw_lead = str(row.get(lead_col) or "").strip() if lead_col else ""
-        if raw_lead:
-            current_lead = raw_lead
-        lead = raw_lead or current_lead
-        if lead.lower() in ("all", "total"):
-            continue
-
-        info = meta[name]
-        for key, col in (
-            ("home_branch", branch_col),
-            ("title", title_col),
-            ("hire_date", hire_col),
-            ("team", team_col),
-        ):
-            if col:
-                val = str(row.get(col) or "").strip()
-                if val and val.lower() not in ("all", "total") and not info.get(key):
-                    info[key] = val
-
-        real_lead = bool(lead)
-        lead_key = lead if real_lead else f"__row_{row_index}"
-
-        def feed(field, raw):
-            v = _base.clean_number(raw)
-            if v is None:
-                return False
-
-            if field in _base.COUNT_FIELDS:
-                bucket = lead_counts[name].setdefault(
-                    lead_key, {"_real_lead": real_lead}
-                )
-                previous = bucket.get(field)
-                if previous is None or abs(v) > abs(previous):
-                    bucket[field] = v
-            else:
-                slot = acc[name].setdefault(field, [0.0, 0])
-                slot[0] += v
-                slot[1] += 1
-            return True
-
-        seen_this_row = set()
-
-        for field, field_headers in wide_by_field.items():
-            for header in field_headers:
-                if feed(field, row.get(header)):
-                    seen_this_row.add(field)
-                    break
-
-        if mn_col and mv_col:
-            field = _base.match_field(_base.norm(row.get(mn_col) or ""))
-            if field and field not in seen_this_row:
-                feed(field, row.get(mv_col))
-
-    reps = []
-    for name in order:
-        rec = {"name": name}
-
-        for field, agg in acc[name].items():
-            total, count = agg
-            rec[field] = (
-                (total / count)
-                if field in _base.MEAN_FIELDS and count
-                else total
+        if status != 200:
+            raise _base.TableauError(
+                f"Could not list views for {_base.TABLEAU_WORKBOOK_CONTENT_URL}."
             )
 
-        issued = pitched = sold = 0.0
-        for bucket in lead_counts[name].values():
-            issued_v = bucket.get("issuedLeads")
-            pitched_v = bucket.get("pitchedLeads")
-            sold_v = bucket.get("soldLeads")
+        try:
+            views = self._view_list(_base.json.loads(raw))
+        except Exception:
+            views = []
 
-            if bucket.get("_real_lead"):
-                observed = [
-                    v for v in (issued_v, pitched_v, sold_v)
-                    if v is not None
-                ]
-                if observed:
-                    issued += max(observed, key=lambda x: abs(x))
-            elif issued_v is not None:
-                issued += issued_v
+        def normalized(value):
+            return _base.norm(str(value or ""))
 
-            if pitched_v is not None:
-                pitched += pitched_v
-            if sold_v is not None:
-                sold += sold_v
+        # Prefer the human-readable worksheet name. Then accept an exact sheet
+        # URL-name/contentUrl match, but never silently select the RepTotals
+        # dashboard itself.
+        for view in views:
+            name = str(view.get("name") or "").strip()
+            content_url = str(view.get("contentUrl") or "").strip()
+            view_url_name = str(view.get("viewUrlName") or "").strip()
+            is_sheet_path = "/sheets/" in content_url.lower()
 
-        if lead_counts[name]:
-            rec["issuedLeads"] = issued
-            rec["pitchedLeads"] = pitched
-            rec["soldLeads"] = sold
+            exact_name = normalized(name) == TARGET_WORKSHEET_NORM
+            exact_url = normalized(view_url_name) == TARGET_WORKSHEET_NORM
+            sheet_tail = (
+                is_sheet_path
+                and normalized(content_url.rsplit("/", 1)[-1]) == TARGET_WORKSHEET_NORM
+            )
 
-        rec.update(meta[name])
-        reps.append(_base.derive(rec))
+            if exact_name or exact_url or sheet_tail:
+                view_id = str(view.get("id") or "").strip()
+                if view_id:
+                    return view_id
 
-    return reps
+        available = []
+        for view in views[:50]:
+            label = str(view.get("name") or view.get("viewUrlName") or "?").strip()
+            content = str(view.get("contentUrl") or "").strip()
+            available.append(f"{label} [{content}]")
+
+        raise _base.TableauError(
+            "Tableau did not expose the 'Sales Rep Totals' worksheet as a REST view. "
+            "The leaderboard refused to fall back to dashboard detail data. "
+            "Available views: " + ("; ".join(available) if available else "none")
+        )
+
+    def fetch_csv(self, base, token, site_id, start, end):
+        """Query Sales Rep Totals and verify we received its summary columns."""
+        csv_text = super().fetch_csv(base, token, site_id, start, end)
+
+        reader = _base.csv.DictReader(_base.io.StringIO(csv_text))
+        headers = reader.fieldnames or []
+        normalized_headers = [_base.norm(h) for h in headers]
+
+        # We specifically need Tableau's pre-calculated rep-total fields. If
+        # those are absent, stop rather than reconstructing them from another
+        # worksheet.
+        required_markers = {
+            "issued": "issuedleadssplitprep",
+            "pitched": "pitchedleadssplit",
+            "sold": "soldleadssplit",
+        }
+        missing = [
+            label for label, marker in required_markers.items()
+            if not any(marker in h for h in normalized_headers)
+        ]
+        if missing:
+            raise _base.TableauError(
+                "Sales Rep Totals returned unexpected columns; missing Tableau "
+                "summary fields: " + ", ".join(missing) + ". Columns received: "
+                + (", ".join(headers) if headers else "none")
+            )
+
+        return csv_text
 
 
-_base.parse_rows = parse_rows
-TableauSource = _base.TableauSource
+# Public names expected by server.py
 TableauError = _base.TableauError
 resolve_dates = _base.resolve_dates
