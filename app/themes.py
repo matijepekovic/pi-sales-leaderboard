@@ -75,9 +75,8 @@ def _theme_store(settings):
     raw = settings.get("theme_config")
     if not isinstance(raw, dict):
         raw = {}
-    office = raw.get("office") if isinstance(raw.get("office"), dict) else {}
     teams = raw.get("teams") if isinstance(raw.get("teams"), dict) else {}
-    return {"office": dict(office), "teams": dict(teams)}
+    return {"teams": dict(teams)}
 
 
 def _save_store(settings, store):
@@ -98,7 +97,7 @@ def _team_lookup(include_inactive=False):
 def _parse_scope(scope, allow_inactive=False):
     scope = str(scope or "").strip().lower()
     if scope == "office":
-        return "office", None
+        raise ValueError("Whole Office inherits the theme of its #1 rep's team and cannot have its own theme.")
     if scope.startswith("team-"):
         try:
             team_id = int(scope.split("-", 1)[1])
@@ -108,7 +107,7 @@ def _parse_scope(scope, allow_inactive=False):
         if not team:
             raise ValueError("Team not found.")
         return f"team-{team_id}", team
-    raise ValueError("Theme scope must be office or team-<id>.")
+    raise ValueError("Theme scope must be team-<id>.")
 
 
 def _default_base(team=None):
@@ -121,17 +120,12 @@ def _default_base(team=None):
 
 def _stored_config(settings, scope, team=None):
     store = _theme_store(settings)
-    if scope == "office":
-        return dict(store["office"])
     return dict(store["teams"].get(str(int(team["team_id"])), {}))
 
 
 def _set_config(settings, scope, team, config):
     store = _theme_store(settings)
-    if scope == "office":
-        store["office"] = config
-    else:
-        store["teams"][str(int(team["team_id"]))] = config
+    store["teams"][str(int(team["team_id"]))] = config
     return _save_store(settings, store)
 
 
@@ -216,7 +210,6 @@ def display_theme_state(settings=None):
         by_name[str(team["name"]).strip().lower()] = theme
 
     return {
-        "office": effective_theme("office", settings=settings),
         "teams": team_state,
         "by_name": by_name,
     }
