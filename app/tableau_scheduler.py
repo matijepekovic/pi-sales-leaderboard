@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 """Twice-daily Tableau refresh worker for the Raspberry Pi appliance.
 
-Runs independently from the Flask/Waitress process so normal application
-restarts do not cancel the schedule. One flock keeps duplicate kiosk launches
-from creating duplicate workers. Times use the Raspberry Pi's local clock.
+The Flask app starts this lazily on the first request after boot/restart.
+Times use the Raspberry Pi's local clock. Only one daemon thread is created
+per app process.
 """
-import fcntl
-import os
+import threading
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
 
-from database import get_meta, get_settings, init_db, replace_reps, set_meta
+from database import get_meta, get_settings, replace_reps, set_meta
 from sources.tableau import TableauError, TableauSource, resolve_dates
 
-DATA_DIR = Path.home() / ".local" / "share" / "pi-tableau-leaderboard"
-LOCK_PATH = DATA_DIR / "tableau-scheduler.lock"
 SCHEDULE_HOURS = (6, 14)
 STARTUP_GRACE_MINUTES = 15
+_START_LOCK = threading.Lock()
+_STARTED = False
 
 
 def _slot_key(dt):
@@ -62,7 +60,7 @@ def _refresh(slot):
             set_meta("scheduled_tableau_last_slot", slot_key)
             return
 
-        # Sales metrics only. Persistent Pi team assignments are preserved by replace_reps.
+        # Sales metrics only. replace_reps preserves persistent Pi team assignments.
         replace_reps(rows)
         start, end = resolve_dates(settings)
         status = (
@@ -84,17 +82,8 @@ def _refresh(slot):
         set_meta("scheduled_tableau_last_slot", slot_key)
 
 
-def main():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    lock_file = open(LOCK_PATH, "a+")
-    try:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        return 0
-
-    init_db()
+def _worker():
     set_meta("scheduled_tableau_status", "Scheduler active — daily at 06:00 and 14:00")
-
     while True:
         now = datetime.now()
         due = _recent_due_slot(now)
@@ -113,5 +102,16 @@ def main():
             time.sleep(65)
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+def start_tableau_scheduler():
+    global _STARTED
+    with _START_LOCK:
+        if _STARTED:
+            return False
+        _STARTED = True
+        thread = threading.Thread(
+            target=_worker,
+            name="tableau-twice-daily",
+            daemon=True,
+        )
+        thread.start()
+        return True
