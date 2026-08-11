@@ -1,0 +1,31 @@
+name: v51 Winning Team Whole Office
+on:
+  push:
+    branches: [build/v51-winning-team-whole-office]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: build/v51-winning-team-whole-office
+          fetch-depth: 0
+      - name: Apply patch
+        run: python .github/v51_patch.py
+      - name: Validate
+        run: |
+          node --check app/static/theme-runtime.js
+          grep -q 'renderedOfficeWinner' app/static/theme-runtime.js
+          grep -q 'theme-office-logo' app/static/theme-runtime.js
+          grep -q 'data.mode==="whole_office"' app/static/theme-runtime.js
+          grep -q 'theme-runtime.js?v=51' app/templates/display.html
+          test "$(tr -d '\n' < VERSION)" = "51"
+      - name: Commit patch
+        run: |
+          git config user.name "matijepekovic"
+          git config user.email "122064226+matijepekovic@users.noreply.github.com"
+          git add app/static/theme-runtime.js app/templates/display.html VERSION
+          git diff --cached --quiet || git commit -m "v51: theme whole office from leading rep team"
+          git push origin HEAD:build/v51-winning-team-whole-office
