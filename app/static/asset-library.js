@@ -81,7 +81,6 @@
   }
 
   function collectionByKey(key){return (catalog?.collections||[]).find(c=>c.key===key)||null;}
-  function itemCollection(item){return (catalog?.collections||[]).find(c=>(c.items||[]).some(x=>x.key===item.key))||null;}
   function firstTarget(item){return Object.values(item.targets||{})[0]||null;}
 
   function previewHTML(item){
@@ -189,12 +188,22 @@
     const data=await response.json();if(data.ok===false)throw new Error(data.error||"Could not save asset.");
   }
 
+  async function enableTheme(){
+    const response=await request(`/api/themes/${encodeURIComponent(scope())}`,{
+      method:"PUT",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({enabled:true})
+    });
+    const data=await response.json();if(data.ok===false)throw new Error(data.error||"Could not enable theme.");
+  }
+
   async function applyTargets(targets,tint,label){
     const pairs=Object.entries(targets||{}).filter(([,url])=>!!url);
     if(!pairs.length)return;
     setBusy(true);setStatus(`${tint?"Tinting and applying":"Applying"} ${label}…`);
     try{
       for(const [target,url] of pairs)await uploadTarget(target,url,tint);
+      await enableTheme();
       setStatus(`${label} applied${tint?` with tint ${tint}`:""}.`);
       // Re-run the existing Theme Studio opener while it is already open. This
       // refreshes its private state and previews without closing the overlay.
