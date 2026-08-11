@@ -413,4 +413,4 @@ def theme_asset(scope, asset_key):
     path = _asset_override_path(normalized_scope, assets.get(asset_key))
     if not path or not path.exists():
         abort(404)
-    return send_file(path)
+    return send_file(path, conditional=True)
