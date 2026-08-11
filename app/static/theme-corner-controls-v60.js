@@ -1,14 +1,19 @@
-/* v60 Theme Studio corner controls.
-   Adds persistent per-corner size and edge-crop controls without replacing the
-   existing Theme Studio. Changes save directly into the team's theme config. */
+/* v61 Theme Studio direct corner editor.
+   Corner ornaments are adjusted directly in the live preview: drag the art
+   toward its screen edge to crop it, drag the on-preview handle to resize it,
+   and double-click the ornament to reset. Saved theme data stays compatible
+   with the v60 TV runtime. */
 (function(){
   const CORNERS={
-    corner_tl:{pos:"tl",label:"Top Left"},
-    corner_tr:{pos:"tr",label:"Top Right"},
-    corner_bl:{pos:"bl",label:"Bottom Left"},
-    corner_br:{pos:"br",label:"Bottom Right"}
+    corner_tl:{pos:"tl",label:"Top Left",sx:-1,sy:-1,innerX:1,innerY:1},
+    corner_tr:{pos:"tr",label:"Top Right",sx:1,sy:-1,innerX:-1,innerY:1},
+    corner_bl:{pos:"bl",label:"Bottom Left",sx:-1,sy:1,innerX:1,innerY:-1},
+    corner_br:{pos:"br",label:"Bottom Right",sx:1,sy:1,innerX:-1,innerY:-1}
   };
   const DEFAULTS={size:100,crop_x:0,crop_y:0};
+  const MIN_SIZE=50;
+  const MAX_SIZE=250;
+  const MAX_CROP=60;
   let state=null;
   let syncing=false;
   let syncTimer=null;
@@ -17,31 +22,37 @@
   function scope(){return String(byId("themeScope")?.value||"").trim();}
   function teamId(){const s=scope();return s.startsWith("team-")?s.slice(5):"";}
   function theme(){const id=teamId();return id&&state?.themes?.teams?.[id]||null;}
-  function val(n,d){n=Number(n);return Number.isFinite(n)?n:d;}
+  function num(v,d){v=Number(v);return Number.isFinite(v)?v:d;}
+  function clamp(v,min,max){return Math.min(max,Math.max(min,v));}
   function settingsFor(key){
     const saved=theme()?.corner_settings?.[key]||{};
-    return {size:val(saved.size,100),crop_x:val(saved.crop_x,0),crop_y:val(saved.crop_y,0)};
+    return {
+      size:clamp(num(saved.size,100),MIN_SIZE,MAX_SIZE),
+      crop_x:clamp(num(saved.crop_x,0),0,MAX_CROP),
+      crop_y:clamp(num(saved.crop_y,0),0,MAX_CROP)
+    };
   }
 
   function injectStyles(){
-    if(byId("v60CornerControlStyles")) return;
-    const s=document.createElement("style");s.id="v60CornerControlStyles";
+    if(byId("v61DirectCornerStyles"))return;
+    const s=document.createElement("style");
+    s.id="v61DirectCornerStyles";
     s.textContent=`
-      .v60-corner-controls{margin-top:10px;padding:10px;border:1px solid #2e2e2e;background:#090909}
-      .v60-corner-controls-head{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:7px}
-      .v60-corner-control{display:grid;grid-template-columns:74px minmax(0,1fr) 48px;gap:8px;align-items:center;margin-top:7px}
-      .v60-corner-control label{margin:0;font-size:12px;color:#b8b8b8}.v60-corner-control input{padding:0;height:24px}
-      .v60-corner-value{text-align:right;color:#d8b34a;font-size:12px;font-variant-numeric:tabular-nums}
-      .v60-corner-help{font-size:11px;color:#777;line-height:1.35;margin-top:8px}
+      .v61-corner-help{margin:6px 0 9px;padding:8px 10px;border:1px solid #303030;background:#0b0b0b;color:#aaa;font-size:12px;line-height:1.35}
+      .theme-preview-corner.v61-direct-corner{pointer-events:auto!important;cursor:grab;touch-action:none;user-select:none;-webkit-user-drag:none;outline:0 solid transparent;outline-offset:2px}
+      .theme-preview-corner.v61-direct-corner:hover{outline-width:1px;outline-style:dashed;outline-color:var(--pb,#e6c760)}
+      .theme-preview-corner.v61-direct-corner.v61-corner-active{cursor:grabbing;outline:1px dashed var(--pb,#e6c760)}
+      .v61-corner-resize{position:absolute;z-index:12;width:15px;height:15px;margin:-7.5px 0 0 -7.5px;border-radius:50%;border:2px solid #080808;background:var(--pb,#e6c760);box-shadow:0 0 0 1px rgba(255,255,255,.75),0 2px 7px rgba(0,0,0,.8);touch-action:none;user-select:none}
+      .v61-corner-resize[data-pos="tl"],.v61-corner-resize[data-pos="br"]{cursor:nwse-resize}
+      .v61-corner-resize[data-pos="tr"],.v61-corner-resize[data-pos="bl"]{cursor:nesw-resize}
+      .v61-corner-resize.v61-corner-active{box-shadow:0 0 0 2px var(--pb,#e6c760),0 2px 9px rgba(0,0,0,.9)}
     `;
     document.head.appendChild(s);
   }
 
   function transformFor(key,cfg){
-    const info=CORNERS[key];if(!info)return "";
-    const sx=info.pos.endsWith("r")?1:-1;
-    const sy=info.pos.startsWith("b")?1:-1;
-    return `translate(${sx*cfg.crop_x}%,${sy*cfg.crop_y}%) scale(${cfg.size/100})`;
+    const info=CORNERS[key];
+    return info?`translate(${info.sx*cfg.crop_x}%,${info.sy*cfg.crop_y}%) scale(${cfg.size/100})`:"";
   }
 
   function originFor(key){
@@ -49,31 +60,42 @@
     return `${p.endsWith("r")?"right":"left"} ${p.startsWith("b")?"bottom":"top"}`;
   }
 
+  function imageFor(key){
+    const p=CORNERS[key]?.pos;
+    return p?byId("themePreview")?.querySelector(`.theme-preview-corner.${p}`):null;
+  }
+
+  function handleFor(key){
+    return byId("themePreview")?.querySelector(`.v61-corner-resize[data-corner-key="${key}"]`)||null;
+  }
+
+  function positionHandle(key){
+    const preview=byId("themePreview");
+    const img=imageFor(key);
+    const handle=handleFor(key);
+    const info=CORNERS[key];
+    if(!preview||!img||!handle||!info)return;
+    const pr=preview.getBoundingClientRect();
+    const r=img.getBoundingClientRect();
+    const x=info.innerX>0?r.right:r.left;
+    const y=info.innerY>0?r.bottom:r.top;
+    handle.style.left=`${x-pr.left}px`;
+    handle.style.top=`${y-pr.top}px`;
+  }
+
   function applyPreview(key,cfg){
-    const p=CORNERS[key]?.pos;if(!p)return;
-    document.querySelectorAll(`.theme-preview-corner.${p}`).forEach(img=>{
-      img.style.transformOrigin=originFor(key);
-      img.style.transform=transformFor(key,cfg);
-    });
-  }
-
-  function readControls(box){
-    return {
-      size:val(box.querySelector('[data-corner-field="size"]')?.value,100),
-      crop_x:val(box.querySelector('[data-corner-field="crop_x"]')?.value,0),
-      crop_y:val(box.querySelector('[data-corner-field="crop_y"]')?.value,0),
-    };
-  }
-
-  function refreshLabels(box,cfg){
-    const values={size:`${Math.round(cfg.size)}%`,crop_x:`${Math.round(cfg.crop_x)}%`,crop_y:`${Math.round(cfg.crop_y)}%`};
-    Object.entries(values).forEach(([field,text])=>{
-      const out=box.querySelector(`[data-corner-value="${field}"]`);if(out)out.textContent=text;
-    });
+    const img=imageFor(key);
+    if(!img)return;
+    img.style.transformOrigin=originFor(key);
+    img.style.transform=transformFor(key,cfg);
+    img.style.willChange="transform";
+    positionHandle(key);
+    requestAnimationFrame(()=>positionHandle(key));
   }
 
   async function saveCorner(key,cfg){
-    const s=scope();if(!s)return;
+    const s=scope();
+    if(!s)return;
     const status=byId("themeStatus");
     if(status)status.textContent=`Saving ${CORNERS[key].label} corner…`;
     try{
@@ -85,39 +107,172 @@
       if(!r.ok||d.ok===false)throw new Error(d.error||`Request failed (${r.status})`);
       const id=teamId();
       if(state?.themes?.teams?.[id]&&d.theme)state.themes.teams[id]=d.theme;
-      if(status)status.textContent="Corner adjustment saved. The TV will pick it up automatically.";
-    }catch(e){if(status)status.textContent=e.message;}
+      if(status)status.textContent="Corner saved. The TV will pick it up automatically.";
+    }catch(e){
+      if(status)status.textContent=e.message;
+      scheduleSync(40);
+    }
   }
 
-  function addControls(card,key){
-    if(card.querySelector(`.v60-corner-controls[data-corner-key="${key}"]`))return;
-    const cfg=settingsFor(key);
-    const box=document.createElement("div");box.className="v60-corner-controls";box.dataset.cornerKey=key;
-    box.innerHTML=`
-      <div class="v60-corner-controls-head"><strong>Size & Crop</strong><button class="btn v60CornerReset" type="button">Reset</button></div>
-      <div class="v60-corner-control"><label>Size</label><input type="range" min="50" max="250" step="5" value="${cfg.size}" data-corner-field="size"><span class="v60-corner-value" data-corner-value="size"></span></div>
-      <div class="v60-corner-control"><label>Crop X</label><input type="range" min="0" max="60" step="1" value="${cfg.crop_x}" data-corner-field="crop_x"><span class="v60-corner-value" data-corner-value="crop_x"></span></div>
-      <div class="v60-corner-control"><label>Crop Y</label><input type="range" min="0" max="60" step="1" value="${cfg.crop_y}" data-corner-field="crop_y"><span class="v60-corner-value" data-corner-value="crop_y"></span></div>
-      <div class="v60-corner-help">Crop pushes the ornament past its screen edge so the excess is clipped. Each corner is adjusted independently.</div>`;
-    card.appendChild(box);
-    refreshLabels(box,cfg);applyPreview(key,cfg);
-
-    box.querySelectorAll('input[type="range"]').forEach(input=>{
-      input.addEventListener("input",()=>{const next=readControls(box);refreshLabels(box,next);applyPreview(key,next);});
-      input.addEventListener("change",()=>saveCorner(key,readControls(box)));
-    });
-    box.querySelector(".v60CornerReset")?.addEventListener("click",()=>{
-      Object.entries(DEFAULTS).forEach(([field,value])=>{const input=box.querySelector(`[data-corner-field="${field}"]`);if(input)input.value=value;});
-      const next=readControls(box);refreshLabels(box,next);applyPreview(key,next);saveCorner(key,next);
-    });
+  function endPointerGesture(cleanup,img,handle){
+    cleanup();
+    img?.classList.remove("v61-corner-active");
+    handle?.classList.remove("v61-corner-active");
   }
 
-  function renderControls(){
+  function beginMove(ev,key){
+    if(ev.pointerType==="mouse"&&ev.button!==0)return;
+    const img=imageFor(key);
+    if(!img)return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const start=settingsFor(key);
+    const startX=ev.clientX;
+    const startY=ev.clientY;
+    const baseW=Math.max(1,img.offsetWidth||55);
+    const baseH=Math.max(1,img.offsetHeight||55);
+    const info=CORNERS[key];
+    let next={...start};
+    let finished=false;
+    img.classList.add("v61-corner-active");
+
+    const move=e=>{
+      const dx=e.clientX-startX;
+      const dy=e.clientY-startY;
+      next={
+        ...start,
+        crop_x:clamp(start.crop_x+(info.sx*dx/baseW*100),0,MAX_CROP),
+        crop_y:clamp(start.crop_y+(info.sy*dy/baseH*100),0,MAX_CROP)
+      };
+      applyPreview(key,next);
+    };
+    const cleanup=()=>{
+      window.removeEventListener("pointermove",move,true);
+      window.removeEventListener("pointerup",up,true);
+      window.removeEventListener("pointercancel",cancel,true);
+    };
+    const up=e=>{
+      if(finished)return;
+      finished=true;
+      e.preventDefault();
+      endPointerGesture(cleanup,img,null);
+      saveCorner(key,next);
+    };
+    const cancel=()=>{
+      if(finished)return;
+      finished=true;
+      endPointerGesture(cleanup,img,null);
+      applyPreview(key,start);
+    };
+    window.addEventListener("pointermove",move,true);
+    window.addEventListener("pointerup",up,true);
+    window.addEventListener("pointercancel",cancel,true);
+  }
+
+  function beginResize(ev,key){
+    if(ev.pointerType==="mouse"&&ev.button!==0)return;
+    const img=imageFor(key);
+    const handle=handleFor(key);
+    const info=CORNERS[key];
+    if(!img||!handle||!info)return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const start=settingsFor(key);
+    const startX=ev.clientX;
+    const startY=ev.clientY;
+    const base=Math.max(1,(img.offsetWidth+img.offsetHeight)/2||55);
+    let next={...start};
+    let finished=false;
+    img.classList.add("v61-corner-active");
+    handle.classList.add("v61-corner-active");
+
+    const move=e=>{
+      const dx=e.clientX-startX;
+      const dy=e.clientY-startY;
+      const projected=((dx*info.innerX)+(dy*info.innerY))/2;
+      next={...start,size:clamp(start.size+(projected/base*100),MIN_SIZE,MAX_SIZE)};
+      applyPreview(key,next);
+    };
+    const cleanup=()=>{
+      window.removeEventListener("pointermove",move,true);
+      window.removeEventListener("pointerup",up,true);
+      window.removeEventListener("pointercancel",cancel,true);
+    };
+    const up=e=>{
+      if(finished)return;
+      finished=true;
+      e.preventDefault();
+      endPointerGesture(cleanup,img,handle);
+      saveCorner(key,next);
+    };
+    const cancel=()=>{
+      if(finished)return;
+      finished=true;
+      endPointerGesture(cleanup,img,handle);
+      applyPreview(key,start);
+    };
+    window.addEventListener("pointermove",move,true);
+    window.addEventListener("pointerup",up,true);
+    window.addEventListener("pointercancel",cancel,true);
+  }
+
+  function resetCorner(ev,key){
+    ev.preventDefault();
+    ev.stopPropagation();
+    const next={...DEFAULTS};
+    applyPreview(key,next);
+    saveCorner(key,next);
+  }
+
+  function ensureHelp(){
+    const preview=byId("themePreview");
+    if(!preview||byId("v61CornerHelp"))return;
+    const note=document.createElement("div");
+    note.id="v61CornerHelp";
+    note.className="v61-corner-help";
+    note.innerHTML="<strong>Edit corners on the preview:</strong> drag an ornament toward its screen edge to crop it, drag the dot to resize, and double-click the ornament to reset.";
+    preview.insertAdjacentElement("beforebegin",note);
+  }
+
+  function ensureHandle(key,img){
+    const preview=byId("themePreview");
+    if(!preview||!img)return;
+    let handle=handleFor(key);
+    if(!handle){
+      handle=document.createElement("div");
+      handle.className="v61-corner-resize";
+      handle.dataset.cornerKey=key;
+      handle.dataset.pos=CORNERS[key].pos;
+      handle.title=`Resize ${CORNERS[key].label} corner`;
+      preview.appendChild(handle);
+      handle.addEventListener("pointerdown",e=>beginResize(e,key));
+    }
+    positionHandle(key);
+  }
+
+  function decorateCorner(key){
+    const img=imageFor(key);
+    if(!img)return;
+    img.classList.add("v61-direct-corner");
+    img.draggable=false;
+    img.title=`Drag ${CORNERS[key].label} corner toward the edge to crop; double-click to reset`;
+    if(!img.dataset.v61Bound){
+      img.dataset.v61Bound="1";
+      img.addEventListener("dragstart",e=>e.preventDefault());
+      img.addEventListener("pointerdown",e=>beginMove(e,key));
+      img.addEventListener("dblclick",e=>resetCorner(e,key));
+    }
+    ensureHandle(key,img);
+    applyPreview(key,settingsFor(key));
+  }
+
+  function decoratePreview(){
     if(!state)return;
+    document.querySelectorAll(".v60-corner-controls").forEach(el=>el.remove());
+    ensureHelp();
     Object.keys(CORNERS).forEach(key=>{
-      const card=document.querySelector(`.theme-asset[data-asset-key="${key}"]`);
-      if(card)addControls(card,key);
-      applyPreview(key,settingsFor(key));
+      if(imageFor(key))decorateCorner(key);
+      else handleFor(key)?.remove();
     });
   }
 
@@ -127,31 +282,33 @@
     try{
       const r=await fetch("/api/themes",{cache:"no-store"});
       const d=await r.json();
-      if(r.ok&&d.ok!==false){state=d;renderControls();}
+      if(r.ok&&d.ok!==false){state=d;decoratePreview();}
     }catch(e){}finally{syncing=false;}
   }
 
   function scheduleSync(delay=40){
-    clearTimeout(syncTimer);syncTimer=setTimeout(sync,delay);
+    clearTimeout(syncTimer);
+    syncTimer=setTimeout(sync,delay);
   }
 
   injectStyles();
   byId("openThemeStudio")?.addEventListener("click",()=>scheduleSync(120));
-  byId("themeScope")?.addEventListener("change",()=>scheduleSync(80));
+  byId("themeScope")?.addEventListener("change",()=>scheduleSync(60));
   byId("themePreset")?.addEventListener("change",()=>scheduleSync(80));
   byId("saveTheme")?.addEventListener("click",()=>scheduleSync(220));
   byId("resetTheme")?.addEventListener("click",()=>scheduleSync(220));
+  window.addEventListener("resize",()=>Object.keys(CORNERS).forEach(positionHandle));
 
   const observer=new MutationObserver(mutations=>{
     let relevant=false;
     for(const m of mutations){
       for(const n of m.addedNodes){
         if(n.nodeType!==1)continue;
-        if(n.matches?.(".theme-asset,.theme-preview-corner")||n.querySelector?.(".theme-asset,.theme-preview-corner")){relevant=true;break;}
+        if(n.matches?.(".theme-preview-corner")||n.querySelector?.(".theme-preview-corner")){relevant=true;break;}
       }
       if(relevant)break;
     }
-    if(relevant){renderControls();scheduleSync(100);}
+    if(relevant){decoratePreview();scheduleSync(80);}
   });
   if(document.body)observer.observe(document.body,{childList:true,subtree:true});
 })();
