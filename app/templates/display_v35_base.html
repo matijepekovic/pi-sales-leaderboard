@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sales Leaderboard</title>
+  <style>
+    :root{
+      --bg:#080808;--panel:#111;--panel2:#151515;--line:#2a2a2a;
+      --text:#f5f5f5;--muted:#9c9c9c;--gold:#d8b34a;--good:#d8b34a;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:Arial,Helvetica,sans-serif}
+    body{padding:22px}
+    header{display:flex;align-items:flex-end;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:16px}
+    h1{margin:0;font-size:clamp(28px,3vw,54px);letter-spacing:.08em}
+    .subtitle{color:var(--muted);font-size:clamp(13px,1.3vw,20px);margin-top:5px}
+    .mode{color:var(--gold);font-weight:800;letter-spacing:.12em;text-transform:uppercase;font-size:clamp(12px,1vw,16px)}
+    #content{height:calc(100vh - 130px);overflow:hidden;position:relative}
+    #scaleRoot{width:100%;transform-origin:top left;will-change:transform}
+    table{width:100%;border-collapse:collapse;table-layout:auto}
+    th{text-align:left;color:var(--muted);font-size:clamp(10px,.85vw,14px);font-weight:700;padding:8px 9px;border-bottom:1px solid var(--line);white-space:nowrap}
+    td{padding:8px 9px;border-bottom:1px solid #202020;font-size:clamp(13px,1.2vw,22px);white-space:nowrap}
+    td.number,th.number{text-align:right}
+    tr:first-child td{color:#fff;font-weight:800}
+    .total-row td{font-weight:900;color:var(--gold);border-top:2px solid var(--gold);border-bottom:0;background:#101010}
+    .total-row td:first-child{letter-spacing:.06em}
+    .rank{color:var(--gold);font-weight:900}
+    .teams{display:grid;grid-template-columns:repeat(var(--team-cols,2),minmax(max-content,1fr));gap:14px}
+    .team-card{border:1px solid var(--line);background:var(--panel);min-width:max-content}
+    .team-head{padding:14px;border-bottom:1px solid var(--line);background:var(--panel2)}
+    .team-head-row{display:flex;gap:12px;align-items:center}.team-head-logo{width:58px;height:58px;object-fit:contain;flex:0 0 auto}
+    .team-name{font-size:clamp(20px,2vw,34px);font-weight:900;letter-spacing:.04em}
+    .team-total{font-size:clamp(28px,3.3vw,54px);font-weight:900;color:var(--gold);margin-top:6px}
+    .team-metrics{display:grid;grid-template-columns:repeat(3,minmax(max-content,1fr));gap:8px;margin-top:10px}
+    .metric{min-width:0}
+    .metric .label{font-size:clamp(9px,.75vw,12px);color:var(--muted);white-space:nowrap}
+    .metric .value{font-size:clamp(14px,1.4vw,23px);font-weight:800;margin-top:2px;white-space:nowrap}
+    .members{padding:0 8px 8px}
+    .members table td,.members table th{padding:6px 6px}
+    /* Purpose-built 2-team head-to-head layout. Nothing in this section
+       is allowed to create intrinsic horizontal overflow. */
+    .vs-board{
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:12px;
+      width:100%;
+      min-width:0;
+      align-items:start;
+    }
+    .vs-card{
+      min-width:0;
+      width:100%;
+      border:1px solid var(--line);
+      background:var(--panel);
+      overflow:hidden;
+    }
+    .vs-head{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      gap:10px;
+      align-items:center;
+      padding:10px 12px;
+      background:var(--panel2);
+      border-bottom:1px solid var(--line);
+      min-width:0;
+    }
+    .vs-identity{display:flex;align-items:center;gap:9px;min-width:0}
+    .vs-logo{width:44px;height:44px;object-fit:contain;flex:0 0 auto}
+    .vs-name{
+      font-size:clamp(18px,1.45vw,28px);
+      font-weight:900;
+      letter-spacing:.035em;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .vs-leader{
+      color:var(--muted);
+      font-size:clamp(9px,.72vw,13px);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      margin-top:2px;
+    }
+    .vs-rank-rule{
+      text-align:right;
+      min-width:0;
+      color:var(--muted);
+      font-size:clamp(8px,.58vw,11px);
+      text-transform:uppercase;
+      letter-spacing:.07em;
+      white-space:nowrap;
+    }
+    .vs-rank-rule.winner-label{
+      color:var(--gold);
+      font-size:clamp(18px,1.45vw,28px);
+      font-weight:900;
+      letter-spacing:.13em;
+      white-space:nowrap;
+    }
+    .vs-rank-rule strong{
+      display:block;
+      color:var(--gold);
+      font-size:clamp(12px,.9vw,17px);
+      letter-spacing:.03em;
+      margin-bottom:1px;
+    }
+
+    /* Team aggregate and rep rows share the exact same row geometry. */
+    .vs-total-row{
+      background:#141414;
+      border-bottom:2px solid var(--gold);
+    }
+    .vs-total-row .vs-rep-name{
+      color:var(--gold);
+      letter-spacing:.045em;
+      font-size:clamp(10px,.78vw,14px);
+    }
+    .vs-total-row .vs-rep-rank{font-size:clamp(11px,.8vw,15px)}
+    .vs-rep-metric.rank-metric .r-value{color:var(--gold);font-weight:900}
+    .vs-rep-metric.rank-metric .r-label{color:#c9ae62}
+
+    .vs-members-title{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:8px;
+      padding:6px 9px;
+      color:var(--muted);
+      font-size:clamp(8px,.58vw,10px);
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      border-bottom:1px solid var(--line);
+    }
+    .vs-reps{display:grid;gap:1px;background:#202020;min-width:0}
+    .vs-rep{
+      display:grid;
+      grid-template-columns:minmax(115px,1.15fr) minmax(0,4.85fr);
+      gap:8px;
+      align-items:stretch;
+      background:#0d0d0d;
+      padding:5px 7px;
+      min-width:0;
+    }
+    .vs-rep.metrics-only{grid-template-columns:1fr}
+    .vs-rep.metrics-only .vs-rep-metrics{grid-column:1}
+    .vs-rep-id{
+      display:flex;
+      align-items:center;
+      gap:6px;
+      min-width:0;
+      border-right:1px solid #252525;
+      padding-right:6px;
+    }
+    .vs-rep-rank{
+      color:var(--gold);
+      font-weight:900;
+      font-size:clamp(10px,.72vw,14px);
+      flex:0 0 auto;
+    }
+    .vs-rep-name{
+      font-size:clamp(11px,.9vw,17px);
+      font-weight:900;
+      white-space:normal;
+      overflow-wrap:anywhere;
+      line-height:1.05;
+      min-width:0;
+    }
+
+    /* 12 rep metrics = 6 columns x 2 rows. Every rep always has the full set. */
+    .vs-rep-metrics{
+      display:grid;
+      grid-template-columns:repeat(6,minmax(0,1fr));
+      gap:4px 6px;
+      min-width:0;
+      align-content:center;
+    }
+    .vs-rep-metric{min-width:0;overflow:hidden}
+    .vs-rep-metric .r-label{
+      font-size:clamp(6px,.39vw,8px);
+      color:var(--muted);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:clip;
+      text-transform:uppercase;
+      letter-spacing:.015em;
+    }
+    .vs-rep-metric .r-value{
+      font-size:clamp(9px,.68vw,13px);
+      font-weight:800;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:clip;
+      margin-top:1px;
+    }
+
+    @media (max-width:1250px){
+      .vs-rep-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}
+      .vs-rep{grid-template-columns:minmax(100px,1fr) minmax(0,4fr)}
+    }
+
+    /* All Teams summary board */
+    .all-board{
+      display:grid;
+      grid-template-columns:repeat(var(--all-cols,2),minmax(0,1fr));
+      gap:14px;
+      width:100%;
+      min-width:0;
+      align-items:start;
+    }
+    .all-card{
+      min-width:0;
+      width:100%;
+      border:2px solid rgba(216,179,74,.8);
+      background:linear-gradient(180deg,#0a0a0a 0%, #090909 100%);
+      box-shadow:inset 0 0 0 1px rgba(216,179,74,.15);
+      padding:12px 14px 10px;
+      position:relative;
+      overflow:hidden;
+    }
+    .all-top{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      gap:12px;
+      align-items:center;
+      min-width:0;
+      padding-bottom:10px;
+      border-bottom:1px solid rgba(216,179,74,.22);
+    }
+    .all-brand{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      min-width:0;
+    }
+    .all-logo{
+      width:88px;
+      height:88px;
+      object-fit:contain;
+      flex:0 0 auto;
+    }
+    .all-name{
+      font-size:clamp(22px,1.9vw,34px);
+      font-weight:900;
+      letter-spacing:.04em;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .all-leader{
+      color:var(--muted);
+      font-size:clamp(9px,.72vw,13px);
+      margin-top:4px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .all-rank-pill{
+      color:var(--gold);
+      font-size:clamp(11px,.88vw,16px);
+      font-weight:900;
+      letter-spacing:.11em;
+      text-transform:uppercase;
+      white-space:nowrap;
+      text-align:right;
+    }
+    .all-rank-pill.winner{
+      font-size:clamp(15px,1.15vw,22px);
+    }
+    .all-stat-list{
+      margin-top:10px;
+      border-top:1px solid rgba(255,255,255,.04);
+    }
+    .all-stat-row{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      gap:12px;
+      align-items:end;
+      padding:8px 0;
+      border-bottom:1px solid rgba(255,255,255,.06);
+      min-width:0;
+    }
+    .all-stat-label{
+      color:var(--muted);
+      text-transform:uppercase;
+      letter-spacing:.09em;
+      font-size:clamp(8px,.55vw,10px);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .all-stat-value{
+      color:var(--gold);
+      font-weight:900;
+      font-size:clamp(16px,1.35vw,25px);
+      white-space:nowrap;
+      text-align:right;
+    }
+    .all-mvp{
+      margin-top:10px;
+      border-top:1px solid rgba(216,179,74,.28);
+      padding-top:10px;
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      gap:10px;
+      align-items:end;
+      min-width:0;
+    }
+    .all-mvp-left{min-width:0}
+    .all-mvp-kicker{
+      color:var(--muted);
+      text-transform:uppercase;
+      letter-spacing:.11em;
+      font-size:clamp(8px,.55vw,10px);
+    }
+    .all-mvp-name{
+      font-size:clamp(16px,1.28vw,23px);
+      font-weight:900;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      margin-top:3px;
+    }
+    .all-mvp-meta{
+      color:var(--muted);
+      font-size:clamp(8px,.58vw,11px);
+      margin-top:3px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .all-mvp-score{
+      color:var(--gold);
+      font-weight:900;
+      font-size:clamp(16px,1.35vw,25px);
+      white-space:nowrap;
+      text-align:right;
+    }
+
+    .empty{display:grid;place-items:center;height:100%;color:var(--muted);font-size:24px}
+    .single-team-summary{display:flex;gap:18px;align-items:flex-end;padding:12px 0 16px;border-bottom:1px solid var(--line);margin-bottom:8px}
+    .single-team-summary .name{font-size:clamp(22px,2.2vw,38px);font-weight:900}
+    .single-team-summary .score{font-size:clamp(28px,3vw,48px);font-weight:900;color:var(--gold)}
+    .single-team-summary .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+    .offline{position:fixed;right:14px;bottom:10px;color:#777;font-size:11px}
+    @media (max-width:900px){body{padding:12px}.teams{gap:8px}.team-metrics{grid-template-columns:repeat(2,1fr)}.vs-board{gap:8px}}
+  </style>
+</head>
+<body>
+<header>
+  <div>
+    <h1 id="title">SALES LEADERBOARD</h1>
+    <div class="subtitle" id="subtitle"></div>
+  </div>
+  <div class="mode" id="modeLabel"></div>
+</header>
+<main id="content"><div id="scaleRoot"><div class="empty">Loading leaderboard…</div></div></main>
+<div class="offline" id="status"></div>
+
+<script>
+const content = document.getElementById("content");
+const scaleRoot = document.getElementById("scaleRoot");
+const titleEl = document.getElementById("title");
+const subtitleEl = document.getElementById("subtitle");
+const modeEl = document.getElementById("modeLabel");
+const statusEl = document.getElementById("status");
+let lastSignature = "";
+let refreshMs = 5000;
+let tvRefreshVersion = null;
+let appRestartVersion = null;
+
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function fmt(v, type, symbol="$"){
+  const n = Number(v || 0);
+  if(type === "currency") return symbol + Math.round(n).toLocaleString();
+  if(type === "percent") return n.toFixed(1) + "%";
+  if(type === "number") return Number.isInteger(n) ? n.toLocaleString() : n.toFixed(1);
+  return esc(v);
+}
+function isNumber(type){ return ["currency","percent","number"].includes(type); }
+
+function tableHTML(rows, metrics, labels, types, symbol, summary=null){
+  let heads = metrics.map(k => `<th class="${isNumber(types[k])?'number':''}">${esc(labels[k]||k)}</th>`).join("");
+  let body = rows.map((row,i) => {
+    let cells = metrics.map(k => {
+      let value = k === "rank" ? (i+1) : row[k];
+      return `<td class="${k==='rank'?'rank ':''}${isNumber(types[k])?'number':''}">${fmt(value, types[k], symbol)}</td>`;
+    }).join("");
+    return `<tr>${cells}</tr>`;
+  }).join("");
+
+  let total = "";
+  if(summary){
+    let labelPlaced = false;
+    const cells = metrics.map(k => {
+      if(k === "rank"){
+        labelPlaced = true;
+        return `<td>TOTAL</td>`;
+      }
+      if(k === "rep_name" && !labelPlaced){
+        labelPlaced = true;
+        return `<td>TOTAL</td>`;
+      }
+      if(["rep_name","team","home_branch","title","hire_date"].includes(k)){
+        return `<td></td>`;
+      }
+      return `<td class="${isNumber(types[k])?'number':''}">${fmt(summary[k], types[k], symbol)}</td>`;
+    }).join("");
+
+    // If neither Rank nor Sales Rep is displayed, put TOTAL in the first column.
+    if(!labelPlaced && metrics.length){
+      const first = metrics[0];
+      const rest = metrics.slice(1).map(k => {
+        if(["rep_name","team","home_branch","title","hire_date"].includes(k)){
+          return `<td></td>`;
+        }
+        return `<td class="${isNumber(types[k])?'number':''}">${fmt(summary[k], types[k], symbol)}</td>`;
+      }).join("");
+      total = `<tr class="total-row"><td>TOTAL</td>${rest}</tr>`;
+    }else{
+      total = `<tr class="total-row">${cells}</tr>`;
+    }
+  }
+
+  return `<table><thead><tr>${heads}</tr></thead><tbody>${body}${total}</tbody></table>`;
+}
+
+const VS_SHORT_LABELS = {
+  issued_leads:"Issued",
+  pitched_leads:"Pitched",
+  pitched_rate:"Pitch %",
+  sold_leads:"Sold",
+  close_rate:"Close %",
+  gross_split:"Gross",
+  pending_split:"Pending",
+  net_split:"Net",
+  dpl:"DPL",
+  sales_retention:"Retention",
+  avg_gross_sale:"Avg Gross",
+  avg_net_sale:"Avg Net"
+};
+
+function vsLabel(metric, data){
+  return VS_SHORT_LABELS[metric] || data.metric_labels[metric] || metric;
+}
+
+function vsGridCols(count){
+  if(count >= 9) return 6;
+  if(count >= 5) return 4;
+  if(count >= 3) return 3;
+  return Math.max(count,1);
+}
+
+function vsMetricCells(row, data, metrics){
+  const primary=data.sort_metric;
+  return metrics.map(k=>`<div class="vs-rep-metric ${k===primary?"rank-metric":""}">
+      <div class="r-label">${esc(vsLabel(k,data))}</div>
+      <div class="r-value">${fmt(row[k],data.metric_types[k],data.currency_symbol)}</div>
+    </div>`).join("");
+}
+
+function vsDataRow(row, index, data, metrics, options={}){
+  const showRank=(data.metrics||[]).includes("rank");
+  const showName=(data.metrics||[]).includes("rep_name");
+  const showIdentity=showRank || showName;
+  const cols=vsGridCols(metrics.length);
+  const isTotal=!!options.total;
+  const hideRank=!!options.hideRank;
+  const rankNumber=options.rankNumber ?? (index+1);
+  const name=isTotal ? "TEAM TOTAL" : row.rep_name;
+
+  return `<div class="vs-rep ${showIdentity?"":"metrics-only"} ${isTotal?"vs-total-row":""}">
+    ${showIdentity?`<div class="vs-rep-id">
+      ${showRank && !hideRank?`<div class="vs-rep-rank">#${rankNumber}</div>`:""}
+      ${showName?`<div class="vs-rep-name">${esc(name)}</div>`:""}
+    </div>`:""}
+    <div class="vs-rep-metrics" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">
+      ${vsMetricCells(row,data,metrics)}
+    </div>
+  </div>`;
+}
+
+function versusHTML(data){
+  // One selected stat set drives both the aggregate row and every rep row.
+  // The backend has already sorted BOTH teams and reps with data.sort_metric
+  // so the highest selected metric is #1 at both levels.
+  const metrics=(data.rep_stat_metrics||[])
+    .filter(k=>isNumber(data.metric_types[k]));
+  const teams=(data.teams||[]).slice(0,2);
+  const showRank=(data.metrics||[]).includes("rank");
+  const primary=data.sort_metric;
+
+  return `<div class="vs-board">${teams.map((team,index)=>{
+    const s=team.summary;
+    const leader=s.leads && s.leads.length
+      ? s.leads.map(l=>`${esc(l.lead_name)} · ${esc(l.lead_role)}`).join(" | ")
+      : "";
+
+    return `<section class="vs-card">
+      <div class="vs-head">
+        <div class="vs-identity">
+          ${s.logo_url?`<img class="vs-logo" src="${s.logo_url}" alt="${esc(s.team)} logo">`:""}
+          <div style="min-width:0">
+            <div class="vs-name">${esc(s.team)}</div>
+            ${leader?`<div class="vs-leader">${leader}</div>`:""}
+          </div>
+        </div>
+        ${index===0?`<div class="vs-rank-rule winner-label">WINNER</div>`:""}
+      </div>
+
+      <div class="vs-members-title">
+        <span>Team + Individual Stats</span>
+        <span>${team.members.length} reps</span>
+      </div>
+
+      <div class="vs-reps">
+        ${vsDataRow(s,index,data,metrics,{total:true,rankNumber:index+1,hideRank:true})}
+        ${team.members.map((rep,i)=>vsDataRow(rep,i,data,metrics)).join("")
+          || `<div class="empty" style="height:auto;padding:18px">No reps</div>`}
+      </div>
+    </section>`;
+  }).join("")}</div>`;
+}
+
+
+function allTeamsHTML(data){
+  const metrics=(data.metrics||[]).filter(k=>isNumber(data.metric_types[k]));
+  const primary=data.sort_metric;
+  const orderedMetrics=[primary, ...metrics.filter(k=>k!==primary)];
+  const teams=(data.teams||[]);
+  const cols = teams.length <= 2 ? teams.length || 1 : (teams.length <= 4 ? 2 : 3);
+  content.style.setProperty("--all-cols", cols);
+
+  return `<div class="all-board">${teams.map((team,index)=>{
+    const s=team.summary;
+    const leader=s.leads && s.leads.length
+      ? s.leads.map(l=>`${esc(l.lead_name)} · ${esc(l.lead_role)}`).join(" | ")
+      : "";
+    const mvp=(team.members||[])[0] || null;
+    const rankLabel=index===0 ? "WINNER" : `#${index+1}`;
+
+    return `<section class="all-card">
+      <div class="all-top">
+        <div class="all-brand">
+          ${s.logo_url?`<img class="all-logo" src="${s.logo_url}" alt="${esc(s.team)} logo">`:""}
+          <div style="min-width:0">
+            <div class="all-name">${esc(s.team)}</div>
+            ${leader?`<div class="all-leader">${leader}</div>`:""}
+          </div>
+        </div>
+        <div class="all-rank-pill ${index===0?'winner':''}">${rankLabel}</div>
+      </div>
+
+      <div class="all-stat-list">
+        ${orderedMetrics.map(k=>`<div class="all-stat-row">
+          <div class="all-stat-label">${esc(data.metric_labels[k]||k)}</div>
+          <div class="all-stat-value">${fmt(s[k], data.metric_types[k], data.currency_symbol)}</div>
+        </div>`).join("")}
+      </div>
+
+      <div class="all-mvp">
+        <div class="all-mvp-left">
+          <div class="all-mvp-kicker">MVP</div>
+          <div class="all-mvp-name">${mvp ? esc(mvp.rep_name) : "No reps"}</div>
+          <div class="all-mvp-meta">${esc(data.metric_labels[primary]||primary)}</div>
+        </div>
+        <div class="all-mvp-score">${mvp ? fmt(mvp[primary], data.metric_types[primary], data.currency_symbol) : "—"}</div>
+      </div>
+    </section>`;
+  }).join("")}</div>`;
+}
+
+function teamCard(team, data, index){
+  const s = team.summary;
+  const metrics = data.metrics.filter(k => !["rank","rep_name","team"].includes(k));
+  const primary = data.sort_metric;
+  const extras = metrics.filter(k => k !== primary).slice(0,6);
+  const extraHTML = extras.map(k => `
+    <div class="metric">
+      <div class="label">${esc(data.metric_labels[k]||k)}</div>
+      <div class="value">${fmt(s[k], data.metric_types[k], data.currency_symbol)}</div>
+    </div>`).join("");
+
+  let members = "";
+  if(data.mode === "all_teams" || data.show_members){
+    const memberMetrics = data.mode === "team_vs_team"
+      ? ["rep_name", primary].filter((v,i,a)=>a.indexOf(v)===i)
+      : data.metrics;
+    members = `<div class="members">${tableHTML(team.members, memberMetrics, data.metric_labels, data.metric_types, data.currency_symbol)}</div>`;
+  }
+
+  return `
+    <section class="team-card">
+      <div class="team-head">
+        <div class="team-head-row">
+          ${s.logo_url ? `<img class="team-head-logo" src="${s.logo_url}" alt="${esc(s.team)} logo">` : ""}
+          <div>
+            <div class="team-name">${index+1}. ${esc(s.team)}</div>
+            ${s.leads && s.leads.length ? `<div class="subtitle">${s.leads.map(l=>`${esc(l.lead_name)} · ${esc(l.lead_role)}`).join(" &nbsp; | &nbsp; ")}</div>` : ""}
+          </div>
+        </div>
+        <div class="team-total">${fmt(s[primary], data.metric_types[primary], data.currency_symbol)}</div>
+        <div class="team-metrics">${extraHTML}</div>
+      </div>
+      ${members}
+    </section>`;
+}
+
+
+function fitLeaderboard(){
+  scaleRoot.style.transform = "scale(1)";
+  scaleRoot.style.width = "100%";
+
+  requestAnimationFrame(() => {
+    const availableW = Math.max(content.clientWidth, 1);
+    const availableH = Math.max(content.clientHeight, 1);
+    const naturalW = Math.max(scaleRoot.scrollWidth, 1);
+    const naturalH = Math.max(scaleRoot.scrollHeight, 1);
+    const isHeadToHead = !!scaleRoot.querySelector(".vs-board");
+
+    let scale = Math.min(1, availableW / naturalW, availableH / naturalH);
+
+    if(isHeadToHead){
+      // The VS layout is already exactly the TV width. Never widen its unscaled
+      // canvas, because doing that is what pushed KPIs off the right edge.
+      scaleRoot.style.width = "100%";
+      scaleRoot.style.transform = `scale(${scale})`;
+      return;
+    }
+
+    // Other modes retain the older auto-fit behavior.
+    if(scale < 1){
+      scaleRoot.style.width = `${availableW / scale}px`;
+      const widenedW = Math.max(scaleRoot.scrollWidth, 1);
+      const widenedH = Math.max(scaleRoot.scrollHeight, 1);
+      scale = Math.min(scale, availableW / widenedW, availableH / widenedH);
+      scaleRoot.style.width = `${availableW / scale}px`;
+    }
+
+    scaleRoot.style.transform = `scale(${scale})`;
+  });
+}
+
+function render(data){
+  titleEl.textContent = data.title || "SALES LEADERBOARD";
+  subtitleEl.textContent = data.subtitle || "";
+  modeEl.textContent = data.mode_label || "";
+
+  if(data.mode === "per_team"){
+    if(!data.rows.length){
+      scaleRoot.innerHTML = `<div class="empty">No reps found for selected team</div>`;
+      fitLeaderboard();
+      return;
+    }
+    const summary = data.team_summary;
+    const primary = data.sort_metric;
+    const summaryHTML = summary ? `
+      <div class="single-team-summary">
+        <div>
+          <div class="label">Team</div>
+          <div class="name">${esc(summary.team)}</div>
+          ${summary.leads && summary.leads.length ? `<div class="subtitle">${summary.leads.map(l=>`${esc(l.lead_name)} · ${esc(l.lead_role)}`).join(" &nbsp; | &nbsp; ")}</div>` : ""}
+        </div>
+        <div>
+          <div class="label">${esc(data.metric_labels[primary] || primary)}</div>
+          <div class="score">${fmt(summary[primary], data.metric_types[primary], data.currency_symbol)}</div>
+        </div>
+      </div>` : "";
+    scaleRoot.innerHTML = summaryHTML + tableHTML(
+      data.rows,
+      data.metrics,
+      data.metric_labels,
+      data.metric_types,
+      data.currency_symbol,
+      summary || null
+    );
+    fitLeaderboard();
+    return;
+  }
+
+  if(data.mode === "whole_office"){
+    scaleRoot.innerHTML = data.rows.length
+      ? tableHTML(
+          data.rows,
+          data.metrics,
+          data.metric_labels,
+          data.metric_types,
+          data.currency_symbol,
+          data.office_summary || null
+        )
+      : `<div class="empty">No reps found</div>`;
+    fitLeaderboard();
+    return;
+  }
+
+  if(!data.teams.length){
+    scaleRoot.innerHTML = `<div class="empty">No teams selected</div>`;
+    fitLeaderboard();
+    return;
+  }
+
+  if(data.mode === "team_vs_team"){
+    scaleRoot.innerHTML = versusHTML(data);
+    fitLeaderboard();
+    return;
+  }
+
+  if(data.mode === "all_teams"){
+    scaleRoot.innerHTML = allTeamsHTML(data);
+    fitLeaderboard();
+    return;
+  }
+
+  const cols = Math.min(Math.max(data.teams.length, 1), 4);
+  content.style.setProperty("--team-cols", cols);
+  scaleRoot.innerHTML = `<div class="teams">${data.teams.map((t,i)=>teamCard(t,data,i)).join("")}</div>`;
+  fitLeaderboard();
+}
+
+async function load(){
+  try{
+    const res = await fetch("/api/leaderboard", {cache:"no-store"});
+    if(!res.ok) throw new Error();
+    const data = await res.json();
+
+    if(appRestartVersion === null){
+      appRestartVersion = Number(data.app_restart_version || 0);
+    }else if(Number(data.app_restart_version || 0) !== appRestartVersion){
+      location.replace("/?restart=" + Date.now());
+      return;
+    }
+
+    if(tvRefreshVersion === null){
+      tvRefreshVersion = Number(data.tv_refresh_version || 0);
+    }else if(Number(data.tv_refresh_version || 0) !== tvRefreshVersion){
+      location.replace("/?refresh=" + Date.now());
+      return;
+    }
+
+    const signature = JSON.stringify([
+      data.data_version,
+      data.settings_version,
+      data.organization_version,
+      data.mode,
+      data.metrics,
+      data.sort_metric,
+      data.rank_direction,
+      data.title,
+      data.subtitle,
+      data.rows,
+      data.teams
+    ]);
+    if(signature !== lastSignature){
+      render(data);
+      lastSignature = signature;
+    }
+    statusEl.textContent = "";
+  }catch(e){
+    statusEl.textContent = "Keeping last displayed data";
+  }
+}
+
+async function getRefresh(){
+  try{
+    const r = await fetch("/api/config",{cache:"no-store"});
+    const d = await r.json();
+    refreshMs = Math.max(2000, Number(d.settings.display_refresh_seconds||5)*1000);
+  }catch(e){}
+  load();
+  setTimeout(loop, refreshMs);
+}
+function loop(){ getRefresh(); }
+window.addEventListener("resize", fitLeaderboard);
+getRefresh();
+</script>
+</body>
+</html>
