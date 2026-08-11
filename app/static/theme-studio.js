@@ -191,8 +191,8 @@
 
   async function resetTheme(){
     if(!currentScope){byId("themeStatus").textContent="Create a team first.";return;}
-    if(!confirm("Reset this design to the Classic theme? Custom artwork for this theme will stop being used."))return;
-    try{await jsonFetch(`/api/themes/${encodeURIComponent(currentScope)}`,{method:"DELETE"});await refreshState();byId("themeStatus").textContent="Reset to Classic.";}catch(e){byId("themeStatus").textContent=e.message;}
+    byId("themeStatus").textContent="Resetting…";
+    try{await jsonFetch(`/api/themes/${encodeURIComponent(currentScope)}`,{method:"DELETE"});await refreshState();byId("themeStatus").textContent="Theme reset to Classic.";}catch(e){byId("themeStatus").textContent=e.message;}
   }
 
   async function uploadAsset(key,blob=null,filename=null){
@@ -251,7 +251,7 @@
       const rows=(data.rows||[]).slice(0,4);const heroCustom=assets.hero&&String(assets.hero).includes("/api/theme-assets/");const hero=theme.enabled?(heroCustom?assets.hero:(team?.name?.toLowerCase()==="undisputed"?assets.hero:team?.logo_url)):team?.logo_url;
       const corners=theme.enabled?[["corner_tl","tl"],["corner_tr","tr"],["corner_bl","bl"],["corner_br","br"]]:[];
       box.innerHTML=`<div class="theme-preview-frame"></div>${corners.map(([k,p])=>assets[k]?`<img class="theme-preview-corner ${p}" src="${esc(assets[k])}" alt="">`:"").join("")}
-        <div class="theme-preview-head">${hero?`<img class="theme-preview-logo" src="${esc(hero)}" alt="">`:`<div class="theme-preview-title">${esc(team?.name||data.title||"WHOLE OFFICE")}</div>`}<div class="theme-preview-mode">${esc(team?"Team Leaderboard":"Whole Office")}</div></div>
+        <div class="theme-preview-head">${hero?`<img class="theme-preview-logo" src="${esc(hero)}" alt="">`:`<div class="theme-preview-title">${esc(team?.name||data.title||"TEAM")}</div>`}<div class="theme-preview-mode">Team Leaderboard</div></div>
         <div class="theme-preview-rows">${rows.map((r,i)=>`<div class="theme-preview-row ${i===0&&theme.enabled?"champ":""}" style="${i===0&&theme.enabled&&assets.champion?`background-image:linear-gradient(rgba(0,0,0,.35),rgba(0,0,0,.35)),url('${esc(assets.champion)}');background-size:100% 100%`:theme.enabled&&assets.row?`background-image:linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),url('${esc(assets.row)}');background-size:100% 100%`:""}"><div class="theme-preview-rank">${i===0&&theme.enabled&&assets.medallion?`<img src="${esc(assets.medallion)}" style="width:34px;height:34px;object-fit:contain">`:`#${i+1}`}</div><div class="theme-preview-name">${esc(r.rep_name)}</div><div class="theme-preview-stat"><span>Close</span><strong>${number(r.close_rate).toFixed(2)}%</strong></div><div class="theme-preview-stat"><span>Sold</span><strong>${number(r.sold_leads).toFixed(2).replace(/\.00$/,"")}</strong></div><div class="theme-preview-stat"><span>Net</span><strong>${money(r.net_split)}</strong></div></div>`).join("")||`<div style="padding:35px;color:#888">No assigned reps yet.</div>`}</div>`;
     }catch(e){box.innerHTML=`<div class="theme-preview-frame"></div><div style="padding:35px;color:#888">Preview unavailable: ${esc(e.message)}</div>`;}
   }
