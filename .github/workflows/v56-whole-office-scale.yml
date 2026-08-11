@@ -1,0 +1,27 @@
+name: v56 Whole Office Scale
+on:
+  push:
+    branches: [build/v56-whole-office-scale]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate scale override
+        run: |
+          node --check app/static/whole-office-scale-v56.js
+          grep -q 'width:94vw!important' app/static/whole-office-scale-v56.js
+          grep -q 'height:clamp(190px,19vh,420px)!important' app/static/whole-office-scale-v56.js
+          grep -q 'font-size:clamp(17px,.95vw,38px)!important' app/static/whole-office-scale-v56.js
+          grep -q 'whole-office-scale-v56.js?v=56' app/templates/display.html
+          test "$(tr -d '\n' < VERSION)" = "56"
+      - name: Ensure display-only diff
+        run: |
+          files="$(git diff --name-only origin/main...HEAD)"
+          echo "$files"
+          bad="$(printf '%s\n' "$files" | grep -Ev '^(VERSION|app/templates/display.html|app/static/whole-office-scale-v56.js|\.github/workflows/v56-whole-office-scale.yml)$' || true)"
+          test -z "$bad"
