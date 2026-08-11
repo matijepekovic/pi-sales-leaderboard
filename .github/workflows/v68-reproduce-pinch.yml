@@ -32,7 +32,7 @@ jobs:
           exit 1
       - name: Reproduce touch/pointer crash path
         run: |
-          cat > /tmp/repro.js <<'JS'
+          node <<'JS'
           const { chromium } = require('playwright');
           (async()=>{
             const browser = await chromium.launch({headless:true});
@@ -61,4 +61,3 @@ jobs:
             await browser.close();
           })().catch(e=>{console.error(e);process.exit(1);});
           JS
-          node /tmp/repro.js
