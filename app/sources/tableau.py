@@ -48,7 +48,10 @@ TABLEAU_VIEW_PATH = f"{TABLEAU_WORKBOOK_CONTENT_URL}/{TABLEAU_VIEW_URL_NAME}"
 TABLEAU_HOME_BRANCH = "Olympia"
 TABLEAU_START_FIELD = "Start"
 TABLEAU_END_FIELD = "End"
-TABLEAU_HOME_BRANCH_FIELD = "Home Branch"
+# The filter card is titled "Home Branch", but the field in the RepTotals data
+# is USER-Home Branch. Tableau REST view filters require the underlying field
+# key, not the display title of the filter card.
+TABLEAU_HOME_BRANCH_FIELD = "USER-Home Branch"
 
 # ---------------------------------------------------------------- mapping
 
@@ -74,7 +77,8 @@ ALIAS_INDEX = sorted(
 REP_ALIASES = ["srname", "rep", "repname", "salesrep", "salesperson",
                "employee", "assignedrep"]
 # Prefer the human-readable USER-Home Branch (Olympia) over Branch-New
-# (WA-OLY) when both are present in the export.
+# (WA-OLY) when both are present in the export. Prefix matching below also
+# handles Salesforce-ish captions such as USER-Home Branch Picklist__c.
 BRANCH_ALIASES = ["userhomebranch", "homebranch", "branchnew", "branch",
                   "office", "location", "market"]
 TITLE_ALIASES = ["usertitlepicklist", "title", "position"]
@@ -135,6 +139,24 @@ def match_field(header_norm):
     return None
 
 
+def find_column(headers, aliases):
+    """
+    Find an export column by exact normalized name first, then by a conservative
+    prefix/substring match. Tableau often exposes the same workbook field with
+    a longer Salesforce caption than the dashboard filter-card title.
+    """
+    normalized = [(header, norm(header)) for header in (headers or [])]
+    for alias in aliases:
+        for header, value in normalized:
+            if value == alias:
+                return header
+    for alias in aliases:
+        for header, value in normalized:
+            if value.startswith(alias) or alias in value:
+                return header
+    return None
+
+
 def derive(r):
     """Fill missing computed columns without overwriting Tableau values."""
     def put(key, val):
@@ -166,20 +188,13 @@ def rep_key_for(name):
 
 
 # ---------------------------------------------------------------- parsing
-
 def parse_rows(csv_text):
     """Parse Tableau view-data CSV into camelCase rep dictionaries."""
     reader = csv.DictReader(io.StringIO(csv_text))
     headers = reader.fieldnames or []
-    hmap = {h: norm(h) for h in headers}
 
     def col_for(aliases):
-        # Alias order is intentional, especially for Home Branch.
-        for alias in aliases:
-            for header, normalized in hmap.items():
-                if normalized == alias:
-                    return header
-        return None
+        return find_column(headers, aliases)
 
     rep_col = col_for(REP_ALIASES)
     if not rep_col:
@@ -195,6 +210,7 @@ def parse_rows(csv_text):
     mn_col = col_for(MEASURE_NAME_COLS)
     mv_col = col_for(MEASURE_VALUE_COLS)
     long_fmt = bool(mn_col and mv_col)
+    hmap = {h: norm(h) for h in headers}
 
     acc = {}
     meta = {}
@@ -264,7 +280,7 @@ def to_app_rows(reps):
             "rep_key": rep_key_for(r["name"]),
             "rep_name": r["name"],
             "team": r.get("team") or "Unassigned",
-            "home_branch": r.get("home_branch") or TABLEAU_HOME_BRANCH,
+            "home_branch": r.get("home_branch") or "",
             "title": r.get("title") or "",
             "hire_date": r.get("hire_date") or "",
         }
@@ -274,8 +290,21 @@ def to_app_rows(reps):
     return rows
 
 
-# ---------------------------------------------------------------- dates
+def branch_profile(csv_text):
+    """Return (exact export header, distinct nonblank branch values)."""
+    reader = csv.DictReader(io.StringIO(csv_text))
+    headers = reader.fieldnames or []
+    branch_col = find_column(headers, BRANCH_ALIASES)
+    values = set()
+    if branch_col:
+        for row in reader:
+            value = str(row.get(branch_col) or "").strip()
+            if value and value.lower() != "all":
+                values.add(value)
+    return branch_col, values
 
+
+# ---------------------------------------------------------------- dates
 def month_range(today=None):
     """First and last day of the current month as YYYY-MM-DD."""
     today = today or date.today()
@@ -299,7 +328,6 @@ def resolve_dates(settings, today=None):
 
 
 # ---------------------------------------------------------------- Tableau IO
-
 class TableauError(RuntimeError):
     pass
 
@@ -315,6 +343,9 @@ class TableauSource(LeaderboardSource):
         self.config = config or {}
         self.last_offices = []
         self.last_total_rows = 0
+        self.last_remote_rows = 0
+        self.last_branch_filter_field = ""
+        self.branch_filter_guard_used = False
 
     def _pat_secret(self):
         return str(self.config.get("tableau_pat_secret") or "").strip()
@@ -453,16 +484,16 @@ class TableauSource(LeaderboardSource):
             f"Normal view '{TABLEAU_VIEW_PATH}' was not found. Visible workbook views: {visible}"
         )
 
-    def fetch_csv(self, base, token, site_id, start, end):
-        """Pull the normal view with the exact Tableau controls shown in RepTotals."""
-        view_id = self._view_id(base, token, site_id)
+    def _query_view_csv(self, base, token, site_id, view_id, start, end, branch_field):
         params = {
             "maxAge": "1",
             f"vf_{TABLEAU_START_FIELD}": start,
             f"vf_{TABLEAU_END_FIELD}": end,
-            f"vf_{TABLEAU_HOME_BRANCH_FIELD}": TABLEAU_HOME_BRANCH,
+            f"vf_{branch_field}": TABLEAU_HOME_BRANCH,
         }
-        query = urllib.parse.urlencode(params)
+        # Use %20 rather than '+' in field names. Tableau documents view-filter
+        # keys with percent-encoded spaces.
+        query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
         status, raw = self._request(
             f"{base}/sites/{site_id}/views/{view_id}/data?{query}",
             token=token,
@@ -474,6 +505,47 @@ class TableauSource(LeaderboardSource):
             )
         return raw.decode("utf-8-sig", errors="replace")
 
+    def fetch_csv(self, base, token, site_id, start, end):
+        """
+        Pull RepTotals with Start/End and the Olympia home-branch filter.
+
+        Tableau requires the underlying field key. We first use the known
+        USER-Home Branch field. If Tableau returns more than Olympia, inspect
+        the CSV header it returned and retry once using the exact export
+        caption. This handles workbook caption changes without reverting to a
+        custom view.
+        """
+        view_id = self._view_id(base, token, site_id)
+        candidates = [TABLEAU_HOME_BRANCH_FIELD, "Home Branch"]
+        tried = set()
+        last_csv = ""
+
+        for candidate in candidates:
+            key = str(candidate or "").strip()
+            if not key or key.lower() in tried:
+                continue
+            tried.add(key.lower())
+
+            csv_text = self._query_view_csv(
+                base, token, site_id, view_id, start, end, key
+            )
+            last_csv = csv_text
+            branch_col, branch_values = branch_profile(csv_text)
+            office = TABLEAU_HOME_BRANCH.lower()
+
+            if branch_col and branch_values and all(
+                    value.lower() == office for value in branch_values):
+                self.last_branch_filter_field = key
+                return csv_text
+
+            # The ignored filter response is useful: it exposes the exact
+            # underlying/export field caption. Try that exact key next.
+            if branch_col and branch_col.lower() not in tried:
+                candidates.append(branch_col)
+
+        self.last_branch_filter_field = candidates[-1] if candidates else ""
+        return last_csv
+
     def _pull_rows(self):
         start, end = resolve_dates(self.config)
         base, token, site_id = self.signin()
@@ -481,7 +553,38 @@ class TableauSource(LeaderboardSource):
             csv_text = self.fetch_csv(base, token, site_id, start, end)
         finally:
             self.signout(base, token)
+
         rows = to_app_rows(parse_rows(csv_text))
+        self.last_remote_rows = len(rows)
+
+        # Never silently put other offices on the Olympia leaderboard. If the
+        # workbook ignores a REST filter, use the same Home Branch column as a
+        # safety guard. The primary filtering still happens in Tableau.
+        branch_values = {
+            str(r.get("home_branch") or "").strip()
+            for r in rows if str(r.get("home_branch") or "").strip()
+        }
+        if not branch_values and rows:
+            raise TableauError(
+                "Tableau returned rows without a Home Branch field, so the Pi "
+                "refused to load an unverified all-office result."
+            )
+
+        office = TABLEAU_HOME_BRANCH.lower()
+        unexpected = {v for v in branch_values if v.lower() != office}
+        if unexpected:
+            filtered = [
+                r for r in rows
+                if str(r.get("home_branch") or "").strip().lower() == office
+            ]
+            if not filtered:
+                raise TableauError(
+                    "Tableau ignored the Olympia Home Branch filter and no "
+                    "Olympia rows could be verified in the returned data."
+                )
+            self.branch_filter_guard_used = True
+            rows = filtered
+
         return start, end, rows
 
     def preview(self):
@@ -494,7 +597,7 @@ class TableauSource(LeaderboardSource):
         return {
             "start": start,
             "end": end,
-            "total_rows": len(rows),
+            "total_rows": self.last_remote_rows or len(rows),
             "selected_rows": len(rows),
             "offices": offices or [TABLEAU_HOME_BRANCH],
             "names": sorted(str(r.get("rep_name")) for r in rows),
@@ -502,11 +605,9 @@ class TableauSource(LeaderboardSource):
 
     def fetch(self):
         _start, _end, rows = self._pull_rows()
-        self.last_total_rows = len(rows)
+        self.last_total_rows = self.last_remote_rows or len(rows)
         self.last_offices = sorted({
             str(r.get("home_branch") or "").strip()
             for r in rows if str(r.get("home_branch") or "").strip()
         }) or [TABLEAU_HOME_BRANCH]
-        # No local include/exclude or office filtering. Tableau already returned
-        # exactly the requested Olympia population.
         return rows
