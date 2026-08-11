@@ -45,6 +45,7 @@ from database import (
 )
 from sources.sample import SampleSource
 from sources.tableau import TableauSource, TableauError, resolve_dates
+from tableau_scheduler import start_tableau_scheduler
 from themes import themes_blueprint, display_theme_state
 
 app = Flask(__name__)
@@ -1342,6 +1343,8 @@ def api_source_options():
         "effective_end": end,
         "source_status": get_meta("source_status", ""),
         "last_source_refresh": get_meta("last_source_refresh", ""),
+        "scheduled_tableau_status": get_meta("scheduled_tableau_status", ""),
+        "scheduled_tableau_last_attempt": get_meta("scheduled_tableau_last_attempt", ""),
     })
 
 
@@ -1641,6 +1644,9 @@ app.secret_key = app_secret_key()
 ensure_labwc_kiosk_autostart()
 ensure_sample_data()
 start_github_auto_update_worker()
+# Twice-daily Tableau pull. Must come after init_db(); the call is idempotent,
+# so a re-import can never start a second worker.
+start_tableau_scheduler()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8765, threaded=True)
