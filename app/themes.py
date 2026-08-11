@@ -31,6 +31,7 @@ PERSISTENT_THEME_ROOT = (
 ASSETS = {
     "background": {"label": "Background", "builtin": "bg.jpg"},
     "hero": {"label": "Hero / Header Art", "builtin": "hero.png"},
+    "logo_small": {"label": "Logo Small", "builtin": "hero.png"},
     "row": {"label": "Leaderboard Row", "builtin": "row.jpg"},
     "champion": {"label": "Champion Row", "builtin": "champ.jpg"},
     "medallion": {"label": "Champion Medallion", "builtin": "medallion.png"},

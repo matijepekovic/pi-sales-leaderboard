@@ -150,6 +150,8 @@ MODES = {
     "per_team": "Per Team",
 }
 
+NON_DISPLAY_METRICS = {"home_branch", "title", "hire_date"}
+
 SUM_FIELDS = {
     "issued_leads", "pitched_leads", "sold_leads",
     "gross_split", "pending_split", "net_split"
@@ -311,7 +313,10 @@ def get_mode_payload(mode=None):
     reps = list_reps()
     metric = settings["sort_metric"].get(mode, "net_split")
     direction = "desc"
-    visible = settings["visible_metrics"].get(mode, [])
+    visible = [
+        key for key in settings["visible_metrics"].get(mode, [])
+        if key not in NON_DISPLAY_METRICS
+    ]
     team_defs, team_by_name = organization_maps()
 
     if mode == "whole_office":
@@ -912,6 +917,7 @@ def api_config():
         "metrics": [
             {"key": key, "label": label, "type": typ}
             for key, label, typ in METRIC_DEFS
+            if key not in NON_DISPLAY_METRICS
         ],
         "modes": [{"key": k, "label": v} for k, v in MODES.items()],
         "teams": list_teams(),
@@ -1026,7 +1032,7 @@ def api_save_config():
     # Team vs Team always includes individual rep stats in v18+.
     current["show_team_members_in_vs"] = True
 
-    valid_keys = {k for k, _, _ in METRIC_DEFS}
+    valid_keys = {k for k, _, _ in METRIC_DEFS if k not in NON_DISPLAY_METRICS}
     if isinstance(incoming.get("visible_metrics"), dict):
         for mode in MODES:
             vals = incoming["visible_metrics"].get(mode)

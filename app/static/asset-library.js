@@ -4,7 +4,7 @@
    Tinting is generated in-browser and saved as a PNG, so the source library is
    never modified and user themes continue to survive software updates. */
 (function(){
-  const CATALOG_URL="/static/asset-library/catalog.json?v=44";
+  const CATALOG_URL="/static/asset-library/catalog.json?v=50";
   let catalog=null;
   let activeCollection="all";
 
@@ -24,9 +24,34 @@
     return response;
   }
 
+  function normalizeCatalog(raw){
+    const next=(raw&&typeof raw==="object")?raw:{categories:[],collections:[]};
+    next.categories=Array.isArray(next.categories)?next.categories:[];
+    if(!next.categories.some(c=>c?.key==="logo_small")){
+      next.categories.unshift({key:"logo_small",label:"Logo Small"});
+    }
+    next.collections=(Array.isArray(next.collections)?next.collections:[]).map(collection=>{
+      const c={...collection,bundle:{...(collection.bundle||{})},items:[...(collection.items||[])]};
+      const small=c.bundle.logo_small||c.bundle.hero||null;
+      if(small){
+        c.bundle.logo_small=small;
+        if(!c.items.some(item=>item?.category==="logo_small")){
+          c.items.unshift({
+            key:`${c.key||"collection"}-logo-small`,
+            category:"logo_small",
+            label:"Logo Small",
+            targets:{logo_small:small}
+          });
+        }
+      }
+      return c;
+    });
+    return next;
+  }
+
   async function loadCatalog(){
     const response=await request(CATALOG_URL);
-    catalog=await response.json();
+    catalog=normalizeCatalog(await response.json());
     return catalog;
   }
 

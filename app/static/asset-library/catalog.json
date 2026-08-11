@@ -1,11 +1,30 @@
 {
-  "version": 2,
+  "version": 3,
   "categories": [
-    {"key": "champion_row", "label": "Champion Row"},
-    {"key": "leaderboard_row", "label": "Leaderboard Row"},
-    {"key": "champion_medallion", "label": "Champion Medallions"},
-    {"key": "totals_mark", "label": "TL Marks"},
-    {"key": "corners", "label": "Corner Sets"}
+    {
+      "key": "logo_small",
+      "label": "Logo Small"
+    },
+    {
+      "key": "champion_row",
+      "label": "Champion Row"
+    },
+    {
+      "key": "leaderboard_row",
+      "label": "Leaderboard Row"
+    },
+    {
+      "key": "champion_medallion",
+      "label": "Champion Medallions"
+    },
+    {
+      "key": "totals_mark",
+      "label": "TL Marks"
+    },
+    {
+      "key": "corners",
+      "label": "Corner Sets"
+    }
   ],
   "collections": [
     {
@@ -20,32 +39,49 @@
         "corner_tl": "/static/theme-packs/undisputed/ctl.png",
         "corner_tr": "/static/theme-packs/undisputed/ctr.png",
         "corner_bl": "/static/theme-packs/undisputed/cbl.png",
-        "corner_br": "/static/theme-packs/undisputed/cbr.png"
+        "corner_br": "/static/theme-packs/undisputed/cbr.png",
+        "logo_small": "/static/theme-packs/undisputed/hero.png"
       },
       "items": [
+        {
+          "key": "undisputed-logo-small",
+          "category": "logo_small",
+          "label": "Logo Small",
+          "targets": {
+            "logo_small": "/static/theme-packs/undisputed/hero.png"
+          }
+        },
         {
           "key": "undisputed-champion-row",
           "category": "champion_row",
           "label": "Arena Champion",
-          "targets": {"champion": "/static/theme-packs/undisputed/champ.jpg"}
+          "targets": {
+            "champion": "/static/theme-packs/undisputed/champ.jpg"
+          }
         },
         {
           "key": "undisputed-leaderboard-row",
           "category": "leaderboard_row",
           "label": "Arena Leaderboard Row",
-          "targets": {"row": "/static/theme-packs/undisputed/row.jpg"}
+          "targets": {
+            "row": "/static/theme-packs/undisputed/row.jpg"
+          }
         },
         {
           "key": "undisputed-medallion",
           "category": "champion_medallion",
           "label": "Arena Champion Medallion",
-          "targets": {"medallion": "/static/theme-packs/undisputed/medallion.png"}
+          "targets": {
+            "medallion": "/static/theme-packs/undisputed/medallion.png"
+          }
         },
         {
           "key": "undisputed-tl",
           "category": "totals_mark",
           "label": "TL",
-          "targets": {"totals_mark": "/static/theme-packs/undisputed/totmark.png"}
+          "targets": {
+            "totals_mark": "/static/theme-packs/undisputed/totmark.png"
+          }
         },
         {
           "key": "undisputed-corners",
