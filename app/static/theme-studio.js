@@ -28,6 +28,8 @@
     corner_br:{label:"Bottom Right",sx:1,sy:1}
   };
   const CORNER_SHEET="corner_sheet";
+  // Not a stored asset: the picker route for "one ornament, mirrored to four".
+  const CORNER_ONE="corner_one";
   const MIN_SIZE=50,MAX_SIZE=250,MAX_CROP=60;
 
   let state=null;          // /api/themes
@@ -244,7 +246,7 @@
 
           <section class="td-sec">
             <h3>Frame</h3>
-            <div class="small">One PNG with all four ornaments. Adding it cuts the corners and seats each one against its edge — nothing else to do.</div>
+            <div class="small">Add a <strong>full frame</strong> and it is cut into four corners, or <strong>one corner</strong> and it is mirrored into the other three. Either way each corner is seated against its edge — nothing else to do. To set corners individually, use their own sections below.</div>
             <div class="td-asset" data-asset="corner_sheet">
               <div class="td-asset-head">
                 <div id="tdSheetThumb" class="td-thumb empty">None</div>
@@ -445,7 +447,7 @@
     return `<img class="td-tile-art" src="${esc(item.url)}" alt="${esc(item.label)}" loading="lazy">`;
   }
 
-  function presetTiles(assetKey,selectedId){
+  function presetTiles(assetKey,selectedId,opts={}){
     const items=library[assetKey]||[];
     const built=items.filter(i=>i.source!=="user");
     const mine=items.filter(i=>i.source==="user");
@@ -459,12 +461,16 @@
           data-del-id="${esc(i.id)}" title="Delete ${esc(i.label)}"
           aria-label="Delete ${esc(i.label)}">×</button></span>`;
     };
-    // Adding is the first thing in the strip, always.
-    const add=`<button class="td-tile td-tile-add" type="button" data-add="${esc(assetKey)}"
-      title="Add your own artwork"><span class="td-tile-art">+</span>
-      <span class="td-tile-cap">Add</span></button>`;
-    return add+built.map(tile).join("")
+    // Adding is the first thing in the strip, unless the caller supplies its own.
+    return (opts.noAdd?"":addTile(assetKey))+built.map(tile).join("")
       +(mine.length?`<span class="td-tile-group">Yours</span>${mine.map(tile).join("")}`:"");
+  }
+
+  function addTile(assetKey,glyph,caption,title){
+    return `<button class="td-tile td-tile-add" type="button" data-add="${esc(assetKey)}"
+      title="${esc(title||"Add your own artwork")}">
+      <span class="td-tile-art">${esc(glyph||"+")}</span>
+      <span class="td-tile-cap">${esc(caption||"Add")}</span></button>`;
   }
 
   function bindTiles(root){
@@ -500,7 +506,8 @@
       const file=input.files?.[0];
       input.value="";
       if(!file)return;
-      if(assetKey===CORNER_SHEET)await splitCornerSheet(file);
+      if(assetKey===CORNER_SHEET)await buildCorners(file,"sheet");
+      else if(assetKey===CORNER_ONE)await buildCorners(file,"mirror");
       else if(assetKey==="team_logo")await uploadLogo(file);
       else await uploadAsset(assetKey,file,file.name);
     };
@@ -600,7 +607,14 @@
 
   function renderSheet(){
     const box=byId("tdSheetTiles");
-    if(box){box.innerHTML=presetTiles(CORNER_SHEET,"");bindTiles(box);}
+    if(box){
+      // Two ways in: a whole frame to cut up, or one ornament to mirror.
+      box.innerHTML=
+        addTile(CORNER_SHEET,"⊞","Full frame","One image holding all four ornaments")
+        +addTile(CORNER_ONE,"◺","One corner","One ornament, mirrored into all four corners")
+        +presetTiles(CORNER_SHEET,"",{noAdd:true});
+      bindTiles(box);
+    }
     const thumb=byId("tdSheetThumb");
     const corner=(themeFor()||{}).assets?.corner_tl;
     if(thumb){
@@ -844,6 +858,30 @@
 
   /* --------------------------------------------------------- corner sheet */
 
+  /* One ornament becomes four. The source is taken to face top-left, which is
+     how corner art is normally drawn; each corner then gets the reflection its
+     position implies. A source facing some other way comes out consistently
+     rotated, which is obvious in the preview and fixable per corner. */
+  async function mirrorVariants(img){
+    const w=img.naturalWidth,h=img.naturalHeight;
+    const flips={
+      corner_tl:[1,1],
+      corner_tr:[-1,1],
+      corner_bl:[1,-1],
+      corner_br:[-1,-1]
+    };
+    const out={};
+    for(const [key,[fx,fy]] of Object.entries(flips)){
+      const c=canvasOf(null,w,h);
+      const ctx=c.getContext("2d");
+      ctx.translate(fx<0?w:0,fy<0?h:0);
+      ctx.scale(fx,fy);
+      ctx.drawImage(img,0,0,w,h);
+      out[key]=await toBlob(c);
+    }
+    return out;
+  }
+
   async function splitSheetImage(img){
     /* Round rather than floor so an odd width never drops its middle column. */
     const w=img.naturalWidth,h=img.naturalHeight;
@@ -863,10 +901,17 @@
     return out;
   }
 
-  async function applySheetBlobs(parts){
+  const CORNER_LABEL={corner_tl:"top left",corner_tr:"top right",
+                      corner_bl:"bottom left",corner_br:"bottom right"};
+
+  async function applySheetBlobs(parts,sourceName){
     for(const [key,blob] of Object.entries(parts)){
       if(!blob)continue;
-      const form=new FormData();form.append("asset",blob,`${key}.png`);
+      const form=new FormData();
+      // Name each piece after where it came from, so the strip reads
+      // "crest.png — top right" rather than four identical entries.
+      const base=String(sourceName||"corners").replace(/\.[a-z0-9]+$/i,"");
+      form.append("asset",blob,`${base} — ${CORNER_LABEL[key]||key}.png`);
       await postAsset(key,{method:"POST",body:form});
     }
     await refreshState();
@@ -887,23 +932,30 @@
     }catch(e){status(e.message);}finally{setBusy(false);}
   }
 
-  async function splitCornerSheet(file){
-    if(!file){status("Choose a corner frame first.");return;}
-    setBusy(true);status("Splitting the sheet into four corners…");
+  /* Both corner routes end the same way: four images, applied to the four
+     corners and seated. Only how the four are produced differs. */
+  async function buildCorners(file,mode){
+    if(!file){status("Choose an image first.");return;}
+    const cutting=mode==="sheet";
+    setBusy(true);
+    status(cutting?"Cutting the frame into four corners…":"Mirroring into four corners…");
     try{
       const img=await loadImage(URL.createObjectURL(file));
-      const parts=await splitSheetImage(img);
-      await applySheetBlobs(parts);
-      // Keep the sheet itself so it can be re-applied to another team later.
-      const form=new FormData();
-      form.append("asset",file,file.name||"corner-sheet.png");
-      form.append("label",file.name||"Corner set");
-      try{
-        await jsonFetch(`/api/asset-library/${CORNER_SHEET}`,{method:"POST",body:form});
-        library=(await jsonFetch("/api/asset-library")).items||library;
-        renderSheet();
-      }catch(e){}
-      status("All four corners set and seated.");
+      const parts=cutting?await splitSheetImage(img):await mirrorVariants(img);
+      await applySheetBlobs(parts,file.name);
+      if(cutting){
+        // Keep the sheet so it can be re-applied to another team later.
+        try{
+          const form=new FormData();
+          form.append("asset",file,file.name||"corner-frame.png");
+          form.append("label",file.name||"Corner frame");
+          await jsonFetch(`/api/asset-library/${CORNER_SHEET}`,{method:"POST",body:form});
+          library=(await jsonFetch("/api/asset-library")).items||library;
+          renderSheet();
+        }catch(e){/* the library is a convenience, never block the corners */}
+      }
+      status(cutting?"Frame cut into four corners and seated."
+                   :"Mirrored into four corners and seated.");
     }catch(e){status(e.message);}finally{setBusy(false);}
   }
 
