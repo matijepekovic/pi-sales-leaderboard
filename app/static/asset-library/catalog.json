@@ -1,10 +1,10 @@
 {
-  "version": 1,
+  "version": 2,
   "categories": [
     {"key": "champion_row", "label": "Champion Row"},
     {"key": "leaderboard_row", "label": "Leaderboard Row"},
     {"key": "champion_medallion", "label": "Champion Medallions"},
-    {"key": "totals_mark", "label": "Totals Mark"},
+    {"key": "totals_mark", "label": "TL Marks"},
     {"key": "corners", "label": "Corner Sets"}
   ],
   "collections": [
@@ -42,9 +42,9 @@
           "targets": {"medallion": "/static/theme-packs/undisputed/medallion.png"}
         },
         {
-          "key": "undisputed-totals-mark",
+          "key": "undisputed-tl",
           "category": "totals_mark",
-          "label": "Arena Totals Mark",
+          "label": "TL",
           "targets": {"totals_mark": "/static/theme-packs/undisputed/totmark.png"}
         },
         {
