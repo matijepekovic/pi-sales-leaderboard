@@ -1,50 +1,54 @@
 """
-Tableau connector.
+Tableau connector for the Olympia Pi sales leaderboard.
 
-ORGANIZATION RULE
------------------
-Tableau supplies row-level sales metrics. The Pi is the authoritative
-leaderboard organization layer:
+Tableau is only the sales-data source. The Raspberry Pi remains the
+organization layer: local team assignments, team leads, logos and display
+configuration never get written back to Tableau and are not erased by a pull.
 
-1. `reps.team` stores Tableau's original team for reference/fallback.
-2. `rep_team_assignments` stores persistent Pi overrides.
-3. Leaderboards group by the effective Pi team.
-4. Moving a rep locally never changes Tableau and is never erased by refresh.
+The Tableau target is intentionally fixed for this installation:
 
-SELECTION RULE
+    server      https://10ay.online.tableau.com
+    site        dabella
+    workbook    8-SalesRepLevelData
+    view        RepTotals
+    PAT name    leaderboard
+    Home Branch Olympia
+    date fields Start / End
+
+Only the PAT secret is supplied by the user. Start/End normally follow the
+current calendar month, with an optional persistent manual override stored in
+the Pi settings database.
+
+COUNTING RULES
 --------------
-The pull deliberately fetches the WHOLE population the view exposes, then
-filters locally:
-
-    keep rep  <=>  (office matches OR name is force-included)
-                   AND name is not excluded
-
-Pre-filtering the query by office would make "always include this person no
-matter which office they sit in" impossible, so office is applied here, not
-in Tableau. Only the date window is pushed to Tableau, because rows outside
-the view's window cannot be recovered locally.
-
-COUNTING RULES (verified against the customer's own Tableau report)
--------------------------------------------------------------------
-The export is lead-level and long-format (Measure Names / Measure Values):
-
-* A lead sold with N products appears as N job rows, each repeating the
-  lead's split value. Counting measures (issued/pitched/sold) must therefore
-  be taken ONCE PER LEAD, or a two-product sale counts as 1.0 instead of 0.5.
-* Dollar measures DO sum across job rows (each product carries its own money).
-* Tableau emits a per-rep "All" roll-up row; it must be skipped or every
-  number doubles.
+The export is lead-level and can be long-format (Measure Names / Measure
+Values). A sold lead with multiple products can therefore appear on multiple
+job rows. Counting metrics are taken once per LEAD-Id while dollar metrics
+sum across job rows. Tableau's per-rep "All" roll-up rows are skipped.
 """
 import csv
 import io
+import json
 import re
 from datetime import date
-
+import urllib.error
 import urllib.parse
 import urllib.request
-import json
 
 from .base import LeaderboardSource
+
+# ---------------------------------------------------------------- fixed Tableau target
+
+TABLEAU_SERVER = "https://10ay.online.tableau.com"
+TABLEAU_SITE = "dabella"
+TABLEAU_PAT_NAME = "leaderboard"
+TABLEAU_WORKBOOK_CONTENT_URL = "8-SalesRepLevelData"
+TABLEAU_VIEW_URL_NAME = "RepTotals"
+TABLEAU_VIEW_PATH = f"{TABLEAU_WORKBOOK_CONTENT_URL}/{TABLEAU_VIEW_URL_NAME}"
+TABLEAU_HOME_BRANCH = "Olympia"
+TABLEAU_START_FIELD = "Start"
+TABLEAU_END_FIELD = "End"
+TABLEAU_HOME_BRANCH_FIELD = "Home Branch"
 
 # ---------------------------------------------------------------- mapping
 
@@ -62,14 +66,16 @@ FIELD_ALIASES = {
     "avgGrossPerRep": ["avggrosssaleperrep", "avggrossperrep", "averagegrossperrep", "avggross"],
     "avgNetPerRep":   ["avgnetsaleperrep", "avgnetperrep", "averagenetperrep", "avgnet"],
 }
-# (alias, field) pairs, longest alias first so specific names win
 ALIAS_INDEX = sorted(
     ((a, f) for f, aliases in FIELD_ALIASES.items() for a in aliases),
-    key=lambda p: -len(p[0]))
+    key=lambda p: -len(p[0])
+)
 
 REP_ALIASES = ["srname", "rep", "repname", "salesrep", "salesperson",
                "employee", "assignedrep"]
-BRANCH_ALIASES = ["branchnew", "userhomebranch", "homebranch", "branch",
+# Prefer the human-readable USER-Home Branch (Olympia) over Branch-New
+# (WA-OLY) when both are present in the export.
+BRANCH_ALIASES = ["userhomebranch", "homebranch", "branchnew", "branch",
                   "office", "location", "market"]
 TITLE_ALIASES = ["usertitlepicklist", "title", "position"]
 HIRE_ALIASES = ["hiredate", "hire"]
@@ -82,7 +88,6 @@ PCT_FIELDS = {"pitchRate", "closeRate", "salesRetention"}
 MEAN_FIELDS = PCT_FIELDS | {"dpl", "avgGrossPerRep", "avgNetPerRep"}
 COUNT_FIELDS = {"issuedLeads", "pitchedLeads", "soldLeads"}
 
-# camelCase (parser) -> the app's snake_case rep schema in sources/base.py
 SCHEMA_MAP = {
     "issuedLeads": "issued_leads",
     "pitchedLeads": "pitched_leads",
@@ -131,10 +136,11 @@ def match_field(header_norm):
 
 
 def derive(r):
-    """Fill MISSING computed columns. Values from Tableau are never overwritten."""
+    """Fill missing computed columns without overwriting Tableau values."""
     def put(key, val):
         if r.get(key) is None:
             r[key] = val
+
     issued, pitched = r.get("issuedLeads"), r.get("pitchedLeads")
     sold = r.get("soldLeads")
     gross, net = r.get("grossSplit"), r.get("netSplit")
@@ -162,18 +168,18 @@ def rep_key_for(name):
 # ---------------------------------------------------------------- parsing
 
 def parse_rows(csv_text):
-    """
-    Parse a Tableau view-data CSV into camelCase rep dicts.
-
-    Handles both the long format (Measure Names / Measure Values, which is
-    what this workbook emits) and a plain wide format.
-    """
+    """Parse Tableau view-data CSV into camelCase rep dictionaries."""
     reader = csv.DictReader(io.StringIO(csv_text))
     headers = reader.fieldnames or []
     hmap = {h: norm(h) for h in headers}
 
     def col_for(aliases):
-        return next((h for h, n in hmap.items() if n in aliases), None)
+        # Alias order is intentional, especially for Home Branch.
+        for alias in aliases:
+            for header, normalized in hmap.items():
+                if normalized == alias:
+                    return header
+        return None
 
     rep_col = col_for(REP_ALIASES)
     if not rep_col:
@@ -190,7 +196,6 @@ def parse_rows(csv_text):
     mv_col = col_for(MEASURE_VALUE_COLS)
     long_fmt = bool(mn_col and mv_col)
 
-    # per rep: counts keyed by lead (deduped), everything else accumulated
     acc = {}
     meta = {}
     order = []
@@ -206,7 +211,7 @@ def parse_rows(csv_text):
 
         lead = (row.get(lead_col) or "").strip() if lead_col else ""
         if long_fmt and lead.lower() == "all":
-            continue                      # per-rep roll-up row
+            continue
 
         info = meta[name]
         for key, col in (("home_branch", branch_col), ("title", title_col),
@@ -221,7 +226,6 @@ def parse_rows(csv_text):
             if v is None:
                 return
             if long_fmt and field in COUNT_FIELDS and lead:
-                # one value per lead, no matter how many job rows repeat it
                 acc[name].setdefault(field, {}).setdefault(lead, v)
             else:
                 slot = acc[name].setdefault(field, [0.0, 0])
@@ -242,7 +246,7 @@ def parse_rows(csv_text):
     for name in order:
         rec = {"name": name}
         for field, agg in acc[name].items():
-            if isinstance(agg, dict):                 # per-lead counts
+            if isinstance(agg, dict):
                 rec[field] = sum(agg.values())
             else:
                 total, count = agg
@@ -253,14 +257,14 @@ def parse_rows(csv_text):
 
 
 def to_app_rows(reps):
-    """camelCase parser dicts -> the app's rep schema (sources/base.py)."""
+    """camelCase parser dictionaries -> app rep schema."""
     rows = []
     for r in reps:
         row = {
             "rep_key": rep_key_for(r["name"]),
             "rep_name": r["name"],
             "team": r.get("team") or "Unassigned",
-            "home_branch": r.get("home_branch") or "",
+            "home_branch": r.get("home_branch") or TABLEAU_HOME_BRANCH,
             "title": r.get("title") or "",
             "hire_date": r.get("hire_date") or "",
         }
@@ -270,7 +274,7 @@ def to_app_rows(reps):
     return rows
 
 
-# ---------------------------------------------------------------- selection
+# ---------------------------------------------------------------- dates
 
 def month_range(today=None):
     """First and last day of the current month as YYYY-MM-DD."""
@@ -285,39 +289,13 @@ def month_range(today=None):
 
 
 def resolve_dates(settings, today=None):
-    """Current month unless a custom range is set and complete."""
+    """Current month unless a complete manual override is active."""
     if str(settings.get("data_date_mode") or "current_month") == "custom":
         start = str(settings.get("data_date_start") or "").strip()
         end = str(settings.get("data_date_end") or "").strip()
         if start and end:
             return start, end
     return month_range(today)
-
-
-def _names(values):
-    return {str(v).strip().lower() for v in (values or []) if str(v).strip()}
-
-
-def apply_selection(rows, settings):
-    """
-    keep rep <=> (office matches OR force-included) AND not excluded
-
-    Office "" means every office. Exclusion always wins over inclusion.
-    """
-    office = str(settings.get("data_office") or "").strip().lower()
-    include = _names(settings.get("data_include_people"))
-    exclude = _names(settings.get("data_exclude_people"))
-
-    kept = []
-    for row in rows:
-        name = str(row.get("rep_name") or "").strip().lower()
-        if name in exclude:
-            continue
-        if office and str(row.get("home_branch") or "").strip().lower() != office:
-            if name not in include:
-                continue
-        kept.append(row)
-    return kept
 
 
 # ---------------------------------------------------------------- Tableau IO
@@ -327,18 +305,25 @@ class TableauError(RuntimeError):
 
 
 class TableauSource(LeaderboardSource):
+    SERVER = TABLEAU_SERVER
+    SITE = TABLEAU_SITE
+    PAT_NAME = TABLEAU_PAT_NAME
+    VIEW_PATH = TABLEAU_VIEW_PATH
+    OFFICE = TABLEAU_HOME_BRANCH
+
     def __init__(self, config=None):
         self.config = config or {}
         self.last_offices = []
         self.last_total_rows = 0
 
-    # -- low level ---------------------------------------------------
-    def _cfg(self, key, default=""):
-        return str(self.config.get(key) or default).strip()
+    def _pat_secret(self):
+        return str(self.config.get("tableau_pat_secret") or "").strip()
 
     def _request(self, url, method="GET", token=None, body=None, timeout=60):
-        headers = {"Accept": "application/json",
-                   "User-Agent": "pi-tableau-sales-leaderboard"}
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "pi-tableau-sales-leaderboard",
+        }
         data = None
         if body is not None:
             data = json.dumps(body).encode()
@@ -354,39 +339,40 @@ class TableauSource(LeaderboardSource):
         except urllib.error.URLError as exc:
             raise TableauError(f"Could not reach Tableau: {exc.reason}")
 
-    def _api_base(self, server):
+    def _api_base(self):
         version = "3.22"
-        status, raw = self._request(f"{server}/api/{version}/serverinfo", timeout=20)
+        status, raw = self._request(f"{TABLEAU_SERVER}/api/{version}/serverinfo", timeout=20)
         if status == 200:
             try:
                 version = json.loads(raw)["serverInfo"]["restApiVersion"]
             except Exception:
                 pass
-        return f"{server}/api/{version}"
+        return f"{TABLEAU_SERVER}/api/{version}"
 
     def signin(self):
-        server = self._cfg("tableau_server").rstrip("/")
-        site = self._cfg("tableau_site")
-        pat_name = self._cfg("tableau_pat_name")
-        pat_secret = self._cfg("tableau_pat_secret")
-        if not (server and pat_name and pat_secret):
-            raise TableauError("Tableau server, token name and token secret are required.")
+        pat_secret = self._pat_secret()
+        if not pat_secret:
+            raise TableauError("Enter the Tableau PAT secret on the Pi first.")
 
-        base = self._api_base(server)
+        base = self._api_base()
         status, raw = self._request(
-            f"{base}/auth/signin", method="POST",
+            f"{base}/auth/signin",
+            method="POST",
             body={"credentials": {
-                "personalAccessTokenName": pat_name,
+                "personalAccessTokenName": TABLEAU_PAT_NAME,
                 "personalAccessTokenSecret": pat_secret,
-                "site": {"contentUrl": site},
+                "site": {"contentUrl": TABLEAU_SITE},
             }},
         )
         if status != 200:
             raise TableauError(
-                "Tableau sign-in failed. Check the token name, token secret and site."
+                "Tableau sign-in failed. Check the PAT secret for token 'leaderboard'."
             )
-        creds = json.loads(raw)["credentials"]
-        return base, creds["token"], creds["site"]["id"]
+        try:
+            creds = json.loads(raw)["credentials"]
+            return base, creds["token"], creds["site"]["id"]
+        except Exception as exc:
+            raise TableauError("Tableau sign-in returned an unexpected response.") from exc
 
     def signout(self, base, token):
         try:
@@ -394,42 +380,101 @@ class TableauSource(LeaderboardSource):
         except Exception:
             pass
 
+    @staticmethod
+    def _view_list(payload):
+        """Handle Tableau's list/single-object JSON shapes defensively."""
+        if not isinstance(payload, dict):
+            return []
+        views = payload.get("views", {}).get("view", [])
+        if isinstance(views, dict):
+            return [views]
+        if isinstance(views, list):
+            return views
+        view = payload.get("view")
+        if isinstance(view, dict):
+            return [view]
+        return []
+
+    def _workbook_id(self, base, token, site_id):
+        workbook_key = urllib.parse.quote(TABLEAU_WORKBOOK_CONTENT_URL, safe="")
+        status, raw = self._request(
+            f"{base}/sites/{site_id}/workbooks/{workbook_key}?key=contentUrl",
+            token=token,
+        )
+        if status != 200:
+            raise TableauError(
+                f"Could not find Tableau workbook '{TABLEAU_WORKBOOK_CONTENT_URL}' "
+                f"(HTTP {status})."
+            )
+        try:
+            workbook = json.loads(raw).get("workbook", {})
+            workbook_id = str(workbook.get("id") or "").strip()
+        except Exception:
+            workbook_id = ""
+        if not workbook_id:
+            raise TableauError(
+                f"Tableau workbook '{TABLEAU_WORKBOOK_CONTENT_URL}' returned no workbook id."
+            )
+        return workbook_id
+
+    def _view_id(self, base, token, site_id):
+        """Resolve the normal RepTotals view; custom views are never used."""
+        workbook_id = self._workbook_id(base, token, site_id)
+        status, raw = self._request(
+            f"{base}/sites/{site_id}/workbooks/{workbook_id}/views",
+            token=token,
+        )
+        if status != 200:
+            raise TableauError(f"Could not list views for {TABLEAU_WORKBOOK_CONTENT_URL}.")
+        try:
+            views = self._view_list(json.loads(raw))
+        except Exception:
+            views = []
+
+        target_url = TABLEAU_VIEW_URL_NAME.lower()
+        target_content_tail = f"/{TABLEAU_VIEW_URL_NAME}".lower()
+        for view in views:
+            view_url_name = str(view.get("viewUrlName") or "").strip().lower()
+            name = str(view.get("name") or "").strip().lower()
+            content_url = str(view.get("contentUrl") or "").strip().lower()
+            if (view_url_name == target_url
+                    or name == target_url
+                    or content_url.endswith(target_content_tail)
+                    or content_url.endswith(f"/sheets{target_content_tail}")):
+                view_id = str(view.get("id") or "").strip()
+                if view_id:
+                    return view_id
+
+        visible = ", ".join(
+            str(v.get("viewUrlName") or v.get("name") or v.get("contentUrl") or "?")
+            for v in views[:20]
+        ) or "(none visible)"
+        raise TableauError(
+            f"Normal view '{TABLEAU_VIEW_PATH}' was not found. Visible workbook views: {visible}"
+        )
+
     def fetch_csv(self, base, token, site_id, start, end):
-        """Locate the saved custom view, then pull its underlying view data."""
-        view_name = self._cfg("tableau_view")
-        status, raw = self._request(
-            f"{base}/sites/{site_id}/customviews?pageSize=1000", token=token)
-        if status != 200:
-            raise TableauError("Could not list Tableau custom views.")
-        views = json.loads(raw).get("customViews", {}).get("customView", [])
-        cv = next((c for c in views
-                   if str(c.get("name", "")).strip().lower() == view_name.lower()), None)
-        if not cv:
-            names = ", ".join(str(c.get("name")) for c in views[:15]) or "(none visible)"
-            raise TableauError(f"Custom view '{view_name}' not found. Visible: {names}")
-        view_id = (cv.get("view") or {}).get("id")
-        if not view_id:
-            raise TableauError("That custom view has no underlying view id.")
-
-        params = {"maxAge": "1"}
-        p_start = self._cfg("data_date_param_start", "Start")
-        p_end = self._cfg("data_date_param_end", "End")
-        if p_start and start:
-            params[f"vf_{p_start}"] = start
-        if p_end and end:
-            params[f"vf_{p_end}"] = end
+        """Pull the normal view with the exact Tableau controls shown in RepTotals."""
+        view_id = self._view_id(base, token, site_id)
+        params = {
+            "maxAge": "1",
+            f"vf_{TABLEAU_START_FIELD}": start,
+            f"vf_{TABLEAU_END_FIELD}": end,
+            f"vf_{TABLEAU_HOME_BRANCH_FIELD}": TABLEAU_HOME_BRANCH,
+        }
         query = urllib.parse.urlencode(params)
-
-        # Underlying view = the whole population, which local selection needs.
         status, raw = self._request(
-            f"{base}/sites/{site_id}/views/{view_id}/data?{query}", token=token)
+            f"{base}/sites/{site_id}/views/{view_id}/data?{query}",
+            token=token,
+        )
         if status != 200:
-            raise TableauError(f"Tableau data request failed (HTTP {status}).")
+            raise TableauError(
+                f"Tableau data request failed (HTTP {status}) for "
+                f"{TABLEAU_VIEW_PATH}, {TABLEAU_HOME_BRANCH}, {start} to {end}."
+            )
         return raw.decode("utf-8-sig", errors="replace")
 
-    # -- public ------------------------------------------------------
-    def preview(self):
-        """Sign in and pull, but return counts only. Nothing is written."""
+    def _pull_rows(self):
         start, end = resolve_dates(self.config)
         base, token, site_id = self.signin()
         try:
@@ -437,26 +482,31 @@ class TableauSource(LeaderboardSource):
         finally:
             self.signout(base, token)
         rows = to_app_rows(parse_rows(csv_text))
-        offices = sorted({str(r.get("home_branch") or "").strip()
-                          for r in rows if str(r.get("home_branch") or "").strip()})
-        selected = apply_selection(rows, self.config)
+        return start, end, rows
+
+    def preview(self):
+        """Sign in and pull counts only; nothing is written to the database."""
+        start, end, rows = self._pull_rows()
+        offices = sorted({
+            str(r.get("home_branch") or "").strip()
+            for r in rows if str(r.get("home_branch") or "").strip()
+        })
         return {
-            "start": start, "end": end,
+            "start": start,
+            "end": end,
             "total_rows": len(rows),
-            "selected_rows": len(selected),
-            "offices": offices,
+            "selected_rows": len(rows),
+            "offices": offices or [TABLEAU_HOME_BRANCH],
             "names": sorted(str(r.get("rep_name")) for r in rows),
         }
 
     def fetch(self):
-        start, end = resolve_dates(self.config)
-        base, token, site_id = self.signin()
-        try:
-            csv_text = self.fetch_csv(base, token, site_id, start, end)
-        finally:
-            self.signout(base, token)
-        rows = to_app_rows(parse_rows(csv_text))
+        _start, _end, rows = self._pull_rows()
         self.last_total_rows = len(rows)
-        self.last_offices = sorted({str(r.get("home_branch") or "").strip()
-                                    for r in rows if str(r.get("home_branch") or "").strip()})
-        return apply_selection(rows, self.config)
+        self.last_offices = sorted({
+            str(r.get("home_branch") or "").strip()
+            for r in rows if str(r.get("home_branch") or "").strip()
+        }) or [TABLEAU_HOME_BRANCH]
+        # No local include/exclude or office filtering. Tableau already returned
+        # exactly the requested Olympia population.
+        return rows
