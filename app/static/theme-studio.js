@@ -170,11 +170,15 @@
       @media(max-width:760px){
         #teamDesignOverlay{padding:0}
         #teamDesignOverlay .panel{min-height:100vh;border:0}
-        .td-colors{grid-template-columns:repeat(2,minmax(0,1fr))}
         /* Keep the pinned preview to a third of the screen so the controls
            under it still have room. */
         .td-stage{max-height:38vh}
         .td-thumb{width:72px;height:50px}
+      }
+      /* A colour row is chip + name + button; two columns cannot hold that on
+         a phone, so it stays one column until there is room for two. */
+      @media(min-width:760px){
+        .td-colors{grid-template-columns:repeat(2,minmax(0,1fr))}
       }
     `;
     document.head.appendChild(s);
