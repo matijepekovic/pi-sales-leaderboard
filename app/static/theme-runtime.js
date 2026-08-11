@@ -65,14 +65,14 @@
         object-fit:contain;align-self:center;justify-self:start;
         filter:drop-shadow(0 4px 10px rgba(0,0,0,.8));
       }
-      body.team-theme-full header.theme-office-logo-active>div:first-child{
+      header.theme-office-logo-active>div:first-child{
         display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto auto;
         column-gap:16px;align-items:center;min-width:0;
       }
-      body.team-theme-full header.theme-office-logo-active #title{
+      header.theme-office-logo-active #title{
         grid-column:2;grid-row:1;align-self:end;
       }
-      body.team-theme-full header.theme-office-logo-active .subtitle{
+      header.theme-office-logo-active .subtitle{
         grid-column:2;grid-row:2;align-self:start;
       }
       body.team-theme-full header.theme-has-hero #title{display:none}
@@ -242,7 +242,6 @@
       document.body.style.backgroundImage="none";
     }
     injectFrame(theme);
-    if(data.mode==="whole_office") injectOfficeLogo(data,theme);
 
     const header=document.querySelector("header");
     const first=header && header.querySelector(":scope > div:first-child");
@@ -313,6 +312,7 @@
     }else if(data.mode==="whole_office"){
       const winner=renderedOfficeWinner(data);
       const winningTheme=winner?lookupTheme(data,winner.team_name,winner.team_id):null;
+      if(winningTheme) injectOfficeLogo(data,winningTheme);
       applyFullTheme(data,winningTheme);
     }else{
       applyComparisonThemes(data);
