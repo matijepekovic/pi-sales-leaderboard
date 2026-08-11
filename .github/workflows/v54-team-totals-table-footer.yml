@@ -1,0 +1,21 @@
+name: v54 Team Totals Table Footer
+on:
+  push:
+    branches: [build/v54-team-totals-table-footer]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate display-only footer fix
+        run: |
+          node --check app/static/team-totals-table-footer-v54.js
+          grep -q 'board.appendChild(footer)' app/static/team-totals-table-footer-v54.js
+          grep -q 'team-totals-table-footer-v54.js?v=54' app/templates/display.html
+          test "$(tr -d '\n' < VERSION)" = "54"
+          files="$(git diff --name-only origin/main...HEAD)"
+          echo "$files"
+          bad="$(printf '%s\n' "$files" | grep -Ev '^(VERSION|app/templates/display.html|app/static/team-totals-table-footer-v54.js|\.github/workflows/v54-team-totals-table-footer.yml)$' || true)"
+          test -z "$bad"
