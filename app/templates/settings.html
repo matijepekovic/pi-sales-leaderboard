@@ -1,295 +1,97 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Leaderboard Settings</title>
-<style>
-:root{--bg:#0b0b0b;--card:#151515;--line:#303030;--text:#f4f4f4;--muted:#a0a0a0;--accent:#d8b34a;--danger:#d46b6b;--ok:#9bd39b}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font-family:Arial,Helvetica,sans-serif;padding:22px}
-.wrap{max-width:1180px;margin:0 auto} h1{margin:0 0 6px}.lead{color:var(--muted);margin:0 0 24px}
-.card{background:var(--card);border:1px solid var(--line);padding:18px;margin:14px 0}
-.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-label{display:block;font-weight:700;margin-bottom:6px}
-input,select{width:100%;padding:10px;background:#090909;color:#fff;border:1px solid #3a3a3a;font-size:16px}
-input[type=checkbox],input[type=radio]{width:18px;height:18px;padding:0}.small{color:var(--muted);font-size:13px}.strong{font-weight:900}
-.btn{padding:10px 14px;border:1px solid #444;background:#171717;color:#fff;cursor:pointer;font-size:15px}.btn:disabled{opacity:.45;cursor:not-allowed}
-.primary{background:var(--accent);color:#111;border-color:var(--accent);font-weight:900}.danger{border-color:#6b3333;color:#ffaaaa}.saved{color:var(--accent)}.ok{color:var(--ok)}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.actions{display:flex;gap:10px;position:sticky;bottom:0;background:rgba(11,11,11,.96);padding:14px 0;z-index:20}
-.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}.check{display:flex;align-items:center;gap:8px;border:1px solid #2b2b2b;padding:9px;background:#101010}.check label{margin:0}
-.persist-note{border-left:3px solid var(--accent);padding:10px 12px;background:#111;color:#ddd;margin-top:12px}
-.overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);display:none;align-items:flex-start;justify-content:center;padding:28px;overflow:auto;z-index:100}.overlay.open{display:flex}
-.panel{width:min(920px,100%);background:#111;border:1px solid #383838;padding:22px}.panel.narrow{max-width:760px}
-.builder-steps{display:flex;gap:7px;flex-wrap:wrap;margin:14px 0 20px}.builder-step{padding:7px 10px;border:1px solid #333;color:var(--muted)}.builder-step.active{border-color:var(--accent);color:var(--accent)}
-.builder-page{display:none}.builder-page.active{display:block}.builder-nav{display:flex;justify-content:space-between;gap:10px;margin-top:20px}
-.builder-list{display:grid;gap:10px;margin-top:14px}.team-summary{display:grid;grid-template-columns:72px 1fr auto;gap:12px;align-items:center;border:1px solid var(--line);padding:12px;background:#101010}
-.team-logo{width:64px;height:64px;object-fit:contain;border:1px solid #333;background:#080808}.team-logo.placeholder{display:grid;place-items:center;color:var(--muted);font-size:11px;text-align:center}.team-title{font-size:20px;font-weight:900}
-.member-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-height:420px;overflow:auto;margin-top:10px}.member-option{display:flex;align-items:center;gap:9px;border:1px solid #2b2b2b;padding:9px;background:#0c0c0c}.member-option input{flex:0 0 auto}
-.logo-preview{width:160px;height:160px;object-fit:contain;border:1px dashed #444;background:#080808;display:block;margin-top:10px}
-.assignment{display:grid;grid-template-columns:1.2fr 1fr;gap:10px;align-items:center;border:1px solid #2b2b2b;background:#101010;padding:10px}.locked-card{max-width:430px;margin:12vh auto 0;background:#111;border:1px solid #383838;padding:24px}
-.source-fixed{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}.source-fixed>div{border:1px solid #2b2b2b;background:#0c0c0c;padding:10px}.source-fixed span{display:block;color:var(--muted);font-size:12px;margin-bottom:3px}.banner{margin:10px 0;padding:10px 12px;border:1px solid #8a6d1f;background:#241d08}
-@media(max-width:760px){body{padding:12px}.grid,.grid3,.metrics,.source-fixed{grid-template-columns:1fr}.member-list{grid-template-columns:1fr}.team-summary{grid-template-columns:54px 1fr}.team-summary .team-actions{grid-column:1/-1}.team-logo{width:48px;height:48px}.assignment{grid-template-columns:1fr}}
-</style>
-</head>
-<body>
-<div id="lockOverlay" class="overlay" aria-hidden="true">
-  <div class="locked-card">
-    <h2 style="margin-top:0">Settings Locked</h2>
-    <p class="small">Enter the leaderboard settings PIN. The TV display stays unlocked.</p>
-    <label for="unlockPin">PIN</label>
-    <input id="unlockPin" type="password" inputmode="numeric" autocomplete="off">
-    <button id="unlockBtn" class="btn primary" type="button" style="width:100%;margin-top:12px">Unlock Settings</button>
-    <div id="unlockStatus" class="small" style="margin-top:10px"></div>
-  </div>
-</div>
-
-<div id="appWrap" class="wrap" style="display:none">
-  <h1>Leaderboard Settings</h1>
-  <p class="lead">The Raspberry Pi owns the TV display and team structure. Tableau only supplies sales data.</p>
-  <div class="persist-note">Settings, teams and Tableau credentials are stored on the Pi and survive reboots and software updates.</div>
-
-  <div class="card">
-    <div class="grid">
-      <div><label for="title">TV Title</label><input id="title" type="text"></div>
-      <div><label for="subtitle">Subtitle</label><input id="subtitle" type="text"></div>
-      <div><label for="activeMode">Active TV Mode</label><select id="activeMode"></select></div>
-      <div><label for="refresh">TV check interval (seconds)</label><input id="refresh" type="number" min="2" max="60"></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2 id="displaySettingsTitle">Display Settings</h2>
-    <div id="activeModeHelp" class="small"></div>
-    <div style="margin-top:12px"><label for="sortMetric">Rank By</label><select id="sortMetric"></select></div>
-    <h3>Data shown on TV</h3>
-    <div id="metricHelp" class="small"></div>
-    <div id="metrics" class="metrics"></div>
-  </div>
-
-  <div id="teamVsOverlay" class="overlay" aria-hidden="true">
-    <div class="panel narrow">
-      <div class="row" style="justify-content:space-between"><div><h2 style="margin:0">Choose Teams</h2><div class="small">Select two teams for the TV matchup.</div></div><button id="cancelTeamVs" class="btn" type="button">Cancel</button></div>
-      <div class="grid" style="margin-top:18px"><div><label for="teamVsOne">Team 1</label><select id="teamVsOne"></select></div><div><label for="teamVsTwo">Team 2</label><select id="teamVsTwo"></select></div></div>
-      <div id="teamVsHint" class="small" style="margin-top:10px"></div><div id="teamVsStatus" class="saved" style="margin-top:10px"></div>
-      <div class="row" style="justify-content:flex-end;margin-top:20px"><button id="applyTeamVs" class="btn primary" type="button">Use These Teams</button></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Team Builder</h2>
-    <p class="small">Create or edit a team in one place: name, logo, team lead and members. Moving a rep locally never changes Tableau.</p>
-    <button id="newTeamBuilder" class="btn primary" type="button">+ Create Team</button>
-    <div id="teamBuilderList" class="builder-list"></div>
-  </div>
-
-  <div id="teamBuilderOverlay" class="overlay" aria-hidden="true">
-    <div class="panel">
-      <div class="row" style="justify-content:space-between"><div><h2 id="builderTitle" style="margin:0">Create Team</h2><div class="small">Build the team step by step.</div></div><button id="closeBuilder" class="btn" type="button">Close</button></div>
-      <div class="builder-steps"><div class="builder-step active" data-step-indicator="0">1. Name</div><div class="builder-step" data-step-indicator="1">2. Logo</div><div class="builder-step" data-step-indicator="2">3. Team Lead</div><div class="builder-step" data-step-indicator="3">4. Members</div><div class="builder-step" data-step-indicator="4">5. Review</div></div>
-      <section class="builder-page active" data-builder-page="0"><label for="builderTeamName">Team Name</label><input id="builderTeamName" type="text" placeholder="Example: Undisputed"></section>
-      <section class="builder-page" data-builder-page="1"><label for="builderLogo">Team Logo</label><input id="builderLogo" type="file" accept="image/png,image/jpeg,image/webp"><img id="builderLogoPreview" class="logo-preview" alt="Team logo preview" style="display:none"><div class="small" style="margin-top:8px">PNG, JPG or WEBP. Maximum 5 MB.</div><button id="removeBuilderLogo" class="btn danger" type="button" style="margin-top:10px;display:none">Remove Logo</button></section>
-      <section class="builder-page" data-builder-page="2"><label for="builderLeader">Team Lead</label><select id="builderLeader"></select><label for="builderLeaderRole" style="margin-top:12px">Role</label><select id="builderLeaderRole"><option>Sales Manager</option><option>SMIT</option><option>General Manager</option><option>Other</option></select></section>
-      <section class="builder-page" data-builder-page="3"><div class="grid"><div><label for="memberSearch">Add Members</label><input id="memberSearch" type="text" placeholder="Search reps"></div><div><label>Selected</label><div id="selectedMemberCount" class="strong" style="padding:10px 0">0 members</div></div></div><div id="builderMembers" class="member-list"></div></section>
-      <section class="builder-page" data-builder-page="4"><h3>Review Team</h3><div id="builderReview"></div></section>
-      <div class="builder-nav"><button id="builderBack" class="btn" type="button">Back</button><div><button id="builderNext" class="btn primary" type="button">Next</button><button id="builderSave" class="btn primary" type="button" style="display:none">Save Team</button></div></div>
-      <div id="builderStatus" class="saved" style="margin-top:10px"></div>
-    </div>
-  </div>
-
-  <div id="deleteTeamOverlay" class="overlay" aria-hidden="true">
-    <div class="panel narrow">
-      <div class="row" style="justify-content:space-between"><div><h2 id="deleteTeamTitle" style="margin:0">Delete Team</h2><div id="deleteTeamMessage" class="small"></div></div><button id="cancelDeleteTeam" class="btn" type="button">Cancel</button></div>
-      <div id="deleteTeamAssignments" class="builder-list" style="margin-top:18px"></div><div id="deleteTeamStatus" class="saved" style="margin-top:12px"></div>
-      <div class="row" style="justify-content:flex-end;margin-top:20px"><button id="confirmDeleteTeam" class="btn danger" type="button">Reassign & Delete Team</button></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Data Source</h2>
-    <p id="sourceStatusLine"><strong>Checking Tableau status…</strong></p>
-    <div id="dateOverrideBanner" class="banner" style="display:none"><strong>Date override active.</strong> <span id="dateOverrideText" class="small"></span><br><button id="clearOverrideQuick" class="btn" type="button" style="margin-top:8px">Use Current Month</button></div>
-    <p class="small">The pull is fixed to the Olympia Rep Totals view. The Pi sends Start, End and Home Branch directly to Tableau; no custom view, rep include list, rep exclude list or local office filter is used.</p>
-    <div class="row"><button id="openDataSource" class="btn primary" type="button">Tableau Data Source</button><button id="pullNowOutside" class="btn" type="button">Pull From Tableau Now</button><button id="loadDemo" class="btn" type="button">Reload Sample Data</button></div>
-    <div id="sourceStatusMsg" class="small" style="margin-top:10px"></div>
-  </div>
-
-  <div id="dataSourceOverlay" class="overlay" aria-hidden="true">
-    <div class="panel" style="max-width:820px">
-      <div class="row" style="justify-content:space-between"><div><h2 style="margin:0">Tableau Data Source</h2><div class="small">Everything except the PAT secret is fixed for this leaderboard.</div></div><button id="closeDataSource" class="btn" type="button">Close</button></div>
-      <div class="source-fixed">
-        <div><span>Tableau Cloud</span><strong>10ay.online.tableau.com</strong></div>
-        <div><span>Site</span><strong>dabella</strong></div>
-        <div><span>View</span><strong>8-SalesRepLevelData / RepTotals</strong></div>
-        <div><span>Home Branch</span><strong>Olympia</strong></div>
-        <div><span>PAT name</span><strong>leaderboard</strong></div>
-        <div><span>Filters sent</span><strong>Start · End · Home Branch</strong></div>
-      </div>
-      <h3 style="margin:22px 0 6px">Authentication</h3>
-      <label for="tabPatSecret">PAT secret</label><input id="tabPatSecret" type="password" autocomplete="new-password" placeholder="Paste PAT secret"><div id="tabSecretState" class="small" style="margin-top:7px"></div>
-      <h3 style="margin:22px 0 6px">Dates</h3>
-      <label class="row" style="margin-bottom:10px"><input type="radio" name="dateMode" id="dateModeMonth" value="current_month"><span>Current calendar month automatically</span></label>
-      <label class="row"><input type="radio" name="dateMode" id="dateModeCustom" value="custom"><span>Override Start / End</span></label>
-      <div id="customDateRow" class="grid" style="margin-top:12px"><div><label for="dateStart">Start</label><input id="dateStart" type="date"></div><div><label for="dateEnd">End</label><input id="dateEnd" type="date"></div></div>
-      <div id="effectiveDates" class="small" style="margin-top:9px"></div>
-      <div id="dataSourceStatus" class="small" style="margin-top:16px"></div>
-      <div class="row" style="justify-content:flex-end;margin-top:14px"><button id="useCurrentMonth" class="btn" type="button">Use Current Month</button><button id="testTableau" class="btn" type="button">Test Connection</button><button id="pullNow" class="btn" type="button">Save & Pull Now</button><button id="saveDataSource" class="btn primary" type="button">Save</button></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>TV Controls</h2><p class="small">Control the fullscreen office TV from this settings page.</p>
-    <div class="row"><button id="refreshTV" class="btn primary" type="button">Refresh TV View</button><button id="fullscreenTV" class="btn" type="button">Force Fullscreen TV</button><button id="restartTV" class="btn" type="button">Restart Leaderboard App</button></div><div id="tvControlStatus" class="small" style="margin-top:10px"></div>
-  </div>
-
-  <div class="card">
-    <h2>Software Update</h2><p class="small">Updates replace application files only. Teams, assignments, settings and the PAT secret live in the Pi's persistent database.</p>
-    <div><strong>Installed version: <span id="softwareVersion">checking…</span></strong></div>
-    <div class="grid" style="margin-top:14px"><div><label for="updateFile">Leaderboard update ZIP</label><input id="updateFile" type="file" accept=".zip,application/zip"></div><div style="display:flex;align-items:end"><button id="installUpdate" class="btn primary" type="button">Install Update</button></div></div><div id="updateStatus" class="small" style="margin-top:12px"></div>
-    <div style="border-top:1px solid var(--line);margin-top:20px;padding-top:18px"><h3 style="margin-top:0">Automatic GitHub Updates</h3><div class="grid"><div><label for="githubRepo">Public GitHub repository</label><input id="githubRepo" type="text" placeholder="username/repository"></div><div><label class="row" style="margin-top:27px"><input id="githubAutoUpdate" type="checkbox"><span>Automatically install newer versions</span></label></div></div><div class="row" style="margin-top:12px"><button id="checkGithub" class="btn" type="button">Check GitHub Now</button></div><div id="githubUpdateStatus" class="small" style="margin-top:10px"></div></div>
-  </div>
-
-  <div class="card">
-    <h2>Settings Lock</h2><p class="small">Anyone on this network can open settings unless a PIN is set. The TV display is never locked.</p>
-    <div class="grid"><div><label for="pinCurrent">Current PIN</label><input id="pinCurrent" type="password" inputmode="numeric" autocomplete="off"></div><div><label for="pinNew">New PIN (4+ digits; blank removes it)</label><input id="pinNew" type="password" inputmode="numeric" autocomplete="off"></div></div>
-    <div class="row" style="margin-top:12px"><button id="savePin" class="btn primary" type="button">Save PIN</button><button id="lockNow" class="btn" type="button">Lock Settings Now</button></div><div id="pinStatus" class="small" style="margin-top:10px"></div>
-  </div>
-
-  <div class="actions"><button id="save" class="btn primary" type="button">Save Display Settings</button><button id="openTV" class="btn" type="button">Open TV View</button><span id="saved" class="saved"></span></div>
-</div>
-
+{% include "settings_v34_base.html" %}
 <script>
-const $=id=>document.getElementById(id);
-const FIXED_SOURCE={
-  tableau_server:"https://10ay.online.tableau.com",
-  tableau_site:"dabella",
-  tableau_pat_name:"leaderboard",
-  tableau_view:"8-SalesRepLevelData/RepTotals",
-  data_office:"Olympia",
-  data_date_param_start:"Start",
-  data_date_param_end:"End",
-  data_include_people:[],
-  data_exclude_people:[]
-};
-let config={},metrics=[],modes=[],teams=[],teamDefs=[],reps=[],leaderCandidates=[];
-let displayMode="whole_office";
+/* v35 Team Builder workflow patch.
+   Members are chosen before the team lead, and the lead can only be one of
+   the reps selected for this team. The underlying v34 settings page remains
+   intact so every existing control keeps working. */
+(function(){
+  const overlay=document.getElementById("teamBuilderOverlay");
+  if(!overlay) return;
 
-function escapeHtml(v){return String(v??"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function escapeAttr(v){return escapeHtml(v);}
-function openOverlay(id){$(id).classList.add("open");$(id).setAttribute("aria-hidden","false");}
-function closeOverlay(id){$(id).classList.remove("open");$(id).setAttribute("aria-hidden","true");}
-async function request(path,options={}){
-  const r=await fetch(path,options);
-  let d={}; try{d=await r.json();}catch(e){}
-  if(r.status===401 && d.locked){showLock();throw new Error("locked");}
-  return {r,d};
-}
+  const indicators=overlay.querySelectorAll("[data-step-indicator]");
+  if(indicators.length>=4){
+    indicators[2].textContent="3. Members";
+    indicators[3].textContent="4. Team Lead";
+  }
 
-function showLock(){openOverlay("lockOverlay");$("appWrap").style.display="none";setTimeout(()=>$("unlockPin").focus(),50);}
-function hideLock(){closeOverlay("lockOverlay");$("appWrap").style.display="";}
-async function boot(){
-  try{
-    const r=await fetch("/api/auth/status",{cache:"no-store"});const d=await r.json();
-    if(d.pin_set && !d.unlocked){showLock();return;}
-    hideLock();await load();
-  }catch(e){showLock();$("unlockStatus").textContent="Could not reach the leaderboard app.";}
-}
-$("unlockBtn").addEventListener("click",async()=>{
-  const pin=$("unlockPin").value.trim();$("unlockStatus").textContent="Checking…";
-  const r=await fetch("/api/auth/unlock",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pin})});const d=await r.json();
-  if(!r.ok){$("unlockStatus").textContent=d.error||"Incorrect PIN.";return;}
-  $("unlockPin").value="";$("unlockStatus").textContent="";hideLock();await load();
-});
-$("unlockPin").addEventListener("keydown",e=>{if(e.key==="Enter")$("unlockBtn").click();});
+  const leaderPage=overlay.querySelector('[data-builder-page="2"]');
+  const memberPage=overlay.querySelector('[data-builder-page="3"]');
+  if(leaderPage && memberPage){
+    leaderPage.dataset.builderPage="3";
+    memberPage.dataset.builderPage="2";
+    leaderPage.parentNode.insertBefore(memberPage,leaderPage);
 
-async function load(){
-  const {r,d}=await request("/api/config",{cache:"no-store"}); if(!r.ok)return;
-  config=d.settings||{};metrics=d.metrics||[];modes=d.modes||[];teams=d.teams||[];teamDefs=d.team_definitions||[];reps=d.reps||[];leaderCandidates=d.leader_candidates||[];
-  $("title").value=config.title||"";$("subtitle").value=config.subtitle||"";$("refresh").value=config.display_refresh_seconds||5;
-  $("githubRepo").value=config.github_repo||"";$("githubAutoUpdate").checked=!!config.github_auto_update;
-  renderTeamSelectors();renderTeamBuilderList();renderMode();applyDataSourceForm();
-  await Promise.all([loadSourceStatus(),loadVersion(),loadGithubStatus()]);
-}
+    const leaderSelect=document.getElementById("builderLeader");
+    if(leaderSelect && !document.getElementById("builderLeaderHelp")){
+      const help=document.createElement("div");
+      help.id="builderLeaderHelp";
+      help.className="small";
+      help.style.margin="0 0 8px";
+      help.textContent="Choose the team lead from the reps assigned in the previous step.";
+      leaderSelect.parentNode.insertBefore(help,leaderSelect);
+    }
+  }
 
-function parseActive(value){value=String(value||"").trim();if(value.startsWith("per_team::"))return{mode:"per_team",team:value.split("::",2)[1]||""};return{mode:value,team:""};}
-function activeLabel(value){const p=parseActive(value);if(p.mode==="per_team")return p.team||"Team";return p.mode==="whole_office"?"Whole office":p.mode==="team_vs_team"?"Team vs team":p.mode==="all_teams"?"All teams":"TV";}
-function activeModeOptions(){
-  const base=[['whole_office','Whole office'],['team_vs_team','Team vs team'],['all_teams','All teams']].map(([k,l])=>`<option value="${k}">${l}</option>`);
-  return base.concat(teamDefs.map(t=>`<option value="per_team::${escapeAttr(t.name)}">${escapeHtml(t.name)}</option>`)).join("");
-}
-function renderTeamSelectors(){
-  const current=String(config.active_mode||"whole_office");$("activeMode").innerHTML=activeModeOptions();
-  if($("activeMode").querySelector(`option[value="${CSS.escape(current)}"]`))$("activeMode").value=current;else $("activeMode").value="whole_office";
-  config.active_mode=$("activeMode").value;displayMode=parseActive(config.active_mode).mode;
-  const opts=['<option value="">Choose team…</option>'].concat(teamDefs.map(t=>`<option value="${escapeAttr(t.name)}">${escapeHtml(t.name)} (${t.rep_count||0})</option>`)).join("");
-  $("teamVsOne").innerHTML=opts;$("teamVsTwo").innerHTML=opts;const s=[...new Set(config.team_vs_team_selected||[])].slice(0,2);$("teamVsOne").value=s[0]||"";$("teamVsTwo").value=s[1]||"";syncTeamVs();
-}
-const TEAM_HIDDEN=new Set(["team","home_branch","title","hire_date"]);
-function metricsForMode(mode){if(mode==="all_teams")return metrics.filter(m=>["number","percent","currency"].includes(m.type));if(["team_vs_team","per_team"].includes(mode))return metrics.filter(m=>!TEAM_HIDDEN.has(m.key));return metrics;}
-function renderMode(){
-  const label=activeLabel($("activeMode").value||config.active_mode);$("displaySettingsTitle").textContent=`${label} Display Settings`;$("activeModeHelp").textContent=`These controls edit ${label}, the current Active TV Mode.`;
-  $("sortMetric").innerHTML=metrics.filter(m=>["number","percent","currency"].includes(m.type)).map(m=>`<option value="${m.key}">${escapeHtml(m.label)}</option>`).join("");$("sortMetric").value=(config.sort_metric||{})[displayMode]||"net_split";
-  const visible=new Set((config.visible_metrics||{})[displayMode]||[]);const available=metricsForMode(displayMode);
-  $("metricHelp").textContent=displayMode==="team_vs_team"?"Selected numeric stats appear for both team totals and reps.":displayMode==="all_teams"?"All Teams shows team stats plus each team's MVP.":"Turn fields on or off for this view.";
-  $("metrics").innerHTML=available.map(m=>`<div class="check"><input type="checkbox" class="metricCheck" id="metric-${m.key}" value="${m.key}" ${visible.has(m.key)?"checked":""}><label for="metric-${m.key}">${escapeHtml(m.label)}</label></div>`).join("");
-}
-function persistMode(mode=displayMode){if(!config.sort_metric)config.sort_metric={};if(!config.visible_metrics)config.visible_metrics={};config.sort_metric[mode]=$("sortMetric").value;config.visible_metrics[mode]=Array.from(document.querySelectorAll(".metricCheck:checked")).map(x=>x.value);}
-$("activeMode").addEventListener("change",()=>{persistMode(displayMode);const next=$("activeMode").value,p=parseActive(next);if(p.mode==="team_vs_team"){openTeamVs();return;}config.active_mode=next;displayMode=p.mode;if(p.mode==="per_team")config.per_team_selected=p.team;renderMode();});
-function syncTeamVs(){const a=$("teamVsOne").value,b=$("teamVsTwo").value;Array.from($("teamVsOne").options).forEach(o=>o.disabled=!!b&&o.value===b);Array.from($("teamVsTwo").options).forEach(o=>o.disabled=!!a&&o.value===a);$("teamVsHint").textContent=a&&b?`${a} vs ${b}`:"Choose two different teams.";}
-function openTeamVs(){const s=[...new Set(config.team_vs_team_selected||[])].slice(0,2);$("teamVsOne").value=s[0]||"";$("teamVsTwo").value=s[1]||"";syncTeamVs();$("teamVsStatus").textContent="";openOverlay("teamVsOverlay");}
-$("teamVsOne").addEventListener("change",syncTeamVs);$("teamVsTwo").addEventListener("change",syncTeamVs);
-$("cancelTeamVs").addEventListener("click",()=>{closeOverlay("teamVsOverlay");$("activeMode").value=config.active_mode;});
-$("applyTeamVs").addEventListener("click",()=>{const a=$("teamVsOne").value,b=$("teamVsTwo").value;if(!a||!b){$("teamVsStatus").textContent="Choose two teams.";return;}if(a===b){$("teamVsStatus").textContent="Choose two different teams.";return;}config.team_vs_team_selected=[a,b];config.active_mode="team_vs_team";displayMode="team_vs_team";closeOverlay("teamVsOverlay");$("activeMode").value="team_vs_team";renderMode();});
+  function selectedMembers(){
+    return (reps||[])
+      .filter(r=>builderMembers.has(String(r.rep_key)))
+      .sort((a,b)=>String(a.rep_name||"").localeCompare(String(b.rep_name||"")));
+  }
 
-async function refreshOrg(){const {r,d}=await request("/api/config",{cache:"no-store"});if(!r.ok)return;teams=d.teams||[];teamDefs=d.team_definitions||[];reps=d.reps||[];leaderCandidates=d.leader_candidates||[];renderTeamSelectors();renderTeamBuilderList();renderMode();}
-function teamById(id){return teamDefs.find(t=>Number(t.team_id)===Number(id));}
-function leaderOptions(current=""){const map=new Map();leaderCandidates.forEach(c=>{const n=String(c.name||"").trim();if(n)map.set(n.toLowerCase(),{name:n,source:c.source||""});});if(current&&!map.has(current.toLowerCase()))map.set(current.toLowerCase(),{name:current,source:"Saved Leader"});return '<option value="">No Leader</option>'+Array.from(map.values()).sort((a,b)=>a.name.localeCompare(b.name)).map(c=>`<option value="${escapeAttr(c.name)}" ${c.name===current?"selected":""}>${escapeHtml(c.name)}${c.source?` — ${escapeHtml(c.source)}`:""}</option>`).join("");}
-function renderTeamBuilderList(){
-  $("teamBuilderList").innerHTML=teamDefs.map(t=>{const lead=t.leader||(t.leads||[])[0];const logo=t.logo_url?`<img class="team-logo" src="${t.logo_url}" alt="${escapeAttr(t.name)} logo">`:'<div class="team-logo placeholder">NO<br>LOGO</div>';return `<div class="team-summary">${logo}<div><div class="team-title">${escapeHtml(t.name)}</div><div class="small">${t.rep_count||0} members</div><div class="small">${lead?`Lead: ${escapeHtml(lead.lead_name)} · ${escapeHtml(lead.lead_role)}`:"No team lead"}</div></div><div class="team-actions"><button class="btn editTeam" data-team-id="${t.team_id}">Edit Team</button> <button class="btn danger deleteTeam" data-team-id="${t.team_id}">Delete Team</button></div></div>`;}).join("")||'<div class="small">No teams created yet.</div>';
-  document.querySelectorAll(".editTeam").forEach(b=>b.addEventListener("click",()=>openTeamBuilder(Number(b.dataset.teamId))));document.querySelectorAll(".deleteTeam").forEach(b=>b.addEventListener("click",()=>openDeleteTeam(Number(b.dataset.teamId))));
-}
-let builderStep=0,builderTeamId=null,builderExistingLogo=null,builderRemoveLogo=false,builderMembers=new Set();
-function openTeamBuilder(id=null){builderTeamId=id;builderStep=0;builderRemoveLogo=false;builderMembers=new Set();const t=id?teamById(id):null,lead=t?.leader||(t?.leads||[])[0];$("builderTitle").textContent=t?`Edit ${t.name}`:"Create Team";$("builderTeamName").value=t?.name||"";$("builderLeader").innerHTML=leaderOptions(lead?.lead_name||"");$("builderLeader").value=lead?.lead_name||"";$("builderLeaderRole").value=lead?.lead_role||"Sales Manager";builderExistingLogo=t?.logo_url||null;$("builderLogo").value="";if(builderExistingLogo){$("builderLogoPreview").src=builderExistingLogo;$("builderLogoPreview").style.display="block";$("removeBuilderLogo").style.display="inline-block";}else{$("builderLogoPreview").style.display="none";$("removeBuilderLogo").style.display="none";}(t?.member_rep_keys||[]).forEach(k=>builderMembers.add(String(k)));$("memberSearch").value="";renderBuilderMembers();setBuilderStep(0);$("builderStatus").textContent="";openOverlay("teamBuilderOverlay");}
-function setBuilderStep(n){builderStep=Math.max(0,Math.min(4,n));document.querySelectorAll("[data-builder-page]").forEach(e=>e.classList.toggle("active",Number(e.dataset.builderPage)===builderStep));document.querySelectorAll("[data-step-indicator]").forEach(e=>e.classList.toggle("active",Number(e.dataset.stepIndicator)===builderStep));$("builderBack").style.visibility=builderStep===0?"hidden":"visible";$("builderNext").style.display=builderStep===4?"none":"inline-block";$("builderSave").style.display=builderStep===4?"inline-block":"none";if(builderStep===4)renderBuilderReview();}
-function renderBuilderMembers(){const q=$("memberSearch").value.trim().toLowerCase();$("builderMembers").innerHTML=[...reps].sort((a,b)=>String(a.rep_name).localeCompare(String(b.rep_name))).filter(r=>!q||String(r.rep_name||"").toLowerCase().includes(q)||String(r.effective_team||"").toLowerCase().includes(q)).map(r=>{const key=String(r.rep_key),checked=builderMembers.has(key),note=r.assigned_team_id&&Number(r.assigned_team_id)!==Number(builderTeamId)?`Currently: ${escapeHtml(r.effective_team)}`:`Tableau: ${escapeHtml(r.tableau_team)}`;return `<label class="member-option"><input type="checkbox" class="builderMember" value="${escapeAttr(key)}" ${checked?"checked":""}><span><strong>${escapeHtml(r.rep_name)}</strong><br><span class="small">${note}</span></span></label>`;}).join("");document.querySelectorAll(".builderMember").forEach(c=>c.addEventListener("change",()=>{c.checked?builderMembers.add(String(c.value)):builderMembers.delete(String(c.value));$("selectedMemberCount").textContent=`${builderMembers.size} member${builderMembers.size===1?"":"s"}`;}));$("selectedMemberCount").textContent=`${builderMembers.size} member${builderMembers.size===1?"":"s"}`;}
-function renderBuilderReview(){const names=reps.filter(r=>builderMembers.has(String(r.rep_key))).map(r=>r.rep_name);const logo=builderRemoveLogo?"Remove existing logo":$("builderLogo").files[0]?$("builderLogo").files[0].name:builderExistingLogo?"Keep existing logo":"No logo";$("builderReview").innerHTML=`<div class="card" style="margin:0"><div><strong>Team:</strong> ${escapeHtml($("builderTeamName").value.trim()||"Unnamed Team")}</div><div style="margin-top:8px"><strong>Logo:</strong> ${escapeHtml(logo)}</div><div style="margin-top:8px"><strong>Lead:</strong> ${escapeHtml($("builderLeader").value||"No Leader")}</div><div style="margin-top:8px"><strong>Members (${names.length}):</strong></div><div class="small" style="margin-top:6px">${names.length?names.map(escapeHtml).join(", "):"No members selected"}</div></div>`;}
-async function saveTeamBuilder(){const name=$("builderTeamName").value.trim();if(!name){setBuilderStep(0);$("builderStatus").textContent="Choose a team name.";return;}$("builderSave").disabled=true;$("builderStatus").textContent="Saving…";const {r,d}=await request("/api/team-builder/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({team_id:builderTeamId,name,leader_name:$("builderLeader").value||"",leader_role:$("builderLeaderRole").value,member_rep_keys:Array.from(builderMembers)})});if(!r.ok){$("builderStatus").textContent=d.error||"Could not save team.";$("builderSave").disabled=false;return;}const id=d.team_id;if(builderRemoveLogo)await request(`/api/teams/${id}/logo`,{method:"DELETE"});else if($("builderLogo").files[0]){const f=new FormData();f.append("logo",$("builderLogo").files[0]);const lr=await fetch(`/api/teams/${id}/logo`,{method:"POST",body:f});const ld=await lr.json();if(!lr.ok){$("builderStatus").textContent=`Team saved, logo failed: ${ld.error||"unknown error"}`;$("builderSave").disabled=false;await refreshOrg();return;}}$("builderStatus").textContent="Team saved.";await refreshOrg();setTimeout(()=>{closeOverlay("teamBuilderOverlay");$("builderSave").disabled=false;},500);}
-$("newTeamBuilder").addEventListener("click",()=>openTeamBuilder());$("closeBuilder").addEventListener("click",()=>closeOverlay("teamBuilderOverlay"));$("builderBack").addEventListener("click",()=>setBuilderStep(builderStep-1));$("builderNext").addEventListener("click",()=>{if(builderStep===0&&!$("builderTeamName").value.trim()){$("builderStatus").textContent="Choose a team name first.";return;}$("builderStatus").textContent="";setBuilderStep(builderStep+1);});$("builderSave").addEventListener("click",saveTeamBuilder);$("memberSearch").addEventListener("input",renderBuilderMembers);$("builderLogo").addEventListener("change",()=>{builderRemoveLogo=false;const f=$("builderLogo").files[0];if(f){$("builderLogoPreview").src=URL.createObjectURL(f);$("builderLogoPreview").style.display="block";$("removeBuilderLogo").style.display="inline-block";}});$("removeBuilderLogo").addEventListener("click",()=>{builderRemoveLogo=true;$("builderLogo").value="";$("builderLogoPreview").style.display="none";$("removeBuilderLogo").style.display="none";});
-let deletingTeam=null;
-function closeDelete(){deletingTeam=null;closeOverlay("deleteTeamOverlay");$("deleteTeamStatus").textContent="";}
-async function openDeleteTeam(id){const t=teamById(id);if(!t)return;const keys=new Set((t.member_rep_keys||[]).map(String)),members=reps.filter(r=>keys.has(String(r.rep_key))).sort((a,b)=>String(a.rep_name).localeCompare(String(b.rep_name))),dest=teamDefs.filter(x=>Number(x.team_id)!==Number(id));if(!members.length){if(!confirm(`Delete ${t.name}?`))return;const {r,d}=await request(`/api/teams/${id}`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({reassignments:[]})});if(!r.ok){alert(d.error||"Could not delete team.");return;}await refreshOrg();return;}deletingTeam=id;$("deleteTeamTitle").textContent=`Delete ${t.name}`;$("deleteTeamMessage").textContent=`${members.length} reps must be reassigned first.`;if(!dest.length){$("deleteTeamAssignments").innerHTML='<div class="card" style="margin:0"><strong>Create another team first.</strong></div>';$("confirmDeleteTeam").disabled=true;}else{$("confirmDeleteTeam").disabled=false;const opts=dest.map(x=>`<option value="${x.team_id}">${escapeHtml(x.name)}</option>`).join("");$("deleteTeamAssignments").innerHTML=members.map(r=>`<div class="assignment"><strong>${escapeHtml(r.rep_name)}</strong><select class="deleteDestination" data-rep-key="${escapeAttr(r.rep_key)}"><option value="">Choose team…</option>${opts}</select></div>`).join("");}openOverlay("deleteTeamOverlay");}
-$("cancelDeleteTeam").addEventListener("click",closeDelete);$("confirmDeleteTeam").addEventListener("click",async()=>{if(!deletingTeam)return;const ss=Array.from(document.querySelectorAll(".deleteDestination"));if(ss.some(s=>!s.value)){$("deleteTeamStatus").textContent="Choose a destination for every rep.";return;}$("confirmDeleteTeam").disabled=true;const reassignments=ss.map(s=>({rep_key:s.dataset.repKey,team_id:Number(s.value)}));const {r,d}=await request(`/api/teams/${deletingTeam}`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({reassignments})});if(!r.ok){$("deleteTeamStatus").textContent=d.error||"Could not delete team.";$("confirmDeleteTeam").disabled=false;return;}$("deleteTeamStatus").textContent=`Deleted ${d.deleted_team}.`;await refreshOrg();setTimeout(()=>{closeDelete();$("confirmDeleteTeam").disabled=false;},500);});
+  function renderLeaderFromMembers(preferred){
+    const select=document.getElementById("builderLeader");
+    if(!select) return;
+    const members=selectedMembers();
+    const current=String(preferred!==undefined?preferred:(select.value||""));
+    const valid=members.some(r=>String(r.rep_name||"")===current);
 
-/* Tableau: fixed target, secret + date override only. */
-function syncDateMode(){const custom=$("dateModeCustom").checked;$("customDateRow").style.display=custom?"":"none";}
-$("dateModeMonth").addEventListener("change",syncDateMode);$("dateModeCustom").addEventListener("change",syncDateMode);
-function applyDataSourceForm(){const custom=(config.data_date_mode||"current_month")==="custom";$("dateModeCustom").checked=custom;$("dateModeMonth").checked=!custom;$("dateStart").value=config.data_date_start||"";$("dateEnd").value=config.data_date_end||"";$("tabPatSecret").value="";$("tabSecretState").textContent=config.tableau_pat_configured?"PAT secret is saved on the Pi. Leave blank to keep it.":"No PAT secret is saved yet.";syncDateMode();updateOverrideBanner();}
-function updateOverrideBanner(){const custom=(config.data_date_mode||"current_month")==="custom",s=config.data_date_start||"",e=config.data_date_end||"";$("dateOverrideBanner").style.display=custom&&s&&e?"":"none";$("dateOverrideText").textContent=custom&&s&&e?`Pulling ${s} through ${e} instead of the current month.`:"";}
-function collectDataSource(){const p={...FIXED_SOURCE,data_date_mode:$("dateModeCustom").checked?"custom":"current_month",data_date_start:$("dateStart").value,data_date_end:$("dateEnd").value};const secret=$("tabPatSecret").value.trim();if(secret)p.tableau_pat_secret=secret;return p;}
-async function saveDataSource(closeAfter=false){$("dataSourceStatus").textContent="Saving…";const {r,d}=await request("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({...config,...collectDataSource()})});if(!r.ok){$("dataSourceStatus").textContent=d.error||"Could not save.";return false;}config=d.settings;$("tabPatSecret").value="";applyDataSourceForm();$("dataSourceStatus").textContent="Saved.";await loadSourceStatus();if(closeAfter)closeOverlay("dataSourceOverlay");return true;}
-async function loadSourceStatus(){try{const {r,d}=await request("/api/source/options",{cache:"no-store"});if(!r.ok)return;$("effectiveDates").textContent=`Effective pull: ${d.effective_start} through ${d.effective_end} · Home Branch: Olympia`;if(d.source_status)$("sourceStatusLine").innerHTML=`<strong>${escapeHtml(d.source_status)}</strong>`;if(d.last_source_refresh)$("sourceStatusMsg").textContent=`Last refreshed ${d.last_source_refresh}.`;}catch(e){}}
-async function pullTableau(statusEl){statusEl.textContent="Pulling Olympia from Tableau…";try{const {r,d}=await request("/api/source/refresh",{method:"POST"});statusEl.textContent=r.ok?`Tableau — ${d.rows} Olympia reps, ${d.start} through ${d.end}.`:(d.error||"Pull failed.");if(r.ok){await refreshOrg();await loadSourceStatus();}}catch(e){if(e.message!=="locked")statusEl.textContent="Could not reach the Pi.";}}
-$("openDataSource").addEventListener("click",async()=>{applyDataSourceForm();await loadSourceStatus();$("dataSourceStatus").textContent="";openOverlay("dataSourceOverlay");});$("closeDataSource").addEventListener("click",()=>closeOverlay("dataSourceOverlay"));$("saveDataSource").addEventListener("click",()=>saveDataSource(true));
-$("useCurrentMonth").addEventListener("click",()=>{$("dateModeMonth").checked=true;syncDateMode();$("dataSourceStatus").textContent="Current month selected. Save to apply.";});
-$("clearOverrideQuick").addEventListener("click",async()=>{config.data_date_mode="current_month";const {r,d}=await request("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({...config,...FIXED_SOURCE})});if(r.ok){config=d.settings;applyDataSourceForm();await loadSourceStatus();}});
-$("testTableau").addEventListener("click",async()=>{$("dataSourceStatus").textContent="Saving, then testing…";if(!await saveDataSource(false))return;$("dataSourceStatus").textContent="Contacting Tableau…";const {r,d}=await request("/api/source/test",{method:"POST"});$("dataSourceStatus").textContent=r.ok?`Connected. ${d.total_rows} Olympia reps for ${d.start} through ${d.end}.`:(d.error||"Test failed.");});
-$("pullNow").addEventListener("click",async()=>{if(await saveDataSource(false))await pullTableau($("dataSourceStatus"));});$("pullNowOutside").addEventListener("click",()=>pullTableau($("sourceStatusMsg")));$("loadDemo").addEventListener("click",async()=>{await request("/api/demo/load",{method:"POST"});await refreshOrg();await loadSourceStatus();});
+    if(!members.length){
+      select.innerHTML='<option value="">No members selected</option>';
+      select.value="";
+      return;
+    }
 
-$("save").addEventListener("click",async()=>{persistMode(displayMode);config.active_mode=$("activeMode").value;config.title=$("title").value;config.subtitle=$("subtitle").value;config.display_refresh_seconds=Number($("refresh").value||5);config.github_repo=$("githubRepo").value.trim();config.github_auto_update=$("githubAutoUpdate").checked;config.show_team_members_in_vs=true;const p=parseActive(config.active_mode);if(p.mode==="per_team")config.per_team_selected=p.team||"";const {r,d}=await request("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(config)});if(!r.ok){alert(d.error||"Could not save settings.");return;}config=d.settings;$("saved").textContent="Saved permanently.";setTimeout(()=>$("saved").textContent="",2500);});$("openTV").addEventListener("click",()=>window.open("/","_blank"));
+    select.innerHTML='<option value="">No Leader</option>'+members.map(r=>
+      `<option value="${escapeAttr(r.rep_name)}">${escapeHtml(r.rep_name)}</option>`
+    ).join("");
+    select.value=valid?current:"";
+  }
 
-$("savePin").addEventListener("click",async()=>{const {r,d}=await request("/api/auth/pin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({current_pin:$("pinCurrent").value.trim(),new_pin:$("pinNew").value.trim()})});$("pinStatus").textContent=r.ok?(d.pin_set?"PIN saved.":"PIN removed."):(d.error||"Could not save PIN.");if(r.ok){$("pinCurrent").value="";$("pinNew").value="";}});$("lockNow").addEventListener("click",async()=>{await fetch("/api/auth/lock",{method:"POST"});location.reload();});
+  const originalSetBuilderStep=setBuilderStep;
+  setBuilderStep=function(n){
+    originalSetBuilderStep(n);
+    if(builderStep===3) renderLeaderFromMembers(document.getElementById("builderLeader").value||"");
+  };
 
-async function loadVersion(){try{const r=await fetch("/api/system/version",{cache:"no-store"});const d=await r.json();$("softwareVersion").textContent=d.version||"unknown";}catch(e){$("softwareVersion").textContent="unknown";}}
-async function waitForRestart(statusEl=$("updateStatus")){statusEl.textContent="Restarting leaderboard…";for(let i=0;i<60;i++){await new Promise(r=>setTimeout(r,1500));try{const x=await fetch("/health?ts="+Date.now(),{cache:"no-store"});if(x.ok){statusEl.textContent="Update complete. Reloading…";setTimeout(()=>location.reload(),700);return;}}catch(e){}}statusEl.textContent="The Pi has not come back yet. Refresh in a minute.";}
-async function loadGithubStatus(){try{const r=await fetch("/api/github/status",{cache:"no-store"});const d=await r.json(),parts=[];if(d.status)parts.push(d.status);if(d.last_check)parts.push(`Last check: ${d.last_check}`);if(d.auto_update)parts.push(`Automatic: every ${d.check_minutes} minutes`);$("githubUpdateStatus").textContent=parts.join(" · ");}catch(e){$("githubUpdateStatus").textContent="Could not read GitHub status.";}}
-$("checkGithub").addEventListener("click",async()=>{if(!$("githubRepo").value.trim()){$("githubUpdateStatus").textContent="Enter the repo and save display settings first.";return;}$("checkGithub").disabled=true;$("githubUpdateStatus").textContent="Checking GitHub…";try{const {r,d}=await request("/api/github/check",{method:"POST"});if(!r.ok){$("githubUpdateStatus").textContent=d.error||"GitHub check failed.";}else if(d.installed){$("githubUpdateStatus").textContent=`Installed v${d.remote_version}.`;await waitForRestart($("githubUpdateStatus"));return;}else $("githubUpdateStatus").textContent=d.message||"Already up to date.";}catch(e){await waitForRestart($("githubUpdateStatus"));return;}$("checkGithub").disabled=false;loadGithubStatus();});
-$("installUpdate").addEventListener("click",async()=>{const f=$("updateFile").files[0];if(!f){$("updateStatus").textContent="Choose the update ZIP first.";return;}if(!confirm(`Install ${f.name}?`))return;$("installUpdate").disabled=true;$("updateStatus").textContent="Uploading and installing…";const form=new FormData();form.append("update",f);try{const r=await fetch("/api/system/update",{method:"POST",body:form});const d=await r.json();if(!r.ok){$("updateStatus").textContent=d.error||"Update failed.";$("installUpdate").disabled=false;return;}await waitForRestart();}catch(e){await waitForRestart();}});
+  const originalOpenTeamBuilder=openTeamBuilder;
+  openTeamBuilder=function(id=null){
+    originalOpenTeamBuilder(id);
+    const t=id?teamById(id):null;
+    const lead=t?.leader||(t?.leads||[])[0];
+    renderLeaderFromMembers(lead?.lead_name||"");
+  };
 
-$("refreshTV").addEventListener("click",async()=>{$("tvControlStatus").textContent="Refreshing TV…";try{const {r,d}=await request("/api/tv/refresh",{method:"POST"});$("tvControlStatus").textContent=r.ok?"TV refresh sent.":(d.error||"Refresh failed.");}catch(e){}setTimeout(()=>$("tvControlStatus").textContent="",2500);});
-$("fullscreenTV").addEventListener("click",async()=>{$("fullscreenTV").disabled=true;$("tvControlStatus").textContent="Relaunching TV fullscreen…";try{const {r,d}=await request("/api/tv/fullscreen",{method:"POST"});$("tvControlStatus").textContent=r.ok?"TV is relaunching in fullscreen kiosk mode.":(d.error||"Fullscreen failed.");}catch(e){}setTimeout(()=>{$("fullscreenTV").disabled=false;$("tvControlStatus").textContent="";},4500);});
-$("restartTV").addEventListener("click",async()=>{if(!confirm("Restart the leaderboard app?"))return;$("restartTV").disabled=true;$("tvControlStatus").textContent="Restart command sent…";try{await fetch("/api/tv/restart",{method:"POST"});}catch(e){}let offline=false;for(let i=0;i<60;i++){await new Promise(r=>setTimeout(r,1000));try{const x=await fetch("/health?ts="+Date.now(),{cache:"no-store"});if(x.ok&&(offline||i>2)){$("tvControlStatus").textContent="Leaderboard restarted.";$("restartTV").disabled=false;return;}}catch(e){offline=true;$("tvControlStatus").textContent="App offline… waiting…";}}$("tvControlStatus").textContent="Restart requested, but app did not return within 60 seconds.";$("restartTV").disabled=false;});
+  const memberContainer=document.getElementById("builderMembers");
+  if(memberContainer){
+    memberContainer.addEventListener("change",e=>{
+      if(!e.target.classList.contains("builderMember")) return;
+      const select=document.getElementById("builderLeader");
+      renderLeaderFromMembers(select?select.value:"");
+    });
+  }
 
-boot();
+  const saveButton=document.getElementById("builderSave");
+  if(saveButton){
+    saveButton.addEventListener("click",e=>{
+      const leader=String(document.getElementById("builderLeader")?.value||"").trim();
+      if(!leader) return;
+      const names=new Set(selectedMembers().map(r=>String(r.rep_name||"")));
+      if(names.has(leader)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setBuilderStep(3);
+      document.getElementById("builderStatus").textContent="Choose the team lead from the reps assigned to this team.";
+    },true);
+  }
+})();
 </script>
-</body>
-</html>
