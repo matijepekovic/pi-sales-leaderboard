@@ -16,6 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: build/themed-renderer-v45
+          fetch-depth: 0
       - name: JS syntax
         run: node --check app/static/themed-team-layout.js
       - name: Verify design-only integration
@@ -24,7 +25,6 @@ jobs:
           test "$(tr -d '\n' < VERSION)" = "45"
       - name: Verify no backend files changed
         run: |
-          git fetch origin main
           CHANGED="$(git diff --name-only origin/main...HEAD | grep -v '^.github/workflows/v45-renderer-smoke.yml$')"
           printf '%s\n' "$CHANGED"
           test -z "$(printf '%s\n' "$CHANGED" | grep -E '^(app/server.py|app/database.py|app/data_|app/tableau|app/templates/settings|app/themes.py)' || true)"
