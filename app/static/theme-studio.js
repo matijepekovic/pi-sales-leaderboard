@@ -86,35 +86,70 @@
       .td-color{border:1px solid #2e2e2e;background:#0d0d0d;padding:9px}
       .td-color label{font-size:12px;margin-bottom:5px}
 
-      .td-tvline{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;color:#9b9b9b;font-size:12px}
-      .td-zoom{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:9px}
-      .td-zoom input[type=range]{flex:1 1 130px;min-width:120px;height:44px}
+      /* The preview rides along: it stays under the header for the whole
+         scroll, so no control is ever adjusted blind. */
+      .td-preview-sec{position:sticky;top:var(--td-head-h,72px);z-index:4;
+        background:#111;margin:0 -16px;padding:10px 16px 12px;border-bottom:1px solid #2a2a2a}
+      .td-tvline{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:7px;color:#9b9b9b;font-size:12px}
+      .td-zoom{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+      .td-zoom .btn{min-height:38px;padding:6px 12px}
+      .td-zoom input[type=range]{flex:1 1 110px;min-width:100px;height:38px}
       .td-stage{border:2px solid #444;background:#000;overflow:auto;-webkit-overflow-scrolling:touch;position:relative}
       .td-sizer{position:relative}
       .td-stage iframe{position:absolute;top:0;left:0;border:0;transform-origin:top left;background:#000}
 
       .td-asset{border:1px solid #303030;background:#0d0d0d;padding:12px;margin-bottom:10px}
-      .td-asset-top{display:flex;gap:12px;align-items:flex-start}
+      .td-asset-head{display:flex;gap:12px;align-items:center}
       .td-thumb{width:88px;height:60px;flex:0 0 auto;object-fit:contain;background:#070707;border:1px solid #242424}
       .td-thumb.empty{display:grid;place-items:center;color:#6d6d6d;font-size:10px;text-align:center}
-      .td-asset-name{font-weight:900;margin-bottom:3px}
-      .td-asset-row{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:10px;align-items:center}
-      .td-asset-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+      .td-asset-name{font-weight:900}
+
+      /* Artwork is chosen by looking at it, not by reading its name. */
+      .td-tiles{display:flex;gap:9px;overflow-x:auto;padding:4px 2px 8px;margin-top:9px;
+        scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}
+      .td-tile{flex:0 0 auto;width:96px;background:transparent;border:1px solid #333;padding:0;
+        cursor:pointer;scroll-snap-align:start;color:inherit;font:inherit;text-align:center}
+      .td-tile:hover{border-color:#585858}
+      .td-tile[aria-pressed="true"]{border-color:var(--td-accent,#d8b34a);box-shadow:0 0 0 1px var(--td-accent,#d8b34a)}
+      .td-tile:focus-visible{outline:2px solid var(--td-accent,#d8b34a);outline-offset:2px}
+      .td-tile-art{width:100%;height:66px;display:block;object-fit:contain;
+        background-color:#0b0b0b;
+        background-image:linear-gradient(45deg,#181818 25%,transparent 25%,transparent 75%,#181818 75%),
+                         linear-gradient(45deg,#181818 25%,transparent 25%,transparent 75%,#181818 75%);
+        background-size:14px 14px;background-position:0 0,7px 7px}
+      .td-tile-frame{position:relative;width:100%;height:66px;background-color:#0b0b0b}
+      .td-tile-frame img{position:absolute;width:44%;height:44%;object-fit:contain}
+      .td-tile-frame .tl{top:2px;left:2px}.td-tile-frame .tr{top:2px;right:2px}
+      .td-tile-frame .bl{bottom:2px;left:2px}.td-tile-frame .br{bottom:2px;right:2px}
+      .td-tile-cap{display:block;padding:5px 6px;font-size:11px;line-height:1.25;color:#b6b6b6;
+        overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .td-tile-group{flex:0 0 auto;align-self:stretch;display:flex;align-items:center;
+        padding:0 4px;color:#7d7d7d;font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+        writing-mode:vertical-rl;transform:rotate(180deg)}
+
+      .td-asset-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;align-items:center}
       .td-asset-actions .btn{flex:1 1 auto}
       .td-asset-actions input[type=color]{width:64px;height:44px;flex:0 0 auto;padding:2px}
 
-      .td-corner-tools{margin-top:11px;padding-top:11px;border-top:1px dashed #333}
+      .td-tune{margin-top:10px;border-top:1px dashed #333;padding-top:9px}
+      .td-tune>summary{cursor:pointer;color:#9b9b9b;font-size:12px;padding:7px 0;list-style:none}
+      .td-tune>summary::-webkit-details-marker{display:none}
+      .td-tune>summary::before{content:"▸ ";color:#6f6f6f}
+      .td-tune[open]>summary::before{content:"▾ "}
       .td-nums{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:9px}
       .td-nums label{font-size:11px;color:#9b9b9b;margin-bottom:4px}
       .td-nudge{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:8px}
+      .td-tune-actions{display:flex;gap:8px;margin-top:9px}
+      .td-tune-actions .btn{flex:1 1 auto}
 
       @media(max-width:760px){
         #teamDesignOverlay{padding:0}
         #teamDesignOverlay .panel{min-height:100vh;border:0}
         .td-colors{grid-template-columns:repeat(2,minmax(0,1fr))}
-        .td-asset-top{flex-direction:column}
-        .td-thumb{width:100%;height:96px}
-        .td-asset-row{grid-template-columns:1fr}
+        /* Keep the pinned preview to a third of the screen so the controls
+           under it still have room. */
+        .td-stage{max-height:38vh}
+        .td-thumb{width:72px;height:50px}
       }
     `;
     document.head.appendChild(s);
@@ -146,8 +181,7 @@
         </div>
 
         <div id="tdMain" style="display:none;flex-direction:column;gap:22px">
-          <section class="td-sec">
-            <h3>Live Preview</h3>
+          <section class="td-sec td-preview-sec">
             <div id="tdTvLine" class="td-tvline"></div>
             <div class="td-zoom">
               <button id="tdZoomFit" class="btn" type="button">Fit</button>
@@ -156,7 +190,6 @@
               <span id="tdZoomLabel" class="small">100%</span>
             </div>
             <div id="tdStage" class="td-stage"><div id="tdSizer" class="td-sizer"><iframe id="tdFrame" title="TV preview" scrolling="no"></iframe></div></div>
-            <div class="small" style="margin-top:7px">This is the real TV page. Nothing here changes what the office TV is showing.</div>
           </section>
 
           <section class="td-sec">
@@ -188,28 +221,17 @@
           </section>
 
           <section class="td-sec">
-            <h3>Corner Set</h3>
-            <div class="small">One PNG holding all four ornaments. It is split into quadrants and each corner is seated automatically — no aligning by hand.</div>
+            <h3>Frame</h3>
+            <div class="small">One PNG with all four ornaments. Choosing it cuts the corners and seats each one against its edge — nothing else to do.</div>
             <div class="td-asset">
-              <div class="td-asset-top">
-                <div id="tdSheetThumb" class="td-thumb empty">No sheet</div>
-                <div style="flex:1;min-width:0">
-                  <div class="td-asset-row">
-                    <select id="tdSheetPreset" aria-label="Saved corner sets"></select>
-                    <button id="tdSheetApply" class="btn" type="button">Apply</button>
-                  </div>
-                  <input id="tdSheetFile" type="file" accept="image/png,image/webp" style="margin-top:9px">
-                  <div class="td-asset-actions">
-                    <button id="tdSheetUpload" class="btn primary" type="button">Split Into 4 Corners</button>
-                  </div>
-                </div>
-              </div>
+              <div id="tdSheetTiles" class="td-tiles"></div>
+              <input id="tdSheetFile" type="file" accept="image/png,image/webp" style="margin-top:4px">
             </div>
           </section>
 
           <section class="td-sec">
             <h3>Artwork</h3>
-            <div class="small">Pick a saved preset, or upload your own — every upload is saved and offered here from then on, for any team.</div>
+            <div class="small">Tap a picture to use it. Anything you upload is saved here and offered on every team from then on.</div>
             <div id="tdAssets"></div>
           </section>
         </div>
@@ -226,6 +248,7 @@
     byId("tdConfirmOk").addEventListener("click",()=>{
       byId("tdConfirm").style.display="none";
       byId("tdMain").style.display="flex";
+      measureHead();
       layoutPreview();
     });
     byId("tdPreset").addEventListener("change",presetChanged);
@@ -234,12 +257,23 @@
     byId("tdReset").addEventListener("click",resetTheme);
     byId("tdLogoUpload").addEventListener("click",uploadLogo);
     byId("tdLogoReset").addEventListener("click",resetLogo);
-    byId("tdSheetUpload").addEventListener("click",splitCornerSheet);
-    byId("tdSheetApply").addEventListener("click",applyCornerSheetPreset);
+    // Choosing a frame IS the instruction; there is nothing to confirm.
+    byId("tdSheetFile").addEventListener("change",()=>{
+      if(byId("tdSheetFile").files?.[0])splitCornerSheet();
+    });
     byId("tdZoomFit").addEventListener("click",()=>setZoom(1));
     byId("tdZoom100").addEventListener("click",()=>setZoom(null));
     byId("tdZoomRange").addEventListener("input",e=>setZoom(Number(e.target.value)/100));
-    window.addEventListener("resize",layoutPreview);
+    window.addEventListener("resize",()=>{measureHead();layoutPreview();});
+  }
+
+  /* The preview sticks directly beneath the header, so it has to know how
+     tall the header actually is rather than assuming. */
+  function measureHead(){
+    const head=document.querySelector("#teamDesignOverlay .td-head");
+    if(!head)return;
+    const h=Math.round(head.getBoundingClientRect().height||72);
+    document.documentElement.style.setProperty("--td-head-h",`${h}px`);
   }
 
   function open(){const o=byId("teamDesignOverlay");o.classList.add("open");o.setAttribute("aria-hidden","false");}
@@ -346,14 +380,38 @@
 
   /* --------------------------------------------------------------- presets */
 
-  function presetOptions(assetKey,selected){
+  /* Artwork is picked by looking at it. Corner sets render as a little frame
+     so a set reads as a set rather than four unrelated squares. */
+  function tileArt(item,assetKey){
+    if(assetKey===CORNER_SHEET||item.corners){
+      const c=item.corners||{};
+      const one=(pos,url)=>url?`<img class="${pos}" src="${esc(url)}" alt="">`:"";
+      if(item.corners){
+        return `<span class="td-tile-frame">${one("tl",c.corner_tl)}${one("tr",c.corner_tr)}
+          ${one("bl",c.corner_bl)}${one("br",c.corner_br)}</span>`;
+      }
+    }
+    return `<img class="td-tile-art" src="${esc(item.url)}" alt="${esc(item.label)}" loading="lazy">`;
+  }
+
+  function presetTiles(assetKey,selectedId){
     const items=library[assetKey]||[];
-    const mine=items.filter(i=>i.source==="user");
+    if(!items.length)return `<div class="small" style="padding:6px 2px">Nothing saved yet — upload artwork below.</div>`;
     const built=items.filter(i=>i.source!=="user");
-    const opt=i=>`<option value="${esc(i.id)}"${i.id===selected?" selected":""}>${esc(i.label)}</option>`;
-    return `<option value="">Choose a preset…</option>`
-      +(built.length?`<optgroup label="Built-in">${built.map(opt).join("")}</optgroup>`:"")
-      +(mine.length?`<optgroup label="Yours">${mine.map(opt).join("")}</optgroup>`:"");
+    const mine=items.filter(i=>i.source==="user");
+    const tile=i=>`<button class="td-tile" type="button" data-key="${esc(assetKey)}"
+        data-id="${esc(i.id)}" aria-pressed="${i.id===selectedId?"true":"false"}"
+        title="${esc(i.label)}">${tileArt(i,assetKey)}<span class="td-tile-cap">${esc(i.label)}</span></button>`;
+    return built.map(tile).join("")
+      +(mine.length?`<span class="td-tile-group">Yours</span>${mine.map(tile).join("")}`:"");
+  }
+
+  function bindTiles(root){
+    (root||document).querySelectorAll(".td-tile").forEach(b=>{
+      if(b.dataset.bound)return;
+      b.dataset.bound="1";
+      b.addEventListener("click",()=>applyPreset(b.dataset.key,b.dataset.id));
+    });
   }
 
   function renderAssets(){
@@ -365,50 +423,58 @@
       const corner=!!CORNERS[d.key];
       const cfg=cornerCfg(d.key);
       return `<div class="td-asset" data-asset="${d.key}">
-        <div class="td-asset-top">
+        <div class="td-asset-head">
           ${src?`<img class="td-thumb" data-thumb="${d.key}" src="${esc(src)}" alt="">`
                :`<div class="td-thumb empty" data-thumb="${d.key}">None</div>`}
-          <div style="flex:1;min-width:0">
-            <div class="td-asset-name">${esc(d.label)}</div>
-            <div class="td-asset-row">
-              <select class="tdPreset" data-key="${d.key}" aria-label="${esc(d.label)} presets">${presetOptions(d.key,"")}</select>
-              <button class="btn tdApply" data-key="${d.key}" type="button">Apply</button>
-            </div>
-            <input class="tdFile" data-key="${d.key}" type="file" accept="image/png,image/jpeg,image/webp" style="margin-top:9px">
-            <div class="td-asset-actions">
-              <button class="btn tdUpload" data-key="${d.key}" type="button">Upload</button>
-              <input class="tdTint" data-key="${d.key}" type="color" value="${esc(theme.colors?.primary_bright||"#d8b34a")}" title="Recolor" aria-label="Recolor ${esc(d.label)}">
-              <button class="btn tdRecolor" data-key="${d.key}" type="button" ${src?"":"disabled"}>Recolor</button>
-              <button class="btn danger tdResetAsset" data-key="${d.key}" type="button">Reset</button>
-            </div>
-            ${corner?`<div class="td-corner-tools">
-              <button class="btn primary tdSnap" data-key="${d.key}" type="button" style="width:100%">Snap Flush To Corner</button>
-              <div class="small" style="margin-top:6px">Measures the artwork's transparent margin and seats it against the edge.</div>
-              <div class="td-nums">
-                <div><label>Size %</label><input class="tdNum" data-key="${d.key}" data-field="size" type="number" min="${MIN_SIZE}" max="${MAX_SIZE}" step="1" value="${cfg.size}"></div>
-                <div><label>Crop X %</label><input class="tdNum" data-key="${d.key}" data-field="crop_x" type="number" min="0" max="${MAX_CROP}" step="1" value="${cfg.crop_x}"></div>
-                <div><label>Crop Y %</label><input class="tdNum" data-key="${d.key}" data-field="crop_y" type="number" min="0" max="${MAX_CROP}" step="1" value="${cfg.crop_y}"></div>
-              </div>
-              <div class="td-nudge">
-                <button class="btn tdNudge" data-key="${d.key}" data-field="crop_x" data-step="-1" type="button">← X</button>
-                <button class="btn tdNudge" data-key="${d.key}" data-field="crop_x" data-step="1" type="button">X →</button>
-                <button class="btn tdNudge" data-key="${d.key}" data-field="crop_y" data-step="-1" type="button">↑ Y</button>
-                <button class="btn tdNudge" data-key="${d.key}" data-field="crop_y" data-step="1" type="button">Y ↓</button>
-              </div>
-            </div>`:""}
-          </div>
+          <div class="td-asset-name">${esc(d.label)}</div>
         </div>
+        <div class="td-tiles" data-tiles="${d.key}">${presetTiles(d.key,"")}</div>
+        <input class="tdFile" data-key="${d.key}" type="file" accept="image/png,image/jpeg,image/webp">
+        <div class="td-asset-actions">
+          <button class="btn tdUpload" data-key="${d.key}" type="button">Upload</button>
+          <input class="tdTint" data-key="${d.key}" type="color" value="${esc(theme.colors?.primary_bright||"#d8b34a")}" title="Recolor" aria-label="Recolor ${esc(d.label)}">
+          <button class="btn tdRecolor" data-key="${d.key}" type="button" ${src?"":"disabled"}>Recolor</button>
+          <button class="btn danger tdResetAsset" data-key="${d.key}" type="button">Reset</button>
+        </div>
+        ${corner?`<details class="td-tune">
+          <summary>Fine-tune position</summary>
+          <div class="small">Corners seat themselves when artwork is added. These are only for artwork that measures wrong.</div>
+          <div class="td-nums">
+            <div><label>Size %</label><input class="tdNum" data-key="${d.key}" data-field="size" type="number" min="${MIN_SIZE}" max="${MAX_SIZE}" step="1" value="${cfg.size}"></div>
+            <div><label>Crop X %</label><input class="tdNum" data-key="${d.key}" data-field="crop_x" type="number" min="0" max="${MAX_CROP}" step="1" value="${cfg.crop_x}"></div>
+            <div><label>Crop Y %</label><input class="tdNum" data-key="${d.key}" data-field="crop_y" type="number" min="0" max="${MAX_CROP}" step="1" value="${cfg.crop_y}"></div>
+          </div>
+          <div class="td-nudge">
+            <button class="btn tdNudge" data-key="${d.key}" data-field="crop_x" data-step="-1" type="button">← X</button>
+            <button class="btn tdNudge" data-key="${d.key}" data-field="crop_x" data-step="1" type="button">X →</button>
+            <button class="btn tdNudge" data-key="${d.key}" data-field="crop_y" data-step="-1" type="button">↑ Y</button>
+            <button class="btn tdNudge" data-key="${d.key}" data-field="crop_y" data-step="1" type="button">Y ↓</button>
+          </div>
+          <div class="td-tune-actions">
+            <button class="btn tdSnap" data-key="${d.key}" type="button">Seat It Again</button>
+            <button class="btn tdUnsnap" data-key="${d.key}" type="button">Clear Position</button>
+          </div>
+        </details>`:""}
       </div>`;
     }).join("");
 
-    document.querySelectorAll(".tdApply").forEach(b=>b.addEventListener("click",()=>applyPreset(b.dataset.key)));
+    bindTiles(byId("tdAssets"));
     document.querySelectorAll(".tdUpload").forEach(b=>b.addEventListener("click",()=>uploadAsset(b.dataset.key)));
     document.querySelectorAll(".tdRecolor").forEach(b=>b.addEventListener("click",()=>recolorAsset(b.dataset.key)));
     document.querySelectorAll(".tdResetAsset").forEach(b=>b.addEventListener("click",()=>resetAsset(b.dataset.key)));
     document.querySelectorAll(".tdSnap").forEach(b=>b.addEventListener("click",()=>snapFlush(b.dataset.key)));
-    document.querySelectorAll(".tdNum").forEach(i=>i.addEventListener("change",()=>{
-      saveCorner(i.dataset.key,readCornerInputs(i.dataset.key));
+    document.querySelectorAll(".tdUnsnap").forEach(b=>b.addEventListener("click",()=>{
+      const cfg={size:100,crop_x:0,crop_y:0};
+      writeCornerInputs(b.dataset.key,cfg);
+      saveCorner(b.dataset.key,cfg);
     }));
+    // "input" paints while typing; "change" also covers steppers and blur on
+    // browsers that only fire one of the two. The debounce collapses both.
+    document.querySelectorAll(".tdNum").forEach(i=>{
+      const push=()=>saveCorner(i.dataset.key,readCornerInputs(i.dataset.key));
+      i.addEventListener("input",push);
+      i.addEventListener("change",push);
+    });
     document.querySelectorAll(".tdNudge").forEach(b=>b.addEventListener("click",()=>{
       const input=document.querySelector(`.tdNum[data-key="${CSS.escape(b.dataset.key)}"][data-field="${b.dataset.field}"]`);
       if(!input)return;
@@ -418,7 +484,8 @@
   }
 
   function renderSheet(){
-    byId("tdSheetPreset").innerHTML=presetOptions(CORNER_SHEET,"");
+    const box=byId("tdSheetTiles");
+    if(box){box.innerHTML=presetTiles(CORNER_SHEET,"");bindTiles(box);}
   }
 
   /* ------------------------------------------------------------- corner cfg */
@@ -448,8 +515,26 @@
     });
   }
 
-  async function saveCorner(key,cfg){
-    status(`Saving ${CORNERS[key]?.label||key}…`);
+  /* Paint the change straight into the preview instead of reloading it. The
+     frame is same-origin and the maths is the TV runtime's own, so what shows
+     here is what the TV will do — but instantly, and without a blank reload. */
+  function paintCorner(key,cfg){
+    const info=CORNERS[key];
+    const doc=byId("tdFrame")?.contentDocument;
+    if(!info||!doc)return;
+    const transform=`translate(${info.sx*cfg.crop_x}%,${info.sy*cfg.crop_y}%) scale(${cfg.size/100})`;
+    const origin=`${info.sx<0?"left":"right"} ${info.sy<0?"top":"bottom"}`;
+    const pos=`${info.sy<0?"t":"b"}${info.sx<0?"l":"r"}`;
+    [".theme-corner",".bt-corner",".v55-office-corner",".v55-card-corner"].forEach(prefix=>{
+      doc.querySelectorAll(`${prefix}.${pos}`).forEach(img=>{
+        img.style.transformOrigin=origin;
+        img.style.transform=transform;
+      });
+    });
+  }
+
+  const cornerSaveTimers={};
+  async function writeCorner(key,cfg){
     try{
       const d=await jsonFetch(`/api/themes/${encodeURIComponent(scope())}`,{
         method:"PUT",headers:{"Content-Type":"application/json"},
@@ -457,8 +542,20 @@
       });
       if(d.theme&&state?.themes?.teams)state.themes.teams[String(teamId)]=d.theme;
       status("Saved. The TV picks it up automatically.");
-      reloadPreview();
     }catch(e){status(e.message);}
+  }
+
+  function saveCorner(key,cfg,immediate){
+    paintCorner(key,cfg);                    // instant, on every change
+    clearTimeout(cornerSaveTimers[key]);
+    // Automatic seating writes straight away; only human nudging is debounced,
+    // so holding an arrow costs one write instead of one per tap.
+    if(immediate)return writeCorner(key,cfg);
+    cornerSaveTimers[key]=setTimeout(()=>writeCorner(key,cfg),400);
+  }
+
+  function repaintAllCorners(){
+    Object.keys(CORNERS).forEach(key=>paintCorner(key,cornerCfg(key)));
   }
 
   /* ------------------------------------------------------------ image tools */
@@ -527,7 +624,7 @@
       const cfg={...readCornerInputs(key),
         crop_x:clamp(x*100,0,MAX_CROP), crop_y:clamp(y*100,0,MAX_CROP)};
       writeCornerInputs(key,cfg);
-      await saveCorner(key,cfg);
+      await saveCorner(key,cfg,true);
       if(!quiet)status(`${info.label} seated against the edge.`);
       return true;
     }catch(e){if(!quiet)status(e.message);return false;}
@@ -539,17 +636,26 @@
     return jsonFetch(`/api/themes/${encodeURIComponent(scope())}/assets/${encodeURIComponent(key)}`,body);
   }
 
-  async function applyPreset(key){
-    const sel=document.querySelector(`.tdPreset[data-key="${CSS.escape(key)}"]`);
-    const id=sel?.value;
+  async function applyPreset(key,id){
     if(!id){status("Choose a preset first.");return;}
-    setBusy(true);status("Applying preset…");
+    // A frame tile means all four corners, cut from the one image.
+    if(key===CORNER_SHEET){
+      const item=(library[CORNER_SHEET]||[]).find(i=>i.id===id);
+      if(!item){status("That frame is no longer available.");return;}
+      setBusy(true);status("Cutting corners from the frame…");
+      try{
+        await applySheetBlobs(await splitSheetImage(await loadImage(item.url)));
+        status("Frame applied — all four corners seated.");
+      }catch(e){status(e.message);}finally{setBusy(false);}
+      return;
+    }
+    setBusy(true);status("Applying artwork…");
     try{
       await postAsset(key,{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({library_id:id})});
       await refreshState();renderAssets();reloadPreview();
       if(CORNERS[key])await snapFlush(key,true);
-      status("Preset applied.");
+      status("Artwork applied.");
     }catch(e){status(e.message);}finally{setBusy(false);}
   }
 
@@ -660,19 +766,6 @@
     }catch(e){status(e.message);}finally{setBusy(false);}
   }
 
-  async function applyCornerSheetPreset(){
-    const id=byId("tdSheetPreset").value;
-    if(!id){status("Choose a saved corner set first.");return;}
-    const item=(library[CORNER_SHEET]||[]).find(i=>i.id===id);
-    if(!item){status("That corner set is no longer available.");return;}
-    setBusy(true);status("Applying corner set…");
-    try{
-      const img=await loadImage(item.url);
-      await applySheetBlobs(await splitSheetImage(img));
-      status("All four corners set and seated.");
-    }catch(e){status(e.message);}finally{setBusy(false);}
-  }
-
   /* --------------------------------------------------------------- theme IO */
 
   async function saveTheme(quiet){
@@ -725,6 +818,12 @@
   function loadPreview(){
     const frame=byId("tdFrame");
     if(!frame)return;
+    frame.onload=()=>{
+      // The board renders asynchronously; repaint once it has drawn so any
+      // adjustment made before the reload finished is not lost visually.
+      setTimeout(repaintAllCorners,900);
+      setTimeout(repaintAllCorners,2200);
+    };
     frame.src=`/?preview=team-${teamId}&t=${Date.now()}`;
     layoutPreview();
   }

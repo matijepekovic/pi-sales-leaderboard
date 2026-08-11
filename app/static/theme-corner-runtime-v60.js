@@ -51,7 +51,11 @@
     if(!data)return;
     if(data.mode==="per_team"){
       const s=data.team_summary||{};
-      applySet(document,".theme-corner",themeFor(data,s.team,s.team_id));
+      const theme=themeFor(data,s.team,s.team_id);
+      // themed-team-layout.js removes .theme-corner and draws .bt-corner in
+      // its place, so matching only the old class silently adjusted nothing.
+      applySet(document,".theme-corner",theme);
+      applySet(document,".bt-corner",theme);
       return;
     }
     if(data.mode==="whole_office"){
