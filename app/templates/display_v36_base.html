@@ -1,0 +1,60 @@
+{% include "display_v35_base.html" %}
+<script>
+/* v36 TV eligibility rule.
+   Keep the full Tableau pull stored and available in Settings, but only reps
+   with a local Pi team assignment are allowed onto any TV view. Team/office
+   totals are recalculated from those assigned reps so hidden rows never
+   contribute to displayed totals or rankings. */
+(function(){
+  if(typeof render!=="function") return;
+  const baseRender=render;
+  const SUM_FIELDS=["issued_leads","pitched_leads","sold_leads","gross_split","pending_split","net_split"];
+  const n=v=>{const x=Number(v||0);return Number.isFinite(x)?x:0;};
+  const assigned=row=>Number(row?.assigned_team_id||0)>0;
+
+  function aggregateAssigned(rows,base={}){
+    const out={...(base||{}),rep_count:rows.length};
+    SUM_FIELDS.forEach(k=>out[k]=rows.reduce((sum,row)=>sum+n(row?.[k]),0));
+    out.pitched_rate=out.issued_leads?out.pitched_leads/out.issued_leads*100:0;
+    out.close_rate=out.issued_leads?out.sold_leads/out.issued_leads*100:0;
+    out.dpl=out.issued_leads?out.net_split/out.issued_leads:0;
+    out.sales_retention=out.gross_split?out.net_split/out.gross_split*100:0;
+    out.avg_gross_sale=out.sold_leads?out.gross_split/out.sold_leads:0;
+    out.avg_net_sale=out.sold_leads?out.net_split/out.sold_leads:0;
+    return out;
+  }
+
+  function assignedOnly(data){
+    const d={...data};
+    d.rows=Array.isArray(data.rows)?data.rows.filter(assigned):[];
+
+    if(d.mode==="whole_office"){
+      d.office_summary=aggregateAssigned(d.rows,data.office_summary||{team:"WHOLE OFFICE"});
+    }else if(d.mode==="per_team"){
+      d.team_summary=data.team_summary
+        ? aggregateAssigned(d.rows,data.team_summary)
+        : null;
+    }
+
+    if(Array.isArray(data.teams)){
+      d.teams=data.teams.map(team=>{
+        const members=(team.members||[]).filter(assigned);
+        return {
+          ...team,
+          members,
+          summary:aggregateAssigned(members,team.summary||{})
+        };
+      }).filter(team=>team.members.length>0);
+
+      const metric=d.sort_metric;
+      d.teams.sort((a,b)=>n(b.summary?.[metric])-n(a.summary?.[metric]));
+    }
+
+    return d;
+  }
+
+  render=function(data){
+    return baseRender(assignedOnly(data));
+  };
+})();
+</script>
