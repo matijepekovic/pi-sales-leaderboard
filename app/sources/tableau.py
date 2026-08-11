@@ -1,24 +1,21 @@
-"""v40 Tableau connector: pull the exposed Rep Totals worksheet directly.
+"""v41 Tableau connector: pull the exact Rep Totals NEW worksheet.
 
-Tableau's REST view list identifies the worksheet as:
-    Rep Totals [8-SalesRepLevelData/sheets/RepTotals]
+The Tableau crosstab dialog identifies the totals worksheet as "Rep Totals NEW".
+The workbook REST view list exposes that worksheet at:
+    8-SalesRepLevelData/sheets/RepTotalsNEW3
 
-The dashboard's visible heading says "Sales Rep Totals", but that is not the
-REST view name. Query the exposed Rep Totals worksheet directly and use
-Tableau's own calculated summary fields. Do not reconstruct totals from detail
-rows and do not fall back to another worksheet.
+Target that exact content URL. Do not query RepTotals, do not reconstruct totals
+from Rep Details, and do not fall back to another worksheet.
 """
 from .tableau_v36_base import *
 from . import tableau_v36_base as _base
 
 
-TARGET_WORKSHEET_NAME = "Rep Totals"
-TARGET_WORKSHEET_NORM = "reptotals"
-TARGET_CONTENT_TAIL = "/sheets/RepTotals"
+TARGET_CONTENT_TAIL = "/sheets/RepTotalsNEW3"
 
 # Keep status/error text aligned with what we actually pull.
 _base.TABLEAU_VIEW_PATH = (
-    f"{_base.TABLEAU_WORKBOOK_CONTENT_URL}/sheets/RepTotals"
+    f"{_base.TABLEAU_WORKBOOK_CONTENT_URL}/sheets/RepTotalsNEW3"
 )
 
 
@@ -26,7 +23,7 @@ class TableauSource(_base.TableauSource):
     VIEW_PATH = _base.TABLEAU_VIEW_PATH
 
     def _view_id(self, base, token, site_id):
-        """Resolve only the exposed Rep Totals worksheet."""
+        """Resolve only the exact Rep Totals NEW REST view."""
         workbook_id = self._workbook_id(base, token, site_id)
         status, raw = self._request(
             f"{base}/sites/{site_id}/workbooks/{workbook_id}/views",
@@ -42,19 +39,9 @@ class TableauSource(_base.TableauSource):
         except Exception:
             views = []
 
-        def normalized(value):
-            return _base.norm(str(value or ""))
-
         for view in views:
-            name = str(view.get("name") or "").strip()
             content_url = str(view.get("contentUrl") or "").strip()
-            view_url_name = str(view.get("viewUrlName") or "").strip()
-
-            exact_name = normalized(name) == TARGET_WORKSHEET_NORM
-            exact_url = normalized(view_url_name) == TARGET_WORKSHEET_NORM
-            exact_content = content_url.lower().endswith(TARGET_CONTENT_TAIL.lower())
-
-            if exact_name or exact_url or exact_content:
+            if content_url.lower().endswith(TARGET_CONTENT_TAIL.lower()):
                 view_id = str(view.get("id") or "").strip()
                 if view_id:
                     return view_id
@@ -66,13 +53,13 @@ class TableauSource(_base.TableauSource):
             available.append(f"{label} [{content}]")
 
         raise _base.TableauError(
-            "Tableau did not expose the Rep Totals worksheet expected at "
+            "Tableau did not expose the expected Rep Totals NEW REST view at "
             f"{_base.TABLEAU_VIEW_PATH}. Available views: "
             + ("; ".join(available) if available else "none")
         )
 
     def fetch_csv(self, base, token, site_id, start, end):
-        """Query Rep Totals and verify Tableau returned summary columns."""
+        """Query Rep Totals NEW and verify Tableau returned the summary fields."""
         csv_text = super().fetch_csv(base, token, site_id, start, end)
 
         reader = _base.csv.DictReader(_base.io.StringIO(csv_text))
@@ -90,7 +77,7 @@ class TableauSource(_base.TableauSource):
         ]
         if missing:
             raise _base.TableauError(
-                "Rep Totals returned unexpected columns; missing Tableau summary "
+                "Rep Totals NEW returned unexpected columns; missing Tableau summary "
                 "fields: " + ", ".join(missing) + ". Columns received: "
                 + (", ".join(headers) if headers else "none")
             )
