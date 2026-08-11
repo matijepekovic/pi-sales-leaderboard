@@ -1,0 +1,37 @@
+name: Theme Studio smoke test
+
+on:
+  push:
+    branches:
+      - build/theme-studio-v42
+    paths:
+      - .github/workflows/theme-studio-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: build/theme-studio-v42
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install app dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Check Python and JavaScript syntax
+        run: |
+          python -m py_compile app/server.py app/database.py app/themes.py app/sources/tableau.py
+          node --check app/static/theme-runtime.js
+          node --check app/static/theme-card-fix.js
+          node --check app/static/theme-studio.js
+      - name: Run fresh-Pi theme smoke test
+        env:
+          PYTHONPATH: ${{ github.workspace }}/app
+          HOME: ${{ runner.temp }}/theme-smoke-home
+        run: |
+          mkdir -p "$HOME"
+          python tools/theme_smoke_test.py
