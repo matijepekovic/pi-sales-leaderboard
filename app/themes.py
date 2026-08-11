@@ -18,6 +18,7 @@ from database import (
     save_settings,
     set_meta,
 )
+from tableau_scheduler import start_tableau_scheduler
 
 
 themes_blueprint = Blueprint("themes", __name__)
@@ -35,12 +36,15 @@ ASSETS = {
     "row": {"label": "Leaderboard Row", "builtin": "row.jpg"},
     "champion": {"label": "Champion Row", "builtin": "champ.jpg"},
     "medallion": {"label": "Champion Medallion", "builtin": "medallion.png"},
-    "corner_tl": {"label": "Top Left Corner", "builtin": "ctl.png"},
-    "corner_tr": {"label": "Top Right Corner", "builtin": "ctr.png"},
-    "corner_bl": {"label": "Bottom Left Corner", "builtin": "cbl.png"},
-    "corner_br": {"label": "Bottom Right Corner", "builtin": "cbr.png"},
+    "corner_tl": {"label": "Top Left Corner", "builtin": "ctl.png", "adjustable": True},
+    "corner_tr": {"label": "Top Right Corner", "builtin": "ctr.png", "adjustable": True},
+    "corner_bl": {"label": "Bottom Left Corner", "builtin": "cbl.png", "adjustable": True},
+    "corner_br": {"label": "Bottom Right Corner", "builtin": "cbr.png", "adjustable": True},
     "totals_mark": {"label": "Totals Mark", "builtin": "totmark.png"},
 }
+
+CORNER_ASSET_KEYS = ("corner_tl", "corner_tr", "corner_bl", "corner_br")
+DEFAULT_CORNER_SETTINGS = {"size": 100.0, "crop_x": 0.0, "crop_y": 0.0}
 
 UNDISPUTED_COLORS = {
     "primary": "#c58a2a",
@@ -143,6 +147,38 @@ def _clean_colors(incoming, base):
     return colors
 
 
+def _bounded_number(value, default, minimum, maximum):
+    try:
+        value = float(value)
+    except Exception:
+        return float(default)
+    return round(min(max(value, minimum), maximum), 2)
+
+
+def _clean_corner_settings(incoming):
+    cleaned = {}
+    if not isinstance(incoming, dict):
+        return cleaned
+    for key in CORNER_ASSET_KEYS:
+        raw = incoming.get(key)
+        if not isinstance(raw, dict):
+            continue
+        cleaned[key] = {
+            "size": _bounded_number(raw.get("size"), 100, 50, 250),
+            "crop_x": _bounded_number(raw.get("crop_x"), 0, 0, 60),
+            "crop_y": _bounded_number(raw.get("crop_y"), 0, 0, 60),
+        }
+    return cleaned
+
+
+def _effective_corner_settings(config):
+    stored = _clean_corner_settings(config.get("corner_settings"))
+    return {
+        key: {**DEFAULT_CORNER_SETTINGS, **stored.get(key, {})}
+        for key in CORNER_ASSET_KEYS
+    }
+
+
 def _asset_override_path(scope, filename):
     if not filename:
         return None
@@ -186,6 +222,7 @@ def effective_theme(scope, settings=None, team=None):
         "enabled": enabled,
         "colors": colors,
         "assets": {},
+        "corner_settings": _effective_corner_settings(config),
         "has_custom_assets": False,
     }
     assets_cfg = config.get("assets") if isinstance(config.get("assets"), dict) else {}
@@ -248,10 +285,25 @@ def _manifest():
             {"key": "champion_text", "label": "Champion Text"},
         ],
         "assets": [
-            {"key": key, "label": value["label"]}
+            {
+                "key": key,
+                "label": value["label"],
+                "adjustable": bool(value.get("adjustable")),
+            }
             for key, value in ASSETS.items()
         ],
+        "corner_controls": {
+            "size": {"min": 50, "max": 250, "step": 5, "default": 100},
+            "crop_x": {"min": 0, "max": 60, "step": 1, "default": 0},
+            "crop_y": {"min": 0, "max": 60, "step": 1, "default": 0},
+        },
     }
+
+
+@themes_blueprint.before_app_request
+def ensure_tableau_schedule_worker():
+    # init_db() has completed by the time Flask serves its first request.
+    start_tableau_scheduler()
 
 
 @themes_blueprint.get("/api/themes")
@@ -285,6 +337,11 @@ def save_theme(scope):
         current["colors"] = _clean_colors(incoming.get("colors", current.get("colors")), base)
         current.setdefault("assets", {})
 
+        existing_corners = _clean_corner_settings(current.get("corner_settings"))
+        if isinstance(incoming.get("corner_settings"), dict):
+            existing_corners.update(_clean_corner_settings(incoming.get("corner_settings")))
+        current["corner_settings"] = existing_corners
+
         version = _set_config(settings, normalized_scope, team, current)
         return jsonify({
             "ok": True,
@@ -306,6 +363,7 @@ def reset_theme(scope):
             "enabled": False,
             "colors": dict(CLASSIC_COLORS),
             "assets": {},
+            "corner_settings": {},
         }
         version = _set_config(settings, normalized_scope, team, config)
         return jsonify({
@@ -363,6 +421,7 @@ def upload_theme_asset(scope, asset_key):
         current.setdefault("enabled", True)
         current["colors"] = _clean_colors(current.get("colors"), base)
         current.setdefault("assets", {})[asset_key] = filename
+        current["corner_settings"] = _clean_corner_settings(current.get("corner_settings"))
         version = _set_config(settings, normalized_scope, team, current)
 
         return jsonify({
