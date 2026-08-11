@@ -236,7 +236,7 @@
         const row=node("div","v53-rep");
         const rowAsset=index===0?assets.champion:assets.row;
         if(rowAsset){
-          const shade=index===0?.30:.48;
+          const shade=index===0 ? .30 : .48;
           row.style.backgroundImage=`linear-gradient(rgba(0,0,0,${shade}),rgba(0,0,0,${shade})),url("${rowAsset}")`;
         }
         const rank=node("div","v53-rank");
