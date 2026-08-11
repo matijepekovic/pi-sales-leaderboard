@@ -33,5 +33,7 @@ jobs:
           test -s app/static/theme-packs/undisputed/cbr.png
       - name: Validate settings integration
         run: grep -q 'asset-library.js?v=44' app/templates/settings.html
+      - name: Validate auto-enable behavior
+        run: grep -q 'async function enableTheme' app/static/asset-library.js
       - name: Validate version
         run: test "$(tr -d '\n' < VERSION)" = "44"
