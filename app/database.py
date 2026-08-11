@@ -55,6 +55,7 @@ DEFAULT_SETTINGS = {
     "title": "SALES LEADERBOARD",
     "subtitle": "",
     "currency_symbol": "$",
+    "theme_config": {"office": {}, "teams": {}},
 
     # Public GitHub auto-update source.
     # Example: "yourusername/pi-sales-leaderboard"

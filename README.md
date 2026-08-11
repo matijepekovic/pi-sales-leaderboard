@@ -581,3 +581,17 @@ preserves persistent data, and restarts the leaderboard automatically.
 No GitHub token is required for a public repository.
 
 See `GITHUB_SETUP.md` for the one-time setup.
+
+## Team Theme Studio
+
+
+v43 adds a persistent theme system for the TV. The original Classic
+leaderboard remains available, and the UNDISPUTED design from the STATS
+repository is included as the first built-in theme pack. Team-specific
+colors, replacement artwork, recolored artwork and logos are managed from
+Settings -> Theme Studio. User-created theme assets are stored under
+~/.local/share/pi-tableau-leaderboard/themes and survive software updates.
+
+Individual team views use the full theme. Team vs Team and All Teams use
+each team's colors/artwork on that team's card. Whole Office has its own
+separate theme so no single team brand takes over the office view.

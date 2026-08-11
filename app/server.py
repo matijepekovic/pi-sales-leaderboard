@@ -45,9 +45,11 @@ from database import (
 )
 from sources.sample import SampleSource
 from sources.tableau import TableauSource, TableauError, resolve_dates
+from themes import themes_blueprint, display_theme_state
 
 app = Flask(__name__)
 app.config["JSON_SORT_KEYS"] = False
+app.register_blueprint(themes_blueprint)
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 PERSISTENT_DATA_DIR = Path.home() / ".local" / "share" / "pi-tableau-leaderboard"
@@ -77,6 +79,7 @@ PIN_ITERATIONS = 200_000
 PUBLIC_ENDPOINTS = {
     "display", "api_leaderboard", "api_config", "api_team_logo",
     "health", "api_auth_status", "api_auth_unlock", "static",
+    "themes.theme_asset",
 }
 
 
@@ -1091,6 +1094,7 @@ def api_leaderboard():
         "metric_labels": metric_label_map(),
         "metric_types": metric_type_map(),
     })
+    payload["theme_state"] = display_theme_state(settings)
     return jsonify(payload)
 
 
