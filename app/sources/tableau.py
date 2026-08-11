@@ -1,24 +1,24 @@
-"""v39 Tableau connector: pull the Sales Rep Totals worksheet directly.
+"""v40 Tableau connector: pull the exposed Rep Totals worksheet directly.
 
-Do not reconstruct rep totals from a dashboard/detail export. Tableau REST
-returns only one child worksheet when a dashboard is queried as CSV, so v39
-resolves the published worksheet named "Sales Rep Totals" and queries that
-view directly. Tableau's own calculated rep totals are then mapped into the
-leaderboard schema by the original wide-row parser.
+Tableau's REST view list identifies the worksheet as:
+    Rep Totals [8-SalesRepLevelData/sheets/RepTotals]
 
-If the worksheet is hidden/not exposed as a REST view, fail clearly instead
-of falling back to detail data or guessing calculations.
+The dashboard's visible heading says "Sales Rep Totals", but that is not the
+REST view name. Query the exposed Rep Totals worksheet directly and use
+Tableau's own calculated summary fields. Do not reconstruct totals from detail
+rows and do not fall back to another worksheet.
 """
 from .tableau_v36_base import *
 from . import tableau_v36_base as _base
 
 
-TARGET_WORKSHEET_NAME = "Sales Rep Totals"
-TARGET_WORKSHEET_NORM = "salesreptotals"
+TARGET_WORKSHEET_NAME = "Rep Totals"
+TARGET_WORKSHEET_NORM = "reptotals"
+TARGET_CONTENT_TAIL = "/sheets/RepTotals"
 
 # Keep status/error text aligned with what we actually pull.
 _base.TABLEAU_VIEW_PATH = (
-    f"{_base.TABLEAU_WORKBOOK_CONTENT_URL}/sheets/SalesRepTotals"
+    f"{_base.TABLEAU_WORKBOOK_CONTENT_URL}/sheets/RepTotals"
 )
 
 
@@ -26,7 +26,7 @@ class TableauSource(_base.TableauSource):
     VIEW_PATH = _base.TABLEAU_VIEW_PATH
 
     def _view_id(self, base, token, site_id):
-        """Resolve the published Sales Rep Totals worksheet, never the dashboard."""
+        """Resolve only the exposed Rep Totals worksheet."""
         workbook_id = self._workbook_id(base, token, site_id)
         status, raw = self._request(
             f"{base}/sites/{site_id}/workbooks/{workbook_id}/views",
@@ -45,23 +45,16 @@ class TableauSource(_base.TableauSource):
         def normalized(value):
             return _base.norm(str(value or ""))
 
-        # Prefer the human-readable worksheet name. Then accept an exact sheet
-        # URL-name/contentUrl match, but never silently select the RepTotals
-        # dashboard itself.
         for view in views:
             name = str(view.get("name") or "").strip()
             content_url = str(view.get("contentUrl") or "").strip()
             view_url_name = str(view.get("viewUrlName") or "").strip()
-            is_sheet_path = "/sheets/" in content_url.lower()
 
             exact_name = normalized(name) == TARGET_WORKSHEET_NORM
             exact_url = normalized(view_url_name) == TARGET_WORKSHEET_NORM
-            sheet_tail = (
-                is_sheet_path
-                and normalized(content_url.rsplit("/", 1)[-1]) == TARGET_WORKSHEET_NORM
-            )
+            exact_content = content_url.lower().endswith(TARGET_CONTENT_TAIL.lower())
 
-            if exact_name or exact_url or sheet_tail:
+            if exact_name or exact_url or exact_content:
                 view_id = str(view.get("id") or "").strip()
                 if view_id:
                     return view_id
@@ -73,22 +66,19 @@ class TableauSource(_base.TableauSource):
             available.append(f"{label} [{content}]")
 
         raise _base.TableauError(
-            "Tableau did not expose the 'Sales Rep Totals' worksheet as a REST view. "
-            "The leaderboard refused to fall back to dashboard detail data. "
-            "Available views: " + ("; ".join(available) if available else "none")
+            "Tableau did not expose the Rep Totals worksheet expected at "
+            f"{_base.TABLEAU_VIEW_PATH}. Available views: "
+            + ("; ".join(available) if available else "none")
         )
 
     def fetch_csv(self, base, token, site_id, start, end):
-        """Query Sales Rep Totals and verify we received its summary columns."""
+        """Query Rep Totals and verify Tableau returned summary columns."""
         csv_text = super().fetch_csv(base, token, site_id, start, end)
 
         reader = _base.csv.DictReader(_base.io.StringIO(csv_text))
         headers = reader.fieldnames or []
         normalized_headers = [_base.norm(h) for h in headers]
 
-        # We specifically need Tableau's pre-calculated rep-total fields. If
-        # those are absent, stop rather than reconstructing them from another
-        # worksheet.
         required_markers = {
             "issued": "issuedleadssplitprep",
             "pitched": "pitchedleadssplit",
@@ -100,8 +90,8 @@ class TableauSource(_base.TableauSource):
         ]
         if missing:
             raise _base.TableauError(
-                "Sales Rep Totals returned unexpected columns; missing Tableau "
-                "summary fields: " + ", ".join(missing) + ". Columns received: "
+                "Rep Totals returned unexpected columns; missing Tableau summary "
+                "fields: " + ", ".join(missing) + ". Columns received: "
                 + (", ".join(headers) if headers else "none")
             )
 
