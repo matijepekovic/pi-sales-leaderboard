@@ -1,0 +1,21 @@
+name: v71 row bounds check
+on:
+  push:
+    branches: [build/v71-row-bounds]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify bounded presentation patch
+        run: |
+          node --check app/static/row-height-bounds-v71.js
+          test "$(cat VERSION)" = 71
+          grep -q 'row-height-bounds-v71.js?v=71' app/templates/display.html
+          grep -q 'min-height:44px' app/static/row-height-bounds-v71.js
+          grep -q 'max-height:82px' app/static/row-height-bounds-v71.js
+          grep -q 'height:clamp(38px,var(--v55-office-row-h,42px),82px)' app/static/row-height-bounds-v71.js
+          grep -q 'min-height:31px' app/static/row-height-bounds-v71.js
+          grep -q 'max-height:67px' app/static/row-height-bounds-v71.js
+          bad=$(git diff --name-only HEAD^..HEAD | grep -E '^(app/server.py|app/database.py|app/sources/)' || true)
+          test -z "$bad"
