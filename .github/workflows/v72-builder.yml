@@ -9,18 +9,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        with: {fetch-depth: 0}
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+        with: {python-version: '3.11'}
       - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Apply v72 source changes
-        run: python .github/scripts/apply_v72.py
-      - name: Install app dependencies
-        run: pip install -r requirements.txt
+        with: {node-version: '20'}
+      - name: Apply v72
+        run: |
+          python .github/scripts/apply_v72.py
+          python .github/scripts/apply_v72b.py
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save playwright@1.54.2
+          npx playwright install --with-deps chromium
       - name: Static checks
         run: |
           node --check app/static/theme-studio.js
@@ -34,8 +36,8 @@ jobs:
           ! grep -q 'zoomFactor' app/static/theme-studio.js
           grep -q 'width:96.5vw' app/static/table-readability-v72.js
           grep -q 'width:97vw' app/static/table-readability-v72.js
-          grep -q 'padding:1px 4px' app/static/table-readability-v72.js
           grep -q 'rows.appendChild(footer)' app/static/table-readability-v72.js
+          grep -q 'Background art is always the back plane' app/static/table-readability-v72.js
       - name: Prepare isolated Pi data
         env:
           HOME: ${{ runner.temp }}/pi-home
@@ -45,107 +47,62 @@ jobs:
           import sys
           sys.path.insert(0,'app')
           from database import init_db, replace_reps, get_team_definitions, assign_rep_to_team, get_settings, save_settings
-          init_db()
-          rows=[]
-          teams=['UNDISPUTED','Bravo']
-          for ti,team in enumerate(teams):
+          init_db(); rows=[]
+          for ti,team in enumerate(['UNDISPUTED','Bravo']):
               for i in range(4):
-                  issued=6+i
-                  sold=1+(i%3)
-                  gross=(50000-ti*12000)-i*2500
-                  net=gross*.72
-                  rows.append({'rep_key':f'{team}-{i}','rep_name':f'{team} Rep {i+1}','team':team,
-                    'issued_leads':issued,'pitched_leads':issued-1,'pitched_rate':(issued-1)/issued*100,
-                    'sold_leads':sold,'close_rate':sold/issued*100,'gross_split':gross,
-                    'pending_split':gross-net,'net_split':net,'dpl':net/issued,
-                    'sales_retention':72,'avg_gross_sale':gross/max(sold,1),'avg_net_sale':net/max(sold,1)})
+                  issued=6+i; sold=1+(i%3); gross=(50000-ti*12000)-i*2500; net=gross*.72
+                  rows.append({'rep_key':f'{team}-{i}','rep_name':f'{team} Rep {i+1}','team':team,'issued_leads':issued,'pitched_leads':issued-1,'pitched_rate':(issued-1)/issued*100,'sold_leads':sold,'close_rate':sold/issued*100,'gross_split':gross,'pending_split':gross-net,'net_split':net,'dpl':net/issued,'sales_retention':72,'avg_gross_sale':gross/max(sold,1),'avg_net_sale':net/max(sold,1)})
           replace_reps(rows)
           ids={t['name']:int(t['team_id']) for t in get_team_definitions()}
           for row in rows: assign_rep_to_team(row['rep_key'],ids[row['team']])
-          s=get_settings();s['active_mode']='whole_office';s['per_team_selected']='UNDISPUTED';s['team_vs_team_selected']=['UNDISPUTED','Bravo'];s['display_refresh_seconds']=2
+          s=get_settings(); s['active_mode']='whole_office'; s['per_team_selected']='UNDISPUTED'; s['team_vs_team_selected']=['UNDISPUTED','Bravo']; s['display_refresh_seconds']=2
+          allm=['rank','rep_name','team','issued_leads','pitched_leads','pitched_rate','sold_leads','close_rate','gross_split','pending_split','net_split','dpl','sales_retention','avg_gross_sale','avg_net_sale']
           for mode in s['visible_metrics']:
-              s['visible_metrics'][mode]=['rank','rep_name','team','issued_leads','pitched_leads','pitched_rate','sold_leads','close_rate','gross_split','pending_split','net_split','dpl','sales_retention','avg_gross_sale','avg_net_sale']
-              s['sort_metric'][mode]='gross_split'
+              s['visible_metrics'][mode]=allm; s['sort_metric'][mode]='gross_split'
           save_settings(s)
           PY
-      - name: Install Playwright Chromium
-        run: |
-          npm install --no-save playwright@1.54.2
-          npx playwright install --with-deps chromium
       - name: Start real app
         env:
           HOME: ${{ runner.temp }}/pi-home
         run: |
           python app/server.py >/tmp/pi-v72.log 2>&1 &
-          for i in $(seq 1 50); do
-            curl -fsS http://127.0.0.1:8765/health && exit 0
-            sleep .5
-          done
-          cat /tmp/pi-v72.log
-          exit 1
-      - name: Real-app display verification
+          for i in $(seq 1 50); do curl -fsS http://127.0.0.1:8765/health && exit 0; sleep .5; done
+          cat /tmp/pi-v72.log; exit 1
+      - name: Real-app 3840x2160 verification
         run: |
-          cat > /tmp/test-v72.js <<'JS'
-          const {chromium}=require(process.cwd()+'/node_modules/playwright');
+          cat > test-v72.js <<'JS'
+          const {chromium}=require('playwright');
           const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+          async function waitSel(page,sel){await page.waitForSelector(sel,{timeout:12000});await page.waitForTimeout(200)}
           (async()=>{
             const browser=await chromium.launch({headless:true});
-            const errors=[];
-            const page=await browser.newPage({viewport:{width:3840,height:2160}});
+            const page=await browser.newPage({viewport:{width:3840,height:2160}}); const errors=[];
             page.on('pageerror',e=>errors.push(String(e)));
-            await page.goto('http://127.0.0.1:8765/?mode=whole_office',{waitUntil:'networkidle'});
-            await page.waitForSelector('#v55OfficeBroadcast .v55-office-row');
-            await page.waitForTimeout(150);
-            let g=await page.evaluate(()=>{
-              const root=document.querySelector('#v55OfficeBroadcast');
-              const main=root.querySelector('.v55-office-main');
-              const row=root.querySelector('.v55-office-row:not(.champion)')||root.querySelector('.v55-office-row');
-              const name=root.querySelector('.v55-office-name');
-              const stat=root.querySelector('.v55-office-stat');
-              return {mainW:main.getBoundingClientRect().width,rowH:row.getBoundingClientRect().height,name:parseFloat(getComputedStyle(name).fontSize),stat:parseFloat(getComputedStyle(stat).fontSize),pad:getComputedStyle(stat).paddingLeft};
-            });
-            assert(g.mainW>3000,`whole office still width-capped: ${JSON.stringify(g)}`);
-            assert(g.rowH>=38&&g.rowH<=82,`whole office row bounds lost: ${g.rowH}`);
-            assert(g.name>=14&&g.stat>=10.5,`whole office text too small: ${JSON.stringify(g)}`);
-            assert(parseFloat(g.pad)<=1.1,`whole office padding not tightened: ${g.pad}`);
+            await page.goto('http://127.0.0.1:8765/',{waitUntil:'networkidle'});
+            await waitSel(page,'#v55OfficeBroadcast .v55-office-row');
+            let g=await page.evaluate(()=>{const r=document.querySelector('#v55OfficeBroadcast'),m=r.querySelector('.v55-office-main'),row=r.querySelector('.v55-office-row:not(.champion)')||r.querySelector('.v55-office-row'),n=r.querySelector('.v55-office-name'),s=r.querySelector('.v55-office-stat'),bg=r.querySelector('.v55-office-bg'),hero=r.querySelector('.v55-office-hero');return {w:m.getBoundingClientRect().width,h:row.getBoundingClientRect().height,name:+parseFloat(getComputedStyle(n).fontSize).toFixed(1),stat:+parseFloat(getComputedStyle(s).fontSize).toFixed(1),pad:parseFloat(getComputedStyle(s).paddingLeft),bgz:getComputedStyle(bg).zIndex,heroz:getComputedStyle(hero).zIndex}});
+            assert(g.w>3500,`office width ${JSON.stringify(g)}`); assert(g.h>=38&&g.h<=82,`office row ${g.h}`); assert(g.name>=14&&g.stat>=10.5,`office font ${JSON.stringify(g)}`); assert(g.pad<=1.1,'office padding'); assert(+g.heroz>+g.bgz,'office bg layering');
 
-            await page.goto('http://127.0.0.1:8765/?mode=per_team::UNDISPUTED',{waitUntil:'networkidle'});
-            await page.waitForSelector('#themedTeamBroadcast .bt-row');await page.waitForTimeout(150);
-            g=await page.evaluate(()=>{
-              const root=document.querySelector('#themedTeamBroadcast');
-              const main=root.querySelector('.bt-main');
-              const row=root.querySelector('.bt-row:not(.champion)')||root.querySelector('.bt-row');
-              const name=root.querySelector('.bt-name');const stat=root.querySelector('.bt-stat');
-              return {mainW:main.getBoundingClientRect().width,rowH:row.getBoundingClientRect().height,name:parseFloat(getComputedStyle(name).fontSize),stat:parseFloat(getComputedStyle(stat).fontSize)};
-            });
-            assert(g.mainW>3000,`per-team still width-capped: ${JSON.stringify(g)}`);
-            assert(g.rowH>=44&&g.rowH<=82,`per-team row bounds lost: ${g.rowH}`);
-            assert(g.name>=14&&g.stat>=11,`per-team text too small: ${JSON.stringify(g)}`);
+            await page.keyboard.press('ArrowRight');
+            await waitSel(page,'.v69-team-card .v69-row');
+            const comp=await page.evaluate(()=>[...document.querySelectorAll('.v69-team-card')].map(c=>{const rows=c.querySelector('.v69-rows'),rs=[...c.querySelectorAll('.v69-row')],f=c.querySelector('.v69-footer'),last=rs.at(-1),stat=c.querySelector('.v69-stat'),bg=c.querySelector('.v69-card-bg'),hero=c.querySelector('.v69-hero');return {inside:f?.parentElement===rows,gap:f&&last?Math.abs(f.getBoundingClientRect().top-last.getBoundingClientRect().bottom):999,stat:parseFloat(getComputedStyle(stat).fontSize),bgz:bg?getComputedStyle(bg).zIndex:'0',heroz:hero?getComputedStyle(hero).zIndex:'2'};}));
+            assert(comp.length===2,'comparison cards'); comp.forEach(x=>{assert(x.inside,'footer not table-bound');assert(x.gap<8,`footer gap ${x.gap}`);assert(x.stat>=10,`comparison stat ${x.stat}`);assert(+x.heroz>+x.bgz,'comparison bg layering')});
 
-            await page.goto('http://127.0.0.1:8765/?mode=team_vs_team',{waitUntil:'networkidle'});
-            await page.waitForSelector('.v69-team-card .v69-row');await page.waitForTimeout(150);
-            const comp=await page.evaluate(()=>[...document.querySelectorAll('.v69-team-card')].map(card=>{
-              const rows=card.querySelector('.v69-rows');const reps=[...card.querySelectorAll('.v69-row')];const footer=card.querySelector('.v69-footer');const last=reps[reps.length-1];
-              return {inside:footer?.parentElement===rows,gap:footer&&last?Math.abs(footer.getBoundingClientRect().top-last.getBoundingClientRect().bottom):999,cardGap:footer?card.getBoundingClientRect().bottom-footer.getBoundingClientRect().bottom:0,stat:parseFloat(getComputedStyle(card.querySelector('.v69-stat')).fontSize)};
-            }));
-            assert(comp.length===2,'comparison cards missing');
-            comp.forEach(x=>{assert(x.inside,'comparison footer not attached to rows');assert(x.gap<8,`footer gap ${x.gap}`);assert(x.stat>=10,`comparison stat too small ${x.stat}`);});
-
+            await page.keyboard.press('ArrowRight'); await page.waitForTimeout(300); await page.keyboard.press('ArrowRight');
+            await waitSel(page,'#themedTeamBroadcast .bt-row');
+            g=await page.evaluate(()=>{const r=document.querySelector('#themedTeamBroadcast'),m=r.querySelector('.bt-main'),row=r.querySelector('.bt-row:not(.champion)')||r.querySelector('.bt-row'),n=r.querySelector('.bt-name'),s=r.querySelector('.bt-stat'),f=r.querySelector('.bt-footer'),last=[...r.querySelectorAll('.bt-row')].at(-1),bg=r.querySelector('.bt-bg'),hero=r.querySelector('.bt-hero');return {w:m.getBoundingClientRect().width,h:row.getBoundingClientRect().height,name:parseFloat(getComputedStyle(n).fontSize),stat:parseFloat(getComputedStyle(s).fontSize),gap:f&&last?Math.abs(f.getBoundingClientRect().top-last.getBoundingClientRect().bottom):999,bgz:bg?getComputedStyle(bg).zIndex:'0',heroz:hero?getComputedStyle(hero).zIndex:'2'};});
+            assert(g.w>3500,`team width ${JSON.stringify(g)}`); assert(g.h>=44&&g.h<=82,`team row ${g.h}`); assert(g.name>=14&&g.stat>=11,`team font ${JSON.stringify(g)}`); assert(g.gap<12,`team totals gap ${g.gap}`); assert(+g.heroz>+g.bgz,'team bg layering');
             assert(!errors.length,'page errors: '+errors.join(' | '));
-            console.log('v72 real-app display verification passed',g,comp);
-            await browser.close();
+            console.log('v72 4K verification passed',g,comp); await browser.close();
           })().catch(e=>{console.error(e);process.exit(1)});
           JS
-          node /tmp/test-v72.js
-      - name: Final source boundary
+          node test-v72.js
+      - name: Production boundary
         run: |
-          bad=$(git diff --name-only | grep -E '^(app/server.py|app/database.py|app/sources/)' || true)
-          test -z "$bad"
-      - name: Commit generated v72 source
+          bad=$(git diff --name-only | grep -E '^(app/server.py|app/database.py|app/sources/)' || true); test -z "$bad"
+      - name: Commit generated source
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name 'github-actions[bot]'; git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add VERSION app/static/theme-studio.js app/static/table-readability-v72.js app/templates/display.html app/templates/settings.html
-          if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'v72: scale table text, remove preview zoom, attach totals [generated]'
+          git diff --cached --quiet || git commit -m 'v72: readable 4K tables, fit-only preview, table-bound totals [generated]'
           git push origin HEAD:build/v72-readable-tables-no-preview-zoom
