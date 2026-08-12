@@ -1,0 +1,77 @@
+name: v73 Whole Office table priority
+on:
+  push:
+    branches: [build/v73-office-table-priority]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - uses: actions/setup-node@v4
+        with: {node-version: '20'}
+      - name: Static checks
+        run: |
+          node --check app/static/whole-office-table-priority-v73.js
+          test "$(cat VERSION)" = 73
+          grep -q 'whole-office-table-priority-v73.js?v=73' app/templates/display.html
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save playwright@1.54.2
+          npx playwright install --with-deps chromium
+      - name: Fixture and app
+        env:
+          HOME: ${{ runner.temp }}/pi-home
+        run: |
+          mkdir -p "$HOME"
+          python - <<'PY'
+          import sys
+          sys.path.insert(0,'app')
+          from database import init_db,replace_reps,get_team_definitions,assign_rep_to_team,get_settings,save_settings
+          init_db(); rows=[]
+          for i in range(30):
+            issued=8+i%5; sold=1+i%3; gross=70000-i*900; net=gross*.72
+            rows.append({'rep_key':f'und-{i}','rep_name':f'Office Rep {i+1}','team':'UNDISPUTED','issued_leads':issued,'pitched_leads':issued-1,'pitched_rate':(issued-1)/issued*100,'sold_leads':sold,'close_rate':sold/issued*100,'gross_split':gross,'pending_split':gross-net,'net_split':net,'dpl':net/issued,'sales_retention':72,'avg_gross_sale':gross/max(sold,1),'avg_net_sale':net/max(sold,1)})
+          replace_reps(rows)
+          team=next(t for t in get_team_definitions() if t['name']=='UNDISPUTED')
+          for row in rows: assign_rep_to_team(row['rep_key'],int(team['team_id']))
+          s=get_settings();s['active_mode']='whole_office';s['display_refresh_seconds']=10
+          s['visible_metrics']['whole_office']=['rank','rep_name','team','issued_leads','sold_leads','gross_split','net_split','close_rate']
+          s['sort_metric']['whole_office']='gross_split';save_settings(s)
+          PY
+          python app/server.py >/tmp/v73.log 2>&1 &
+          for i in $(seq 1 50); do curl -fsS http://127.0.0.1:8765/health && exit 0; sleep .5; done
+          cat /tmp/v73.log; exit 1
+      - name: Verify true 4K pressure behavior
+        run: |
+          cat > verify-v73.js <<'JS'
+          const {chromium}=require('playwright');
+          const assert=(x,m)=>{if(!x)throw new Error(m)};
+          (async()=>{
+            const b=await chromium.launch({headless:true});
+            const p=await b.newPage({viewport:{width:3840,height:2160}});
+            const errors=[];p.on('pageerror',e=>errors.push(String(e)));
+            await p.goto('http://127.0.0.1:8765/',{waitUntil:'networkidle'});
+            await p.waitForSelector('#v55OfficeBroadcast .v55-office-row');await p.waitForTimeout(250);
+            const x=await p.evaluate(()=>{
+              const root=document.querySelector('#v55OfficeBroadcast');
+              const brand=root.querySelector('.v55-office-brand');
+              const row=root.querySelector('.v55-office-row:not(.champion)')||root.querySelector('.v55-office-row');
+              return {preferred:parseFloat(root.dataset.v73PreferredBrand),hero:brand.getBoundingClientRect().height,row:row.getBoundingClientRect().height,count:root.querySelectorAll('.v55-office-row').length};
+            });
+            assert(x.count===30,`row count ${JSON.stringify(x)}`);
+            assert(x.hero<x.preferred-100,`hero did not yield to table ${JSON.stringify(x)}`);
+            assert(x.hero>=145,`hero shrank below safe minimum ${JSON.stringify(x)}`);
+            assert(x.row>=60&&x.row<=82,`table did not retain readable row height ${JSON.stringify(x)}`);
+            assert(!errors.length,errors.join(' | '));
+            console.log('v73 4K pressure passed',x);await b.close();
+          })().catch(e=>{console.error(e);process.exit(1)});
+          JS
+          node verify-v73.js
+      - name: Production boundary
+        run: |
+          bad=$(git diff --name-only origin/main...HEAD | grep -E '^(app/server.py|app/database.py|app/sources/|app/static/themed-team-layout.js|app/static/comparison-team-cards-v53.js)' || true)
+          test -z "$bad"
