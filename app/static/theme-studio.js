@@ -232,6 +232,24 @@
           </section>
 
           <section class="td-sec">
+            <h3>Theme Details</h3>
+            <div class="td-color">
+              <span class="td-color-chip" style="background:linear-gradient(135deg,#444,#111)"></span>
+              <span class="td-color-text"><span class="td-color-label">Hero Size</span><br><span class="td-color-value">50–200%</span></span>
+              <input id="tdHeroScale" type="number" min="50" max="200" step="5" value="100" inputmode="numeric" style="width:96px">
+            </div>
+            <div class="td-color">
+              <span id="tdStripeChip" class="td-color-chip" style="background:#d8b34a"></span>
+              <span class="td-color-text"><span class="td-color-label">Alternating Row Tint</span><br><span id="tdStripeValue" class="td-color-value">#d8b34a</span></span>
+              <button id="tdStripeOpen" class="btn td-color-btn" type="button">Change colour</button>
+              <input id="tdStripeColor" class="td-hidden-color" type="color" value="#d8b34a" tabindex="-1" aria-hidden="true">
+            </div>
+            <label for="tdStripeStrength">Tint strength (%)</label>
+            <input id="tdStripeStrength" type="number" min="0" max="100" step="5" value="0" inputmode="numeric">
+            <div class="small" style="margin-top:6px">0% keeps the current row appearance. The tint is applied to alternating rows over the theme artwork.</div>
+          </section>
+
+          <section class="td-sec">
             <h3>Team Logo</h3>
             <div class="td-asset" data-asset="team_logo">
               <div class="td-asset-head">
@@ -285,6 +303,15 @@
     });
     byId("tdPreset").addEventListener("change",presetChanged);
     byId("tdEnabled").addEventListener("change",()=>{saveTheme(true);});
+    byId("tdHeroScale").addEventListener("change",()=>saveTheme(true));
+    byId("tdStripeStrength").addEventListener("change",()=>saveTheme(true));
+    byId("tdStripeOpen").addEventListener("click",()=>{const i=byId("tdStripeColor");if(i){i.focus();i.click();}});
+    byId("tdStripeColor").addEventListener("input",()=>{
+      const i=byId("tdStripeColor");
+      byId("tdStripeChip").style.background=i.value;
+      byId("tdStripeValue").textContent=i.value;
+    });
+    byId("tdStripeColor").addEventListener("change",()=>saveTheme(true));
     byId("tdSave").addEventListener("click",()=>saveTheme(false));
     byId("tdReset").addEventListener("click",resetTheme);
     byId("tdLogoReset").addEventListener("click",resetLogo);
@@ -362,6 +389,7 @@
     byId("tdPreset").value=theme.base||"classic";
     byId("tdEnabled").checked=!!theme.enabled;
     renderColors(theme.colors||CLASSIC);
+    renderThemeDetails(theme);
     renderLogo();
     renderSheet();
     renderAssets();
@@ -414,6 +442,20 @@
     document.querySelectorAll(".tdColorInput").forEach(i=>out[i.dataset.colorKey]=i.value);
     return out;
   };
+
+  function renderThemeDetails(theme){
+    const hero=clamp(num(theme?.hero_scale,100),50,200);
+    const stripe=theme?.row_stripe||{};
+    const color=/^#[0-9a-f]{6}$/i.test(String(stripe.color||""))
+      ?String(stripe.color).toLowerCase()
+      :String(theme?.colors?.primary||"#d8b34a").toLowerCase();
+    const strength=clamp(num(stripe.strength,0),0,100);
+    byId("tdHeroScale").value=String(Math.round(hero));
+    byId("tdStripeColor").value=color;
+    byId("tdStripeChip").style.background=color;
+    byId("tdStripeValue").textContent=color;
+    byId("tdStripeStrength").value=String(Math.round(strength));
+  }
 
   function presetChanged(){
     const preset=byId("tdPreset").value;
@@ -968,7 +1010,16 @@
     try{
       const d=await jsonFetch(`/api/themes/${encodeURIComponent(scope())}`,{
         method:"PUT",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({base:byId("tdPreset").value,enabled:byId("tdEnabled").checked,colors:currentColors()})
+        body:JSON.stringify({
+          base:byId("tdPreset").value,
+          enabled:byId("tdEnabled").checked,
+          colors:currentColors(),
+          hero_scale:clamp(num(byId("tdHeroScale")?.value,100),50,200),
+          row_stripe:{
+            color:byId("tdStripeColor")?.value||"#d8b34a",
+            strength:clamp(num(byId("tdStripeStrength")?.value,0),0,100)
+          }
+        })
       });
       if(d.theme&&state?.themes?.teams)state.themes.teams[String(teamId)]=d.theme;
       status("Design saved. The TV picks it up automatically.");

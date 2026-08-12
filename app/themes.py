@@ -207,6 +207,23 @@ def _effective_corner_settings(config):
     }
 
 
+def _clean_hero_scale(value):
+    return _bounded_number(value, 100, 50, 200)
+
+
+def _clean_row_stripe(incoming, colors=None):
+    colors = colors if isinstance(colors, dict) else {}
+    default_color = str(colors.get("primary") or "#d8b34a").lower()
+    color = default_color
+    strength = 0.0
+    if isinstance(incoming, dict):
+        candidate = str(incoming.get("color") or "").strip()
+        if candidate and COLOR_RE.match(candidate):
+            color = candidate.lower()
+        strength = _bounded_number(incoming.get("strength"), 0, 0, 100)
+    return {"color": color, "strength": strength}
+
+
 def _asset_override_path(scope, filename):
     if not filename:
         return None
@@ -251,6 +268,8 @@ def effective_theme(scope, settings=None, team=None):
         "colors": colors,
         "assets": {},
         "corner_settings": _effective_corner_settings(config),
+        "hero_scale": _clean_hero_scale(config.get("hero_scale")),
+        "row_stripe": _clean_row_stripe(config.get("row_stripe"), colors),
         "has_custom_assets": False,
     }
     assets_cfg = config.get("assets") if isinstance(config.get("assets"), dict) else {}
@@ -325,6 +344,10 @@ def _manifest():
             "crop_x": {"min": 0, "max": 60, "step": 1, "default": 0},
             "crop_y": {"min": 0, "max": 60, "step": 1, "default": 0},
         },
+        "theme_controls": {
+            "hero_scale": {"min": 50, "max": 200, "step": 5, "default": 100},
+            "row_stripe_strength": {"min": 0, "max": 100, "step": 5, "default": 0},
+        },
     }
 
 
@@ -369,6 +392,13 @@ def save_theme(scope):
         if isinstance(incoming.get("corner_settings"), dict):
             existing_corners.update(_clean_corner_settings(incoming.get("corner_settings")))
         current["corner_settings"] = existing_corners
+        current["hero_scale"] = _clean_hero_scale(
+            incoming.get("hero_scale", current.get("hero_scale"))
+        )
+        current["row_stripe"] = _clean_row_stripe(
+            incoming.get("row_stripe", current.get("row_stripe")),
+            current.get("colors"),
+        )
 
         version = _set_config(settings, normalized_scope, team, current)
         return jsonify({
@@ -392,6 +422,8 @@ def reset_theme(scope):
             "colors": dict(CLASSIC_COLORS),
             "assets": {},
             "corner_settings": {},
+            "hero_scale": 100.0,
+            "row_stripe": {"color": CLASSIC_COLORS["primary"], "strength": 0.0},
         }
         version = _set_config(settings, normalized_scope, team, config)
         return jsonify({
