@@ -1,12 +1,68 @@
-name: v68 write probe
+name: v68 builder
 permissions:
   contents: write
 on:
   push:
     branches: [build/v68-pinch-cap]
 jobs:
-  probe:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo write-probe-ok
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Generate source
+        run: python .github/scripts/apply_v68.py
+      - name: Static checks
+        run: |
+          node --check app/static/theme-studio.js
+          python -m py_compile app/themes.py
+          python - <<'PY'
+          import sys
+          sys.path.insert(0,'app')
+          import themes
+          assert themes._clean_corner_settings({'corner_tl':{'size':500}})['corner_tl']['size']==500
+          assert themes._clean_corner_settings({'corner_tl':{'size':900}})['corner_tl']['size']==600
+          assert themes._manifest()['corner_controls']['size']['max']==600
+          PY
+          grep -q 'MAX_SIZE=600' app/static/theme-studio.js
+          grep -q 'MAX_ZOOM=4' app/static/theme-studio.js
+          grep -q 'try{stage.setPointerCapture' app/static/theme-studio.js
+          grep -q 'theme-studio.js?v=68' app/templates/settings.html
+          test "$(cat VERSION)" = 68
+      - name: Browser setup
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save playwright@1.54.2
+          npx playwright install --with-deps chromium
+      - name: Start real app
+        env:
+          HOME: ${{ runner.temp }}/pi-home
+        run: |
+          mkdir -p "$HOME"
+          python app/server.py >/tmp/pi-app.log 2>&1 &
+          for i in $(seq 1 40); do
+            curl -fsS http://127.0.0.1:8765/health && exit 0
+            sleep .5
+          done
+          cat /tmp/pi-app.log
+          exit 1
+      - name: Gesture stress
+        run: node .github/scripts/test_v68.js
+      - name: Commit generated source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION app/static/theme-studio.js app/themes.py app/templates/settings.html
+          if git diff --cached --quiet; then
+            echo source-already-generated
+            exit 0
+          fi
+          git commit -m 'v68: fix pinch crash and raise corner cap [generated]'
+          git push origin HEAD:build/v68-pinch-cap
