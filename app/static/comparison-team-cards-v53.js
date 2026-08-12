@@ -1,309 +1,244 @@
-/* v53 comparison presentation.
-   Team vs Team and All Teams are rendered as self-contained team design cards.
-   Existing data/filtering/sorting remains authoritative; this layer only
-   re-composes the already-selected teams into a TV-friendly card grid. */
+/* v69 comparison presentation.
+   Team vs Team and All Teams now use the same information model as individual
+   team view: every enabled metric, one column per metric, themed rows and a
+   totals footer. Teams stack vertically at full width, winner first.
+
+   PRESENTATION ONLY. Existing server payloads remain authoritative for
+   assignments, member ordering, values, calculations and selected metrics. */
 (function(){
   if(typeof render!=="function") return;
 
   const previousRender=render;
-  const STYLE_ID="comparisonTeamCardsV53Styles";
+  const STYLE_ID="comparisonTeamCardsV69Styles";
+  const ROOT_CLASS="v69-comparison-board";
   const comparisonModes=new Set(["team_vs_team","all_teams"]);
+  const TEXT_METRICS=new Set(["rank","rep_name","team","home_branch","title","hire_date"]);
   const assigned=row=>Number(row?.assigned_team_id||0)>0;
   const norm=value=>String(value||"").trim().toLowerCase();
 
   function node(tag,className,text){
     const el=document.createElement(tag);
-    if(className) el.className=className;
-    if(text!==undefined&&text!==null) el.textContent=String(text);
+    if(className)el.className=className;
+    if(text!==undefined&&text!==null)el.textContent=String(text);
     return el;
   }
 
-  function ensureStyles(){
-    if(document.getElementById(STYLE_ID)) return;
-    const style=document.createElement("style");
-    style.id=STYLE_ID;
-    style.textContent=`
-      /* The shared TV title/subtitle are redundant now that the views carry
-         their own team identity. Keep the header itself available to modes
-         that inject artwork/logo into it. */
-      #title,#subtitle{display:none!important}
-
-      body.v53-comparison-mode{padding:10px!important;background-color:#050505!important}
-      body.v53-comparison-mode header{display:none!important}
-      body.v53-comparison-mode #content{height:calc(100vh - 20px)!important;overflow:hidden!important}
-      body.v53-comparison-mode #scaleRoot{width:100%;height:100%;transform-origin:top left}
-
-      .v53-board{
-        width:100%;height:100%;min-width:0;min-height:0;
-        display:grid;
-        grid-template-columns:repeat(var(--v53-cols),minmax(0,1fr));
-        grid-template-rows:repeat(var(--v53-rows),minmax(0,1fr));
-        gap:10px;
-      }
-      .v53-card{
-        --v53-primary:#d8b34a;--v53-bright:#e6c760;--v53-panel:#0b0b0b;
-        --v53-text:#f5f5f5;--v53-muted:#9c9c9c;--v53-champion:#fff;
-        min-width:0;min-height:0;width:100%;height:100%;overflow:hidden;
-        position:relative;display:flex;flex-direction:column;
-        color:var(--v53-text);background-color:var(--v53-panel);
-        background-position:center;background-size:cover;background-repeat:no-repeat;
-        border:2px solid var(--v53-primary);
-        box-shadow:inset 0 0 0 1px rgba(0,0,0,.9),inset 0 0 36px rgba(0,0,0,.72);
-      }
-      .v53-card::after{
-        content:"";position:absolute;inset:4px;pointer-events:none;z-index:20;
-        border:1px solid color-mix(in srgb,var(--v53-primary) 45%,transparent);
-      }
-      .v53-corner{position:absolute;z-index:21;width:min(15%,76px);height:auto;object-fit:contain;pointer-events:none}
-      .v53-corner.tl{top:0;left:0}.v53-corner.tr{top:0;right:0}
-      .v53-corner.bl{bottom:0;left:0}.v53-corner.br{bottom:0;right:0}
-
-      .v53-brand{
-        position:relative;z-index:2;flex:0 0 25%;min-height:82px;max-height:230px;
-        display:flex;flex-direction:column;align-items:center;justify-content:center;
-        padding:12px 16px 6px;text-align:center;
-      }
-      .v53-logo{display:block;width:min(72%,330px);height:min(78%,190px);object-fit:contain;filter:drop-shadow(0 5px 10px rgba(0,0,0,.7))}
-      .v53-name{font-weight:900;font-size:clamp(20px,2vw,42px);letter-spacing:.05em;color:var(--v53-bright);text-transform:uppercase}
-      .v53-ranked-by{margin-top:4px;font-size:clamp(7px,.53vw,11px);letter-spacing:.16em;text-transform:uppercase;color:var(--v53-muted);font-weight:800}
-
-      .v53-reps{
-        position:relative;z-index:2;flex:1 1 auto;min-height:0;
-        display:grid;grid-template-rows:repeat(var(--v53-rep-count),minmax(0,1fr));
-        padding:0 12px;
-      }
-      .v53-rep{
-        position:relative;min-width:0;min-height:0;overflow:hidden;
-        display:grid;grid-template-columns:clamp(24px,2.1vw,42px) minmax(0,1fr) auto;
-        align-items:center;gap:8px;padding:4px 7px;
-        border-bottom:1px solid color-mix(in srgb,var(--v53-primary) 19%,transparent);
-        background-position:center;background-size:100% 100%;background-repeat:no-repeat;
-      }
-      .v53-rep:first-child{color:var(--v53-champion);font-weight:900}
-      .v53-rank{font-size:clamp(12px,1.05vw,22px);font-weight:900;text-align:center;color:var(--v53-bright)}
-      .v53-medallion{display:block;width:clamp(23px,2.2vw,42px);height:clamp(23px,2.2vw,42px);object-fit:contain;margin:auto}
-      .v53-rep-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:clamp(10px,.9vw,18px);font-weight:800;letter-spacing:.02em}
-      .v53-rep-value{white-space:nowrap;text-align:right;font-size:clamp(10px,.86vw,18px);font-weight:900;color:var(--v53-bright);font-variant-numeric:tabular-nums}
-      .v53-empty{display:grid;place-items:center;color:var(--v53-muted);font-size:12px;padding:16px}
-
-      .v53-totals{
-        position:relative;z-index:2;flex:0 0 auto;
-        display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
-        margin:8px 10px 8px;padding-top:7px;
-        border-top:2px solid var(--v53-primary);
-      }
-      .v53-total{min-width:0;text-align:center;padding:1px 5px;border-right:1px solid color-mix(in srgb,var(--v53-primary) 22%,transparent)}
-      .v53-total:last-child{border-right:0}
-      .v53-total-value{white-space:nowrap;overflow:hidden;text-overflow:clip;color:var(--v53-bright);font-size:clamp(8px,.72vw,15px);font-weight:900;font-variant-numeric:tabular-nums}
-      .v53-total-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;color:var(--v53-muted);font-size:clamp(5px,.4vw,8px);letter-spacing:.11em;text-transform:uppercase}
-
-      .v53-board.v53-narrow .v53-brand{flex-basis:22%;min-height:66px;padding-top:8px}
-      .v53-board.v53-narrow .v53-logo{width:min(78%,220px);height:min(80%,135px)}
-      .v53-board.v53-narrow .v53-reps{padding:0 7px}
-      .v53-board.v53-narrow .v53-rep{grid-template-columns:24px minmax(0,1fr) auto;gap:5px;padding:3px 4px}
-      .v53-board.v53-narrow .v53-rep-name,.v53-board.v53-narrow .v53-rep-value{font-size:clamp(8px,.65vw,13px)}
-      .v53-board.v53-narrow .v53-totals{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:5px;margin:6px 7px 7px}
-      .v53-board.v53-narrow .v53-total:nth-child(2){border-right:0}
-
-      .v53-board.v53-dense .v53-brand{flex-basis:20%;min-height:60px}
-      .v53-board.v53-dense .v53-rep{padding-top:2px;padding-bottom:2px}
-      .v53-board.v53-dense .v53-rep-name,.v53-board.v53-dense .v53-rep-value{font-size:clamp(7px,.58vw,12px)}
-
-      @media(max-width:1100px){
-        .v53-board{gap:7px}.v53-brand{padding-left:9px;padding-right:9px}
-        .v53-reps{padding-left:7px;padding-right:7px}.v53-totals{margin-left:7px;margin-right:7px}
-      }
-    `;
-    document.head.appendChild(style);
+  function clamp(value,min,max){
+    value=Number(value);
+    return Number.isFinite(value)?Math.min(max,Math.max(min,value)):min;
   }
 
-  function layoutFor(count){
-    if(count<=1) return {cols:1,rows:1};
-    if(count===2) return {cols:2,rows:1};
-    if(count===3) return {cols:3,rows:1};
-    if(count===4) return {cols:2,rows:2};
-    if(count<=6) return {cols:3,rows:2};
-    if(count<=8) return {cols:4,rows:2};
-    if(count<=9) return {cols:3,rows:3};
-    if(count<=12) return {cols:4,rows:3};
-    const cols=Math.max(4,Math.ceil(Math.sqrt(count*16/9)));
-    return {cols,rows:Math.ceil(count/cols)};
+  function metricKeys(data){
+    return (Array.isArray(data?.metrics)?data.metrics:[]).filter(key=>!TEXT_METRICS.has(key));
   }
 
-  function visibleTeamNames(mode){
-    const selector=mode==="team_vs_team"?".vs-card .vs-name":".all-card .all-name";
-    return [...document.querySelectorAll(selector)]
-      .map(el=>String(el.textContent||"").trim())
-      .filter(Boolean);
-  }
-
-  function visibleTeams(data){
-    const source=Array.isArray(data.teams)?data.teams:[];
-    const byName=new Map(source.map(team=>[norm(team?.summary?.team),team]));
-    const names=visibleTeamNames(data.mode);
-    const ordered=[];
-    const used=new Set();
-
-    names.forEach(name=>{
-      const team=byName.get(norm(name));
-      if(team&&!used.has(team)){
-        ordered.push(team);used.add(team);
-      }
-    });
-
-    if(ordered.length) return ordered;
-    return source.filter(team=>(team.members||[]).some(assigned));
+  function formatValue(data,key,value){
+    if(typeof fmt==="function")return fmt(value,data?.metric_types?.[key],data?.currency_symbol);
+    return String(value??"");
   }
 
   function themeFor(data,summary){
     const state=data?.theme_state||{};
     const teamId=summary?.team_id;
-    if(teamId!==undefined&&teamId!==null&&state.teams?.[String(teamId)]) return state.teams[String(teamId)];
+    if(teamId!==undefined&&teamId!==null&&state.teams?.[String(teamId)])return state.teams[String(teamId)];
     return state.by_name?.[norm(summary?.team)]||null;
   }
 
-  function formatValue(data,key,value){
-    if(typeof fmt==="function") return fmt(value,data.metric_types?.[key],data.currency_symbol);
-    return String(value??"");
+  function setThemeVars(card,colors={}){
+    const map={
+      primary:"--v69-primary",primary_bright:"--v69-bright",primary_dark:"--v69-dark",
+      secondary:"--v69-secondary",background:"--v69-bg",panel:"--v69-panel",
+      text:"--v69-text",muted:"--v69-muted",champion_text:"--v69-champ"
+    };
+    Object.entries(map).forEach(([key,name])=>{if(colors[key])card.style.setProperty(name,colors[key]);});
   }
 
-  function totalKeys(data){
-    const selected=(Array.isArray(data.metrics)?data.metrics:[]).filter(k=>!["rank","rep_name","team"].includes(k));
-    const preferred=["gross_split","pending_split","net_split","sold_leads","issued_leads","pitched_leads","close_rate","pitched_rate","dpl","sales_retention","avg_gross_sale","avg_net_sale"];
-    const out=[];
-    preferred.forEach(k=>{if(selected.includes(k)&&!out.includes(k)) out.push(k);});
-    selected.forEach(k=>{if(!out.includes(k)) out.push(k);});
-    const primary=data.sort_metric;
-    let result=out.slice(0,4);
-    if(primary&&selected.includes(primary)&&!result.includes(primary)){
-      if(result.length<4) result.push(primary);
-      else result[result.length-1]=primary;
-    }
-    return result;
+  function ensureStyles(){
+    if(document.getElementById(STYLE_ID))return;
+    const style=document.createElement("style");
+    style.id=STYLE_ID;
+    style.textContent=`
+      #title,#subtitle{display:none!important}
+      body.v69-comparison-active{padding:8px!important;background:#050505!important;overflow:hidden!important}
+      body.v69-comparison-active header{display:none!important}
+      body.v69-comparison-active #content{height:calc(100vh - 16px)!important;overflow:hidden!important}
+      body.v69-comparison-active #scaleRoot{width:100%!important;height:100%!important;transform:none!important;transform-origin:top left!important}
+
+      .${ROOT_CLASS}{width:100%;height:100%;min-width:0;min-height:0;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+      .v69-team-card{
+        --v69-primary:#d8b34a;--v69-bright:#e6c760;--v69-dark:#705b20;--v69-secondary:#303030;
+        --v69-bg:#080808;--v69-panel:#111;--v69-text:#f5f5f5;--v69-muted:#9c9c9c;--v69-champ:#fff;
+        position:relative;flex:1 1 0;min-height:0;width:100%;overflow:hidden;display:flex;flex-direction:column;
+        color:var(--v69-text);background:var(--v69-bg);border:2px solid var(--v69-primary);
+        box-shadow:inset 0 0 0 1px #000,inset 0 0 0 4px color-mix(in srgb,var(--v69-primary) 26%,transparent),inset 0 0 40px rgba(0,0,0,.72);
+        font-family:"Arial Narrow","Roboto Condensed",Impact,Arial,sans-serif;
+      }
+      .v69-team-card *{box-sizing:border-box}
+      .v69-card-bg{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:cover;opacity:.68}
+      .v69-card-atmosphere{position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(rgba(5,5,5,.40),rgba(5,5,5,.66))}
+      .v69-card-frame{position:absolute;inset:5px;z-index:18;pointer-events:none;border:1px solid color-mix(in srgb,var(--v69-primary) 70%,transparent)}
+      .v69-corner{position:absolute;z-index:20;width:clamp(60px,7vw,120px);height:auto;object-fit:contain;pointer-events:none;filter:drop-shadow(0 2px 5px #000)}
+      .v69-corner.tl{top:0;left:0}.v69-corner.tr{top:0;right:0}.v69-corner.bl{bottom:0;left:0}.v69-corner.br{bottom:0;right:0}
+
+      .v69-brand{position:relative;z-index:3;flex:0 0 var(--v69-brand-h,92px);min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:4px 34px 2px;text-align:center;overflow:hidden}
+      .v69-hero{display:block;width:min(72vw,1160px);height:calc(100% - 14px);max-width:92%;object-fit:contain;filter:drop-shadow(0 4px 10px rgba(0,0,0,.86))}
+      .v69-team-name{font-family:Impact,"Arial Narrow",sans-serif;color:var(--v69-bright);font-size:clamp(20px,2.1vw,42px);letter-spacing:.045em;text-transform:uppercase;text-shadow:0 3px 7px #000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:90%}
+      .v69-ranked{flex:0 0 auto;color:var(--v69-muted);font-size:clamp(6px,.46vw,10px);font-weight:800;letter-spacing:.14em;text-transform:uppercase;text-shadow:0 2px 3px #000;white-space:nowrap}
+
+      .v69-main{position:relative;z-index:3;flex:1 1 auto;min-height:0;width:min(96%,1870px);margin:0 auto;display:flex;flex-direction:column}
+      .v69-head,.v69-row,.v69-footer{display:grid;grid-template-columns:clamp(50px,3.6vw,72px) minmax(210px,2.45fr) repeat(var(--v69-cols),minmax(0,1fr));align-items:center}
+      .v69-head{flex:0 0 auto;min-height:24px;color:var(--v69-bright);text-transform:uppercase;letter-spacing:.09em;text-align:center;font-size:clamp(6px,.48vw,10px);font-weight:800;border-top:1px solid color-mix(in srgb,var(--v69-primary) 48%,transparent);border-bottom:1px solid color-mix(in srgb,var(--v69-primary) 48%,transparent);background:rgba(6,6,5,.91);text-shadow:0 1px 3px #000}
+      .v69-head .rep{text-align:left;padding-left:9px;color:var(--v69-muted)}
+      .v69-rows{flex:1 1 auto;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:1px}
+      .v69-row{position:relative;flex:1 1 0;min-height:0;max-height:none;overflow:hidden;border-bottom:1px solid color-mix(in srgb,var(--v69-primary) 14%,transparent);background-position:center;background-size:100% 100%;background-repeat:no-repeat}
+      .v69-row:before{content:"";position:absolute;inset:0;z-index:0;background:rgba(4,4,3,.54);pointer-events:none}.v69-row>*{position:relative;z-index:1}
+      .v69-row.champion{flex:1.15 1 0;border:2px solid var(--v69-bright);border-radius:4px;box-shadow:0 0 20px color-mix(in srgb,var(--v69-bright) 26%,transparent)}
+      .v69-row.champion:before{background:rgba(22,3,3,.18)}
+      .v69-rank{font-family:Impact,"Arial Narrow",sans-serif;text-align:center;color:var(--v69-bright);font-size:var(--v69-rank-font,20px);font-weight:900;text-shadow:0 2px 3px #000;min-width:0}
+      .v69-medal{display:block;width:min(70%,54px);height:min(88%,54px);object-fit:contain;margin:auto;filter:drop-shadow(0 2px 6px #000)}
+      .v69-rep{min-width:0;padding:1px 9px;overflow:hidden}
+      .v69-rep-name{font-family:Impact,"Arial Narrow",sans-serif;color:var(--v69-bright);font-size:var(--v69-name-font,15px);font-weight:900;letter-spacing:.02em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 2px 3px #000}
+      .v69-row.champion .v69-rep-name{color:var(--v69-champ)}
+      .v69-stat{align-self:stretch;display:flex;align-items:center;justify-content:center;text-align:center;border-left:1px solid color-mix(in srgb,var(--v69-primary) 24%,transparent);font-variant-numeric:tabular-nums;font-weight:800;font-size:var(--v69-stat-font,11px);text-shadow:0 2px 3px #000;white-space:nowrap;overflow:hidden;padding:0 2px}
+      .v69-stat.money{color:var(--v69-bright)}.v69-stat.primary{color:var(--v69-champ);font-weight:900}
+      .v69-empty{flex:1 1 auto;display:grid;place-items:center;color:var(--v69-muted);font-size:12px}
+
+      .v69-footer{position:relative;z-index:3;flex:0 0 auto;min-height:38px;border-top:2px solid var(--v69-primary);background:rgba(0,0,0,.62);padding:3px 0;margin-top:2px}
+      .v69-footer-spacer{grid-column:span 2;align-self:stretch}
+      .v69-total{min-width:0;text-align:center;border-left:1px solid color-mix(in srgb,var(--v69-primary) 28%,transparent);padding:0 3px}
+      .v69-total-v{color:var(--v69-bright);font-size:var(--v69-total-font,11px);font-weight:900;white-space:nowrap;overflow:hidden;font-variant-numeric:tabular-nums;text-shadow:0 2px 3px #000}
+      .v69-total-l{color:var(--v69-muted);font-size:clamp(5px,.38vw,7px);letter-spacing:.07em;text-transform:uppercase;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      @media(max-width:1150px){.${ROOT_CLASS}{gap:6px}.v69-main{width:97%}.v69-head,.v69-row,.v69-footer{grid-template-columns:40px minmax(145px,2.1fr) repeat(var(--v69-cols),minmax(0,1fr))}}
+    `;
+    document.head.appendChild(style);
+  }
+
+  function cleanup(){
+    document.body.classList.remove("v69-comparison-active","v53-comparison-mode");
+    document.querySelector(`.${ROOT_CLASS}`)?.remove();
+  }
+
+  function visibleTeams(data){
+    return (Array.isArray(data?.teams)?data.teams:[]).filter(team=>(team?.members||[]).some(assigned));
+  }
+
+  function rankedTeams(data){
+    const key=data?.sort_metric;
+    return visibleTeams(data).map((team,index)=>({team,index})).sort((a,b)=>{
+      const av=Number(a.team?.summary?.[key]??0),bv=Number(b.team?.summary?.[key]??0);
+      const an=Number.isFinite(av)?av:0,bn=Number.isFinite(bv)?bv:0;
+      if(bn!==an)return bn-an;
+      return a.index-b.index;
+    }).map(item=>item.team);
   }
 
   function addCorners(card,assets){
     [["corner_tl","tl"],["corner_tr","tr"],["corner_bl","bl"],["corner_br","br"]].forEach(([key,pos])=>{
-      if(!assets?.[key]) return;
-      const img=node("img",`v53-corner ${pos}`);
-      img.src=assets[key];img.alt="";
-      card.appendChild(img);
+      if(!assets?.[key])return;
+      const img=node("img",`v69-corner ${pos}`);img.src=assets[key];img.alt="";card.appendChild(img);
     });
   }
 
-  function buildCard(team,data){
-    const summary=team.summary||{};
-    const rawTheme=themeFor(data,summary);
-    const theme=rawTheme&&rawTheme.enabled&&rawTheme.colors?rawTheme:null;
-    const colors=theme?.colors||{};
-    const assets=theme?.assets||{};
-    const members=(Array.isArray(team.members)?team.members:[]).filter(assigned);
-    const primary=data.sort_metric;
+  function mainLogo(data,summary){
+    if(summary?.logo_url)return summary.logo_url;
+    const id=Number(summary?.team_id||0);
+    return id?`/api/teams/${id}/logo?v=${Number(data?.organization_version||0)}`:null;
+  }
 
-    const card=node("section","v53-card");
+  function heroFor(data,summary,theme){
+    const assets=theme?.assets||{};
+    return assets.hero||mainLogo(data,summary)||null;
+  }
+
+  function buildCard(team,data,metrics){
+    const summary=team?.summary||{};
+    const theme=themeFor(data,summary)||{};
+    const colors=theme.colors||{};
+    const assets=theme.assets||{};
+    const members=(Array.isArray(team?.members)?team.members:[]).filter(assigned);
+    const card=node("section","v69-team-card");
     card.dataset.team=String(summary.team||"");
-    if(colors.primary) card.style.setProperty("--v53-primary",colors.primary);
-    if(colors.primary_bright) card.style.setProperty("--v53-bright",colors.primary_bright);
-    if(colors.panel) card.style.setProperty("--v53-panel",colors.panel);
-    if(colors.text) card.style.setProperty("--v53-text",colors.text);
-    if(colors.muted) card.style.setProperty("--v53-muted",colors.muted);
-    if(colors.champion_text) card.style.setProperty("--v53-champion",colors.champion_text);
-    if(assets.background){
-      card.style.backgroundImage=`linear-gradient(rgba(4,4,4,.64),rgba(4,4,4,.64)),url("${assets.background}")`;
-    }
+    card.dataset.teamId=String(summary.team_id??"");
+    setThemeVars(card,colors);
+    card.style.setProperty("--v69-cols",String(Math.max(metrics.length,1)));
+
+    const heroScale=clamp(theme.hero_scale??100,50,200)/100;
+    const baseBrand=Math.max(62,Math.min(112,window.innerHeight*.085));
+    card.style.setProperty("--v69-brand-h",`${Math.round(baseBrand*heroScale)}px`);
+    const count=Math.max(members.length,1);
+    card.style.setProperty("--v69-name-font",`${count>=11?9:count>=8?11:count>=5?13:15}px`);
+    card.style.setProperty("--v69-rank-font",`${count>=11?12:count>=8?15:count>=5?18:21}px`);
+    card.style.setProperty("--v69-stat-font",`${count>=11?8:count>=8?9:count>=5?10:11}px`);
+    card.style.setProperty("--v69-total-font",`${metrics.length>=10?8:metrics.length>=7?9:11}px`);
+
+    if(assets.background){const bg=node("img","v69-card-bg");bg.src=assets.background;bg.alt="";card.appendChild(bg);}
+    card.appendChild(node("div","v69-card-atmosphere"));
+    card.appendChild(node("div","v69-card-frame"));
     addCorners(card,assets);
 
-    const brand=node("div","v53-brand");
-    const logoSrc=summary.logo_url||null;
-    if(logoSrc){
-      const logo=node("img","v53-logo");logo.src=logoSrc;logo.alt=`${summary.team||"Team"} logo`;
-      logo.addEventListener("error",()=>{
-        logo.remove();
-        if(!brand.querySelector(".v53-name")) brand.insertBefore(node("div","v53-name",summary.team||"Team"),brand.firstChild);
-      },{once:true});
-      brand.appendChild(logo);
-    }else{
-      brand.appendChild(node("div","v53-name",summary.team||"Team"));
-    }
-    const ranked=node("div","v53-ranked-by",`Ranked by ${data.metric_labels?.[primary]||primary||"score"}`);
-    brand.appendChild(ranked);
+    const brand=node("div","v69-brand");
+    const heroSrc=heroFor(data,summary,theme);
+    if(heroSrc){
+      const hero=node("img","v69-hero");hero.src=heroSrc;hero.alt=String(summary.team||"Team");
+      hero.addEventListener("error",()=>{hero.remove();brand.insertBefore(node("div","v69-team-name",summary.team||"Team"),brand.firstChild);},{once:true});
+      brand.appendChild(hero);
+    }else brand.appendChild(node("div","v69-team-name",summary.team||"Team"));
+    brand.appendChild(node("div","v69-ranked",`Ranked by ${data?.metric_labels?.[data?.sort_metric]||data?.sort_metric||"score"}`));
     card.appendChild(brand);
 
+    const main=node("main","v69-main");
+    const head=node("div","v69-head");
+    head.appendChild(node("div","",""));head.appendChild(node("div","rep","Rep"));
+    metrics.forEach(key=>head.appendChild(node("div","",data?.metric_labels?.[key]||key)));
+    main.appendChild(head);
+
     if(members.length){
-      const reps=node("div","v53-reps");
-      reps.style.setProperty("--v53-rep-count",String(members.length));
+      const rows=node("div","v69-rows");
       members.forEach((rep,index)=>{
-        const row=node("div","v53-rep");
-        const rowAsset=index===0?assets.champion:assets.row;
-        if(rowAsset){
-          const shade=index===0 ? .30 : .48;
-          row.style.backgroundImage=`linear-gradient(rgba(0,0,0,${shade}),rgba(0,0,0,${shade})),url("${rowAsset}")`;
-        }
-        const rank=node("div","v53-rank");
-        if(index===0&&assets.medallion){
-          const medal=node("img","v53-medallion");medal.src=assets.medallion;medal.alt="1";rank.appendChild(medal);
-        }else rank.textContent=String(index+1);
+        const champion=index===0;
+        const row=node("div",`v69-row${champion?" champion":""}`);
+        const art=champion?(assets.champion||assets.row):assets.row;
+        if(art)row.style.backgroundImage=`url("${String(art).replace(/["\\\n\r]/g,"")}")`;
+        const rank=node("div","v69-rank");
+        if(champion&&assets.medallion){const medal=node("img","v69-medal");medal.src=assets.medallion;medal.alt="1";rank.appendChild(medal);}else rank.textContent=String(index+1);
         row.appendChild(rank);
-        row.appendChild(node("div","v53-rep-name",rep.rep_name||""));
-        row.appendChild(node("div","v53-rep-value",formatValue(data,primary,rep?.[primary])));
-        reps.appendChild(row);
+        const repBox=node("div","v69-rep");repBox.appendChild(node("div","v69-rep-name",rep?.rep_name||""));row.appendChild(repBox);
+        metrics.forEach(key=>row.appendChild(node("div",`v69-stat${data?.metric_types?.[key]==="currency"?" money":""}${key===data?.sort_metric?" primary":""}`,formatValue(data,key,rep?.[key]))));
+        rows.appendChild(row);
       });
-      card.appendChild(reps);
-    }else{
-      const empty=node("div","v53-empty","No assigned reps");empty.style.flex="1 1 auto";card.appendChild(empty);
-    }
+      main.appendChild(rows);
+    }else main.appendChild(node("div","v69-empty","No assigned reps"));
 
-    const totals=node("div","v53-totals");
-    totalKeys(data).forEach(key=>{
-      const item=node("div","v53-total");
-      item.appendChild(node("div","v53-total-value",formatValue(data,key,summary?.[key])));
-      item.appendChild(node("div","v53-total-label",data.metric_labels?.[key]||key));
-      totals.appendChild(item);
+    const footer=node("footer","v69-footer");
+    footer.appendChild(node("div","v69-footer-spacer"));
+    metrics.forEach(key=>{
+      const item=node("div","v69-total");
+      item.appendChild(node("div","v69-total-v",formatValue(data,key,summary?.[key])));
+      item.appendChild(node("div","v69-total-l",data?.metric_labels?.[key]||key));
+      footer.appendChild(item);
     });
-    card.appendChild(totals);
-    return {card,memberCount:members.length};
-  }
-
-  function clearComparisonMode(){
-    document.body.classList.remove("v53-comparison-mode");
+    main.appendChild(footer);
+    card.appendChild(main);
+    return card;
   }
 
   function renderComparison(data){
     ensureStyles();
-    if(!comparisonModes.has(data?.mode)){
-      clearComparisonMode();
-      return;
-    }
-
-    const teams=visibleTeams(data);
-    const layout=layoutFor(Math.max(teams.length,1));
-    const board=node("div","v53-board");
-    board.style.setProperty("--v53-cols",String(layout.cols));
-    board.style.setProperty("--v53-rows",String(layout.rows));
-    if(layout.cols>=4) board.classList.add("v53-narrow");
-
-    let maxMembers=0;
-    teams.forEach(team=>{
-      const built=buildCard(team,data);
-      maxMembers=Math.max(maxMembers,built.memberCount);
-      board.appendChild(built.card);
-    });
-    if(maxMembers>=7||layout.rows>=3) board.classList.add("v53-dense");
-
-    document.body.classList.add("v53-comparison-mode");
-    const root=document.getElementById("scaleRoot");
-    if(!root) return;
-    root.style.transform="";
-    root.innerHTML="";
-    if(teams.length) root.appendChild(board);
-    else root.appendChild(node("div","empty","No teams with assigned reps"));
-
-    if(typeof fitLeaderboard==="function") setTimeout(fitLeaderboard,0);
+    const teams=rankedTeams(data),metrics=metricKeys(data);
+    if(!teams.length)return false;
+    const scaleRoot=document.getElementById("scaleRoot");if(!scaleRoot)return false;
+    const board=node("div",ROOT_CLASS);
+    teams.forEach(team=>board.appendChild(buildCard(team,data,metrics)));
+    scaleRoot.innerHTML="";scaleRoot.appendChild(board);
+    document.body.classList.add("v69-comparison-active");
+    if(typeof fitLeaderboard==="function")setTimeout(fitLeaderboard,0);
+    return true;
   }
 
   render=function(data){
     const result=previousRender(data);
-    renderComparison(data);
+    cleanup();
+    if(comparisonModes.has(data?.mode))renderComparison(data);
     return result;
   };
 })();
