@@ -31,13 +31,11 @@
   // Not a stored asset: the picker route for "one ornament, mirrored to four".
   const CORNER_ONE="corner_one";
   const MIN_SIZE=50,MAX_SIZE=600,MAX_CROP=60;
-  const MIN_ZOOM=1,MAX_ZOOM=4,MIN_PINCH_DIST=4;
 
   let state=null;          // /api/themes
   let library={};          // /api/asset-library -> {asset_key:[items]}
   let geometry={width:1920,height:1080,aspect:16/9,source:"default"};
   let teamId=null;
-  let zoomFactor=1;
   let busy=false;
 
   const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
@@ -94,8 +92,7 @@
         margin:0 16px 7px;color:#9b9b9b;font-size:12px}
       .td-stage{background:#000;position:relative;overflow:hidden;
         border-top:1px solid #2a2a2a;border-bottom:1px solid #2a2a2a;
-        touch-action:none;cursor:grab;user-select:none}
-      .td-stage.td-grabbing{cursor:grabbing}
+        touch-action:auto;cursor:default;user-select:none}
       .td-sizer{position:absolute;top:0;left:0;transform-origin:top left}
       .td-stage iframe,.td-stage img{position:absolute;top:0;left:0;border:0;
         transform-origin:top left;background:#000;pointer-events:none}
@@ -216,7 +213,7 @@
           <section class="td-sec td-preview-sec">
             <div id="tdTvLine" class="td-tvline"></div>
             <div id="tdStage" class="td-stage"><div id="tdSizer" class="td-sizer"><iframe id="tdFrame" title="TV preview" scrolling="no"></iframe></div></div>
-            <div class="td-hint">Pinch to zoom · drag to move · double-tap to fit</div>
+            <div class="td-hint">Live preview at the TV aspect ratio</div>
           </section>
 
           <section class="td-sec">
@@ -298,7 +295,6 @@
       byId("tdConfirm").style.display="none";
       byId("tdMain").style.display="flex";
       measureHead();
-      installPreviewGestures();
       layoutPreview();
     });
     byId("tdPreset").addEventListener("change",presetChanged);
@@ -349,7 +345,6 @@
   async function openDesign(id){
     installUI();
     teamId=Number(id)||null;
-    zoomFactor=1;panX=0;panY=0;
     if(!teamId){alert("Save this team first, then design it.");return;}
 
     /* Name the team before anything is fetched. The whole point of this screen
@@ -1093,8 +1088,7 @@
     return width/(geometry.width||1920);
   }
 
-  let panX=0,panY=0;
-
+  /* v72: preview is fit-only. No pinch, pan, wheel zoom or double-tap zoom. */
   function layoutPreview(){
     const stage=byId("tdStage"),sizer=byId("tdSizer"),frame=byId("tdFrame");
     if(!stage||!sizer||!frame)return;
@@ -1103,112 +1097,7 @@
     frame.style.height=`${geometry.height}px`;
     frame.style.transform="none";
     stage.style.height=`${geometry.height*fit}px`;
-    clampPan();
-    sizer.style.transform=`translate(${panX}px,${panY}px) scale(${fit*zoomFactor})`;
-  }
-
-  /* Keep the board inside the window: at fit it is pinned, zoomed in it can
-     move but never past its own edges. */
-  function clampPan(){
-    const stage=byId("tdStage");
-    if(!stage)return;
-    if(!Number.isFinite(zoomFactor)||zoomFactor<MIN_ZOOM||zoomFactor>MAX_ZOOM)zoomFactor=MIN_ZOOM;
-    if(!Number.isFinite(panX))panX=0;
-    if(!Number.isFinite(panY))panY=0;
-    const fit=fitScale();
-    if(!Number.isFinite(fit)||fit<=0){panX=0;panY=0;return;}
-    const w=geometry.width*fit*zoomFactor, h=geometry.height*fit*zoomFactor;
-    const maxX=Math.max(0,Number.isFinite(w)?w-stage.clientWidth:0);
-    const maxY=Math.max(0,Number.isFinite(h)?h-stage.clientHeight:0);
-    panX=clamp(panX,-maxX,0);
-    panY=clamp(panY,-maxY,0);
-  }
-
-  function setZoom(next,originX,originY){
-    const before=Number.isFinite(zoomFactor)&&zoomFactor>=MIN_ZOOM&&zoomFactor<=MAX_ZOOM?zoomFactor:MIN_ZOOM;
-    const candidate=Number(next);
-    zoomFactor=Number.isFinite(candidate)?clamp(candidate,MIN_ZOOM,MAX_ZOOM):before;
-    if(Number.isFinite(originX)&&Number.isFinite(originY)&&before>0){
-      const ratio=zoomFactor/before;
-      if(Number.isFinite(ratio)){
-        panX=originX-(originX-(Number.isFinite(panX)?panX:0))*ratio;
-        panY=originY-(originY-(Number.isFinite(panY)?panY:0))*ratio;
-      }
-    }
-    if(!Number.isFinite(panX))panX=0;
-    if(!Number.isFinite(panY))panY=0;
-    if(zoomFactor===MIN_ZOOM){panX=0;panY=0;}
-    layoutPreview();
-  }
-
-  function installPreviewGestures(){
-    const stage=byId("tdStage");
-    if(!stage||stage.dataset.gestures)return;
-    stage.dataset.gestures="1";
-
-    const points=new Map();
-    let startDist=0,startZoom=1,startMid=null,lastTap=0,panning=false,lastX=0,lastY=0;
-    const dist=([a,b])=>Math.hypot(a.x-b.x,a.y-b.y);
-    const mid=([a,b])=>{
-      const r=stage.getBoundingClientRect();
-      return {x:(a.x+b.x)/2-r.left,y:(a.y+b.y)/2-r.top};
-    };
-
-    stage.addEventListener("pointerdown",e=>{
-      try{stage.setPointerCapture(e.pointerId);}catch(_e){}
-      if(!Number.isFinite(e.clientX)||!Number.isFinite(e.clientY))return;
-      points.set(e.pointerId,{x:e.clientX,y:e.clientY});
-      if(points.size===2){
-        const p=[...points.values()];
-        const measured=dist(p);
-        startDist=Number.isFinite(measured)&&measured>=MIN_PINCH_DIST?measured:0;
-        startZoom=Number.isFinite(zoomFactor)?zoomFactor:MIN_ZOOM;
-        startMid=startDist?mid(p):null;
-        if(startMid&&(!Number.isFinite(startMid.x)||!Number.isFinite(startMid.y))){startDist=0;startMid=null;}
-        panning=false;
-      }else if(points.size===1){
-        const now=Date.now();
-        if(now-lastTap<300){setZoom(1);lastTap=0;return;}   // double-tap = fit
-        lastTap=now;
-        panning=zoomFactor>1;
-        lastX=e.clientX;lastY=e.clientY;
-        if(panning)stage.classList.add("td-grabbing");
-      }
-    });
-
-    stage.addEventListener("pointermove",e=>{
-      if(!points.has(e.pointerId))return;
-      if(!Number.isFinite(e.clientX)||!Number.isFinite(e.clientY))return;
-      points.set(e.pointerId,{x:e.clientX,y:e.clientY});
-      if(points.size>=2&&startDist>=MIN_PINCH_DIST&&startMid){
-        const p=[...points.values()].slice(0,2);
-        const measured=dist(p);
-        if(Number.isFinite(measured)&&measured>=MIN_PINCH_DIST)setZoom(startZoom*(measured/startDist),startMid.x,startMid.y);
-      }else if(panning){
-        const dx=e.clientX-lastX,dy=e.clientY-lastY;
-        if(Number.isFinite(dx)&&Number.isFinite(dy)){panX+=dx;panY+=dy;}
-        lastX=e.clientX;lastY=e.clientY;
-        layoutPreview();
-      }
-    });
-
-    const release=e=>{
-      points.delete(e.pointerId);
-      if(points.size<2)startDist=0;
-      if(!points.size){panning=false;stage.classList.remove("td-grabbing");}
-    };
-    stage.addEventListener("pointerup",release);
-    stage.addEventListener("pointercancel",release);
-
-    // Desktop: ctrl/cmd + wheel, the usual zoom convention.
-    stage.addEventListener("wheel",e=>{
-      if(!e.ctrlKey&&!e.metaKey)return;
-      e.preventDefault();
-      const r=stage.getBoundingClientRect();
-      setZoom(zoomFactor*(e.deltaY<0?1.12:0.89),e.clientX-r.left,e.clientY-r.top);
-    },{passive:false});
-
-    stage.addEventListener("dblclick",()=>setZoom(1));
+    sizer.style.transform=`scale(${fit})`;
   }
 
   /* ------------------------------------------------- entry points per team */
