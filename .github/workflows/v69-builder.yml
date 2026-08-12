@@ -18,7 +18,9 @@ jobs:
         with:
           node-version: '20'
       - name: Apply v69 source changes
-        run: python .github/scripts/apply_v69.py
+        run: |
+          python .github/scripts/apply_v69.py
+          python .github/scripts/patch_v69_test.py
       - name: Install app dependencies
         run: pip install -r requirements.txt
       - name: Static and server contract checks
