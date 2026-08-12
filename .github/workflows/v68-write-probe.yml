@@ -19,6 +19,8 @@ jobs:
           node-version: '20'
       - name: Generate source
         run: python .github/scripts/apply_v68.py
+      - name: App dependencies
+        run: pip install -r requirements.txt
       - name: Static checks
         run: |
           node --check app/static/theme-studio.js
@@ -38,7 +40,6 @@ jobs:
           test "$(cat VERSION)" = 68
       - name: Browser setup
         run: |
-          pip install -r requirements.txt
           npm install --no-save playwright@1.54.2
           npx playwright install --with-deps chromium
       - name: Start real app
