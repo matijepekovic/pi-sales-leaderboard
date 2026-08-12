@@ -192,7 +192,7 @@ def _clean_corner_settings(incoming):
         if not isinstance(raw, dict):
             continue
         cleaned[key] = {
-            "size": _bounded_number(raw.get("size"), 100, 50, 250),
+            "size": _bounded_number(raw.get("size"), 100, 50, 600),
             "crop_x": _bounded_number(raw.get("crop_x"), 0, 0, 60),
             "crop_y": _bounded_number(raw.get("crop_y"), 0, 0, 60),
         }
@@ -321,7 +321,7 @@ def _manifest():
             for key, value in ASSETS.items()
         ],
         "corner_controls": {
-            "size": {"min": 50, "max": 250, "step": 5, "default": 100},
+            "size": {"min": 50, "max": 600, "step": 5, "default": 100},
             "crop_x": {"min": 0, "max": 60, "step": 1, "default": 0},
             "crop_y": {"min": 0, "max": 60, "step": 1, "default": 0},
         },
