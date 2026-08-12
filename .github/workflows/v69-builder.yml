@@ -20,6 +20,7 @@ jobs:
       - name: Apply v69 source changes
         run: |
           python .github/scripts/apply_v69.py
+          python .github/scripts/patch_v69_office_rows.py
           python .github/scripts/patch_v69_test.py
       - name: Install app dependencies
         run: pip install -r requirements.txt
@@ -31,6 +32,7 @@ jobs:
           node --check app/static/broadcast-views-v55.js
           node --check app/static/theme-corner-runtime-v60.js
           node --check app/static/theme-extras-v69.js
+          node --check app/static/whole-office-inline-team-v57.js
           python -m py_compile app/themes.py
           python - <<'PY'
           import sys
@@ -49,7 +51,9 @@ jobs:
           grep -q 'comparison-team-cards-v53.js?v=69' app/templates/display.html
           grep -q 'theme-extras-v69.js?v=69' app/templates/display.html
           grep -q 'theme-corner-runtime-v60.js?v=69' app/templates/display.html
+          grep -q 'whole-office-inline-team-v57.js?v=69' app/templates/display.html
           ! grep -q 'whole-office-scale-v56.js' app/templates/display.html
+          ! grep -q 'height:clamp(34px,3.05vh,70px)!important' app/static/whole-office-inline-team-v57.js
           grep -q 'const comparisonModes=new Set();' app/static/broadcast-views-v55.js
           grep -q 'theme-studio.js?v=69' app/templates/settings.html
       - name: Install Playwright Chromium
@@ -90,7 +94,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add VERSION app/themes.py app/static/theme-studio.js app/static/themed-team-layout.js app/static/broadcast-views-v55.js app/static/theme-corner-runtime-v60.js app/templates/display.html app/templates/settings.html
+          git add VERSION app/themes.py app/static/theme-studio.js app/static/themed-team-layout.js app/static/broadcast-views-v55.js app/static/theme-corner-runtime-v60.js app/static/whole-office-inline-team-v57.js app/templates/display.html app/templates/settings.html
           if git diff --cached --quiet; then
             echo source-already-generated
             exit 0
