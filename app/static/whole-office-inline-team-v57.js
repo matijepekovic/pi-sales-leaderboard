@@ -5,12 +5,6 @@
   const style=document.createElement("style");
   style.id="v57WholeOfficeInlineTeam";
   style.textContent=`
-    #v55OfficeBroadcast .v55-office-row{
-      height:clamp(34px,3.05vh,70px)!important;
-    }
-    #v55OfficeBroadcast .v55-office-row.champion{
-      height:clamp(42px,3.70vh,86px)!important;
-    }
     #v55OfficeBroadcast .v55-office-rep{
       display:flex!important;
       align-items:center!important;

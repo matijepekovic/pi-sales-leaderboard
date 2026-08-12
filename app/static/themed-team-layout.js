@@ -85,7 +85,7 @@
       #${ROOT_ID} .bt-head{flex:0 0 auto;color:var(--bt-bright);text-transform:uppercase;letter-spacing:.12em;text-align:center;font-size:clamp(8px,.72vw,12px);font-weight:800;padding:7px 0;border-top:1px solid color-mix(in srgb,var(--bt-primary) 48%,transparent);border-bottom:1px solid color-mix(in srgb,var(--bt-primary) 48%,transparent);background:rgba(6,6,5,.92);text-shadow:0 1px 3px #000}
       #${ROOT_ID} .bt-head .rep{text-align:left;padding-left:10px;color:var(--bt-muted)}
       #${ROOT_ID} .bt-board{flex:1 1 auto;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:1px}
-      #${ROOT_ID} .bt-row{position:relative;flex:1 1 0;min-height:44px;max-height:82px;background-position:center;background-size:100% 100%;background-repeat:no-repeat;border-bottom:1px solid color-mix(in srgb,var(--bt-primary) 13%,transparent);overflow:hidden}
+      #${ROOT_ID} .bt-row{position:relative;flex:1 1 0;min-height:0;max-height:none;background-position:center;background-size:100% 100%;background-repeat:no-repeat;border-bottom:1px solid color-mix(in srgb,var(--bt-primary) 13%,transparent);overflow:hidden}
       #${ROOT_ID}.dense .bt-row{min-height:38px;max-height:67px}#${ROOT_ID}.very-dense .bt-row{min-height:31px;max-height:55px}
       #${ROOT_ID} .bt-row:before{content:"";position:absolute;inset:0;z-index:0;background:rgba(4,4,3,.56);pointer-events:none}#${ROOT_ID} .bt-row>*{position:relative;z-index:1}
       #${ROOT_ID} .bt-rank{font-family:Impact,"Arial Narrow",sans-serif;text-align:center;color:var(--bt-bright);font-size:clamp(23px,2.65vw,46px);font-weight:900;text-shadow:0 2px 4px #000;min-width:0}
@@ -94,11 +94,11 @@
       #${ROOT_ID}.dense .bt-name{font-size:clamp(12px,1.12vw,19px)}
       #${ROOT_ID} .bt-stat{align-self:stretch;display:flex;align-items:center;justify-content:center;text-align:center;border-left:1px solid color-mix(in srgb,var(--bt-primary) 24%,transparent);font-variant-numeric:tabular-nums;font-weight:800;font-size:clamp(10px,.88vw,16px);text-shadow:0 2px 3px #000;white-space:nowrap;overflow:hidden;padding:0 3px}#${ROOT_ID}.dense .bt-stat{font-size:clamp(9px,.76vw,13px)}
       #${ROOT_ID} .bt-stat.money{color:var(--bt-bright)}#${ROOT_ID} .bt-stat.primary{color:var(--bt-champ);font-weight:900;position:relative}
-      #${ROOT_ID} .champion{flex-grow:1.18;min-height:58px;max-height:100px;margin:4px 0;border:2px solid var(--bt-bright);border-radius:7px;box-shadow:0 0 34px color-mix(in srgb,var(--bt-bright) 34%,transparent),inset 0 0 0 1px color-mix(in srgb,var(--bt-champ) 28%,transparent),0 4px 26px rgba(0,0,0,.82)}
+      #${ROOT_ID} .champion{flex:1.18 1 0;min-height:0;max-height:none;margin:4px 0;border:2px solid var(--bt-bright);border-radius:7px;box-shadow:0 0 34px color-mix(in srgb,var(--bt-bright) 34%,transparent),inset 0 0 0 1px color-mix(in srgb,var(--bt-champ) 28%,transparent),0 4px 26px rgba(0,0,0,.82)}
       #${ROOT_ID} .champion:before{background:rgba(30,4,3,.12)}#${ROOT_ID} .champion:after{content:"";position:absolute;top:0;bottom:0;width:28%;z-index:2;background:linear-gradient(105deg,transparent,color-mix(in srgb,var(--bt-champ) 15%,transparent),transparent);animation:btShimmer 8s linear infinite;pointer-events:none}@keyframes btShimmer{from{left:-35%}to{left:135%}}
       #${ROOT_ID} .champion .bt-name{color:var(--bt-champ);font-size:clamp(15px,1.45vw,25px)}#${ROOT_ID} .bt-medal{display:block;width:clamp(48px,5.2vw,88px);height:clamp(48px,7.2vh,88px);object-fit:contain;margin:auto;filter:drop-shadow(0 3px 10px rgba(0,0,0,.9))}#${ROOT_ID}.dense .bt-medal{width:clamp(38px,4.2vw,64px);height:clamp(38px,5.6vh,64px)}
       #${ROOT_ID} .champion .bt-stat.primary:after{content:"";position:absolute;left:16%;right:16%;bottom:18%;height:2px;background:linear-gradient(90deg,transparent,var(--bt-bright),transparent);box-shadow:0 0 8px color-mix(in srgb,var(--bt-bright) 85%,transparent)}
-      #${ROOT_ID} .team-lead{flex-grow:1;min-height:44px;max-height:82px;margin-top:2px;border-top:1px solid color-mix(in srgb,var(--bt-primary) 42%,transparent)}
+      #${ROOT_ID} .team-lead{flex:1 1 0;min-height:0;max-height:none;margin-top:2px;border-top:1px solid color-mix(in srgb,var(--bt-primary) 42%,transparent)}
       #${ROOT_ID} .team-lead .bt-name{color:var(--bt-text)}
       #${ROOT_ID} .bt-tl-mark{display:block;width:clamp(38px,4.6vw,74px);height:clamp(30px,5.7vh,64px);object-fit:contain;margin:auto;filter:drop-shadow(0 2px 7px #000)}
       #${ROOT_ID} .bt-footer{position:relative;z-index:4;flex:0 0 auto;width:min(94.5%,1810px);margin:clamp(4px,.65vh,9px) auto clamp(9px,1.4vh,18px);border-top:2px solid var(--bt-primary);background:rgba(0,0,0,.62);padding:clamp(6px,.9vh,11px) 0;min-height:54px}
@@ -147,8 +147,6 @@
     const hero=customHero?a.hero:(String(teamName).trim().toLowerCase()==="undisputed"&&a.hero?a.hero:summary.logo_url||null);
     const root=document.createElement("section");
     root.id=ROOT_ID;
-    if(display.rows.length>=9) root.classList.add("very-dense");
-    else if(display.rows.length>=7) root.classList.add("dense");
     root.style.setProperty("--bt-cols",Math.max(stats.length,1));
     setVars(root,c);
 

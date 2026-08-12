@@ -63,9 +63,10 @@
       return;
     }
     if(data.mode==="team_vs_team"||data.mode==="all_teams"){
-      document.querySelectorAll(".v55-team-card").forEach(card=>{
+      document.querySelectorAll(".v69-team-card").forEach(card=>{
         const name=String(card.dataset.team||"").trim();
-        applySet(card,".v55-card-corner",themeFor(data,name,null));
+        const teamId=Number(card.dataset.teamId||0)||null;
+        applySet(card,".v69-corner",themeFor(data,name,teamId));
       });
     }
   }

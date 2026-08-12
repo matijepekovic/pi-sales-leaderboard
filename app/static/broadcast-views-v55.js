@@ -10,7 +10,7 @@
   const OFFICE_ROOT="v55OfficeBroadcast";
   const STYLE_ID="v55BroadcastViewsStyles";
   const TEXT_METRICS=new Set(["rank","rep_name","team","home_branch","title","hire_date"]);
-  const comparisonModes=new Set(["team_vs_team","all_teams"]);
+  const comparisonModes=new Set();
   const norm=v=>String(v||"").trim().toLowerCase();
   const assigned=row=>Number(row?.assigned_team_id||0)>0;
 
@@ -147,7 +147,7 @@
       #${OFFICE_ROOT} .v55-office-corner{position:absolute;z-index:31;width:clamp(60px,7vw,120px);height:auto;object-fit:contain;pointer-events:none;filter:drop-shadow(0 2px 5px #000)}
       #${OFFICE_ROOT} .v55-office-corner.tl{top:6px;left:6px}#${OFFICE_ROOT} .v55-office-corner.tr{top:6px;right:6px}#${OFFICE_ROOT} .v55-office-corner.bl{bottom:6px;left:6px}#${OFFICE_ROOT} .v55-office-corner.br{bottom:6px;right:6px}
       #${OFFICE_ROOT} .v55-office-brand{position:relative;z-index:4;flex:0 0 auto;height:var(--v55-office-brand-h,150px);display:flex;align-items:center;justify-content:center;padding:8px 40px 2px}
-      #${OFFICE_ROOT} .v55-office-hero{display:block;width:min(70vw,1080px);height:100%;object-fit:contain;filter:drop-shadow(0 5px 14px rgba(0,0,0,.9))}
+      #${OFFICE_ROOT} .v55-office-hero{display:block;width:min(78vw,1680px);height:100%;object-fit:contain;filter:drop-shadow(0 5px 14px rgba(0,0,0,.9))}
       #${OFFICE_ROOT} .v55-office-wordmark{font-family:Impact,"Arial Narrow",sans-serif;font-size:clamp(54px,8vw,138px);letter-spacing:.035em;text-transform:uppercase;color:var(--v55-bright);text-shadow:0 3px 0 #000,0 0 16px color-mix(in srgb,var(--v55-bright) 30%,transparent)}
       #${OFFICE_ROOT} .v55-office-main{position:relative;z-index:4;width:min(96%,1870px);margin:0 auto;flex:0 0 auto;min-height:0}
       #${OFFICE_ROOT} .v55-office-head,#${OFFICE_ROOT} .v55-office-row,#${OFFICE_ROOT} .v55-office-footer{display:grid;grid-template-columns:clamp(52px,3.8vw,76px) minmax(260px,2.7fr) repeat(var(--v55-office-cols),minmax(0,1fr));align-items:center}
@@ -292,11 +292,16 @@
     root.style.setProperty("--v55-office-cols",String(stats.length));
 
     const rowCount=Math.max(display.rows.length,1);
-    const brandHeight=rowCount>=14?112:rowCount>=10?132:rowCount>=7?160:220;
-    const available=Math.max(300,window.innerHeight-brandHeight-30-48-34);
-    const rowHeight=Math.max(25,Math.min(68,Math.floor(available/(rowCount+(rowCount?0.18:0)))));
-    root.style.setProperty("--v55-office-brand-h",`${brandHeight}px`);
-    root.style.setProperty("--v55-office-row-h",`${rowHeight}px`);
+    const heroScale=Math.max(.5,Math.min(2,Number(theme.hero_scale||100)/100));
+    // v67 Whole Office used a 19vh hero at this TV size. Keep that 100%
+    // baseline, then let the theme multiplier own artwork size while rows take
+    // every remaining pixel.
+    const baseBrandHeight=Math.max(190,Math.min(420,window.innerHeight*.19));
+    const brandHeight=baseBrandHeight*heroScale;
+    const available=Math.max(120,window.innerHeight-brandHeight-30-48-20);
+    const rowHeight=Math.max(12,available/(rowCount+(rowCount?0.18:0)));
+    root.style.setProperty("--v55-office-brand-h",`${brandHeight.toFixed(2)}px`);
+    root.style.setProperty("--v55-office-row-h",`${rowHeight.toFixed(2)}px`);
 
     const bg=node("div","v55-office-bg");
     bg.style.backgroundColor=colors.background||"#070706";
