@@ -305,7 +305,7 @@ def split_active_mode(value):
     return value, ""
 
 
-def get_mode_payload(mode=None):
+def get_mode_payload(mode=None, sort_metric_override=None, team_vs_team_override=None):
     settings = get_settings()
 
     raw_mode = mode if mode is not None else settings.get("active_mode", "whole_office")
@@ -315,7 +315,13 @@ def get_mode_payload(mode=None):
     selected_team_from_mode = parsed_team
 
     reps = list_reps()
+    numeric_sort_metrics = {
+        key for key, _, typ in METRIC_DEFS
+        if typ in ("number", "percent", "currency") and key != "rank"
+    }
     metric = settings["sort_metric"].get(mode, "net_split")
+    if sort_metric_override in numeric_sort_metrics:
+        metric = sort_metric_override
     direction = "desc"
     visible = [
         key for key in settings["visible_metrics"].get(mode, [])
@@ -343,7 +349,14 @@ def get_mode_payload(mode=None):
         # The SAME metric + direction rank both levels:
         #   - members inside each team
         #   - the two aggregate team summaries
-        selected = list(dict.fromkeys(settings.get("team_vs_team_selected") or []))[:2]
+        requested_pair = (
+            team_vs_team_override
+            if isinstance(team_vs_team_override, (list, tuple))
+            else None
+        )
+        selected = list(dict.fromkeys(
+            requested_pair or settings.get("team_vs_team_selected") or []
+        ))[:2]
         if not selected:
             selected = [t["name"] for t in team_defs[:2]]
 
@@ -1078,12 +1091,25 @@ def api_save_config():
 @app.get("/api/leaderboard")
 def api_leaderboard():
     mode = request.args.get("mode")
+    sort_metric_override = request.args.get("sort_metric")
+    team_override = request.args.getlist("team")
     settings = get_settings()
-    payload = get_mode_payload(mode)
+    payload = get_mode_payload(
+        mode,
+        sort_metric_override=sort_metric_override,
+        team_vs_team_override=team_override[:2] if team_override else None,
+    )
+    numeric_sort_metrics = {
+        key for key, _, typ in METRIC_DEFS
+        if typ in ("number", "percent", "currency") and key != "rank"
+    }
+    effective_sort_metric = sort_metric_override
+    if effective_sort_metric not in numeric_sort_metrics:
+        effective_sort_metric = settings["sort_metric"].get(payload["mode"], "net_split")
     payload.update({
         "title": settings.get("title", "SALES LEADERBOARD"),
         "subtitle": settings.get("subtitle", ""),
-        "sort_metric": settings["sort_metric"].get(payload["mode"], "net_split"),
+        "sort_metric": effective_sort_metric,
         "rank_direction": "desc",
         "currency_symbol": settings.get("currency_symbol", "$"),
         "data_version": int(get_meta("data_version", "0")),
