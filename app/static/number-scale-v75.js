@@ -22,7 +22,7 @@
    At 100% every declaration below computes to exactly the value it has
    today, so the board is unchanged until the size is actually moved. */
 (function(){
-  const MIN=60,MAX=160;
+  const MIN=60,MAX=300;
   const STYLE_ID="v75-number-scale";
 
   function ensureStyles(){

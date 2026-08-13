@@ -7,7 +7,7 @@
 
    The display half of this lives in number-scale-v75.js. */
 (function(){
-  const MIN=60,MAX=160,STEP=10;
+  const MIN=60,MAX=300,STEP=10;
 
   const CARD=`
     <div class="card" id="v75NumCard">

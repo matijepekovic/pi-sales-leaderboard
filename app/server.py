@@ -87,6 +87,11 @@ PUBLIC_ENDPOINTS = {
     # The kiosk reports its own viewport and is deliberately unauthenticated.
     # Reading the geometry back stays behind the settings lock.
     "api_tv_geometry_report",
+    # Product close rates are board numbers, not secrets, and they are headed
+    # for the TV. Reading them is open, like the leaderboard itself. The
+    # refresh POST is deliberately not listed: that one calls out to Tableau,
+    # and it is only ever pressed from an already-unlocked settings page.
+    "api_product_close",
 }
 
 
@@ -1077,7 +1082,7 @@ def api_save_config():
                 raw = incoming["number_font_scale"].get(mode)
                 if raw is None:
                     continue
-                current["number_font_scale"][mode] = min(max(int(raw), 60), 160)
+                current["number_font_scale"][mode] = min(max(int(raw), 60), 300)
             except Exception:
                 pass
 
@@ -1471,11 +1476,12 @@ def api_source_refresh():
 
 
 # --------------------------------------------------------------- product beta
-# Close Rate by Product, v75. Beta: reachable from the settings remote only.
+# Close Rate by Product. Beta: shown on the settings remote, not on the TV.
 #
-# Neither endpoint is listed in PUBLIC_ENDPOINTS, so enforce_settings_lock
-# 401s both once a PIN is set. There is deliberately no MODES entry either,
-# so the TV has no code path to this data at all.
+# Reading is open (see PUBLIC_ENDPOINTS) because these are board numbers, not
+# secrets. What keeps it off the TV is the absence of a MODES entry: the
+# display builds its rotation from that dict and /api/leaderboard serves only
+# keys in it, so there is no code path to this data from the board.
 
 @app.get("/api/product-close")
 def api_product_close():
