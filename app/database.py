@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -173,6 +174,15 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+
+-- v75 Close Rate by Product. Stands entirely apart from reps: a different
+-- Tableau workbook, a different grain, and no join to anything else here.
+-- Beta, reachable only from the settings remote.
+CREATE TABLE IF NOT EXISTS product_close (
+    product TEXT PRIMARY KEY,
+    close_rate REAL NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -440,6 +450,37 @@ def replace_reps(rows):
             con.execute(sql, tuple(clean[c] for c in cols))
             _ensure_team_in_connection(con, clean["team"])
     bump_version()
+
+
+def replace_product_close(rows):
+    """Replace the beta product close-rate table. Touches nothing else.
+
+    Deliberately does NOT bump data_version: the TV has no product view, so
+    there is nothing for the display to re-render and no reason to make it
+    reload the board.
+    """
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    with connect() as con:
+        con.execute("DELETE FROM product_close")
+        for row in rows:
+            product = str(row.get("product") or "").strip()
+            if not product:
+                continue
+            con.execute(
+                "INSERT OR REPLACE INTO product_close "
+                "(product, close_rate, updated_at) VALUES (?,?,?)",
+                (product, float(row.get("close_rate") or 0), stamp),
+            )
+
+
+def get_product_close():
+    """Stored product close rates, best first."""
+    with connect() as con:
+        rows = con.execute(
+            "SELECT product, close_rate, updated_at FROM product_close "
+            "ORDER BY close_rate DESC"
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def create_team(name):

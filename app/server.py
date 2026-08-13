@@ -30,6 +30,7 @@ from database import (
     create_team,
     delete_team_lead,
     get_meta,
+    get_product_close,
     get_settings,
     get_team_definitions,
     init_db,
@@ -45,7 +46,7 @@ from database import (
 )
 from sources.sample import SampleSource
 from sources.tableau import TableauSource, TableauError, resolve_dates
-from tableau_scheduler import start_tableau_scheduler
+from tableau_scheduler import refresh_product_close, start_tableau_scheduler
 from themes import themes_blueprint, display_theme_state
 
 app = Flask(__name__)
@@ -64,6 +65,7 @@ HARD_CODED_GITHUB_REPO = "matijepekovic/pi-sales-leaderboard"
 GITHUB_CHECK_SECONDS = 15 * 60
 _GITHUB_UPDATE_LOCK = threading.Lock()
 _SOURCE_REFRESH_LOCK = threading.Lock()
+_PRODUCT_REFRESH_LOCK = threading.Lock()
 
 PIN_ITERATIONS = 200_000
 
@@ -1447,6 +1449,47 @@ def api_source_refresh():
         return jsonify({"ok": False, "error": f"Tableau refresh failed: {exc}"}), 400
     finally:
         _SOURCE_REFRESH_LOCK.release()
+
+
+# --------------------------------------------------------------- product beta
+# Close Rate by Product, v75. Beta: reachable from the settings remote only.
+#
+# Neither endpoint is listed in PUBLIC_ENDPOINTS, so enforce_settings_lock
+# 401s both once a PIN is set. There is deliberately no MODES entry either,
+# so the TV has no code path to this data at all.
+
+@app.get("/api/product-close")
+def api_product_close():
+    rows = get_product_close()
+    return jsonify({
+        "ok": True,
+        "beta": True,
+        "rows": rows,
+        "updated_at": rows[0]["updated_at"] if rows else "",
+        "status": get_meta("product_close_status", ""),
+    })
+
+
+@app.post("/api/product-close/refresh")
+def api_product_close_refresh():
+    """Pull product close rates on demand."""
+    if not _PRODUCT_REFRESH_LOCK.acquire(blocking=False):
+        return jsonify({"ok": False, "error": "A refresh is already running."}), 409
+    try:
+        settings = get_settings()
+        if not str(settings.get("tableau_pat_secret") or "").strip():
+            return jsonify({"ok": False,
+                            "error": "Enter the Tableau PAT secret first."}), 400
+        # refresh_product_close never raises; it records its own status.
+        ok = refresh_product_close(settings)
+        status = get_meta("product_close_status", "")
+        if not ok:
+            return jsonify({"ok": False, "error": status}), 400
+        rows = get_product_close()
+        return jsonify({"ok": True, "rows": rows, "message": status,
+                        "updated_at": rows[0]["updated_at"] if rows else ""})
+    finally:
+        _PRODUCT_REFRESH_LOCK.release()
 
 
 @app.post("/api/demo/load")

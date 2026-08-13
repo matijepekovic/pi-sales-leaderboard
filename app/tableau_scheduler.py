@@ -9,8 +9,10 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from database import get_meta, get_settings, replace_reps, set_meta
+from database import (get_meta, get_settings, replace_product_close,
+                      replace_reps, set_meta)
 from sources.tableau import TableauError, TableauSource, resolve_dates
+from sources.tableau_products import ProductCloseSource
 
 SCHEDULE_HOURS = (6, 14)
 STARTUP_GRACE_MINUTES = 15
@@ -43,6 +45,26 @@ def _next_slot(now):
     return tomorrow.replace(hour=SCHEDULE_HOURS[0], minute=0, second=0, microsecond=0)
 
 
+def refresh_product_close(settings):
+    """Pull the beta product close rates. Never raises.
+
+    Deliberately isolated from the rep refresh: this is a different workbook
+    that the leaderboard does not depend on, so a failure here must not fail
+    the rep pull, touch source_status, or affect the slot bookkeeping. It
+    reports only into its own meta key.
+    """
+    try:
+        start, end, rows = ProductCloseSource(settings).fetch_products()
+        replace_product_close(rows)
+        now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        set_meta("product_close_status",
+                 f"{len(rows)} products, {start} to {end} — updated {now_text}")
+        return True
+    except Exception as exc:
+        set_meta("product_close_status", f"Product close rate pull failed: {exc}")
+        return False
+
+
 def _refresh(slot):
     slot_key = _slot_key(slot)
     set_meta("scheduled_tableau_last_attempt", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -73,6 +95,10 @@ def _refresh(slot):
         set_meta("scheduled_tableau_status", f"Scheduled pull completed at {now_text}")
         set_meta("scheduled_tableau_last_slot", slot_key)
         set_meta("data_version", int(get_meta("data_version", "0")) + 1)
+
+        # Beta, and a separate workbook. Runs last and swallows its own
+        # errors so the rep board above is already committed either way.
+        refresh_product_close(settings)
     except TableauError as exc:
         set_meta("scheduled_tableau_status", f"Scheduled Tableau error: {exc}")
         set_meta("source_status", f"Tableau error: {exc}")
