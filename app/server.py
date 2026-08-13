@@ -1068,6 +1068,19 @@ def api_save_config():
             if val in numeric_keys:
                 current["sort_metric"][mode] = val
 
+    # v75 number size, per screen. Percent, clamped so the remote can never
+    # store a value that would push text out of its row.
+    if isinstance(incoming.get("number_font_scale"), dict):
+        current.setdefault("number_font_scale", {})
+        for mode in MODES:
+            try:
+                raw = incoming["number_font_scale"].get(mode)
+                if raw is None:
+                    continue
+                current["number_font_scale"][mode] = min(max(int(raw), 60), 160)
+            except Exception:
+                pass
+
     try:
         refresh = int(
             incoming.get(
@@ -1121,6 +1134,12 @@ def api_leaderboard():
         "app_restart_version": int(get_meta("app_restart_version", "0")),
         "metric_labels": metric_label_map(),
         "metric_types": metric_type_map(),
+        # v75. Percent size for the numbers on this screen only. Changing it
+        # bumps settings_version, which is already part of the display's
+        # render signature, so the board picks it up on its next poll.
+        "number_font_scale": int(
+            (settings.get("number_font_scale") or {}).get(payload["mode"], 100)
+        ),
     })
     payload["theme_state"] = display_theme_state(settings)
     return jsonify(payload)

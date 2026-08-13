@@ -47,6 +47,13 @@ DEFAULT_SETTINGS = {
         "all_teams": "desc",
         "per_team": "desc",
     },
+    # v75. Percent size of the numbers only, per screen. 100 is unchanged.
+    "number_font_scale": {
+        "whole_office": 100,
+        "team_vs_team": 100,
+        "all_teams": 100,
+        "per_team": 100,
+    },
     "visible_metrics": DEFAULT_METRICS,
     "team_vs_team_selected": [],
     "per_team_selected": "",
@@ -380,6 +387,10 @@ def get_settings():
         base["sort_metric"] = {
             **DEFAULT_SETTINGS["sort_metric"],
             **incoming.get("sort_metric", {})
+        }
+        base["number_font_scale"] = {
+            **DEFAULT_SETTINGS["number_font_scale"],
+            **incoming.get("number_font_scale", {})
         }
         # Ranking direction is no longer user-configurable.
         # Highest selected metric is always #1.
