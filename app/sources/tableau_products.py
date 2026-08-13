@@ -39,6 +39,8 @@ TABLEAU_MARKET = "Olympia"
 PRODUCT_COLUMN_ALIASES = ["productcalcgroup", "productcalc", "product"]
 CLOSE_RATE_COLUMN_ALIASES = ["closeratenras", "closerate"]
 
+OVERALL = "Overall"
+
 # Only these five lines belong on the board. Anything else Tableau returns --
 # Doors, Solar, Walk-In Tubs, and the "All" roll-up row -- is dropped by not
 # appearing here. Aliases are matched on the normalized label so a caption
@@ -54,7 +56,15 @@ PRODUCTS = {
     "siding": "Siding",
     "window": "Windows",
     "windows": "Windows",
+    # Tableau's roll-up row. Kept for the Overall card, and named here so the
+    # screen never has to recompute it -- these rates are deduped per lead and
+    # do not average back out of the individual products.
+    "all": OVERALL,
 }
+
+# The order the cards appear in, Overall last. Deliberately not rate order:
+# this is a scoreboard of fixed product lines, not a ranking.
+PRODUCT_ORDER = ["Bath", "Siding", "Windows", "Gutters", "Roof", OVERALL]
 
 # Tableau hands back fractions; the rest of the app works in 0..100.
 RATE_SCALE = 100.0
@@ -95,9 +105,13 @@ def parse_product_rows(csv_text):
         if label not in best or rate > best[label]:
             best[label] = rate
 
+    # Canonical card order, with anything unexpected appended rather than lost.
+    def position(name):
+        return PRODUCT_ORDER.index(name) if name in PRODUCT_ORDER else len(PRODUCT_ORDER)
+
     return [
-        {"product": name, "close_rate": rate}
-        for name, rate in sorted(best.items(), key=lambda kv: -kv[1])
+        {"product": name, "close_rate": best[name]}
+        for name in sorted(best, key=lambda n: (position(n), n))
     ]
 
 

@@ -94,6 +94,10 @@ DEFAULT_SETTINGS = {
     "data_include_people": [],
     "data_exclude_people": [],
 
+    # v78 product-card icon overrides: {"bath": "<library url>", ...}.
+    # Empty means the screen's built-in SVG glyph is used.
+    "product_icons": {},
+
     # Office printer, raw port 9100. Remembered so the test button works
     # without retyping the address.
     "printer_host": "",

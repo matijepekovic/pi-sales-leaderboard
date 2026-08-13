@@ -55,7 +55,15 @@ CORNER_SHEET_KEY = "corner_sheet"
 # team_logo is a library key too, so a logo can be re-used across teams the
 # same way as any other artwork. It is applied through the team logo endpoint,
 # never as a theme asset.
-LIBRARY_KEYS = set(ASSETS) | {CORNER_SHEET_KEY, "team_logo"}
+# v78 product-card icons. Library-only, and deliberately NOT added to ASSETS:
+# they belong to the Product Close Rates screen, not to a team's theme, so the
+# per-team asset editor must not grow six irrelevant rows. Uploading and
+# reading them goes through the existing asset-library endpoints unchanged.
+PRODUCT_ICON_KEYS = {
+    "product_bath", "product_siding", "product_windows",
+    "product_gutters", "product_roof", "product_overall",
+}
+LIBRARY_KEYS = set(ASSETS) | {CORNER_SHEET_KEY, "team_logo"} | PRODUCT_ICON_KEYS
 
 # Artwork the user has uploaded, tinted or recolored, kept so it can be reused
 # on any team later. It cannot live in the theme folder: _remove_old_asset_files

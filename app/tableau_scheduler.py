@@ -57,6 +57,10 @@ def refresh_product_close(settings):
         start, end, rows = ProductCloseSource(settings).fetch_products()
         replace_product_close(rows)
         now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # Stored separately from the status string so the screen can put the
+        # range in its header without parsing prose.
+        set_meta("product_close_start", start)
+        set_meta("product_close_end", end)
         set_meta("product_close_status",
                  f"{len(rows)} products, {start} to {end} — updated {now_text}")
         return True

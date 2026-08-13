@@ -93,6 +93,7 @@ PUBLIC_ENDPOINTS = {
     # refresh POST is deliberately not listed: that one calls out to Tableau,
     # and it is only ever pressed from an already-unlocked settings page.
     "api_product_close",
+    "product_preview",
 }
 
 
@@ -1087,6 +1088,21 @@ def api_save_config():
             except Exception:
                 pass
 
+    # v78 product-card icon overrides. Only the six known cards, and only
+    # library URLs -- these end up in an <img src>, so an arbitrary string
+    # here would let the settings page point the TV at any remote host.
+    if isinstance(incoming.get("product_icons"), dict):
+        allowed_cards = {"bath", "siding", "windows", "gutters", "roof", "overall"}
+        icons = {}
+        for card, url in incoming["product_icons"].items():
+            card = str(card).strip().lower()
+            url = str(url or "").strip()
+            if card not in allowed_cards or not url:
+                continue
+            if url.startswith("/api/asset-library/") and ".." not in url:
+                icons[card] = url[:300]
+        current["product_icons"] = icons
+
     try:
         refresh = int(
             incoming.get(
@@ -1484,6 +1500,16 @@ def api_source_refresh():
 # display builds its rotation from that dict and /api/leaderboard serves only
 # keys in it, so there is no code path to this data from the board.
 
+@app.get("/preview/products")
+def product_preview():
+    """The Product Close Rates screen, exactly as the TV would draw it.
+
+    A preview only: there is no MODES entry for this, so rotation cannot
+    select it and the kiosk never lands here on its own.
+    """
+    return render_template("product_preview.html")
+
+
 @app.get("/api/product-close")
 def api_product_close():
     rows = get_product_close()
@@ -1492,6 +1518,9 @@ def api_product_close():
         "beta": True,
         "rows": rows,
         "updated_at": rows[0]["updated_at"] if rows else "",
+        "start": get_meta("product_close_start", ""),
+        "end": get_meta("product_close_end", ""),
+        "icons": (get_settings().get("product_icons") or {}),
         "status": get_meta("product_close_status", ""),
     })
 

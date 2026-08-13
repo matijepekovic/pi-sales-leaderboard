@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Product Close Rates — Preview</title>
+<style>
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1220}
+  #productRoot{position:absolute;inset:0}
+</style>
+</head>
+<body>
+<!-- Full-bleed so what you approve here is exactly what the TV would show. -->
+<div id="productRoot"></div>
+<script src="/static/product-screen-v78.js?v=78"></script>
+<script>
+async function paint(){
+  try{
+    const r = await fetch("/api/product-close", {cache:"no-store"});
+    if(!r.ok) return;
+    renderProductScreen(document.getElementById("productRoot"), await r.json());
+  }catch(e){}
+}
+paint();
+// Slow poll: a refresh from the phone shows up here without reloading.
+setInterval(paint, 15000);
+</script>
+</body>
+</html>
