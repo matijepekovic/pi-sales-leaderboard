@@ -94,6 +94,11 @@ DEFAULT_SETTINGS = {
     "data_include_people": [],
     "data_exclude_people": [],
 
+    # Office printer, raw port 9100. Remembered so the test button works
+    # without retyping the address.
+    "printer_host": "",
+    "printer_port": 9100,
+
     # Settings-page lock. Stores a salted PBKDF2 hash, never the PIN.
     "settings_pin_hash": "",
 }

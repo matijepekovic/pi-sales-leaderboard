@@ -44,6 +44,7 @@ from database import (
     set_meta,
     set_rep_team_assignments,
 )
+import printing
 from sources.sample import SampleSource
 from sources.tableau import TableauSource, TableauError, resolve_dates
 from tableau_scheduler import refresh_product_close, start_tableau_scheduler
@@ -1515,6 +1516,40 @@ def api_product_close_refresh():
                         "updated_at": rows[0]["updated_at"] if rows else ""})
     finally:
         _PRODUCT_REFRESH_LOCK.release()
+
+
+# ------------------------------------------------------------------- printer
+# Raw port 9100. Both are actions -- one scans the office network, the other
+# consumes paper -- so neither belongs in PUBLIC_ENDPOINTS.
+
+@app.post("/api/printer/scan")
+def api_printer_scan():
+    return jsonify(printing.scan())
+
+
+@app.post("/api/printer/test")
+def api_printer_test():
+    body = request.get_json(silent=True) or {}
+    settings = get_settings()
+
+    host = str(body.get("host") or settings.get("printer_host") or "").strip()
+    try:
+        port = int(body.get("port") or settings.get("printer_port")
+                   or printing.RAW_PORT)
+    except Exception:
+        port = printing.RAW_PORT
+
+    ok, message = printing.print_test(host, port, software_version())
+
+    # Remember the address only once it has actually worked, so a typo never
+    # becomes the saved default and get quietly reused on the next press.
+    if ok and host:
+        settings["printer_host"] = host[:120]
+        settings["printer_port"] = port
+        save_settings(settings)
+
+    return jsonify({"ok": ok, "message" if ok else "error": message,
+                    "host": host, "port": port}), (200 if ok else 400)
 
 
 @app.post("/api/demo/load")
