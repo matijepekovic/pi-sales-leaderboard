@@ -324,7 +324,9 @@ def get_mode_payload(mode=None, sort_metric_override=None, team_vs_team_override
     mode = parsed_mode if parsed_mode in MODES else "whole_office"
     selected_team_from_mode = parsed_team
 
-    reps = list_reps()
+    # While a mapping preview is running the board shows those rows instead.
+    # They live in memory with an expiry and never reach the reps table.
+    reps = source_picker.preview_rows() or list_reps()
     numeric_sort_metrics = {
         key for key, _, typ in METRIC_DEFS
         if typ in ("number", "percent", "currency") and key != "rank"
@@ -1094,6 +1096,17 @@ def api_save_config():
     for key in ("tableau_workbook", "tableau_sheet"):
         if isinstance(incoming.get(key), str):
             current[key] = incoming[key].strip()[:300]
+    if isinstance(incoming.get("source_mapping"), dict):
+        raw = incoming["source_mapping"]
+        metrics = raw.get("metrics") if isinstance(raw.get("metrics"), dict) else {}
+        valid = {k for k, _, _ in METRIC_DEFS}
+        current["source_mapping"] = {
+            "rep_name": str(raw.get("rep_name") or "")[:200],
+            "home_branch": str(raw.get("home_branch") or "")[:200],
+            "team": str(raw.get("team") or "")[:200],
+            "metrics": {str(k): str(v)[:200] for k, v in metrics.items()
+                        if k in valid and str(v or "").strip()},
+        }
 
     # v78 product-card icon overrides. Only the six known cards, and only
     # library URLs -- these end up in an <img src>, so an arbitrary string
@@ -1156,7 +1169,11 @@ def api_leaderboard():
         "sort_metric": effective_sort_metric,
         "rank_direction": "desc",
         "currency_symbol": settings.get("currency_symbol", "$"),
-        "data_version": int(get_meta("data_version", "0")),
+        # A running preview has to move this, or the display keeps
+        # showing the frame it already rendered.
+        "data_version": int(get_meta("data_version", "0"))
+                        + source_picker.preview_state()["seq"] * 1000000,
+        "preview": source_picker.preview_state(),
         "settings_version": int(get_meta("settings_version", "0")),
         "organization_version": int(get_meta("organization_version", "0")),
         "tv_refresh_version": int(get_meta("tv_refresh_version", "0")),
@@ -1584,6 +1601,60 @@ def api_source_views(workbook):
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
         return jsonify({"ok": False, "error": f"Could not list sheets: {exc}"}), 400
+
+
+@app.post("/api/source/columns")
+def api_source_columns():
+    """What a report offers, and a first guess at the mapping."""
+    body = request.get_json(silent=True) or {}
+    workbook = str(body.get("workbook") or "").strip()
+    sheet = str(body.get("sheet") or "").strip()
+    if not workbook or not sheet:
+        return jsonify({"ok": False, "error": "Pick a workbook and a sheet."}), 400
+    try:
+        return jsonify({"ok": True,
+                        **source_picker.report_columns(get_settings(), workbook, sheet)})
+    except TableauError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Could not read that report: {exc}"}), 400
+
+
+@app.post("/api/source/preview")
+def api_source_preview():
+    """Pull through a mapping and, optionally, put it on the TV for a while.
+
+    Saves nothing. Preview rows live in memory with an expiry and never touch
+    the reps table, so the real numbers return on their own.
+    """
+    body = request.get_json(silent=True) or {}
+    workbook = str(body.get("workbook") or "").strip()
+    sheet = str(body.get("sheet") or "").strip()
+    mapping = body.get("mapping") or {}
+    on_tv = bool(body.get("on_tv"))
+    if not workbook or not sheet:
+        return jsonify({"ok": False, "error": "Pick a workbook and a sheet."}), 400
+    try:
+        start, end, rows, notes = source_picker.preview_pull(
+            get_settings(), workbook, sheet, mapping)
+        if on_tv:
+            source_picker.start_preview(rows, f"{workbook} / {sheet}")
+        return jsonify({
+            "ok": True, "start": start, "end": end, "reps": len(rows),
+            "notes": notes, "on_tv": on_tv,
+            "preview": source_picker.preview_state(),
+            "rows": rows[:8],
+        })
+    except TableauError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Preview failed: {exc}"}), 400
+
+
+@app.post("/api/source/preview/stop")
+def api_source_preview_stop():
+    source_picker.stop_preview()
+    return jsonify({"ok": True, "preview": source_picker.preview_state()})
 
 
 @app.post("/api/source/test-view")

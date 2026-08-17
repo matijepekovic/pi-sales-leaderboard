@@ -13,6 +13,8 @@ Two jobs:
 from sources import tableau_v36_base as _base
 from sources.tableau import TableauSource
 from sources.tableau_custom import CustomTableauSource
+from sources.tableau_mapped import (MappedTableauSource, describe_report,
+                                   suggest_mapping, unmapped_columns)
 
 # What the board reads when nothing has been picked. Kept here as strings so
 # "Reset to Default" has something to restore, and so the shipped connector
@@ -35,11 +37,20 @@ def chosen(settings):
     return workbook, sheet
 
 
+def mapping_of(settings):
+    """The saved column mapping, or {} when the report needs no mapping."""
+    mapping = (settings or {}).get("source_mapping") or {}
+    return mapping if mapping.get("rep_name") else {}
+
+
 def resolve_source(settings):
     """The rep source to pull with. Today's class unless a report was picked."""
     workbook, sheet = chosen(settings)
     if not workbook:
         return TableauSource(settings)
+    mapping = mapping_of(settings)
+    if mapping:
+        return MappedTableauSource(settings, workbook, sheet, mapping)
     return CustomTableauSource(settings, workbook, sheet)
 
 
@@ -143,6 +154,69 @@ def list_views(settings, workbook):
         source.signout(base, token)
 
 
+# -------------------------------------------------------------- live preview
+# Mapped rows shown on the TV while you are still adjusting the mapping.
+#
+# Deliberately in memory with an expiry, never in the reps table. A preview
+# cannot survive a restart, cannot outlive its window, and cannot overwrite the
+# real numbers -- the worst case is the board showing preview data for a few
+# minutes and then returning to normal on its own.
+
+import threading
+import time as _time
+
+_PREVIEW_LOCK = threading.Lock()
+_PREVIEW = {"rows": None, "until": 0.0, "seq": 0, "label": ""}
+PREVIEW_MINUTES = 15
+
+
+def start_preview(rows, label="", minutes=PREVIEW_MINUTES):
+    with _PREVIEW_LOCK:
+        _PREVIEW["rows"] = list(rows or [])
+        _PREVIEW["until"] = _time.time() + max(1, int(minutes)) * 60
+        _PREVIEW["seq"] += 1
+        _PREVIEW["label"] = str(label or "")
+        return dict(_PREVIEW, rows=len(_PREVIEW["rows"]))
+
+
+def stop_preview():
+    with _PREVIEW_LOCK:
+        _PREVIEW["rows"] = None
+        _PREVIEW["until"] = 0.0
+        _PREVIEW["label"] = ""
+
+
+def preview_rows():
+    """Rows to show instead of the stored ones, or None when not previewing."""
+    with _PREVIEW_LOCK:
+        if _PREVIEW["rows"] is None:
+            return None
+        if _time.time() >= _PREVIEW["until"]:
+            _PREVIEW["rows"] = None
+            _PREVIEW["label"] = ""
+            return None
+        return list(_PREVIEW["rows"])
+
+
+def preview_state():
+    with _PREVIEW_LOCK:
+        active = _PREVIEW["rows"] is not None and _time.time() < _PREVIEW["until"]
+        return {
+            "active": active,
+            "label": _PREVIEW["label"] if active else "",
+            "rows": len(_PREVIEW["rows"]) if active else 0,
+            "seconds_left": max(0, int(_PREVIEW["until"] - _time.time())) if active else 0,
+            "seq": _PREVIEW["seq"],
+        }
+
+
+def preview_pull(settings, workbook, sheet, mapping):
+    """Run the chosen report through the mapping. Saves nothing."""
+    source = MappedTableauSource(settings, workbook, sheet, mapping)
+    start, end, rows = source._pull_rows()
+    return start, end, rows, source.last_notes
+
+
 def test_view(settings, workbook, sheet):
     """Trial pull. Never writes anything, and never touches the saved source.
 
@@ -168,4 +242,27 @@ def test_view(settings, workbook, sheet):
         "offices": offices,
         "metrics": metrics,
         "sample": [str(r.get("rep_name") or "") for r in rows[:3]],
+    }
+
+
+def report_columns(settings, workbook, sheet):
+    """Fetch the report once and describe what it offers to map against."""
+    source = MappedTableauSource(settings, workbook, sheet, {})
+    start, end = _base.resolve_dates(settings)
+    base, token, site_id = source.signin()
+    try:
+        csv_text = source.fetch_csv(base, token, site_id, start, end)
+    finally:
+        source.signout(base, token)
+
+    described = describe_report(csv_text)
+    guess = suggest_mapping(described["headers"], described["choices"])
+    return {
+        "shape": described["shape"],
+        "headers": described["headers"],
+        "choices": described["choices"],
+        "suggested": guess,
+        "unmapped": unmapped_columns(described["choices"], guess),
+        "start": start,
+        "end": end,
     }

@@ -99,6 +99,9 @@ DEFAULT_SETTINGS = {
     # against the chosen report has actually parsed.
     "tableau_workbook": "",
     "tableau_sheet": "",
+    # Which of the chosen report's columns feeds which board stat. Empty
+    # means the report is read by the shipped parser, unmapped.
+    "source_mapping": {},
 
     # v78 product-card icon overrides: {"bath": "<library url>", ...}.
     # Empty means the screen's built-in SVG glyph is used.
