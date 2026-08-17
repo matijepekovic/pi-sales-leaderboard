@@ -292,6 +292,24 @@ class MappedTableauSource(CustomTableauSource):
         self.mapping = mapping or {}
         self.last_notes = {}
 
+    def fetch_csv(self, base, token, site_id, start, end):
+        """Fetch the selected report without the shipped RepTotals shape gate.
+
+        CustomTableauSource inherits tableau.TableauSource.fetch_csv(), whose
+        final step verifies SR-Name / Measure Names / Measure Values and the
+        original summary measures. That is correct for the default board but
+        wrong for a report that has not been mapped yet: discovery and mapped
+        parsing must be allowed to see the report's raw export first.
+
+        Call the lower transport/filter implementation directly. It still uses
+        this custom source's _view_id(), sign-in, dates, REST request handling
+        and Olympia filter attempt; it skips only the original report's shape
+        validator.
+        """
+        return _base.TableauSource.fetch_csv(
+            self, base, token, site_id, start, end
+        )
+
     def _pull_rows(self):
         start, end = _base.resolve_dates(self.config)
         base, token, site_id = self.signin()
