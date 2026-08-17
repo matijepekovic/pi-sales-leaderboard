@@ -64,7 +64,8 @@ jobs:
           try:
               strict.fetch_csv('base', 'token', 'site', '2026-08-01', '2026-08-31')
           except base.TableauError as exc:
-              assert 'missing SR-Name' in str(exc)
+              message = str(exc)
+              assert 'Measure Names' in message and 'Measure Values' in message, message
           else:
               raise AssertionError('stock CustomTableauSource unexpectedly accepted a wide report')
 
