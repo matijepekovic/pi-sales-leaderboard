@@ -2,6 +2,8 @@ name: v83 source picker search
 on:
   push:
     branches: [build/v83-source-picker-search]
+  pull_request:
+    branches: [main]
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -59,7 +61,6 @@ jobs:
             if(!wb[1].hidden||!wb[1].disabled) throw new Error('nonmatching workbook stayed selectable');
             if(d.getElementById('v83WorkbookSearchCount').textContent!=='1 matching workbooks') throw new Error('workbook count wrong');
 
-            // Search also matches the content URL/value, not only display text.
             wbSearch.value='RegionalSaleswFLOW';
             wbSearch.dispatchEvent(new dom.window.Event('input'));
             if(wb[2].hidden||wb[2].disabled) throw new Error('workbook content URL search failed');
@@ -70,8 +71,6 @@ jobs:
             if(sheets[3].hidden||sheets[3].disabled) throw new Error('sheet search did not find retention');
             if(!sheets[2].hidden||!sheets[2].disabled) throw new Error('nonmatching sheet stayed selectable');
 
-            // Existing picker replaces the sheet options after workbook changes.
-            // MutationObserver must reapply the search to the newly loaded list.
             const sheet=d.getElementById('v79Sheet');
             sheet.innerHTML='<option value="">Choose a sheet…</option><option value="x/sheets/RetentionSummary">Retention Summary</option><option value="x/sheets/Other">Other</option>';
             await wait(10);
@@ -79,15 +78,11 @@ jobs:
             if(sheets[1].hidden||sheets[1].disabled) throw new Error('search did not reapply after sheet reload');
             if(!sheets[2].hidden||!sheets[2].disabled) throw new Error('reloaded nonmatch stayed selectable');
 
-            // Switching workbook clears the old sheet search rather than hiding
-            // the next workbook's sheet list behind a stale query.
             const workbook=d.getElementById('v79Workbook');
             workbook.value='A1SalesKPIs';
             workbook.dispatchEvent(new dom.window.Event('change'));
             if(shSearch.value!=='') throw new Error('sheet search was not cleared on workbook change');
 
-            // If enumeration fails, v81 replaces the selects with typed inputs.
-            // v83 must leave that fallback alone.
             const fallback=new JSDOM('<!doctype html><html><body><input id="v79Workbook"><input id="v79Sheet"></body></html>',{runScripts:'dangerously'});
             fallback.window.eval(script);
             await new Promise(r=>setTimeout(r,25));
