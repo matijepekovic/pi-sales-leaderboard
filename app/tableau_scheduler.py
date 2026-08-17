@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 
 from database import (get_meta, get_settings, replace_product_close,
                       replace_reps, set_meta)
+import source_picker
 from sources.tableau import TableauError, TableauSource, resolve_dates
 from sources.tableau_products import ProductCloseSource
 
@@ -79,7 +80,7 @@ def _refresh(slot):
             set_meta("scheduled_tableau_last_slot", slot_key)
             return
 
-        source = TableauSource(settings)
+        source = source_picker.resolve_source(settings)
         rows = source.fetch()
         if not rows:
             set_meta("scheduled_tableau_status", "Scheduled Tableau pull returned no matching people; existing data kept")

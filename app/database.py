@@ -94,6 +94,12 @@ DEFAULT_SETTINGS = {
     "data_include_people": [],
     "data_exclude_people": [],
 
+    # v79 rep-board report override. Empty means the shipped default, and
+    # the shipped connector runs unchanged. Only written after a trial pull
+    # against the chosen report has actually parsed.
+    "tableau_workbook": "",
+    "tableau_sheet": "",
+
     # v78 product-card icon overrides: {"bath": "<library url>", ...}.
     # Empty means the screen's built-in SVG glyph is used.
     "product_icons": {},
