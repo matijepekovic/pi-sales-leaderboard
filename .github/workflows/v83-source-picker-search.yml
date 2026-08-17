@@ -1,0 +1,100 @@
+name: v83 source picker search
+on:
+  push:
+    branches: [build/v83-source-picker-search]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax and production-boundary checks
+        run: |
+          node --check app/static/source-picker-search-v83.js
+          test "$(cat VERSION)" = 83
+          grep -q '/static/source-picker-v79.js?v=81' app/templates/settings.html
+          grep -q '/static/source-picker-search-v83.js?v=83' app/templates/settings.html
+          git diff origin/main --name-only | sort
+          test "$(git diff origin/main --name-only | grep -v '^.github/workflows/v83-source-picker-search.yml$' | sort | tr '\n' ' ')" = "VERSION app/static/source-picker-search-v83.js app/templates/settings.html "
+          test "$(git hash-object app/static/source-picker-v79.js)" = "26bcdf66f7fab2b3ac18d9460f45e881b2d239df"
+      - name: Install tiny DOM test dependency
+        run: npm install --no-save jsdom@24
+      - name: Search behavior
+        run: |
+          node <<'NODE'
+          const fs=require('fs');
+          const {JSDOM}=require('jsdom');
+          const script=fs.readFileSync('app/static/source-picker-search-v83.js','utf8');
+          const wait=ms=>new Promise(r=>setTimeout(r,ms));
+
+          async function main(){
+            const dom=new JSDOM(`<!doctype html><html><body>
+              <div><select id="v79Workbook">
+                <option value="">Choose a workbook…</option>
+                <option value="8-SalesRepLevelData">Sales Rep Level Data</option>
+                <option value="RegionalSaleswFLOW">Regional Sales Flow</option>
+                <option value="A1SalesKPIs">A.1-Sales KPIs and Visualizations</option>
+              </select></div>
+              <div><select id="v79Sheet">
+                <option value="">Choose a sheet…</option>
+                <option value="book/sheets/RepTotalsNEW3">Rep Totals NEW</option>
+                <option value="book/sheets/NetRanked">Net Ranked</option>
+                <option value="book/sheets/SalesTotalsRetention">Sales Totals & Retention</option>
+              </select></div>
+            </body></html>`,{runScripts:'dangerously'});
+            dom.window.eval(script);
+            await wait(25);
+
+            const d=dom.window.document;
+            const wbSearch=d.getElementById('v83WorkbookSearch');
+            const shSearch=d.getElementById('v83SheetSearch');
+            if(!wbSearch||!shSearch) throw new Error('search inputs were not installed');
+
+            wbSearch.value='kpi';
+            wbSearch.dispatchEvent(new dom.window.Event('input'));
+            const wb=[...d.getElementById('v79Workbook').options];
+            if(wb[3].hidden||wb[3].disabled) throw new Error('workbook name search did not find KPI workbook');
+            if(!wb[1].hidden||!wb[1].disabled) throw new Error('nonmatching workbook stayed selectable');
+            if(d.getElementById('v83WorkbookSearchCount').textContent!=='1 matching workbooks') throw new Error('workbook count wrong');
+
+            // Search also matches the content URL/value, not only display text.
+            wbSearch.value='RegionalSaleswFLOW';
+            wbSearch.dispatchEvent(new dom.window.Event('input'));
+            if(wb[2].hidden||wb[2].disabled) throw new Error('workbook content URL search failed');
+
+            shSearch.value='retention';
+            shSearch.dispatchEvent(new dom.window.Event('input'));
+            let sheets=[...d.getElementById('v79Sheet').options];
+            if(sheets[3].hidden||sheets[3].disabled) throw new Error('sheet search did not find retention');
+            if(!sheets[2].hidden||!sheets[2].disabled) throw new Error('nonmatching sheet stayed selectable');
+
+            // Existing picker replaces the sheet options after workbook changes.
+            // MutationObserver must reapply the search to the newly loaded list.
+            const sheet=d.getElementById('v79Sheet');
+            sheet.innerHTML='<option value="">Choose a sheet…</option><option value="x/sheets/RetentionSummary">Retention Summary</option><option value="x/sheets/Other">Other</option>';
+            await wait(10);
+            sheets=[...sheet.options];
+            if(sheets[1].hidden||sheets[1].disabled) throw new Error('search did not reapply after sheet reload');
+            if(!sheets[2].hidden||!sheets[2].disabled) throw new Error('reloaded nonmatch stayed selectable');
+
+            // Switching workbook clears the old sheet search rather than hiding
+            // the next workbook's sheet list behind a stale query.
+            const workbook=d.getElementById('v79Workbook');
+            workbook.value='A1SalesKPIs';
+            workbook.dispatchEvent(new dom.window.Event('change'));
+            if(shSearch.value!=='') throw new Error('sheet search was not cleared on workbook change');
+
+            // If enumeration fails, v81 replaces the selects with typed inputs.
+            // v83 must leave that fallback alone.
+            const fallback=new JSDOM('<!doctype html><html><body><input id="v79Workbook"><input id="v79Sheet"></body></html>',{runScripts:'dangerously'});
+            fallback.window.eval(script);
+            await new Promise(r=>setTimeout(r,25));
+            if(fallback.window.document.getElementById('v83WorkbookSearch')||fallback.window.document.getElementById('v83SheetSearch')) throw new Error('typed fallback was modified');
+
+            console.log('v83 source picker search passed');
+            dom.window.close(); fallback.window.close();
+          }
+          main().catch(err=>{console.error(err);process.exit(1)});
+          NODE
