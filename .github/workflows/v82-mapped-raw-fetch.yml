@@ -42,7 +42,10 @@ jobs:
           from sources.tableau_mapped import MappedTableauSource
           import source_picker
 
-          csv_text = (\n              'Sales Rep,Home Branch,Gross Split,Close Rate\\n'\n              'Ana Reyes,Olympia,32.14,0.50\\n'\n              'Ben Ortiz,Olympia,18.25,0.25\\n'\n          )
+          csv_text = """Sales Rep,Home Branch,Gross Split,Close Rate
+          Ana Reyes,Olympia,32.14,0.50
+          Ben Ortiz,Olympia,18.25,0.25
+          """
 
           def wire(source):
               source._view_id = lambda base_url, token, site_id: 'view-1'
