@@ -13,8 +13,8 @@ Two jobs:
 from sources import tableau_v36_base as _base
 from sources.tableau import TableauSource
 from sources.tableau_custom import CustomTableauSource
-from sources.tableau_mapped import (MappedTableauSource, describe_report,
-                                   suggest_mapping, unmapped_columns)
+from sources.tableau_crosstab import (CrosstabMappedTableauSource,
+                                      mapping_description)
 
 # What the board reads when nothing has been picked. Kept here as strings so
 # "Reset to Default" has something to restore, and so the shipped connector
@@ -50,7 +50,7 @@ def resolve_source(settings):
         return TableauSource(settings)
     mapping = mapping_of(settings)
     if mapping:
-        return MappedTableauSource(settings, workbook, sheet, mapping)
+        return CrosstabMappedTableauSource(settings, workbook, sheet, mapping)
     return CustomTableauSource(settings, workbook, sheet)
 
 
@@ -212,7 +212,7 @@ def preview_state():
 
 def preview_pull(settings, workbook, sheet, mapping):
     """Run the chosen report through the mapping. Saves nothing."""
-    source = MappedTableauSource(settings, workbook, sheet, mapping)
+    source = CrosstabMappedTableauSource(settings, workbook, sheet, mapping)
     start, end, rows = source._pull_rows()
     return start, end, rows, source.last_notes
 
@@ -246,28 +246,15 @@ def test_view(settings, workbook, sheet):
 
 
 def report_columns(settings, workbook, sheet):
-    """Fetch the report once and describe what it offers to map against."""
-    source = MappedTableauSource(settings, workbook, sheet, {})
+    """Download Tableau's Crosstab Excel and expose those finished columns."""
+    source = CrosstabMappedTableauSource(settings, workbook, sheet, {})
     start, end = _base.resolve_dates(settings)
     base, token, site_id = source.signin()
     try:
-        csv_text = source.fetch_csv(base, token, site_id, start, end)
+        xlsx_bytes = source.fetch_crosstab(base, token, site_id, start, end)
     finally:
         source.signout(base, token)
 
-    described = describe_report(csv_text)
-    guess = suggest_mapping(described["headers"], described["choices"])
-    return {
-        "shape": described["shape"],
-        # Rep / branch / team always come from real columns; the stats come
-        # from the choices, which on a pivoted report are measure names and
-        # not columns at all. The UI needs both lists to offer the right one
-        # in each dropdown.
-        "headers": described["headers"],
-        "choices": described["choices"],
-        "samples": described.get("samples") or {},
-        "suggested": guess,
-        "unmapped": unmapped_columns(described["choices"], guess),
-        "start": start,
-        "end": end,
-    }
+    described = mapping_description(xlsx_bytes)
+    return {**described, "start": start, "end": end}
+
