@@ -1,0 +1,198 @@
+name: v84 crosstab picker
+permissions:
+  contents: write
+on:
+  push:
+    branches: [build/v84-crosstab-picker]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Wire custom picker to Crosstab source
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('app/source_picker.py')
+          s=p.read_text()
+          old='''from sources.tableau_mapped import (MappedTableauSource, describe_report,\n                                   suggest_mapping, unmapped_columns)\n'''
+          new='''from sources.tableau_crosstab import (CrosstabMappedTableauSource,\n                                      mapping_description)\n'''
+          if old in s:
+              s=s.replace(old,new,1)
+          elif new not in s:
+              raise SystemExit('source_picker import block changed unexpectedly')
+
+          s=s.replace(
+              'return MappedTableauSource(settings, workbook, sheet, mapping)',
+              'return CrosstabMappedTableauSource(settings, workbook, sheet, mapping)'
+          )
+          s=s.replace(
+              'source = MappedTableauSource(settings, workbook, sheet, mapping)',
+              'source = CrosstabMappedTableauSource(settings, workbook, sheet, mapping)'
+          )
+
+          start=s.find('def report_columns(settings, workbook, sheet):')
+          if start < 0:
+              raise SystemExit('report_columns not found')
+          replacement='''def report_columns(settings, workbook, sheet):\n    \"\"\"Download Tableau's Crosstab Excel and expose those finished columns.\"\"\"\n    source = CrosstabMappedTableauSource(settings, workbook, sheet, {})\n    start, end = _base.resolve_dates(settings)\n    base, token, site_id = source.signin()\n    try:\n        xlsx_bytes = source.fetch_crosstab(base, token, site_id, start, end)\n    finally:\n        source.signout(base, token)\n\n    described = mapping_description(xlsx_bytes)\n    return {**described, \"start\": start, \"end\": end}\n'''
+          # report_columns is the final function in this file today.
+          s=s[:start]+replacement+'\n'
+          p.write_text(s)
+          Path('VERSION').write_text('84\n')
+          PY
+      - name: Compile
+        run: |
+          python -m py_compile app/sources/tableau_crosstab.py app/source_picker.py
+          test "$(cat VERSION)" = 84
+      - name: Crosstab direct-cell regression
+        env:
+          PYTHONPATH: app
+        run: |
+          python - <<'PY'
+          import io, zipfile
+          from sources.tableau import TableauSource
+          from sources.tableau_crosstab import (
+              CrosstabMappedTableauSource, read_crosstab, map_crosstab
+          )
+          from sources import tableau_v36_base as base
+          import source_picker
+
+          def fixture(duplicate=False):
+              rows = [
+                  ('Olympia','Alice',1000,0.40),
+                  ('', 'Alice' if duplicate else 'Bob',2000,0.25),
+              ]
+              sheet_rows=['''<row r="1">
+                <c r="A1" t="inlineStr"><is><t>Home Branch</t></is></c>
+                <c r="B1" t="inlineStr"><is><t>Sales Rep</t></is></c>
+                <c r="C1" t="inlineStr"><is><t>Gross Split</t></is></c>
+                <c r="D1" t="inlineStr"><is><t>Close Rate</t></is></c>
+              </row>''']
+              for i,(branch,name,gross,rate) in enumerate(rows,2):
+                  branch_cell=(f'<c r="A{i}" t="inlineStr"><is><t>{branch}</t></is></c>'
+                               if branch else f'<c r="A{i}"/>')
+                  sheet_rows.append(f'''<row r="{i}">{branch_cell}
+                    <c r="B{i}" t="inlineStr"><is><t>{name}</t></is></c>
+                    <c r="C{i}"><v>{gross}</v></c>
+                    <c r="D{i}" s="1"><v>{rate}</v></c>
+                  </row>''')
+              worksheet='''<?xml version="1.0" encoding="UTF-8"?>
+              <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                <sheetData>%s</sheetData>
+              </worksheet>''' % ''.join(sheet_rows)
+              styles='''<?xml version="1.0" encoding="UTF-8"?>
+              <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                <numFmts count="1"><numFmt numFmtId="166" formatCode="0.0%%"/></numFmts>
+                <cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="166" applyNumberFormat="1"/></cellXfs>
+              </styleSheet>'''
+              workbook='''<?xml version="1.0" encoding="UTF-8"?>
+              <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+                xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                <sheets><sheet name="Sheet 1" sheetId="1" r:id="rId1"/></sheets>
+              </workbook>'''
+              rels='''<?xml version="1.0" encoding="UTF-8"?>
+              <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+              </Relationships>'''
+              out=io.BytesIO()
+              with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
+                  z.writestr('xl/workbook.xml',workbook)
+                  z.writestr('xl/_rels/workbook.xml.rels',rels)
+                  z.writestr('xl/styles.xml',styles)
+                  z.writestr('xl/worksheets/sheet1.xml',worksheet)
+              return out.getvalue()
+
+          book=fixture()
+          headers, raw_rows, samples=read_crosstab(book)
+          assert headers == ['Home Branch','Sales Rep','Gross Split','Close Rate'], headers
+          assert raw_rows[0]['Gross Split'] == 1000
+          assert raw_rows[0]['Close Rate'] == 40.0, raw_rows[0]
+          assert samples['Sales Rep'] == 'Alice'
+
+          mapping={
+              'rep_name':'Sales Rep',
+              'home_branch':'Home Branch',
+              'team':'',
+              'metrics':{'gross_split':'Gross Split','close_rate':'Close Rate'},
+          }
+          reps, notes=map_crosstab(book,mapping)
+          assert len(reps)==2
+          assert reps[0]['grossSplit']==1000
+          assert reps[0]['closeRate']==40.0
+          assert reps[1]['grossSplit']==2000
+          assert reps[1]['closeRate']==25.0
+          assert reps[1]['home_branch']=='Olympia'  # repeated Crosstab dimension carried down
+          assert notes['source']=='crosstab_excel'
+
+          try:
+              map_crosstab(fixture(True),mapping)
+          except base.TableauError as exc:
+              msg=str(exc)
+              assert 'more than one row' in msg and 'will not add' in msg, msg
+          else:
+              raise AssertionError('duplicate rep rows were aggregated instead of rejected')
+
+          # Prove the transport is the official Crosstab endpoint, not /data.
+          src=CrosstabMappedTableauSource({},'Workbook','Workbook/sheets/SalesTotals',mapping)
+          src._view_id=lambda b,t,s:'view-123'
+          urls=[]
+          src._request=lambda url, **kwargs: (urls.append(url) or (200,book))
+          got=src.fetch_crosstab('https://tableau/api/3.29','token','site','2026-08-01','2026-08-31')
+          assert got==book
+          assert urls and '/views/view-123/crosstab/excel?' in urls[0], urls
+          assert '/data?' not in urls[0]
+          assert 'vf_Start=2026-08-01' in urls[0] and 'vf_End=2026-08-31' in urls[0]
+
+          # Exercise the actual phone functions without stubbing their parser.
+          old_signin=CrosstabMappedTableauSource.signin
+          old_signout=CrosstabMappedTableauSource.signout
+          old_view=CrosstabMappedTableauSource._view_id
+          old_request=CrosstabMappedTableauSource._request
+          try:
+              CrosstabMappedTableauSource.signin=lambda self: ('https://tableau/api/3.29','token','site')
+              CrosstabMappedTableauSource.signout=lambda self,b,t: None
+              CrosstabMappedTableauSource._view_id=lambda self,b,t,s:'view-123'
+              CrosstabMappedTableauSource._request=lambda self,url,**kwargs:(200,book)
+
+              desc=source_picker.report_columns({},'Workbook','Workbook/sheets/SalesTotals')
+              assert desc['shape']=='crosstab', desc
+              assert desc['headers']==headers, desc
+              assert desc['samples']['Close Rate']=='40.0', desc
+
+              start,end,rows,preview_notes=source_picker.preview_pull(
+                  {},'Workbook','Workbook/sheets/SalesTotals',mapping)
+              assert len(rows)==2
+              assert rows[0]['rep_name']=='Alice'
+              assert rows[0]['gross_split']==1000
+              assert rows[0]['close_rate']==40.0
+              assert rows[1]['gross_split']==2000
+          finally:
+              CrosstabMappedTableauSource.signin=old_signin
+              CrosstabMappedTableauSource.signout=old_signout
+              CrosstabMappedTableauSource._view_id=old_view
+              CrosstabMappedTableauSource._request=old_request
+
+          selected=source_picker.resolve_source({
+              'tableau_workbook':'Workbook',
+              'tableau_sheet':'Workbook/sheets/SalesTotals',
+              'source_mapping':mapping,
+          })
+          assert type(selected) is CrosstabMappedTableauSource, type(selected)
+          assert type(source_picker.resolve_source({})) is TableauSource
+          print('v84 Crosstab direct-cell regression passed')
+          PY
+      - name: Production boundary
+        run: |
+          changed=$(git diff origin/main --name-only | grep -v '^.github/workflows/v84-crosstab-picker.yml$' | sort)
+          echo "$changed"
+          test "$(echo "$changed" | tr '\n' ' ')" = "VERSION app/source_picker.py app/sources/tableau_crosstab.py "
+          ! git diff origin/main --name-only | grep -Eq '^(app/server.py|app/sources/tableau.py|app/sources/tableau_v36_base.py|app/sources/tableau_custom.py|app/sources/tableau_mapped.py|app/templates/display.html|app/static/source-picker-v79.js)$'
+      - name: Commit production wiring
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add VERSION app/source_picker.py app/sources/tableau_crosstab.py
+          git diff --cached --quiet || git commit -m 'v84: map Tableau Crosstab Excel cells directly'
+          git push origin HEAD:build/v84-crosstab-picker
