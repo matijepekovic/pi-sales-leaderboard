@@ -33,6 +33,9 @@ PERCENT_STATS = {"pitched_rate", "close_rate", "sales_retention"}
 MEASURE_NAME_HINTS = ("measurenames", "measure")
 MEASURE_VALUE_HINTS = ("measurevalues", "value")
 
+# How far into the export to look for an example value per column.
+SAMPLE_ROWS = 40
+
 
 def detect_shape(headers):
     """'long' if this export pivots measures into rows, else 'wide'."""
@@ -49,21 +52,47 @@ def describe_report(csv_text):
     one they are the distinct values of Measure Names, because that is where
     the metric names actually live -- the headers are just the pivot's
     scaffolding. The UI needs the same list either way.
+
+    `samples` carries the first real value found behind each name, so the
+    person doing the mapping can recognise a column by what is in it rather
+    than by trusting its title.
     """
     reader = _base.csv.DictReader(_base.io.StringIO(csv_text))
     headers = reader.fieldnames or []
     shape = detect_shape(headers)
+    rows = list(reader)
+
+    samples = {}
+    for header in headers:
+        for row in rows[:SAMPLE_ROWS]:
+            value = str(row.get(header) or "").strip()
+            if value:
+                samples[header] = value[:40]
+                break
 
     if shape != "long":
-        return {"shape": shape, "headers": headers, "choices": list(headers)}
+        return {"shape": shape, "headers": headers, "choices": list(headers),
+                "samples": samples}
 
     measure_col = _base.find_column(headers, list(MEASURE_NAME_HINTS))
+    value_col = _base.find_column(headers, list(MEASURE_VALUE_HINTS))
     labels = []
-    for row in reader:
+    for row in rows:
         label = str(row.get(measure_col) or "").strip()
-        if label and label not in labels:
+        if not label:
+            continue
+        if label not in labels:
             labels.append(label)
-    return {"shape": shape, "headers": headers, "choices": labels}
+        if label not in samples:
+            value = str(row.get(value_col) or "").strip()
+            if value:
+                samples[label] = value[:40]
+
+    # A pivot whose Measure Names column came back empty still has to be
+    # mappable -- fall back to the headers rather than showing an empty list
+    # and leaving no way to match anything.
+    return {"shape": shape, "headers": headers,
+            "choices": labels or list(headers), "samples": samples}
 
 
 def suggest_mapping(headers, choices=None):

@@ -259,8 +259,13 @@ def report_columns(settings, workbook, sheet):
     guess = suggest_mapping(described["headers"], described["choices"])
     return {
         "shape": described["shape"],
+        # Rep / branch / team always come from real columns; the stats come
+        # from the choices, which on a pivoted report are measure names and
+        # not columns at all. The UI needs both lists to offer the right one
+        # in each dropdown.
         "headers": described["headers"],
         "choices": described["choices"],
+        "samples": described.get("samples") or {},
         "suggested": guess,
         "unmapped": unmapped_columns(described["choices"], guess),
         "start": start,
