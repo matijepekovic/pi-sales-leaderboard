@@ -25,6 +25,7 @@ from database import (
     DEFAULT_SETTINGS,
     SECRET_SETTING_KEYS,
     METRIC_DEFS,
+    apply_team_overlay,
     set_team_lead,
     delete_team,
     create_team,
@@ -326,7 +327,14 @@ def get_mode_payload(mode=None, sort_metric_override=None, team_vs_team_override
 
     # While a mapping preview is running the board shows those rows instead.
     # They live in memory with an expiry and never reach the reps table.
-    reps = source_picker.preview_rows() or list_reps()
+    #
+    # The preview goes through the same organization overlay the stored rows
+    # get. Without it a previewed rep carries whatever team text the report
+    # holds, so every team screen empties out and the preview looks broken on
+    # everything except Whole Office. `is not None` rather than `or`: a
+    # preview that found nobody must not silently fall back to the real board.
+    preview = source_picker.preview_rows()
+    reps = apply_team_overlay(preview) if preview is not None else list_reps()
     numeric_sort_metrics = {
         key for key, _, typ in METRIC_DEFS
         if typ in ("number", "percent", "currency") and key != "rank"
@@ -1637,13 +1645,24 @@ def api_source_preview():
     try:
         start, end, rows, notes = source_picker.preview_pull(
             get_settings(), workbook, sheet, mapping)
+        # A preview of nobody would leave the real board up and read as
+        # "the button did nothing". Say so instead.
+        if not rows:
+            return jsonify({
+                "ok": False,
+                "error": ("That pull came back with no people, so there is "
+                          "nothing to preview. Check the column mapped to the "
+                          "rep name."),
+            }), 400
         if on_tv:
             source_picker.start_preview(rows, f"{workbook} / {sheet}")
         return jsonify({
             "ok": True, "start": start, "end": end, "reps": len(rows),
             "notes": notes, "on_tv": on_tv,
             "preview": source_picker.preview_state(),
-            "rows": rows[:8],
+            # What the board will actually group these people under, so the
+            # phone can show the team a previewed rep lands on.
+            "rows": apply_team_overlay([dict(row) for row in rows[:8]]),
         })
     except TableauError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400

@@ -367,9 +367,13 @@ class CrosstabMappedTableauSource(CustomTableauSource):
             token=token,
         )
         if status != 200:
+            # Crosstab is a worksheet export. Pointing it at a dashboard is
+            # the easy mistake to make, because dashboards are listed in the
+            # sheet picker alongside worksheets and look identical there.
             raise _base.TableauError(
                 f"Tableau Crosstab download failed (HTTP {status}) for "
-                f"{self.VIEW_PATH}."
+                f"{self.VIEW_PATH}. Crosstab comes from a worksheet — if this "
+                "is a dashboard, pick the worksheet inside it instead."
             )
         return raw
 

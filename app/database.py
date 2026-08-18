@@ -814,9 +814,24 @@ def get_team_definitions(include_inactive=False):
     return teams
 
 
-def list_reps():
+def apply_team_overlay(rows):
+    """Put the Pi's organization layer onto rep rows, whatever produced them.
+
+    A rep's team is decided here, not by whatever the source returned:
+
+      1. the persistent Pi assignment for that rep_key, when there is one
+      2. otherwise the source's own team text, matched to a team of that name
+      3. otherwise that text as its own bucket
+
+    list_reps() has always done this to the stored rows; it is a function of
+    its own so the mapping preview can be given the same treatment. Preview
+    rows are the same people under the same rep_key, so they have to land on
+    the same teams they will land on once the report is switched over.
+
+    Rows are updated in place and returned.
+    """
+    rows = list(rows or [])
     with connect() as con:
-        rows = [dict(r) for r in con.execute("SELECT * FROM reps").fetchall()]
         assignments = {
             r["rep_key"]: int(r["team_id"])
             for r in con.execute(
@@ -852,6 +867,12 @@ def list_reps():
         row["team_override"] = assigned_team_name or ""
         row["local_team_override"] = local_override
     return rows
+
+
+def list_reps():
+    with connect() as con:
+        rows = [dict(r) for r in con.execute("SELECT * FROM reps").fetchall()]
+    return apply_team_overlay(rows)
 
 
 def list_teams():

@@ -759,7 +759,14 @@ async function load(){
       render(data);
       lastSignature = signature;
     }
-    statusEl.textContent = "";
+    // A mapping preview replaces the board's people for a few minutes. Say so
+    // on the screen, otherwise "the preview is running" and "the preview never
+    // started" look exactly the same from the other side of the room.
+    const preview = data.preview || {};
+    statusEl.textContent = preview.active
+      ? `PREVIEW · ${preview.label || "mapped report"} · `
+        + `${Math.max(1, Math.round((preview.seconds_left || 0) / 60))} min left`
+      : "";
   }catch(e){
     statusEl.textContent = "Keeping last displayed data";
   }
