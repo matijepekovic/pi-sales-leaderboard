@@ -47,6 +47,7 @@ from database import (
 )
 import printing
 import source_picker
+from sources import tableau_configured
 from sources.sample import SampleSource
 from sources.tableau import TableauSource, TableauError, resolve_dates
 from tableau_scheduler import refresh_product_close, start_tableau_scheduler
@@ -194,6 +195,12 @@ def clean_source(raw):
                 "date_start_field", "date_end_field"):
         if isinstance(raw.get(key), str):
             clean[key] = raw[key].strip()[:300]
+
+    # Only the three the source knows how to read.
+    if isinstance(raw.get("export"), str):
+        mode = raw["export"].strip().lower()
+        if mode in tableau_configured.EXPORTS:
+            clean["export"] = mode
 
     if isinstance(raw.get("filters"), list):
         clean["filters"] = [
@@ -1678,7 +1685,8 @@ def api_source_views(workbook):
 
 
 SOURCE_FIELDS = ("server", "site", "pat_name", "workbook", "sheet", "filters",
-                 "date_start_field", "date_end_field", "mapping", "row_filter")
+                 "date_start_field", "date_end_field", "mapping", "row_filter",
+                 "export")
 
 
 def source_overrides(body):

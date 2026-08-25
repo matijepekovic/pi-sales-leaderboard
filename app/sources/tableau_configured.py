@@ -33,6 +33,11 @@ DEFAULTS = {
     "date_start_field": _base.TABLEAU_START_FIELD,
     "date_end_field": _base.TABLEAU_END_FIELD,
     "mapping": {},
+    # Which export to read the view through:
+    #   auto     - the view's CSV, Crosstab only if that comes back empty
+    #   csv      - view data only
+    #   crosstab - the finished Crosstab summary table only
+    "export": "auto",
     # Keep only rows whose column matches. The old Olympia guard, expressed as
     # configuration: a report for one office keeps it, a company-wide board
     # clears it.
@@ -43,7 +48,9 @@ DEFAULTS = {
 # Blank here is never deliberate -- without them there is nothing to sign in
 # to -- so these fall back to the default when empty. Everything else honours
 # an empty value: clearing a filter field or a date field is a real choice.
-REQUIRED = ("server", "site", "pat_name", "workbook", "sheet")
+REQUIRED = ("server", "site", "pat_name", "workbook", "sheet", "export")
+
+EXPORTS = ("auto", "csv", "crosstab")
 
 
 def config_of(settings):
@@ -117,6 +124,8 @@ class ConfiguredTableauSource(_base.TableauSource):
         self.filters = list(self.source["filters"])
         self.mapping = dict(self.source["mapping"])
         self.row_filter = dict(self.source["row_filter"])
+        mode = str(self.source.get("export") or "auto").strip().lower()
+        self.export_mode = mode if mode in EXPORTS else "auto"
         self.VIEW_PATH = f"{self.workbook}/sheets/{self.sheet.rsplit('/', 1)[-1]}"
         self.last_notes = {}
         self.last_export = ""
@@ -280,15 +289,38 @@ class ConfiguredTableauSource(_base.TableauSource):
         return csv_text
 
     def read_export(self, base, token, site_id, start, end):
-        """(csv_text or xlsx bytes, which one) for the configured view."""
+        """(payload, which export) for the configured view.
+
+        Which export is a choice, not a guess. `auto` prefers the view's own
+        CSV and falls back to Crosstab, which is right when the CSV is a clean
+        summary -- but a view whose CSV stitches worksheets together answers
+        the CSV request perfectly well, so under `auto` the Crosstab is never
+        reached. `crosstab` is how you say: read the finished summary table
+        Tableau builds for Download > Crosstab, and nothing else.
+        """
+        if self.export_mode == "crosstab":
+            view_id = self._view_id(base, token, site_id)
+            book = self._query_crosstab(base, token, site_id, view_id, start,
+                                        end, self.filters)
+            return book, "crosstab", ""
+
         csv_error = ""
         csv_text = ""
         try:
             csv_text = self.fetch_csv(base, token, site_id, start, end)
         except _base.TableauError as exc:
+            if self.export_mode == "csv":
+                raise
             csv_error = str(exc)
         if has_columns(csv_text):
             return csv_text, "csv", ""
+
+        if self.export_mode == "csv":
+            raise _base.TableauError(
+                f"{self.VIEW_PATH} returned an empty view-data export for "
+                f"{start} to {end} — no columns at all. Try the Crosstab export "
+                "for this sheet, or check the filters being sent.")
+
         view_id = self._view_id(base, token, site_id)
         book = self._query_crosstab(base, token, site_id, view_id, start, end,
                                     self.filters)

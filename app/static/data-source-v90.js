@@ -42,6 +42,17 @@
           <select id="v79Sheet"><option value="">Pick a workbook first</option></select>
         </div>
       </div>
+      <!-- Outside the grid above: typedFallback() rebuilds that grid when the
+           token cannot enumerate content, and would take this with it. -->
+      <div style="margin-top:12px">
+        <label for="v90Export">Export</label>
+        <select id="v90Export">
+          <option value="auto">Automatic</option>
+          <option value="csv">View data (CSV)</option>
+          <option value="crosstab">Crosstab (Download &gt; Crosstab)</option>
+        </select>
+      </div>
+      <div id="v90ExportNote" class="small" style="margin-top:6px;opacity:.75"></div>
 
       <h3 style="margin:18px 0 4px">Date range</h3>
       <label class="row" style="margin-bottom:6px">
@@ -137,6 +148,7 @@
       filters:filters.filter(f=>f.field.trim()).map(f=>({field:f.field.trim(),value:f.value})),
       date_start_field:$("v90DateStart").value.trim(),
       date_end_field:$("v90DateEnd").value.trim(),
+      export:$("v90Export").value,
       row_filter:{column:$("v90KeepColumn").value,value:$("v90KeepValue").value.trim()},
       mapping:mapping||{},
     };
@@ -178,8 +190,22 @@
   }
 
   const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
-  function touched(){ proven=null; paintDates(); setUseEnabled(); }
+  function touched(){ proven=null; paintDates(); paintExport(); setUseEnabled(); }
   function setUseEnabled(){ $("v79Use").disabled=!(proven && same(proven,payload())); }
+
+  const EXPORT_NOTE={
+    auto:"Asks for the view's own data export, and only falls back to Crosstab "
+        +"if that comes back with nothing.",
+    csv:"Asks for the view's data export and nothing else. An empty answer is "
+       +"reported rather than quietly swapped for the Crosstab.",
+    crosstab:"Asks for the finished Crosstab table — the same one Download > "
+            +"Crosstab gives you, one row per rep. Use this when the view's "
+            +"data export combines worksheets.",
+  };
+
+  function paintExport(){
+    $("v90ExportNote").textContent=EXPORT_NOTE[$("v90Export").value]||"";
+  }
 
   function paintFilters(){
     $("v90Filters").innerHTML=filters.map((f,i)=>`
@@ -337,6 +363,8 @@
     $("v90Server").value=source.server||"";
     $("v90Site").value=source.site||"";
     $("v90PatName").value=source.pat_name||"";
+    $("v90Export").value=source.export||"auto";
+    paintExport();
     $("v90DateStart").value=source.date_start_field||"";
     $("v90DateEnd").value=source.date_end_field||"";
     filters=(source.filters||[]).map(f=>({field:f.field||"",value:f.value||""}));
@@ -466,6 +494,11 @@
     ["v90Server","v90Site","v90PatName","v90DateStart","v90DateEnd","v90KeepValue"]
       .forEach(id=>$(id).addEventListener("input",touched));
     $("v90KeepColumn").addEventListener("change",touched);
+    $("v90Export").addEventListener("change",()=>{
+      // The columns you map against depend on which export answers, so a
+      // change here invalidates what is on screen.
+      mapping=null; headers=[]; choices=[]; samples={}; paintMapping(); touched();
+    });
     ["v90DateMonth","v90DateCustom","v90RangeStart","v90RangeEnd"]
       .forEach(id=>$(id).addEventListener("change",touched));
     $("v90AddFilter").addEventListener("click",()=>{
