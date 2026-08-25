@@ -33,8 +33,14 @@ ADDITIVE_FIELDS = {
 }
 
 
-def parse_summary_rows(csv_text):
-    """Pivot Tableau's long Rep Totals NEW export into one summary row per rep."""
+def summary_rows_with_notes(csv_text):
+    """Pivot the long export, and report what had to be collapsed.
+
+    Returns (reps, collapsed) where collapsed lists every (rep, measure) mark
+    that appeared more than once. A healthy summary export collapses nothing;
+    anything else means the view is handing the same cell over twice, which is
+    worth saying out loud rather than silently absorbing.
+    """
     reader = _base.csv.DictReader(_base.io.StringIO(csv_text))
     headers = reader.fieldnames or []
 
@@ -68,6 +74,7 @@ def parse_summary_rows(csv_text):
     # overrides aggregate correctly.
     reps = {}
     order = []
+    collapsed = []          # (rep, measure) marks that arrived more than once
 
     for row_index, row in enumerate(reader):
         name = str(row.get(rep_col) or "").strip()
@@ -102,12 +109,26 @@ def parse_summary_rows(csv_text):
 
         month = str(row.get(month_col) or "").strip() if month_col else ""
         year = str(row.get(year_col) or "").strip() if year_col else ""
-        period = (year, month) if (year or month) else ("all", str(row_index))
+        # One value per rep, measure and period. Distinct months are summed
+        # further down, which is what a multi-month range needs.
+        #
+        # When the export carries no Month or Year column there is only one
+        # period, so a measure that appears twice for the same rep is the same
+        # summary cell arriving twice -- a view built from two worksheets, say.
+        # Keying those by row index instead made them look like two periods and
+        # summed them, which doubled every total and then skewed every derived
+        # rate, because a doubled soldLeads was divided by a single-counted
+        # issuedLeads.
+        period = (year, month) if (year or month) else ("all",)
 
         bucket = reps[name]["values"].setdefault(field, {})
         previous = bucket.get(period)
-        if previous is None or abs(value) > abs(previous):
+        if previous is None:
             bucket[period] = value
+        else:
+            collapsed.append((name, field))
+            if abs(value) > abs(previous):
+                bucket[period] = value
 
     result = []
     for name in order:
@@ -122,7 +143,13 @@ def parse_summary_rows(csv_text):
         # exact DPL/retention/average-sale values from the Tableau summary totals.
         result.append(_base.derive(rec))
 
-    return result
+    return result, collapsed
+
+
+def parse_summary_rows(csv_text):
+    """The parser the rest of the app calls: rows only."""
+    reps, _collapsed = summary_rows_with_notes(csv_text)
+    return reps
 
 
 # TableauSource._pull_rows is defined in tableau_v36_base and resolves

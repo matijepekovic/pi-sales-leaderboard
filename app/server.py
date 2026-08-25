@@ -1548,9 +1548,16 @@ def api_source_refresh():
         # Sales metrics only. Pi team assignments are untouched by design.
         replace_reps(rows)
         start, end = resolve_dates(settings)
+        # A report that hands the same summary cell over twice -- a view built
+        # from two worksheets, say -- would silently double every total. The
+        # parsers collapse those; say so, because it means the report is not
+        # the single summary sheet it is being read as.
+        collapsed = (getattr(source, "last_notes", {}) or {}).get("collapsed") or []
         status = (f"Tableau — {len(rows)} people, {start} to {end}"
                   + (f", office {settings.get('data_office')}"
-                     if settings.get("data_office") else ", all offices"))
+                     if settings.get("data_office") else ", all offices")
+                  + (f" — {len(collapsed)} repeated measure(s) counted once: "
+                     + ", ".join(collapsed[:6]) if collapsed else ""))
         set_meta("source_status", status)
         set_meta("last_source_refresh", time.strftime("%Y-%m-%d %H:%M:%S"))
         set_meta("data_version", int(get_meta("data_version", "0")) + 1)

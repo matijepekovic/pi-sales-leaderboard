@@ -304,7 +304,10 @@ class ConfiguredTableauSource(_base.TableauSource):
             return parse_mapped(payload, self.mapping)
         # No mapping saved: the shipped parser, byte for byte what the board
         # has always used for its own report.
-        return _base.parse_rows(payload), {"shape": "shipped"}
+        from .tableau import summary_rows_with_notes
+        reps, collapsed = summary_rows_with_notes(payload)
+        return reps, {"shape": "shipped",
+                      "collapsed": sorted({field for _rep, field in collapsed})}
 
     def _pull_rows(self):
         start, end = _base.resolve_dates(self.config)

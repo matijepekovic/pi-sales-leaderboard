@@ -263,6 +263,7 @@ def parse_mapped(csv_text, mapping, shape=""):
             scale[stat] = 1.0
 
     reps = []
+    collapsed = []          # stats whose value arrived more than once per rep
     for name in order:
         rec = collected[name]
         out = {
@@ -274,10 +275,22 @@ def parse_mapped(csv_text, mapping, shape=""):
             camel = STAT_TO_CAMEL.get(stat)
             if not camel or not values:
                 continue
-            # Several rows for one rep means a split across months; rates are
-            # already finished figures, so take one rather than summing.
-            total = max(values) if stat in PERCENT_STATS else sum(values)
+            if stat in PERCENT_STATS:
+                # Rates are finished figures; take one rather than summing.
+                total = max(values)
+            else:
+                # Several rows for one rep are months to add up -- unless they
+                # carry the same figure, in which case they are one summary
+                # cell arriving more than once, which is what a view built
+                # from two worksheets hands back. Adding those doubles every
+                # total and then skews every rate derived from them.
+                unique = list(dict.fromkeys(values))
+                if len(unique) < len(values):
+                    collapsed.append(stat)
+                total = sum(unique)
             out[camel] = total * scale[stat]
         reps.append(out)
 
-    return reps, {"shape": shape, "scaled": sorted(s for s in scale if scale[s] != 1.0)}
+    return reps, {"shape": shape,
+                  "scaled": sorted(s for s in scale if scale[s] != 1.0),
+                  "collapsed": sorted(set(collapsed))}
