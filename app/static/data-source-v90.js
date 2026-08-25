@@ -32,6 +32,13 @@
         stays where it was, under Tableau Data Source. It is never shown back.</div>
 
       <h3 style="margin:18px 0 4px">Report</h3>
+      <div class="small">Search every report this token can see, or pick the
+        workbook and sheet below.</div>
+      <input id="v94Search" type="search" placeholder="Search reports…"
+             autocomplete="off" style="width:100%;box-sizing:border-box;margin:8px 0 4px">
+      <div id="v94Results" style="max-height:230px;overflow:auto;border:1px solid #262626;
+           border-radius:4px;display:none"></div>
+      <div id="v94Count" class="small" style="opacity:.7;margin:4px 0 10px"></div>
       <div class="grid">
         <div>
           <label for="v79Workbook">Workbook</label>
@@ -202,6 +209,64 @@
             +"Crosstab gives you, one row per rep. Use this when the view's "
             +"data export combines worksheets.",
   };
+
+  // Every published view the token can see, loaded once and searched here.
+  let allViews=null, viewsError="";
+
+  function paintResults(){
+    const box=$("v94Results"), note=$("v94Count");
+    const q=$("v94Search").value.trim().toLowerCase();
+    if(allViews===null){
+      box.style.display="none";
+      note.textContent=viewsError||"Loading the report list…";
+      return;
+    }
+    const hits=allViews.filter(v=>!q
+      || `${v.name} ${v.workbook} ${v.sheet}`.toLowerCase().includes(q)).slice(0,60);
+    box.style.display=hits.length?"":"none";
+    box.innerHTML=hits.map(v=>`
+      <div class="v94Hit" data-workbook="${esc(v.workbook)}" data-sheet="${esc(v.sheet)}"
+           style="padding:8px 10px;border-bottom:1px solid #1e1e1e;cursor:pointer">
+        <div><strong>${esc(v.name)}</strong></div>
+        <div class="small" style="opacity:.65">${esc(v.workbook)} · ${esc(v.sheet)}</div>
+      </div>`).join("");
+    note.textContent=allViews.length
+      ? `${hits.length} of ${allViews.length} reports${q?" matching":""}`
+      : "No reports listed — pick the workbook and sheet below instead.";
+    box.querySelectorAll(".v94Hit").forEach(el=>
+      el.addEventListener("click",()=>choose(el.dataset.workbook, el.dataset.sheet)));
+  }
+
+  function choose(workbook, sheet){
+    // Fill the two selects whatever they are -- dropdowns normally, typed
+    // inputs when the token cannot enumerate content.
+    const set=(id,value)=>{
+      const el=$(id);
+      if(!el) return;
+      if(el.tagName==="SELECT" && ![...el.options].some(o=>o.value===value)){
+        el.insertAdjacentHTML("beforeend",
+          `<option value="${esc(value)}">${esc(value)}</option>`);
+      }
+      el.value=value;
+    };
+    set("v79Workbook", workbook);
+    set("v79Sheet", sheet);
+    mapping=null; headers=[]; choices=[]; samples={}; paintMapping();
+    touched();
+    $("v79Status").textContent=`Picked ${workbook} / ${sheet}. Read Its Columns to map it.`;
+  }
+
+  async function loadAllViews(){
+    try{
+      const {r,d}=await request("/api/source/views",{cache:"no-store"});
+      if(!r.ok||!d.ok){ allViews=[]; viewsError=(d&&d.error)||"Could not list reports."; }
+      else allViews=d.views||[];
+    }catch(e){
+      if(e.message==="locked") return;
+      allViews=[]; viewsError="Could not reach the Pi.";
+    }
+    paintResults();
+  }
 
   function paintExport(){
     $("v90ExportNote").textContent=EXPORT_NOTE[$("v90Export").value]||"";
@@ -524,7 +589,8 @@
            "Back to the shipped default source, on the current month.");
     });
 
-    paintCurrent().then(loadWorkbooks);
+    $("v94Search").addEventListener("input",paintResults);
+    paintCurrent().then(loadWorkbooks).then(loadAllViews);
   }
 
   if(document.readyState==="loading"){

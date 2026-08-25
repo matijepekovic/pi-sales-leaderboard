@@ -1673,6 +1673,18 @@ def api_source_workbooks():
         return jsonify({"ok": False, "error": f"Could not list workbooks: {exc}"}), 400
 
 
+@app.get("/api/source/views")
+def api_source_all_views():
+    """Every report the token can see, flat, for the picker's search box."""
+    try:
+        return jsonify({"ok": True,
+                        "views": source_picker.list_all_views(get_settings())})
+    except TableauError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Could not list reports: {exc}"}), 400
+
+
 @app.get("/api/source/workbooks/<path:workbook>/views")
 def api_source_views(workbook):
     try:

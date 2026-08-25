@@ -128,6 +128,58 @@ def list_workbooks(settings):
         source.signout(base, token)
 
 
+def list_all_views(settings):
+    """Every report the token can see, across every workbook, in one list.
+
+    Picking through workbook-then-sheet only works when you already know which
+    workbook a report lives in. This is the flat version: one search, one
+    click. It is a single sign-in, so it costs one request rather than one per
+    workbook per keystroke.
+
+    Everything here is a *published view*. A worksheet that exists only inside
+    a dashboard is not published on its own and cannot appear -- which is
+    worth being able to see, because a dashboard's data export hands back
+    every worksheet on it at once, stitched together.
+    """
+    source, base, token, site_id = _signed_in(settings)
+    try:
+        rows = []
+        status, raw = source._request(
+            f"{base}/sites/{site_id}/views?pageSize=1000", token=token)
+        if status == 200:
+            for view in source._view_list(_base.json.loads(raw)):
+                content_url = str(view.get("contentUrl") or "").strip()
+                if not content_url:
+                    continue
+                parts = content_url.split("/")
+                rows.append({
+                    "workbook": parts[0],
+                    "sheet": parts[-1],
+                    "name": str(view.get("name") or parts[-1]).strip(),
+                    "content_url": content_url,
+                })
+    finally:
+        source.signout(base, token)
+
+    if not rows:
+        # A site that will not serve the flat listing still answers per
+        # workbook, so walk them instead.
+        for book in list_workbooks(settings):
+            try:
+                for view in list_views(settings, book["content_url"]):
+                    rows.append({
+                        "workbook": book["content_url"],
+                        "sheet": str(view["content_url"]).split("/")[-1],
+                        "name": view["name"],
+                        "content_url": view["content_url"],
+                    })
+            except _base.TableauError:
+                continue
+
+    rows.sort(key=lambda r: (r["workbook"].lower(), r["name"].lower()))
+    return rows
+
+
 def list_views(settings, workbook):
     """Sheets in one workbook. Names differ from content URLs, so both."""
     workbook = str(workbook or "").strip()
