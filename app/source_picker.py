@@ -17,30 +17,17 @@ from sources.tableau_crosstab import describe_crosstab, mapping_description
 from sources.tableau_mapped import describe_report, suggest_mapping, unmapped_columns
 
 
-def legacy_source(settings):
-    """Fold a pre-v90 report pick into the source object.
-
-    v79-v86 stored the picked report in tableau_workbook / tableau_sheet /
-    source_mapping. Those installs upgrade without losing their choice.
-    """
-    settings = settings or {}
-    workbook = str(settings.get("tableau_workbook") or "").strip()
-    sheet = str(settings.get("tableau_sheet") or "").strip()
-    mapping = settings.get("source_mapping") or {}
-    if not workbook or not sheet:
-        return {}
-    return {"workbook": workbook, "sheet": sheet.rsplit("/", 1)[-1],
-            "mapping": mapping if mapping.get("rep_name") else {}}
-
-
 def source_config(settings):
-    """The configuration the board pulls with."""
-    settings = settings or {}
-    if not (settings.get("source") or {}):
-        legacy = legacy_source(settings)
-        if legacy:
-            return config_of({"source": legacy})
-    return config_of(settings)
+    """The configuration the board pulls with.
+
+    Pre-v90 installs stored a picked report in tableau_workbook /
+    tableau_sheet. Those are deliberately ignored now: the reports they point
+    at were picked while the picker was still guessing at exports, and the
+    shipped default is a report that has been measured against the live site.
+    Anything saved through the Data Source card lands in `source` and still
+    wins.
+    """
+    return config_of(settings or {})
 
 
 def resolve_source(settings):

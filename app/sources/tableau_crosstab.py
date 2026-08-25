@@ -18,7 +18,8 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 from . import tableau_v36_base as _base
-from .tableau_mapped import STAT_TO_CAMEL, suggest_mapping, unmapped_columns
+from .tableau_mapped import (STAT_TO_CAMEL, PERCENT_STATS, _scale_percent,
+                             suggest_mapping, unmapped_columns)
 
 _NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _NS_DOC_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -341,7 +342,25 @@ def map_crosstab(xlsx_bytes, mapping):
         raise _base.TableauError(
             f"No Crosstab rows had a value in '{rep_col}'. Is that the right column?"
         )
-    return reps, {"shape": "crosstab", "source": "crosstab_excel", "scaled": []}
+
+    # Rates arrive as raw fractions (0.2413) unless the workbook's number
+    # format marked the cell as a percentage, in which case _cell_value has
+    # already scaled it. Decide per stat from everything that came back, the
+    # same rule the CSV path uses: all at or below 1 means fractions.
+    scaled = []
+    for stat in PERCENT_STATS:
+        camel = STAT_TO_CAMEL.get(stat)
+        if not camel:
+            continue
+        values = [rep[camel] for rep in reps if isinstance(rep.get(camel), (int, float))]
+        if values and _scale_percent(values):
+            for rep in reps:
+                if isinstance(rep.get(camel), (int, float)):
+                    rep[camel] = rep[camel] * 100.0
+            scaled.append(stat)
+
+    return reps, {"shape": "crosstab", "source": "crosstab_excel",
+                  "scaled": sorted(scaled)}
 
 
 def _branch_profile(xlsx_bytes):

@@ -1,23 +1,13 @@
 """One Tableau source, described entirely by settings.
 
-Everything the pull needs -- server, site, token name, workbook, sheet, the
-filters to send, and which column feeds which board stat -- comes from the
-saved `source` object. Nothing about the report is compiled in, so pointing
-the board at a different report is a settings change rather than a release.
+Everything the pull needs -- server, site, token name, workbook, sheet, which
+export to read, the filters to send, and which column feeds which board stat
+-- comes from the saved `source` object. Nothing about the report is compiled
+in, so pointing the board at a different report is a settings change rather
+than a release.
 
-The shipped Olympia Rep Totals pull is not a special case any more; it is the
-seeded default configuration. With that configuration this class makes exactly
-the request the board has always made:
-
-    /views/{id}/data?maxAge=1&vf_Start=..&vf_End=..&vf_USER-Home Branch=Olympia
-
-and, with no column mapping saved, parses it with the same shipped parser --
-so an install that changes nothing sees no change at all.
-
-Two exports, in the order the board has always preferred them: the view's CSV
-first, Crosstab Excel only when the CSV comes back with no columns. Some views
-that export data perfectly well refuse /crosstab/excel outright with HTTP 400,
-so CSV cannot be the fallback.
+The defaults below are not a guess. They were probed against the live site:
+each was chosen because that is what the server actually returns.
 """
 from . import tableau_v36_base as _base
 from .tableau_mapped import parse_mapped
@@ -26,21 +16,55 @@ DEFAULTS = {
     "server": _base.TABLEAU_SERVER,
     "site": _base.TABLEAU_SITE,
     "pat_name": _base.TABLEAU_PAT_NAME,
-    "workbook": "8-SalesRepLevelData",
-    "sheet": "RepTotalsNEW3",
-    "filters": [{"field": _base.TABLEAU_HOME_BRANCH_FIELD,
-                 "value": _base.TABLEAU_HOME_BRANCH}],
-    "date_start_field": _base.TABLEAU_START_FIELD,
-    "date_end_field": _base.TABLEAU_END_FIELD,
-    "mapping": {},
-    # Which export to read the view through:
-    #   auto     - the view's CSV, Crosstab only if that comes back empty
-    #   csv      - view data only
-    #   crosstab - the finished Crosstab summary table only
-    "export": "auto",
-    # Keep only rows whose column matches. The old Olympia guard, expressed as
-    # configuration: a report for one office keeps it, a company-wide board
-    # clears it.
+
+    # Probed against the live site on 2026-08-25. The board's old report,
+    # 8-SalesRepLevelData/sheets/RepTotalsNEW3 ("Reps KPIs per Month"), returns
+    # HTTP 200 with a zero-byte body for every filter combination including
+    # none, and its Crosstab returns HTTP 400 with an internal Tableau error.
+    # It is broken on the Tableau side, so the default points at the report
+    # that answers.
+    "workbook": "SalesReportingSiding",
+    "sheet": "RepLeadKPIsDashboard",
+
+    # That view's CSV export is 3,524 rows of stitched worksheets with
+    # duplicate "(copy)" columns. Its Crosstab is 881 rows, one per rep, with
+    # the finished columns mapped below -- the table you get from
+    # Download > Crosstab.
+    "export": "crosstab",
+
+    # Measured, one field name at a time: vf_"Home Branch" cuts the export
+    # from 881 rows to 16 Olympia ones, while "USER-Home Branch" -- the name
+    # the old report needed -- is silently ignored by this view.
+    "filters": [{"field": "Home Branch", "value": _base.TABLEAU_HOME_BRANCH}],
+
+    # Also measured: this view ignores date filters. Start, Appt. Date and
+    # Date all return the same 881 rows, so the window comes from how the
+    # view itself is saved in Tableau, not from here. Left empty rather than
+    # sending fields that do nothing.
+    "date_start_field": "",
+    "date_end_field": "",
+
+    # The Crosstab's own column names.
+    "mapping": {
+        "rep_name": "SR-Name",
+        "home_branch": "Home Branch",
+        "team": "SR-Team_Lead_User_Text__c",
+        "metrics": {
+            "issued_leads": "Issued Leads Split",
+            "pitched_leads": "Pitched Leads Split",
+            "pitched_rate": "Pitched Rate",
+            "sold_leads": "Sold Leads Split",
+            "close_rate": "Close Rate",
+            "gross_split": "Gross Split",
+            "pending_split": "Sale (Pending) Split",
+            "net_split": "Net Split",
+            "dpl": "DPL Split",
+            "sales_retention": "Retention",
+            "avg_gross_sale": "Avg. Gross Split",
+        },
+    },
+
+    # 881 rows is every branch, so this is what makes it Olympia's board.
     "row_filter": {"column": "home_branch", "value": _base.TABLEAU_HOME_BRANCH},
 }
 
