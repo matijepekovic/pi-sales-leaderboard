@@ -43,6 +43,21 @@
         </div>
       </div>
 
+      <h3 style="margin:18px 0 4px">Date range</h3>
+      <label class="row" style="margin-bottom:6px">
+        <input type="radio" name="v90DateMode" id="v90DateMonth" value="current_month">
+        <span>Current calendar month, rolling</span></label>
+      <label class="row">
+        <input type="radio" name="v90DateMode" id="v90DateCustom" value="custom">
+        <span>A range I choose</span></label>
+      <div id="v90DateRow" class="grid" style="margin-top:10px;display:none">
+        <div><label for="v90RangeStart">Start</label>
+          <input id="v90RangeStart" type="date"></div>
+        <div><label for="v90RangeEnd">End</label>
+          <input id="v90RangeEnd" type="date"></div>
+      </div>
+      <div id="v90DateResolved" class="small" style="margin-top:8px;opacity:.75"></div>
+
       <h3 style="margin:18px 0 4px">Filters sent to Tableau</h3>
       <div class="small">What the Pi puts in the request. Remove them all and
         the report is pulled exactly as it is saved in Tableau.</div>
@@ -127,9 +142,44 @@
     };
   }
 
+  // The window is stored as its own settings keys, not inside `source`, so
+  // it travels beside the configuration rather than in it.
+  function dates(){
+    return {
+      data_date_mode: $("v90DateCustom").checked ? "custom" : "current_month",
+      data_date_start: $("v90RangeStart").value,
+      data_date_end: $("v90RangeEnd").value,
+    };
+  }
+
+  const payload=()=>({...candidate(), ...dates()});
+
+  function monthRange(){
+    const now=new Date();
+    const pad=n=>String(n).padStart(2,"0");
+    const last=new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+    return [`${now.getFullYear()}-${pad(now.getMonth()+1)}-01`,
+            `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(last)}`];
+  }
+
+  function paintDates(){
+    const d=dates();
+    const custom=d.data_date_mode==="custom";
+    $("v90DateRow").style.display=custom?"":"none";
+    // resolve_dates() falls back to the current month unless BOTH ends are
+    // filled in, so say which window the pull will really use.
+    const complete=custom&&d.data_date_start&&d.data_date_end;
+    const [from,to]=complete?[d.data_date_start,d.data_date_end]:monthRange();
+    const bad=complete&&d.data_date_start>d.data_date_end;
+    $("v90DateResolved").innerHTML=bad
+      ? '<strong>Start is after end — fix that before saving.</strong>'
+      : `The next pull asks for <strong>${esc(from)}</strong> to <strong>${esc(to)}</strong>`
+        +(custom&&!complete?" — fill in both dates to override the month." : "");
+  }
+
   const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
-  function touched(){ proven=null; setUseEnabled(); }
-  function setUseEnabled(){ $("v79Use").disabled=!(proven && same(proven,candidate())); }
+  function touched(){ proven=null; paintDates(); setUseEnabled(); }
+  function setUseEnabled(){ $("v79Use").disabled=!(proven && same(proven,payload())); }
 
   function paintFilters(){
     $("v90Filters").innerHTML=filters.map((f,i)=>`
@@ -218,7 +268,7 @@
     try{
       const {r,d}=await request("/api/source/columns",{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify(candidate())});
+        body:JSON.stringify(payload())});
       if(!r.ok||!d.ok){$("v79Status").textContent=d.error||"Could not read that report.";return;}
       headers=d.headers||[]; choices=d.choices||[]; samples=d.samples||{}; shape=d.shape;
       mapping=d.suggested||{}; mapping.metrics=mapping.metrics||{};
@@ -256,12 +306,12 @@
     try{
       const {r,d}=await request("/api/source/preview",{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({...candidate(),on_tv})});
+        body:JSON.stringify({...payload(),on_tv})});
       if(!r.ok||!d.ok){
         status.innerHTML=`<strong>That pull failed.</strong><br>${esc(d.error||"")}`;
         $("v79PreviewRows").innerHTML=""; return;
       }
-      proven=candidate(); setUseEnabled();
+      proven=payload(); setUseEnabled();
       const notes=d.notes||{};
       const cost=notes.seconds!==undefined?` · ${notes.seconds}s`:"";
       const scaled=(notes.scaled||[]).length
@@ -299,6 +349,14 @@
         `<option value="${esc(c.key)}"${c.key===keep.column?" selected":""}>${esc(c.label)}</option>`).join("");
     $("v90KeepValue").value=keep.value||"";
     mapping=(source.mapping&&source.mapping.rep_name)?{...source.mapping}:null;
+
+    const saved=window.config||{};
+    const custom=(saved.data_date_mode||"current_month")==="custom";
+    $("v90DateCustom").checked=custom;
+    $("v90DateMonth").checked=!custom;
+    $("v90RangeStart").value=saved.data_date_start||"";
+    $("v90RangeEnd").value=saved.data_date_end||"";
+    paintDates();
   }
 
   async function paintCurrent(){
@@ -380,13 +438,17 @@
     }
   }
 
-  async function save(source,message){
+  async function save(chosen,message){
+    const {data_date_mode,data_date_start,data_date_end}=chosen||dates();
+    const source={...(chosen||{})};
+    ["data_date_mode","data_date_start","data_date_end"].forEach(k=>delete source[k]);
     const status=$("v79Status");
     status.textContent="Saving…";
     try{
       const {r,d}=await request("/api/config",{
         method:"PUT",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({...(window.config||{}),source})});
+        body:JSON.stringify({...(window.config||{}), source,
+          data_date_mode, data_date_start, data_date_end})});
       if(!r.ok){status.textContent=d.error||"Could not save.";return;}
       window.config=d.settings;
       await paintCurrent();
@@ -404,6 +466,8 @@
     ["v90Server","v90Site","v90PatName","v90DateStart","v90DateEnd","v90KeepValue"]
       .forEach(id=>$(id).addEventListener("input",touched));
     $("v90KeepColumn").addEventListener("change",touched);
+    ["v90DateMonth","v90DateCustom","v90RangeStart","v90RangeEnd"]
+      .forEach(id=>$(id).addEventListener("change",touched));
     $("v90AddFilter").addEventListener("click",()=>{
       filters.push({field:"",value:""}); paintFilters(); touched();
     });
@@ -421,7 +485,10 @@
       touched(); mapping=null; headers=[]; choices=[]; samples={}; paintMapping();
       $("v79PreviewRows").innerHTML=""; $("v79PreviewStatus").textContent="";
       stopPreview();
-      save({},"Back to the shipped default source.");
+      $("v90DateMonth").checked=true; $("v90DateCustom").checked=false;
+      $("v90RangeStart").value=""; $("v90RangeEnd").value=""; paintDates();
+      save({data_date_mode:"current_month",data_date_start:"",data_date_end:""},
+           "Back to the shipped default source, on the current month.");
     });
 
     paintCurrent().then(loadWorkbooks);

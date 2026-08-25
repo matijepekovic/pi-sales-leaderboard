@@ -1678,9 +1678,11 @@ def source_overrides(body):
     """Whatever of the source configuration the settings page is trying out.
 
     Only the known fields, so a candidate configuration cannot smuggle
-    anything else into the pull.
+    anything else into the pull. The date window comes along because the card
+    offers it beside the report, even though it is stored as its own setting.
     """
-    return {key: body[key] for key in SOURCE_FIELDS if key in body}
+    keys = SOURCE_FIELDS + source_picker.DATE_KEYS
+    return {key: body[key] for key in keys if key in body}
 
 
 @app.post("/api/source/columns")

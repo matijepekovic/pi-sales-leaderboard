@@ -214,6 +214,22 @@ def preview_state():
         }
 
 
+# The date window lives in the settings rather than in the source object --
+# the whole app resolves it through resolve_dates() -- but the card offers it
+# beside the report, so a trial pull has to carry a candidate range too.
+DATE_KEYS = ("data_date_mode", "data_date_start", "data_date_end")
+
+
+def trial_settings(settings, overrides=None):
+    """Settings carrying the date window being tried out, if any."""
+    trial = dict(settings or {})
+    for key in DATE_KEYS:
+        value = (overrides or {}).get(key)
+        if value is not None:
+            trial[key] = value
+    return trial
+
+
 def trial_config(settings, overrides=None):
     """The saved config with whatever the settings page is trying out on top."""
     config = dict(source_config(settings))
@@ -226,7 +242,8 @@ def trial_config(settings, overrides=None):
 def preview_pull(settings, overrides=None):
     """Run a candidate configuration end to end. Saves nothing."""
     import time as _clock
-    source = ConfiguredTableauSource(settings, trial_config(settings, overrides))
+    source = ConfiguredTableauSource(trial_settings(settings, overrides),
+                                     trial_config(settings, overrides))
     began = _clock.monotonic()
     start, end, rows = source._pull_rows()
     notes = dict(source.last_notes or {},
@@ -267,8 +284,9 @@ def read_columns(settings, overrides=None):
     that returns nothing -- so what you map against is what you will get.
     """
     config = trial_config(settings, overrides)
-    source = ConfiguredTableauSource(settings, config)
-    start, end = _base.resolve_dates(settings)
+    trial = trial_settings(settings, overrides)
+    source = ConfiguredTableauSource(trial, config)
+    start, end = _base.resolve_dates(trial)
     base, token, site_id = source.signin()
     try:
         payload, how, csv_error = source.read_export(base, token, site_id, start, end)
