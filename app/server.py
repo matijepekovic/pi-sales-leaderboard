@@ -181,6 +181,50 @@ def metric_label_map():
     return {key: label for key, label, typ in METRIC_DEFS}
 
 
+def clean_source(raw):
+    """A saved source configuration, field by field.
+
+    Anything absent stays absent, so the seeded defaults keep filling it in;
+    what is present is bounded and typed. Filters are pairs of field name and
+    value -- an empty list is legitimate and means "send only the dates".
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    clean = {}
+    for key in ("server", "site", "pat_name", "workbook", "sheet",
+                "date_start_field", "date_end_field"):
+        if isinstance(raw.get(key), str):
+            clean[key] = raw[key].strip()[:300]
+
+    if isinstance(raw.get("filters"), list):
+        clean["filters"] = [
+            {"field": str(f.get("field") or "").strip()[:200],
+             "value": str(f.get("value") or "").strip()[:200]}
+            for f in raw["filters"][:10]
+            if isinstance(f, dict) and str(f.get("field") or "").strip()
+        ]
+
+    if isinstance(raw.get("row_filter"), dict):
+        column = str(raw["row_filter"].get("column") or "").strip()[:200]
+        valid = {key for key, _, _ in METRIC_DEFS}
+        clean["row_filter"] = {
+            "column": column if column in valid else "",
+            "value": str(raw["row_filter"].get("value") or "").strip()[:200],
+        }
+
+    if isinstance(raw.get("mapping"), dict):
+        mapping = raw["mapping"]
+        metrics = mapping.get("metrics") if isinstance(mapping.get("metrics"), dict) else {}
+        valid = {key for key, _, _ in METRIC_DEFS}
+        clean["mapping"] = {
+            "rep_name": str(mapping.get("rep_name") or "")[:200],
+            "home_branch": str(mapping.get("home_branch") or "")[:200],
+            "team": str(mapping.get("team") or "")[:200],
+            "metrics": {str(k): str(v)[:200] for k, v in metrics.items()
+                        if k in valid and str(v or "").strip()},
+        }
+    return clean
+
+
 def numeric(v):
     try:
         return float(v or 0)
@@ -1116,6 +1160,11 @@ def api_save_config():
                         if k in valid and str(v or "").strip()},
         }
 
+    # v90. The whole data source in one object. Cleaned field by field,
+    # because this decides what the Pi asks Tableau for every morning.
+    if isinstance(incoming.get("source"), dict):
+        current["source"] = clean_source(incoming["source"])
+
     # v78 product-card icon overrides. Only the six known cards, and only
     # library URLs -- these end up in an <img src>, so an arbitrary string
     # here would let the settings page point the TV at any remote host.
@@ -1585,8 +1634,18 @@ def api_product_close_refresh():
 
 @app.get("/api/source/report")
 def api_source_report():
-    """Which report is in use, and what the default is."""
-    return jsonify({"ok": True, **source_picker.describe(get_settings())})
+    """The whole source configuration, and what the shipped default is.
+
+    The columns a keep-only rule may name come from here rather than from the
+    settings page's own metric list, which is not populated yet when the card
+    first paints.
+    """
+    return jsonify({
+        "ok": True,
+        "row_filter_columns": [{"key": key, "label": label}
+                               for key, label, typ in METRIC_DEFS if typ == "text"],
+        **source_picker.describe(get_settings()),
+    })
 
 
 @app.get("/api/source/workbooks")
@@ -1611,17 +1670,26 @@ def api_source_views(workbook):
         return jsonify({"ok": False, "error": f"Could not list sheets: {exc}"}), 400
 
 
+SOURCE_FIELDS = ("server", "site", "pat_name", "workbook", "sheet", "filters",
+                 "date_start_field", "date_end_field", "mapping", "row_filter")
+
+
+def source_overrides(body):
+    """Whatever of the source configuration the settings page is trying out.
+
+    Only the known fields, so a candidate configuration cannot smuggle
+    anything else into the pull.
+    """
+    return {key: body[key] for key in SOURCE_FIELDS if key in body}
+
+
 @app.post("/api/source/columns")
 def api_source_columns():
-    """What a report offers, and a first guess at the mapping."""
+    """What the candidate report offers, and a first guess at the mapping."""
     body = request.get_json(silent=True) or {}
-    workbook = str(body.get("workbook") or "").strip()
-    sheet = str(body.get("sheet") or "").strip()
-    if not workbook or not sheet:
-        return jsonify({"ok": False, "error": "Pick a workbook and a sheet."}), 400
     try:
-        return jsonify({"ok": True,
-                        **source_picker.report_columns(get_settings(), workbook, sheet)})
+        return jsonify({"ok": True, **source_picker.read_columns(
+            get_settings(), source_overrides(body))})
     except TableauError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
@@ -1630,21 +1698,16 @@ def api_source_columns():
 
 @app.post("/api/source/preview")
 def api_source_preview():
-    """Pull through a mapping and, optionally, put it on the TV for a while.
+    """Pull a candidate configuration and, optionally, put it on the TV.
 
     Saves nothing. Preview rows live in memory with an expiry and never touch
     the reps table, so the real numbers return on their own.
     """
     body = request.get_json(silent=True) or {}
-    workbook = str(body.get("workbook") or "").strip()
-    sheet = str(body.get("sheet") or "").strip()
-    mapping = body.get("mapping") or {}
+    overrides = source_overrides(body)
     on_tv = bool(body.get("on_tv"))
-    if not workbook or not sheet:
-        return jsonify({"ok": False, "error": "Pick a workbook and a sheet."}), 400
     try:
-        start, end, rows, notes = source_picker.preview_pull(
-            get_settings(), workbook, sheet, mapping)
+        start, end, rows, notes = source_picker.preview_pull(get_settings(), overrides)
         # A preview of nobody would leave the real board up and read as
         # "the button did nothing". Say so instead.
         if not rows:
@@ -1654,8 +1717,10 @@ def api_source_preview():
                           "nothing to preview. Check the column mapped to the "
                           "rep name."),
             }), 400
+        config = source_picker.trial_config(get_settings(), overrides)
         if on_tv:
-            source_picker.start_preview(rows, f"{workbook} / {sheet}")
+            source_picker.start_preview(
+                rows, f"{config['workbook']} / {config['sheet']}")
         return jsonify({
             "ok": True, "start": start, "end": end, "reps": len(rows),
             "notes": notes, "on_tv": on_tv,
@@ -1678,15 +1743,11 @@ def api_source_preview_stop():
 
 @app.post("/api/source/test-view")
 def api_source_test_view():
-    """Trial pull against a candidate report. Saves nothing either way."""
+    """Trial pull against a candidate configuration. Saves nothing either way."""
     body = request.get_json(silent=True) or {}
-    workbook = str(body.get("workbook") or "").strip()
-    sheet = str(body.get("sheet") or "").strip()
-    if not workbook or not sheet:
-        return jsonify({"ok": False, "error": "Pick a workbook and a sheet."}), 400
     try:
-        return jsonify({"ok": True,
-                        **source_picker.test_view(get_settings(), workbook, sheet)})
+        return jsonify({"ok": True, **source_picker.test_source(
+            get_settings(), source_overrides(body))})
     except TableauError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:

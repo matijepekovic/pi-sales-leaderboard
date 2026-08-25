@@ -94,14 +94,18 @@ DEFAULT_SETTINGS = {
     "data_include_people": [],
     "data_exclude_people": [],
 
-    # v79 rep-board report override. Empty means the shipped default, and
-    # the shipped connector runs unchanged. Only written after a trial pull
-    # against the chosen report has actually parsed.
+    # v79 rep-board report override. Kept so an install that saved one before
+    # v90 still upgrades cleanly; the values are folded into "source" below.
     "tableau_workbook": "",
     "tableau_sheet": "",
-    # Which of the chosen report's columns feeds which board stat. Empty
-    # means the report is read by the shipped parser, unmapped.
     "source_mapping": {},
+
+    # v90. The whole data source, in one place: where to connect, which
+    # report, which filters to send, and which column feeds which board stat.
+    # Empty means the seeded default -- the Olympia Rep Totals pull the board
+    # has always made -- so an install that never opens this behaves exactly
+    # as it did. See sources/tableau_configured.DEFAULTS.
+    "source": {},
 
     # v78 product-card icon overrides: {"bath": "<library url>", ...}.
     # Empty means the screen's built-in SVG glyph is used.

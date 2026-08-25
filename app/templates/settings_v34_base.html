@@ -106,17 +106,17 @@ input[type=checkbox],input[type=radio]{width:18px;height:18px;padding:0}.small{c
   </div>
 
   <div class="card">
-    <h2>Data Source</h2>
+    <h2>Pull Status</h2>
     <p id="sourceStatusLine"><strong>Checking Tableau status…</strong></p>
     <div id="dateOverrideBanner" class="banner" style="display:none"><strong>Date override active.</strong> <span id="dateOverrideText" class="small"></span><br><button id="clearOverrideQuick" class="btn" type="button" style="margin-top:8px">Use Current Month</button></div>
-    <p class="small">The pull is fixed to the Olympia Rep Totals view. The Pi sends Start, End and Home Branch directly to Tableau; no custom view, rep include list, rep exclude list or local office filter is used.</p>
+    <p class="small">Status of the last pull. The report itself, its filters and the column mapping live in the Data Source card below.</p>
     <div class="row"><button id="openDataSource" class="btn primary" type="button">Tableau Data Source</button><button id="pullNowOutside" class="btn" type="button">Pull From Tableau Now</button><button id="loadDemo" class="btn" type="button">Reload Sample Data</button></div>
     <div id="sourceStatusMsg" class="small" style="margin-top:10px"></div>
   </div>
 
   <div id="dataSourceOverlay" class="overlay" aria-hidden="true">
     <div class="panel" style="max-width:820px">
-      <div class="row" style="justify-content:space-between"><div><h2 style="margin:0">Tableau Data Source</h2><div class="small">Everything except the PAT secret is fixed for this leaderboard.</div></div><button id="closeDataSource" class="btn" type="button">Close</button></div>
+      <div class="row" style="justify-content:space-between"><div><h2 style="margin:0">Tableau Data Source</h2><div class="small">The PAT secret, stored write-only. Server, site and token name are in the Data Source card.</div></div><button id="closeDataSource" class="btn" type="button">Close</button></div>
       <div class="source-fixed">
         <div><span>Tableau Cloud</span><strong>10ay.online.tableau.com</strong></div>
         <div><span>Site</span><strong>dabella</strong></div>

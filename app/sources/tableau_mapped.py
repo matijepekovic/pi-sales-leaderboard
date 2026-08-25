@@ -19,7 +19,6 @@ Two report shapes are handled, chosen automatically:
           Sales Totals & Retention and Net Ranked reports look like.
 """
 from . import tableau_v36_base as _base
-from .tableau_custom import CustomTableauSource
 
 # Board stat -> the camelCase key to_app_rows() expects. Same set the shipped
 # parser fills, so a mapped pull produces rows the rest of the app already
@@ -282,68 +281,3 @@ def parse_mapped(csv_text, mapping, shape=""):
         reps.append(out)
 
     return reps, {"shape": shape, "scaled": sorted(s for s in scale if scale[s] != 1.0)}
-
-
-class MappedTableauSource(CustomTableauSource):
-    """The chosen report, read through the chosen column mapping."""
-
-    def __init__(self, config=None, workbook="", sheet="", mapping=None):
-        super().__init__(config, workbook, sheet)
-        self.mapping = mapping or {}
-        self.last_notes = {}
-
-    def fetch_csv(self, base, token, site_id, start, end):
-        """Fetch the selected report without the shipped RepTotals shape gate.
-
-        CustomTableauSource inherits tableau.TableauSource.fetch_csv(), whose
-        final step verifies SR-Name / Measure Names / Measure Values and the
-        original summary measures. That is correct for the default board but
-        wrong for a report that has not been mapped yet: discovery and mapped
-        parsing must be allowed to see the report's raw export first.
-
-        Call the lower transport/filter implementation directly. It still uses
-        this custom source's _view_id(), sign-in, dates, REST request handling
-        and Olympia filter attempt; it skips only the original report's shape
-        validator.
-        """
-        return _base.TableauSource.fetch_csv(
-            self, base, token, site_id, start, end
-        )
-
-    def _pull_rows(self):
-        start, end = _base.resolve_dates(self.config)
-        base, token, site_id = self.signin()
-        try:
-            csv_text = self.fetch_csv(base, token, site_id, start, end)
-        finally:
-            self.signout(base, token)
-
-        reps, notes = parse_mapped(csv_text, self.mapping)
-        self.last_notes = notes
-        rows = _base.to_app_rows(reps)
-        self.last_remote_rows = len(rows)
-
-        # Same protection the shipped pull has: never put another office on
-        # the Olympia board. Only possible when a branch column is mapped --
-        # the preview says so when it is not.
-        if self.mapping.get("home_branch"):
-            office = _base.TABLEAU_HOME_BRANCH.lower()
-            values = {
-                str(r.get("home_branch") or "").strip()
-                for r in rows if str(r.get("home_branch") or "").strip()
-            }
-            unexpected = {v for v in values if v.lower() != office}
-            if unexpected:
-                filtered = [
-                    r for r in rows
-                    if str(r.get("home_branch") or "").strip().lower() == office
-                ]
-                if not filtered:
-                    raise _base.TableauError(
-                        "That report returned no Olympia rows — it came back with "
-                        + ", ".join(sorted(unexpected)[:5])
-                    )
-                self.branch_filter_guard_used = True
-                rows = filtered
-
-        return start, end, rows

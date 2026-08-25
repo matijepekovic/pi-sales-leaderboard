@@ -1,73 +1,78 @@
-"""Choosing which Tableau report the rep board reads from.
+"""The board's data source: one configuration, one code path.
 
-Two jobs:
+  resolve_source(settings) - the factory. Always the same class, always
+  described by the saved `source` object. With nothing saved that object is
+  the seeded default, which is the Olympia Rep Totals pull the board has
+  always made -- same request, same parser, same numbers.
 
-  resolve_source(settings) - the factory. Returns the shipped TableauSource
-  unless a report has actually been picked, so an install that never touches
-  the picker runs exactly the code it ran before this file existed.
-
-  list_workbooks / list_views / test_view - discovery for the settings page,
-  reusing the base connector's sign-in and request helpers rather than
+  list_workbooks / list_views / read_columns - discovery for the settings
+  page, reusing the source's own sign-in and request helpers rather than
   adding any HTTP code.
 """
 from sources import tableau_v36_base as _base
 from sources.tableau import TableauSource
-from sources.tableau_custom import CustomTableauSource
-from sources.tableau_crosstab import CrosstabMappedTableauSource, describe_view
-
-# What the board reads when nothing has been picked. Kept here as strings so
-# "Reset to Default" has something to restore, and so the shipped connector
-# itself never has to be edited.
-DEFAULT_WORKBOOK = "8-SalesRepLevelData"
-DEFAULT_SHEET = "RepTotalsNEW3"
+from sources.tableau_configured import (ConfiguredTableauSource, DEFAULTS,
+                                        config_of, has_columns)
+from sources.tableau_crosstab import describe_crosstab, mapping_description
+from sources.tableau_mapped import describe_report, suggest_mapping, unmapped_columns
 
 
-def chosen(settings):
-    """The picked report, or ("", "") when running on the default."""
-    workbook = str((settings or {}).get("tableau_workbook") or "").strip()
-    sheet = str((settings or {}).get("tableau_sheet") or "").strip()
+def legacy_source(settings):
+    """Fold a pre-v90 report pick into the source object.
+
+    v79-v86 stored the picked report in tableau_workbook / tableau_sheet /
+    source_mapping. Those installs upgrade without losing their choice.
+    """
+    settings = settings or {}
+    workbook = str(settings.get("tableau_workbook") or "").strip()
+    sheet = str(settings.get("tableau_sheet") or "").strip()
+    mapping = settings.get("source_mapping") or {}
     if not workbook or not sheet:
-        return "", ""
-    # A pick that matches the shipped target is not a pick -- fall through to
-    # the original class so the default path stays byte-identical.
-    if (workbook.lower() == DEFAULT_WORKBOOK.lower()
-            and sheet.rsplit("/", 1)[-1].lower() == DEFAULT_SHEET.lower()):
-        return "", ""
-    return workbook, sheet
+        return {}
+    return {"workbook": workbook, "sheet": sheet.rsplit("/", 1)[-1],
+            "mapping": mapping if mapping.get("rep_name") else {}}
 
 
-def mapping_of(settings):
-    """The saved column mapping, or {} when the report needs no mapping."""
-    mapping = (settings or {}).get("source_mapping") or {}
-    return mapping if mapping.get("rep_name") else {}
+def source_config(settings):
+    """The configuration the board pulls with."""
+    settings = settings or {}
+    if not (settings.get("source") or {}):
+        legacy = legacy_source(settings)
+        if legacy:
+            return config_of({"source": legacy})
+    return config_of(settings)
 
 
 def resolve_source(settings):
-    """The rep source to pull with. Today's class unless a report was picked."""
-    workbook, sheet = chosen(settings)
-    if not workbook:
-        return TableauSource(settings)
-    mapping = mapping_of(settings)
-    if mapping:
-        return CrosstabMappedTableauSource(settings, workbook, sheet, mapping)
-    return CustomTableauSource(settings, workbook, sheet)
+    """The rep source to pull with. One class, described by settings."""
+    return ConfiguredTableauSource(settings, source_config(settings))
 
 
 def describe(settings):
-    workbook, sheet = chosen(settings)
+    config = source_config(settings)
     return {
-        "workbook": workbook or DEFAULT_WORKBOOK,
-        "sheet": (sheet or DEFAULT_SHEET).rsplit("/", 1)[-1],
-        "is_default": not workbook,
-        "default_workbook": DEFAULT_WORKBOOK,
-        "default_sheet": DEFAULT_SHEET,
+        "workbook": config["workbook"],
+        "sheet": config["sheet"].rsplit("/", 1)[-1],
+        "is_default": config == config_of({}),
+        "default_workbook": DEFAULTS["workbook"],
+        "default_sheet": DEFAULTS["sheet"],
+        "server": config["server"],
+        "site": config["site"],
+        "pat_name": config["pat_name"],
+        "filters": config["filters"],
+        "date_start_field": config["date_start_field"],
+        "date_end_field": config["date_end_field"],
+        "row_filter": config["row_filter"],
+        "mapping": config["mapping"],
+        "defaults": DEFAULTS,
     }
 
 
 # ------------------------------------------------------------------ discovery
 
-def _signed_in(settings):
-    source = TableauSource(settings)
+def _signed_in(settings, source=None):
+    """Signed in with the configured connection, not a compiled-in one."""
+    source = source or ConfiguredTableauSource(settings, source_config(settings))
     base, token, site_id = source.signin()
     return source, base, token, site_id
 
@@ -209,55 +214,84 @@ def preview_state():
         }
 
 
-def preview_pull(settings, workbook, sheet, mapping):
-    """Run the chosen report through the mapping. Saves nothing."""
-    source = CrosstabMappedTableauSource(settings, workbook, sheet, mapping)
+def trial_config(settings, overrides=None):
+    """The saved config with whatever the settings page is trying out on top."""
+    config = dict(source_config(settings))
+    for key, value in (overrides or {}).items():
+        if key in config and value is not None:
+            config[key] = value
+    return config
+
+
+def preview_pull(settings, overrides=None):
+    """Run a candidate configuration end to end. Saves nothing."""
+    import time as _clock
+    source = ConfiguredTableauSource(settings, trial_config(settings, overrides))
+    began = _clock.monotonic()
     start, end, rows = source._pull_rows()
-    return start, end, rows, source.last_notes
+    notes = dict(source.last_notes or {},
+                 seconds=round(_clock.monotonic() - began, 1),
+                 remote_rows=source.last_remote_rows)
+    return start, end, rows, notes
 
 
-def test_view(settings, workbook, sheet):
-    """Trial pull. Never writes anything, and never touches the saved source.
+def test_source(settings, overrides=None):
+    """Trial pull, reported the way the settings page needs it.
 
-    Returns what a real pull would have found, so a report can be judged
-    before it is committed to rather than at 6am with a stale board.
+    Never writes anything and never touches the saved configuration, so a
+    report can be judged before it is committed to rather than at 6am with a
+    stale board.
     """
-    source = CustomTableauSource(settings, workbook, sheet)
-    start, end, rows = source._pull_rows()
-    offices = sorted({
-        str(r.get("home_branch") or "").strip()
-        for r in rows if str(r.get("home_branch") or "").strip()
-    })
-    metrics = sorted({
-        key for row in rows for key, value in row.items()
-        if isinstance(value, (int, float)) and value
-    })
+    start, end, rows, notes = preview_pull(settings, overrides)
+    config = trial_config(settings, overrides)
+    branch_column = str((config.get("row_filter") or {}).get("column") or "home_branch")
     return {
-        "workbook": workbook,
-        "sheet": sheet,
+        "workbook": config["workbook"],
+        "sheet": config["sheet"],
         "start": start,
         "end": end,
         "reps": len(rows),
-        "offices": offices,
-        "metrics": metrics,
+        "offices": sorted({str(r.get(branch_column) or "").strip()
+                           for r in rows if str(r.get(branch_column) or "").strip()}),
+        "metrics": sorted({key for row in rows for key, value in row.items()
+                           if isinstance(value, (int, float)) and value}),
         "sample": [str(r.get("rep_name") or "") for r in rows[:3]],
+        "notes": notes,
     }
 
 
-def report_columns(settings, workbook, sheet):
-    """Read the chosen view and expose what it offers to map against.
+def read_columns(settings, overrides=None):
+    """What the candidate report offers to map against, and a first guess.
 
-    Same order as the pull: the view's own CSV export first -- the request
-    the board has always made -- and Crosstab Excel only when that returns
-    nothing.
+    Same route as the pull: the view's CSV first, Crosstab Excel only when
+    that returns nothing -- so what you map against is what you will get.
     """
-    source = CrosstabMappedTableauSource(settings, workbook, sheet, {})
+    config = trial_config(settings, overrides)
+    source = ConfiguredTableauSource(settings, config)
     start, end = _base.resolve_dates(settings)
     base, token, site_id = source.signin()
     try:
-        described = describe_view(source, base, token, site_id, start, end)
+        payload, how, csv_error = source.read_export(base, token, site_id, start, end)
     finally:
         source.signout(base, token)
 
+    if how == "csv":
+        described = describe_report(payload)
+        guess = suggest_mapping(described["headers"], described["choices"])
+        described = {
+            "shape": described["shape"],
+            "headers": described["headers"],
+            "choices": described["choices"],
+            "samples": described.get("samples") or {},
+            "suggested": guess,
+            "unmapped": unmapped_columns(described["choices"], guess),
+        }
+        described["export"] = "view data (CSV)"
+    else:
+        described = mapping_description(payload)
+        described["export"] = "Crosstab Excel"
+        if csv_error:
+            described["csv_error"] = csv_error
     return {**described, "start": start, "end": end}
+
 
