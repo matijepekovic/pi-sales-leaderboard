@@ -13,8 +13,7 @@ Two jobs:
 from sources import tableau_v36_base as _base
 from sources.tableau import TableauSource
 from sources.tableau_custom import CustomTableauSource
-from sources.tableau_crosstab import (CrosstabMappedTableauSource,
-                                      mapping_description)
+from sources.tableau_crosstab import CrosstabMappedTableauSource, describe_view
 
 # What the board reads when nothing has been picked. Kept here as strings so
 # "Reset to Default" has something to restore, and so the shipped connector
@@ -246,15 +245,19 @@ def test_view(settings, workbook, sheet):
 
 
 def report_columns(settings, workbook, sheet):
-    """Download Tableau's Crosstab Excel and expose those finished columns."""
+    """Read the chosen view and expose what it offers to map against.
+
+    Same order as the pull: the view's own CSV export first -- the request
+    the board has always made -- and Crosstab Excel only when that returns
+    nothing.
+    """
     source = CrosstabMappedTableauSource(settings, workbook, sheet, {})
     start, end = _base.resolve_dates(settings)
     base, token, site_id = source.signin()
     try:
-        xlsx_bytes = source.fetch_crosstab(base, token, site_id, start, end)
+        described = describe_view(source, base, token, site_id, start, end)
     finally:
         source.signout(base, token)
 
-    described = mapping_description(xlsx_bytes)
     return {**described, "start": start, "end": end}
 

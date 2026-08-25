@@ -19,7 +19,8 @@ import xml.etree.ElementTree as ET
 
 from . import tableau_v36_base as _base
 from .tableau_custom import CustomTableauSource
-from .tableau_mapped import STAT_TO_CAMEL, suggest_mapping, unmapped_columns
+from .tableau_mapped import (STAT_TO_CAMEL, MappedTableauSource, describe_report,
+                             parse_mapped, suggest_mapping, unmapped_columns)
 
 _NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _NS_DOC_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -30,6 +31,20 @@ _NS = {"m": _NS_MAIN, "r": _NS_DOC_REL, "pr": _NS_PKG_REL}
 # custom formats such as 0.0%; those are detected from styles.xml below.
 _BUILTIN_PERCENT_FORMATS = {9, 10}
 _SAMPLE_ROWS = 40
+
+
+def _csv_has_columns(csv_text):
+    """True when Tableau actually sent a CSV table back.
+
+    An empty body, or one whose first line has no separated fields, means the
+    view gave us nothing through /views/{id}/data -- which is the signal to
+    fall back to the Crosstab export rather than to fail.
+    """
+    first_line = str(csv_text or "").lstrip("﻿").strip().splitlines()[:1]
+    if not first_line:
+        return False
+    headers = next(_base.csv.reader(first_line), [])
+    return len([h for h in headers if str(h).strip()]) >= 2
 
 
 def _column_index(cell_ref):
@@ -405,15 +420,55 @@ class CrosstabMappedTableauSource(CustomTableauSource):
         self.last_branch_filter_field = candidates[-1] if candidates else ""
         return last_book
 
+    def fetch_view_csv(self, base, token, site_id, start, end):
+        """The chosen view, pulled the way the working board pull pulls.
+
+        /views/{id}/data with Start, End and the home-branch filter -- the
+        exact request the shipped rep pull makes every morning, minus its
+        RepTotals shape check. MappedTableauSource.fetch_csv is that request;
+        calling it unbound avoids a second class in the chain.
+        """
+        return MappedTableauSource.fetch_csv(self, base, token, site_id, start, end)
+
+    def read_view(self, base, token, site_id, start, end):
+        """(headers, rows-as-mapped-input, how) for the chosen view.
+
+        CSV first. Crosstab Excel is the fallback, not the default: the CSV
+        endpoint is what the board has always used and what Tableau accepts
+        for every view, while /crosstab/excel refuses some of them outright
+        (HTTP 400) even though their data downloads fine.
+        """
+        csv_text = ""
+        csv_error = ""
+        try:
+            csv_text = self.fetch_view_csv(base, token, site_id, start, end)
+        except _base.TableauError as exc:
+            csv_error = str(exc)
+
+        if _csv_has_columns(csv_text):
+            return csv_text, "csv", ""
+
+        # Nothing usable came back as CSV, so try the Crosstab export.
+        return None, "crosstab", csv_error
+
     def _pull_rows(self):
         start, end = _base.resolve_dates(self.config)
         base, token, site_id = self.signin()
         try:
-            book = self.fetch_crosstab(base, token, site_id, start, end)
+            csv_text, how, csv_error = self.read_view(base, token, site_id, start, end)
+            book = None
+            if how == "crosstab":
+                book = self.fetch_crosstab(base, token, site_id, start, end)
         finally:
             self.signout(base, token)
 
-        reps, notes = map_crosstab(book, self.mapping)
+        if how == "csv":
+            reps, notes = parse_mapped(csv_text, self.mapping)
+            notes = dict(notes, source="view_data_csv")
+        else:
+            reps, notes = map_crosstab(book, self.mapping)
+            if csv_error:
+                notes = dict(notes, csv_error=csv_error)
         self.last_notes = notes
         rows = _base.to_app_rows(reps)
         self.last_remote_rows = len(rows)
@@ -443,15 +498,35 @@ class CrosstabMappedTableauSource(CustomTableauSource):
         return start, end, rows
 
 
-def mapping_description(xlsx_bytes):
-    """Describe the Crosstab for the existing phone mapping UI."""
-    described = describe_crosstab(xlsx_bytes)
+def _description(described):
+    """One description shape for the phone, whichever export it came from."""
     guess = suggest_mapping(described["headers"], described["choices"])
     return {
         "shape": described["shape"],
         "headers": described["headers"],
         "choices": described["choices"],
-        "samples": described["samples"],
+        "samples": described.get("samples") or {},
         "suggested": guess,
         "unmapped": unmapped_columns(described["choices"], guess),
     }
+
+
+def mapping_description(xlsx_bytes):
+    """Describe the Crosstab for the existing phone mapping UI."""
+    return _description(describe_crosstab(xlsx_bytes))
+
+
+def describe_view(source, base, token, site_id, start, end):
+    """Describe the chosen view for the mapping UI, CSV first.
+
+    Same order the pull uses, so what you map against is what you will get.
+    """
+    csv_text, how, csv_error = source.read_view(base, token, site_id, start, end)
+    if how == "csv":
+        return dict(_description(describe_report(csv_text)), export="view data (CSV)")
+    described = _description(describe_crosstab(
+        source.fetch_crosstab(base, token, site_id, start, end)))
+    described["export"] = "Crosstab Excel"
+    if csv_error:
+        described["csv_error"] = csv_error
+    return described
