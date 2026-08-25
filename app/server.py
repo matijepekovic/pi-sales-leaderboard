@@ -45,7 +45,6 @@ from database import (
     set_rep_team_assignments,
 )
 import printing
-import source_picker
 from sources.sample import SampleSource
 from sources.tableau import TableauSource, TableauError, resolve_dates
 from tableau_scheduler import refresh_product_close, start_tableau_scheduler
@@ -1089,12 +1088,6 @@ def api_save_config():
             except Exception:
                 pass
 
-    # v79 rep-board report. Saved by the picker only after its Test passed;
-    # blank in either field means the shipped default.
-    for key in ("tableau_workbook", "tableau_sheet"):
-        if isinstance(incoming.get(key), str):
-            current[key] = incoming[key].strip()[:300]
-
     # v78 product-card icon overrides. Only the six known cards, and only
     # library URLs -- these end up in an <img src>, so an arbitrary string
     # here would let the settings page point the TV at any remote host.
@@ -1431,7 +1424,7 @@ def api_source_options():
 def api_source_test():
     """Sign in and pull, reporting counts only. Nothing is written."""
     try:
-        preview = source_picker.resolve_source(get_settings()).preview()
+        preview = TableauSource(get_settings()).preview()
     except TableauError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
@@ -1459,7 +1452,7 @@ def api_source_refresh():
         return jsonify({"ok": False, "error": "A refresh is already running."}), 409
     try:
         settings = get_settings()
-        source = source_picker.resolve_source(settings)
+        source = TableauSource(settings)
         rows = source.fetch()
         if not rows:
             set_meta("source_status", "Tableau returned no matching people")
@@ -1552,55 +1545,6 @@ def api_product_close_refresh():
                         "updated_at": rows[0]["updated_at"] if rows else ""})
     finally:
         _PRODUCT_REFRESH_LOCK.release()
-
-
-# ------------------------------------------------------------- report picker
-# Choosing which Tableau report the rep board reads. All three are actions
-# that sign in to Tableau, so none belongs in PUBLIC_ENDPOINTS.
-
-@app.get("/api/source/report")
-def api_source_report():
-    """Which report is in use, and what the default is."""
-    return jsonify({"ok": True, **source_picker.describe(get_settings())})
-
-
-@app.get("/api/source/workbooks")
-def api_source_workbooks():
-    try:
-        return jsonify({"ok": True,
-                        "workbooks": source_picker.list_workbooks(get_settings())})
-    except TableauError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
-    except Exception as exc:
-        return jsonify({"ok": False, "error": f"Could not list workbooks: {exc}"}), 400
-
-
-@app.get("/api/source/workbooks/<path:workbook>/views")
-def api_source_views(workbook):
-    try:
-        return jsonify({"ok": True,
-                        "views": source_picker.list_views(get_settings(), workbook)})
-    except TableauError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
-    except Exception as exc:
-        return jsonify({"ok": False, "error": f"Could not list sheets: {exc}"}), 400
-
-
-@app.post("/api/source/test-view")
-def api_source_test_view():
-    """Trial pull against a candidate report. Saves nothing either way."""
-    body = request.get_json(silent=True) or {}
-    workbook = str(body.get("workbook") or "").strip()
-    sheet = str(body.get("sheet") or "").strip()
-    if not workbook or not sheet:
-        return jsonify({"ok": False, "error": "Pick a workbook and a sheet."}), 400
-    try:
-        return jsonify({"ok": True,
-                        **source_picker.test_view(get_settings(), workbook, sheet)})
-    except TableauError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
-    except Exception as exc:
-        return jsonify({"ok": False, "error": f"Test failed: {exc}"}), 400
 
 
 # ------------------------------------------------------------------- printer
