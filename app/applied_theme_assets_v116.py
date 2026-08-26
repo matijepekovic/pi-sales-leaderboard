@@ -150,7 +150,7 @@ def _materialize_config(scope, team, config, initial_migration=False):
             _copy_verified(
                 builtin,
                 target,
-                replace_existing=bool(initial_migration and not target.exists()),
+                replace_existing=bool(initial_migration),
             )
             if assets.get(asset_key) != filename:
                 assets[asset_key] = filename
