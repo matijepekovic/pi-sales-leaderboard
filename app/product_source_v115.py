@@ -23,6 +23,28 @@ def selected_market(settings=None):
     return str(settings.get("product_market") or DEFAULT_MARKET).strip() or DEFAULT_MARKET
 
 
+def _rep_market_fallback():
+    """Current rep home branches are a safe fallback for the dropdown.
+
+    Some Tableau views omit a filter-only dimension from downloaded CSV even
+    when includeAllColumns is requested. The rep board already stores the same
+    office/market names, so use those choices rather than collapsing the UI
+    back to Olympia-only if Tableau hides the filter domain.
+    """
+    try:
+        from database import list_reps
+        values = {
+            str(row.get("home_branch") or "").strip()
+            for row in list_reps()
+            if str(row.get("home_branch") or "").strip()
+        }
+        if values:
+            return sorted(values, key=str.casefold)
+    except Exception:
+        pass
+    return []
+
+
 class ProductCloseSourceV115(_BaseProductCloseSource):
     """Same fixed Tableau product report, with a configurable market filter."""
 
@@ -46,8 +68,8 @@ class ProductCloseSourceV115(_BaseProductCloseSource):
         if market:
             params[f"vf_{TABLEAU_MARKET_FIELD}"] = market
         if include_all_columns:
-            # Tableau's view-data endpoint can expose dimensions that are used
-            # as filters but are not visible in the compact two-column sheet.
+            # Tableau versions that support this return hidden dimensions too;
+            # versions that do not simply ignore the extra query parameter.
             params["includeAllColumns"] = "true"
 
         query = _base.urllib.parse.urlencode(
@@ -121,24 +143,25 @@ class ProductCloseSourceV115(_BaseProductCloseSource):
         reader = _base.csv.DictReader(_base.io.StringIO(csv_text))
         headers = reader.fieldnames or []
         market_col = _base.find_column(headers, MARKET_COLUMN_ALIASES)
-        if not market_col:
-            raise _base.TableauError(
-                "The Product Close Rates report did not expose its market field "
-                "for the dropdown. Columns received: "
-                + (", ".join(headers) if headers else "none")
-            )
+        if market_col:
+            values = {
+                str(row.get(market_col) or "").strip()
+                for row in reader
+                if str(row.get(market_col) or "").strip()
+                and str(row.get(market_col) or "").strip().lower() != "all"
+            }
+            if values:
+                return sorted(values, key=str.casefold)
 
-        values = {
-            str(row.get(market_col) or "").strip()
-            for row in reader
-            if str(row.get(market_col) or "").strip()
-            and str(row.get(market_col) or "").strip().lower() != "all"
-        }
-        if not values:
-            raise _base.TableauError(
-                "The Product Close Rates report returned no market choices."
-            )
-        return sorted(values, key=str.casefold)
+        fallback = _rep_market_fallback()
+        if fallback:
+            return fallback
+
+        raise _base.TableauError(
+            "The Product Close Rates report did not expose market choices. "
+            "Columns received: "
+            + (", ".join(headers) if headers else "none")
+        )
 
 
 TableauError = _base.TableauError
