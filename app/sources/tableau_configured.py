@@ -6,73 +6,36 @@ export to read, the filters to send, and which column feeds which board stat
 in, so pointing the board at a different report is a settings change rather
 than a release.
 
-The defaults below are not a guess. They were probed against the live site:
-each was chosen because that is what the server actually returns.
+Connection defaults only tell the Pi how to reach Tableau. The report itself is
+never compiled in: no workbook, sheet, filters or mapping exists until the
+user saves one from the Data Source card.
 """
 from . import tableau_v36_base as _base
 from .tableau_mapped import parse_mapped
 
 DEFAULTS = {
+    # Connection only. These are what let a fresh Pi sign in and enumerate
+    # Tableau content; they do not choose any report or data.
     "server": _base.TABLEAU_SERVER,
     "site": _base.TABLEAU_SITE,
     "pat_name": _base.TABLEAU_PAT_NAME,
 
-    # Probed against the live site on 2026-08-25. The board's old report,
-    # 8-SalesRepLevelData/sheets/RepTotalsNEW3 ("Reps KPIs per Month"), returns
-    # HTTP 200 with a zero-byte body for every filter combination including
-    # none, and its Crosstab returns HTTP 400 with an internal Tableau error.
-    # It is broken on the Tableau side, so the default points at the report
-    # that answers.
-    "workbook": "SalesReportingSiding",
-    "sheet": "RepLeadKPIsDashboard",
-
-    # That view's CSV export is 3,524 rows of stitched worksheets with
-    # duplicate "(copy)" columns. Its Crosstab is 881 rows, one per rep, with
-    # the finished columns mapped below -- the table you get from
-    # Download > Crosstab.
-    "export": "crosstab",
-
-    # Measured, one field name at a time: vf_"Home Branch" cuts the export
-    # from 881 rows to 16 Olympia ones, while "USER-Home Branch" -- the name
-    # the old report needed -- is silently ignored by this view.
-    "filters": [{"field": "Home Branch", "value": _base.TABLEAU_HOME_BRANCH}],
-
-    # Also measured: this view ignores date filters. Start, Appt. Date and
-    # Date all return the same 881 rows, so the window comes from how the
-    # view itself is saved in Tableau, not from here. Left empty rather than
-    # sending fields that do nothing.
+    # No report fallback. Until the user saves a tested source, scheduled and
+    # manual pulls fail closed and the existing leaderboard rows stay intact.
+    "workbook": "",
+    "sheet": "",
+    "export": "auto",
+    "filters": [],
     "date_start_field": "",
     "date_end_field": "",
-
-    # The Crosstab's own column names.
-    "mapping": {
-        "rep_name": "SR-Name",
-        "home_branch": "Home Branch",
-        "team": "SR-Team_Lead_User_Text__c",
-        "metrics": {
-            "issued_leads": "Issued Leads Split",
-            "pitched_leads": "Pitched Leads Split",
-            "pitched_rate": "Pitched Rate",
-            "sold_leads": "Sold Leads Split",
-            "close_rate": "Close Rate",
-            "gross_split": "Gross Split",
-            "pending_split": "Sale (Pending) Split",
-            "net_split": "Net Split",
-            "dpl": "DPL Split",
-            "sales_retention": "Retention",
-            "avg_gross_sale": "Avg. Gross Split",
-        },
-    },
-
-    # 881 rows is every branch, so this is what makes it Olympia's board.
-    "row_filter": {"column": "home_branch", "value": _base.TABLEAU_HOME_BRANCH},
+    "mapping": {},
+    "row_filter": {},
 }
 
 
-# Blank here is never deliberate -- without them there is nothing to sign in
-# to -- so these fall back to the default when empty. Everything else honours
-# an empty value: clearing a filter field or a date field is a real choice.
-REQUIRED = ("server", "site", "pat_name", "workbook", "sheet", "export")
+# Only the connection falls back when a saved value is blank. A blank workbook
+# or sheet is intentional and means that no report has been selected.
+CONNECTION_REQUIRED = ("server", "site", "pat_name")
 
 EXPORTS = ("auto", "csv", "crosstab")
 
@@ -85,7 +48,7 @@ def config_of(settings):
         for key, value in saved.items():
             if key not in config or value is None:
                 continue
-            if key in REQUIRED and not str(value).strip():
+            if key in CONNECTION_REQUIRED and not str(value).strip():
                 continue
             config[key] = value
     config["filters"] = [
@@ -196,6 +159,10 @@ class ConfiguredTableauSource(_base.TableauSource):
     # ------------------------------------------------------------- the view
 
     def _workbook_id(self, base, token, site_id):
+        if not self.workbook:
+            raise _base.TableauError(
+                "No Tableau report is selected. Choose a workbook and sheet "
+                "in Data Source, Check The Numbers, then Use This Source.")
         key = _base.urllib.parse.quote(self.workbook, safe="")
         status, raw = self._request(
             f"{base}/sites/{site_id}/workbooks/{key}?key=contentUrl", token=token)
@@ -213,6 +180,10 @@ class ConfiguredTableauSource(_base.TableauSource):
         return workbook_id
 
     def _view_id(self, base, token, site_id):
+        if not self.sheet:
+            raise _base.TableauError(
+                "No Tableau report is selected. Choose a workbook and sheet "
+                "in Data Source, Check The Numbers, then Use This Source.")
         workbook_id = self._workbook_id(base, token, site_id)
         status, raw = self._request(
             f"{base}/sites/{site_id}/workbooks/{workbook_id}/views", token=token)
