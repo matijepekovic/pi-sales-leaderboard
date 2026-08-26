@@ -5,7 +5,7 @@
    split (a "Data Source" card describing a fixed view, and a separate report
    picker) is gone. No report is selected until the user tests and saves one.
 
-   Ids stay v79* so the v83 search helper keeps attaching to the two selects.
+   Ids stay v79* so the existing source endpoints and mapping hooks keep working.
 
    Nothing here touches the display: the board still receives the same rep
    rows it always has, so themes, table formatting and the number-size
@@ -13,117 +13,123 @@
 (function(){
   const CARD=`
     <div class="card" id="v90SourceCard">
-      <h2>Data Source</h2>
-      <div class="small">Everything the morning pull uses. Change the report,
-        the filters or the mapping here — check the numbers, then switch.</div>
-      <div id="v79Current" class="small" style="margin-top:10px"></div>
+      <h2>Tableau Report</h2>
+      <div class="small">Choose one report, map it, verify the numbers, then save it.
+        The saved report is the source used by every automatic refresh.</div>
 
-      <h3 style="margin:18px 0 4px">Connection</h3>
-      <div class="grid">
-        <div><label for="v90Server">Server</label>
-          <input id="v90Server" type="text" placeholder="https://10ay.online.tableau.com"></div>
-        <div><label for="v90Site">Site</label>
-          <input id="v90Site" type="text" placeholder="dabella"></div>
-        <div><label for="v90PatName">Token name</label>
-          <input id="v90PatName" type="text" placeholder="leaderboard"></div>
-      </div>
-      <div class="small" style="margin-top:6px;opacity:.7">The token secret
-        stays where it was, under Tableau Data Source. It is never shown back.</div>
-
-      <h3 style="margin:18px 0 4px">Report</h3>
-      <div class="small">Search every <strong>published</strong> report this token can see, or pick the
-        workbook and sheet below. A worksheet that exists only inside a dashboard
-        (even if Download &gt; Crosstab shows it) will not appear here until it is published as a view.</div>
-      <input id="v94Search" type="search" placeholder="Search reports…"
-             autocomplete="off" style="width:100%;box-sizing:border-box;margin:8px 0 4px">
-      <div id="v94Results" style="max-height:230px;overflow:auto;border:1px solid #262626;
-           border-radius:4px;display:none"></div>
-      <div id="v94Count" class="small" style="opacity:.7;margin:4px 0 10px"></div>
-      <div class="grid">
-        <div>
-          <label for="v79Workbook">Workbook</label>
-          <select id="v79Workbook"><option value="">Loading…</option></select>
+      <div style="margin-top:12px;padding:12px;border:1px solid #2b2b2b;border-radius:6px">
+        <div id="v79Current" class="small"></div>
+        <div id="v97Schedule" class="small" style="margin-top:5px;opacity:.78">
+          Automatic refresh: <strong>6:00 AM and 2:00 PM</strong> · Pi local time
         </div>
-        <div>
-          <label for="v79Sheet">Sheet</label>
-          <select id="v79Sheet"><option value="">Pick a workbook first</option></select>
+        <div id="v97LastRefresh" class="small" style="margin-top:3px;opacity:.68"></div>
+      </div>
+
+      <div style="margin-top:20px">
+        <div class="small" style="opacity:.62;text-transform:uppercase;letter-spacing:.08em">Step 1</div>
+        <h3 style="margin:3px 0 5px">Choose the report</h3>
+        <div class="small">Pick a published workbook and report. Dashboard-only worksheets
+          shown in Tableau's Download &gt; Crosstab menu must be published as a view before the Pi can pull them.</div>
+        <div class="grid" style="margin-top:10px">
+          <div>
+            <label for="v79Workbook">Workbook</label>
+            <select id="v79Workbook"><option value="">Loading…</option></select>
+          </div>
+          <div>
+            <label for="v79Sheet">Report</label>
+            <select id="v79Sheet"><option value="">Pick a workbook first</option></select>
+          </div>
         </div>
-      </div>
-      <!-- Outside the grid above: typedFallback() rebuilds that grid when the
-           token cannot enumerate content, and would take this with it. -->
-      <div style="margin-top:12px">
-        <label for="v90Export">Export</label>
-        <select id="v90Export">
-          <option value="auto">Automatic</option>
-          <option value="csv">View data (CSV)</option>
-          <option value="crosstab">Crosstab (Download &gt; Crosstab)</option>
-        </select>
-      </div>
-      <div id="v90ExportNote" class="small" style="margin-top:6px;opacity:.75"></div>
-
-      <h3 style="margin:18px 0 4px">Date range</h3>
-      <label class="row" style="margin-bottom:6px">
-        <input type="radio" name="v90DateMode" id="v90DateMonth" value="current_month">
-        <span>Current calendar month, rolling</span></label>
-      <label class="row">
-        <input type="radio" name="v90DateMode" id="v90DateCustom" value="custom">
-        <span>A range I choose</span></label>
-      <div id="v90DateRow" class="grid" style="margin-top:10px;display:none">
-        <div><label for="v90RangeStart">Start</label>
-          <input id="v90RangeStart" type="date"></div>
-        <div><label for="v90RangeEnd">End</label>
-          <input id="v90RangeEnd" type="date"></div>
-      </div>
-      <div id="v90DateResolved" class="small" style="margin-top:8px;opacity:.75"></div>
-
-      <h3 style="margin:18px 0 4px">Filters sent to Tableau</h3>
-      <div class="small">What the Pi puts in the request. Remove them all and
-        the report is pulled exactly as it is saved in Tableau.</div>
-      <div id="v90Filters" style="margin-top:8px"></div>
-      <div class="row" style="margin-top:8px;gap:10px;flex-wrap:wrap">
-        <button id="v90AddFilter" class="btn" type="button">Add Filter</button>
-      </div>
-      <div class="grid" style="margin-top:12px">
-        <div><label for="v90DateStart">Start date field</label>
-          <input id="v90DateStart" type="text" placeholder="Start"></div>
-        <div><label for="v90DateEnd">End date field</label>
-          <input id="v90DateEnd" type="text" placeholder="End"></div>
+        <div style="margin-top:10px">
+          <label for="v90Export">Data to map</label>
+          <select id="v90Export">
+            <option value="auto">Automatic</option>
+            <option value="csv">View data (CSV)</option>
+            <option value="crosstab">Crosstab (Download &gt; Crosstab)</option>
+          </select>
+          <div id="v90ExportNote" class="small" style="margin-top:5px;opacity:.72"></div>
+        </div>
+        <div class="row" style="margin-top:12px;gap:10px;flex-wrap:wrap">
+          <button id="v79Load" class="btn primary" type="button">Read Report</button>
+        </div>
+        <div id="v79Status" class="small" style="margin-top:8px"></div>
       </div>
 
-      <h3 style="margin:18px 0 4px">Keep only</h3>
-      <div class="small">A last check on what came back, applied here rather
-        than in Tableau. Leave the column blank to keep every row.</div>
-      <div class="grid" style="margin-top:8px">
-        <div><label for="v90KeepColumn">Column</label>
-          <select id="v90KeepColumn"></select></div>
-        <div><label for="v90KeepValue">Value</label>
-          <input id="v90KeepValue" type="text" placeholder="Olympia"></div>
-      </div>
-
-      <div class="row" style="margin-top:16px;gap:10px;flex-wrap:wrap">
-        <button id="v79Load" class="btn" type="button">Read Its Columns</button>
-        <button id="v79Use" class="btn primary" type="button" disabled>Use This Source</button>
-        <button id="v79Reset" class="btn danger" type="button">Clear Report</button>
-      </div>
-      <div id="v79Status" class="small" style="margin-top:10px"></div>
-
-      <div id="v79MapWrap" style="display:none;margin-top:20px">
-        <h3 style="margin:0 0 4px">Match the columns</h3>
-        <div class="small">Anything the names made obvious is filled in
-          already. The example under each dropdown is what that column holds.
-          Leave every stat unmapped to read a report shaped like the board's
-          own.</div>
+      <div id="v79MapWrap" style="display:none;margin-top:22px">
+        <div class="small" style="opacity:.62;text-transform:uppercase;letter-spacing:.08em">Step 2</div>
+        <h3 style="margin:3px 0 5px">Map the columns</h3>
+        <div class="small">Choose which returned Tableau column feeds each leaderboard field.
+          Example values are shown under the dropdowns. Nothing is saved yet.</div>
         <div id="v79MapRows" style="margin-top:10px"></div>
         <div id="v79Unmapped" class="small" style="margin-top:10px"></div>
       </div>
 
-      <div class="row" style="margin-top:14px;gap:10px;flex-wrap:wrap">
-        <button id="v79Check" class="btn" type="button">Check The Numbers</button>
-        <button id="v79PreviewTv" class="btn primary" type="button">Preview on TV</button>
-        <button id="v79PreviewStop" class="btn" type="button">Stop Preview</button>
+      <div style="margin-top:22px;padding-top:18px;border-top:1px solid #262626">
+        <div class="small" style="opacity:.62;text-transform:uppercase;letter-spacing:.08em">Step 3</div>
+        <h3 style="margin:3px 0 5px">Verify and activate</h3>
+        <div class="small">Check the numbers first. After a clean check, <strong>Save for Auto Refresh</strong>
+          activates this exact report for the 6 AM and 2 PM pulls and keeps it through restarts and updates.</div>
+        <div class="row" style="margin-top:12px;gap:10px;flex-wrap:wrap">
+          <button id="v79Check" class="btn" type="button">Check The Numbers</button>
+          <button id="v79PreviewTv" class="btn" type="button">Preview on TV</button>
+          <button id="v79PreviewStop" class="btn" type="button">Stop Preview</button>
+        </div>
+        <div id="v79PreviewStatus" class="small" style="margin-top:8px"></div>
+        <div id="v79PreviewRows" style="margin-top:8px"></div>
+        <div class="row" style="margin-top:12px;gap:10px;flex-wrap:wrap">
+          <button id="v79Use" class="btn primary" type="button" disabled>Save for Auto Refresh</button>
+        </div>
       </div>
-      <div id="v79PreviewStatus" class="small" style="margin-top:8px"></div>
-      <div id="v79PreviewRows" style="margin-top:8px"></div>
+
+      <details id="v97Advanced" style="margin-top:22px;padding-top:14px;border-top:1px solid #262626">
+        <summary style="cursor:pointer;font-weight:600">Advanced source options</summary>
+        <div class="small" style="margin-top:6px;opacity:.7">Only change these when the selected report needs them.</div>
+
+        <h3 style="margin:16px 0 5px">Connection</h3>
+        <div class="grid">
+          <div><label for="v90Server">Server</label>
+            <input id="v90Server" type="text" placeholder="Tableau server"></div>
+          <div><label for="v90Site">Site</label>
+            <input id="v90Site" type="text" placeholder="Site"></div>
+          <div><label for="v90PatName">Token name</label>
+            <input id="v90PatName" type="text" placeholder="Token name"></div>
+        </div>
+        <div class="small" style="margin-top:5px;opacity:.68">The PAT secret remains write-only in Tableau Login.</div>
+
+        <h3 style="margin:16px 0 5px">Date range</h3>
+        <label class="row" style="margin-bottom:6px">
+          <input type="radio" name="v90DateMode" id="v90DateMonth" value="current_month">
+          <span>Current calendar month, rolling</span></label>
+        <label class="row">
+          <input type="radio" name="v90DateMode" id="v90DateCustom" value="custom">
+          <span>A range I choose</span></label>
+        <div id="v90DateRow" class="grid" style="margin-top:10px;display:none">
+          <div><label for="v90RangeStart">Start</label><input id="v90RangeStart" type="date"></div>
+          <div><label for="v90RangeEnd">End</label><input id="v90RangeEnd" type="date"></div>
+        </div>
+        <div id="v90DateResolved" class="small" style="margin-top:7px;opacity:.72"></div>
+        <div class="grid" style="margin-top:10px">
+          <div><label for="v90DateStart">Start date field</label><input id="v90DateStart" type="text" placeholder="Optional"></div>
+          <div><label for="v90DateEnd">End date field</label><input id="v90DateEnd" type="text" placeholder="Optional"></div>
+        </div>
+
+        <h3 style="margin:16px 0 5px">Tableau filters</h3>
+        <div class="small">Leave empty to pull the report exactly as Tableau saved it.</div>
+        <div id="v90Filters" style="margin-top:8px"></div>
+        <button id="v90AddFilter" class="btn" type="button" style="margin-top:6px">Add Filter</button>
+
+        <h3 style="margin:16px 0 5px">Keep only</h3>
+        <div class="small">Optional safety check after Tableau returns the rows.</div>
+        <div class="grid" style="margin-top:8px">
+          <div><label for="v90KeepColumn">Column</label><select id="v90KeepColumn"></select></div>
+          <div><label for="v90KeepValue">Value</label><input id="v90KeepValue" type="text" placeholder="Optional"></div>
+        </div>
+
+        <div style="margin-top:18px;padding-top:12px;border-top:1px solid #262626">
+          <button id="v79Reset" class="btn danger" type="button">Clear Active Report</button>
+          <div class="small" style="margin-top:5px;opacity:.68">This keeps the current leaderboard data but stops future Tableau pulls until another report is saved.</div>
+        </div>
+      </details>
     </div>`;
 
   const $=id=>document.getElementById(id);
@@ -210,66 +216,21 @@
             +"data export combines worksheets.",
   };
 
-  // Every published view the token can see, loaded once and searched here.
-  let allViews=null, viewsError="";
-
-  function paintResults(){
-    const box=$("v94Results"), note=$("v94Count");
-    const q=$("v94Search").value.trim().toLowerCase();
-    if(allViews===null){
-      box.style.display="none";
-      note.textContent=viewsError||"Loading the report list…";
-      return;
-    }
-    const hits=allViews.filter(v=>!q
-      || `${v.name} ${v.workbook} ${v.sheet}`.toLowerCase().includes(q)).slice(0,60);
-    box.style.display=hits.length?"":"none";
-    box.innerHTML=hits.map(v=>`
-      <div class="v94Hit" data-workbook="${esc(v.workbook)}" data-sheet="${esc(v.sheet)}"
-           style="padding:8px 10px;border-bottom:1px solid #1e1e1e;cursor:pointer">
-        <div><strong>${esc(v.name)}</strong></div>
-        <div class="small" style="opacity:.65">${esc(v.workbook)} · ${esc(v.sheet)}</div>
-      </div>`).join("");
-    note.textContent=allViews.length
-      ? `${hits.length} of ${allViews.length} reports${q?" matching":""}`
-      : "No reports listed — pick the workbook and sheet below instead.";
-    box.querySelectorAll(".v94Hit").forEach(el=>
-      el.addEventListener("click",()=>choose(el.dataset.workbook, el.dataset.sheet)));
-  }
-
-  function choose(workbook, sheet){
-    // Fill the two selects whatever they are -- dropdowns normally, typed
-    // inputs when the token cannot enumerate content.
-    const set=(id,value)=>{
-      const el=$(id);
-      if(!el) return;
-      if(el.tagName==="SELECT" && ![...el.options].some(o=>o.value===value)){
-        el.insertAdjacentHTML("beforeend",
-          `<option value="${esc(value)}">${esc(value)}</option>`);
-      }
-      el.value=value;
-    };
-    set("v79Workbook", workbook);
-    set("v79Sheet", sheet);
-    mapping=null; headers=[]; choices=[]; samples={}; paintMapping();
-    touched();
-    $("v79Status").textContent=`Picked ${workbook} / ${sheet}. Read Its Columns to map it.`;
-  }
-
-  async function loadAllViews(){
-    try{
-      const {r,d}=await request("/api/source/views",{cache:"no-store"});
-      if(!r.ok||!d.ok){ allViews=[]; viewsError=(d&&d.error)||"Could not list reports."; }
-      else allViews=d.views||[];
-    }catch(e){
-      if(e.message==="locked") return;
-      allViews=[]; viewsError="Could not reach the Pi.";
-    }
-    paintResults();
-  }
-
   function paintExport(){
     $("v90ExportNote").textContent=EXPORT_NOTE[$("v90Export").value]||"";
+  }
+
+  async function paintScheduleState(){
+    const el=$("v97LastRefresh");
+    if(!el) return;
+    try{
+      const {r,d}=await request("/api/state",{cache:"no-store"});
+      if(r.ok){
+        el.textContent=d.last_source_refresh
+          ? `Last successful Tableau pull: ${d.last_source_refresh}`
+          : "No successful Tableau pull recorded yet.";
+      }
+    }catch(e){}
   }
 
   function paintFilters(){
@@ -458,9 +419,10 @@
       if(!r.ok) return;
       defaults=d.defaults||{};
       $("v79Current").innerHTML=(d.workbook&&d.sheet)
-        ? `Currently reading: <strong>${esc(d.workbook)} / ${esc(d.sheet)}</strong>`
-        : `<strong>No Tableau report selected.</strong> Choose one below, check the numbers, then save it.`;
+        ? `<strong>Active scheduled report:</strong> ${esc(d.workbook)} / ${esc(d.sheet)} · ${esc(d.export||"auto")}`
+        : `<strong>No active report.</strong> Automatic refresh will keep the existing leaderboard data until you save one.`;
       fill(d, d.row_filter_columns);
+      paintScheduleState();
       if(d.workbook){
         const select=$("v79Workbook");
         if(select&&select.tagName==="SELECT"&&!select.value){
@@ -555,6 +517,12 @@
     const app=document.getElementById("appWrap");
     if(!app||document.getElementById("v90SourceCard")) return;
     app.insertAdjacentHTML("beforeend",CARD);
+    const sourceCard=$("v90SourceCard");
+    const cards=[...app.querySelectorAll(":scope > .card")];
+    const pullCard=cards.find(card=>card.querySelector("h2")?.textContent.trim()==="Pull Status");
+    const tvCard=cards.find(card=>card.querySelector("h2")?.textContent.trim()==="TV Controls");
+    if(pullCard&&tvCard&&tvCard.nextElementSibling!==pullCard) tvCard.insertAdjacentElement("afterend",pullCard);
+    if(sourceCard&&pullCard&&pullCard.nextElementSibling!==sourceCard) pullCard.insertAdjacentElement("afterend",sourceCard);
 
     ["v90Server","v90Site","v90PatName","v90DateStart","v90DateEnd","v90KeepValue"]
       .forEach(id=>$(id).addEventListener("input",touched));
@@ -570,14 +538,18 @@
       filters.push({field:"",value:""}); paintFilters(); touched();
     });
     $("v79Workbook").addEventListener("change",()=>{touched();loadViews();});
-    $("v79Sheet").addEventListener("change",()=>{touched();loadColumns();});
+    $("v79Sheet").addEventListener("change",()=>{
+      mapping=null; headers=[]; choices=[]; samples={}; paintMapping(); touched();
+      $("v79Status").textContent=$("v79Sheet").value
+        ? "Report selected. Press Read Report to see the columns." : "";
+    });
     $("v79Load").addEventListener("click",loadColumns);
     $("v79Check").addEventListener("click",()=>runPreview(false));
     $("v79PreviewTv").addEventListener("click",()=>runPreview(true));
     $("v79PreviewStop").addEventListener("click",stopPreview);
     $("v79Use").addEventListener("click",()=>{
       if(!proven) return;
-      save(proven,"Saved. The next pull uses this source — press Pull From Tableau Now to try it straight away.");
+      save(proven,"Saved for automatic refresh. This exact report will be used at 6:00 AM and 2:00 PM, and after restarts or updates.");
     });
     $("v79Reset").addEventListener("click",()=>{
       touched(); mapping=null; headers=[]; choices=[]; samples={}; paintMapping();
@@ -598,11 +570,10 @@
         date_start_field:"", date_end_field:"", mapping:{},
         row_filter:{column:"",value:""},
         data_date_mode:"current_month",data_date_start:"",data_date_end:""
-      }, "Report cleared. Existing leaderboard data stays in place until you choose, test and save another report.");
+      }, "Active report cleared. Existing leaderboard data stays in place; automatic pulls wait until you save another report.");
     });
 
-    $("v94Search").addEventListener("input",paintResults);
-    paintCurrent().then(loadWorkbooks).then(loadAllViews);
+    paintCurrent().then(loadWorkbooks);
   }
 
   if(document.readyState==="loading"){

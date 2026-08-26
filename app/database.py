@@ -100,11 +100,10 @@ DEFAULT_SETTINGS = {
     "tableau_sheet": "",
     "source_mapping": {},
 
-    # v90. The whole data source, in one place: where to connect, which
-    # report, which filters to send, and which column feeds which board stat.
-    # Empty means the seeded default -- the Olympia Rep Totals pull the board
-    # has always made -- so an install that never opens this behaves exactly
-    # as it did. See sources/tableau_configured.DEFAULTS.
+    # v90+. The whole selected data source, persisted in SQLite. The 06:00
+    # and 14:00 scheduler reads this same object after reboots and app updates.
+    # Empty means no report selected; existing leaderboard rows are kept until
+    # the user tests and saves a source from the remote.
     "source": {},
 
     # v78 product-card icon overrides: {"bath": "<library url>", ...}.

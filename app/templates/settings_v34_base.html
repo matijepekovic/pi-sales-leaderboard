@@ -109,31 +109,25 @@ input[type=checkbox],input[type=radio]{width:18px;height:18px;padding:0}.small{c
     <h2>Pull Status</h2>
     <p id="sourceStatusLine"><strong>Checking Tableau status…</strong></p>
     <div id="dateOverrideBanner" class="banner" style="display:none"><strong>Date override active.</strong> <span id="dateOverrideText" class="small"></span><br><button id="clearOverrideQuick" class="btn" type="button" style="margin-top:8px">Use Current Month</button></div>
-    <p class="small">Status of the last pull. The report itself, its filters and the column mapping live in the Data Source card below.</p>
-    <div class="row"><button id="openDataSource" class="btn primary" type="button">Tableau Data Source</button><button id="pullNowOutside" class="btn" type="button">Pull From Tableau Now</button><button id="loadDemo" class="btn" type="button">Reload Sample Data</button></div>
+    <p class="small">Status of the selected report's last manual or automatic pull.</p>
+    <div class="row"><button id="pullNowOutside" class="btn primary" type="button">Pull Selected Report Now</button><button id="openDataSource" class="btn" type="button">Tableau Login</button><button id="loadDemo" class="btn" type="button">Load Sample Data</button></div>
     <div id="sourceStatusMsg" class="small" style="margin-top:10px"></div>
   </div>
 
   <div id="dataSourceOverlay" class="overlay" aria-hidden="true">
-    <div class="panel" style="max-width:820px">
-      <div class="row" style="justify-content:space-between"><div><h2 style="margin:0">Tableau Data Source</h2><div class="small">The PAT secret, stored write-only. Server, site, token name and the date range are in the Data Source card.</div></div><button id="closeDataSource" class="btn" type="button">Close</button></div>
-      <div class="source-fixed">
-        <div><span>Tableau Cloud</span><strong>10ay.online.tableau.com</strong></div>
-        <div><span>Site</span><strong>dabella</strong></div>
-        <div><span>View</span><strong>8-SalesRepLevelData / RepTotals</strong></div>
-        <div><span>Home Branch</span><strong>Olympia</strong></div>
-        <div><span>PAT name</span><strong>leaderboard</strong></div>
-        <div><span>Filters sent</span><strong>Start · End · Home Branch</strong></div>
+    <div class="panel narrow">
+      <div class="row" style="justify-content:space-between">
+        <div><h2 style="margin:0">Tableau Login</h2>
+          <div class="small">Authentication only. Choose the workbook, report, export and mapping in the Tableau Report card.</div></div>
+        <button id="closeDataSource" class="btn" type="button">Close</button>
       </div>
-      <h3 style="margin:22px 0 6px">Authentication</h3>
-      <label for="tabPatSecret">PAT secret</label><input id="tabPatSecret" type="password" autocomplete="new-password" placeholder="Paste PAT secret"><div id="tabSecretState" class="small" style="margin-top:7px"></div>
-      <h3 style="margin:22px 0 6px">Dates</h3>
-      <label class="row" style="margin-bottom:10px"><input type="radio" name="dateMode" id="dateModeMonth" value="current_month"><span>Current calendar month automatically</span></label>
-      <label class="row"><input type="radio" name="dateMode" id="dateModeCustom" value="custom"><span>Override Start / End</span></label>
-      <div id="customDateRow" class="grid" style="margin-top:12px"><div><label for="dateStart">Start</label><input id="dateStart" type="date"></div><div><label for="dateEnd">End</label><input id="dateEnd" type="date"></div></div>
-      <div id="effectiveDates" class="small" style="margin-top:9px"></div>
-      <div id="dataSourceStatus" class="small" style="margin-top:16px"></div>
-      <div class="row" style="justify-content:flex-end;margin-top:14px"><button id="useCurrentMonth" class="btn" type="button">Use Current Month</button><button id="testTableau" class="btn" type="button">Test Connection</button><button id="pullNow" class="btn" type="button">Save & Pull Now</button><button id="saveDataSource" class="btn primary" type="button">Save</button></div>
+      <h3 style="margin:22px 0 6px">PAT secret</h3>
+      <input id="tabPatSecret" type="password" autocomplete="new-password" placeholder="Paste PAT secret">
+      <div id="tabSecretState" class="small" style="margin-top:7px"></div>
+      <div id="dataSourceStatus" class="small" style="margin-top:14px"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:14px">
+        <button id="saveDataSource" class="btn primary" type="button">Save Login</button>
+      </div>
     </div>
   </div>
 
@@ -160,17 +154,6 @@ input[type=checkbox],input[type=radio]{width:18px;height:18px;padding:0}.small{c
 
 <script>
 const $=id=>document.getElementById(id);
-const FIXED_SOURCE={
-  tableau_server:"https://10ay.online.tableau.com",
-  tableau_site:"dabella",
-  tableau_pat_name:"leaderboard",
-  tableau_view:"8-SalesRepLevelData/RepTotals",
-  data_office:"Olympia",
-  data_date_param_start:"Start",
-  data_date_param_end:"End",
-  data_include_people:[],
-  data_exclude_people:[]
-};
 let config={},metrics=[],modes=[],teams=[],teamDefs=[],reps=[],leaderCandidates=[];
 let displayMode="whole_office";
 
@@ -260,20 +243,57 @@ function closeDelete(){deletingTeam=null;closeOverlay("deleteTeamOverlay");$("de
 async function openDeleteTeam(id){const t=teamById(id);if(!t)return;const keys=new Set((t.member_rep_keys||[]).map(String)),members=reps.filter(r=>keys.has(String(r.rep_key))).sort((a,b)=>String(a.rep_name).localeCompare(String(b.rep_name))),dest=teamDefs.filter(x=>Number(x.team_id)!==Number(id));if(!members.length){if(!confirm(`Delete ${t.name}?`))return;const {r,d}=await request(`/api/teams/${id}`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({reassignments:[]})});if(!r.ok){alert(d.error||"Could not delete team.");return;}await refreshOrg();return;}deletingTeam=id;$("deleteTeamTitle").textContent=`Delete ${t.name}`;$("deleteTeamMessage").textContent=`${members.length} reps must be reassigned first.`;if(!dest.length){$("deleteTeamAssignments").innerHTML='<div class="card" style="margin:0"><strong>Create another team first.</strong></div>';$("confirmDeleteTeam").disabled=true;}else{$("confirmDeleteTeam").disabled=false;const opts=dest.map(x=>`<option value="${x.team_id}">${escapeHtml(x.name)}</option>`).join("");$("deleteTeamAssignments").innerHTML=members.map(r=>`<div class="assignment"><strong>${escapeHtml(r.rep_name)}</strong><select class="deleteDestination" data-rep-key="${escapeAttr(r.rep_key)}"><option value="">Choose team…</option>${opts}</select></div>`).join("");}openOverlay("deleteTeamOverlay");}
 $("cancelDeleteTeam").addEventListener("click",closeDelete);$("confirmDeleteTeam").addEventListener("click",async()=>{if(!deletingTeam)return;const ss=Array.from(document.querySelectorAll(".deleteDestination"));if(ss.some(s=>!s.value)){$("deleteTeamStatus").textContent="Choose a destination for every rep.";return;}$("confirmDeleteTeam").disabled=true;const reassignments=ss.map(s=>({rep_key:s.dataset.repKey,team_id:Number(s.value)}));const {r,d}=await request(`/api/teams/${deletingTeam}`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({reassignments})});if(!r.ok){$("deleteTeamStatus").textContent=d.error||"Could not delete team.";$("confirmDeleteTeam").disabled=false;return;}$("deleteTeamStatus").textContent=`Deleted ${d.deleted_team}.`;await refreshOrg();setTimeout(()=>{closeDelete();$("confirmDeleteTeam").disabled=false;},500);});
 
-/* Tableau: fixed target, secret + date override only. */
-function syncDateMode(){const custom=$("dateModeCustom").checked;$("customDateRow").style.display=custom?"":"none";}
-$("dateModeMonth").addEventListener("change",syncDateMode);$("dateModeCustom").addEventListener("change",syncDateMode);
-function applyDataSourceForm(){const custom=(config.data_date_mode||"current_month")==="custom";$("dateModeCustom").checked=custom;$("dateModeMonth").checked=!custom;$("dateStart").value=config.data_date_start||"";$("dateEnd").value=config.data_date_end||"";$("tabPatSecret").value="";$("tabSecretState").textContent=config.tableau_pat_configured?"PAT secret is saved on the Pi. Leave blank to keep it.":"No PAT secret is saved yet.";syncDateMode();updateOverrideBanner();}
-function updateOverrideBanner(){const custom=(config.data_date_mode||"current_month")==="custom",s=config.data_date_start||"",e=config.data_date_end||"";$("dateOverrideBanner").style.display=custom&&s&&e?"":"none";$("dateOverrideText").textContent=custom&&s&&e?`Pulling ${s} through ${e} instead of the current month.`:"";}
-function collectDataSource(){const p={...FIXED_SOURCE,data_date_mode:$("dateModeCustom").checked?"custom":"current_month",data_date_start:$("dateStart").value,data_date_end:$("dateEnd").value};const secret=$("tabPatSecret").value.trim();if(secret)p.tableau_pat_secret=secret;return p;}
-async function saveDataSource(closeAfter=false){$("dataSourceStatus").textContent="Saving…";const {r,d}=await request("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({...config,...collectDataSource()})});if(!r.ok){$("dataSourceStatus").textContent=d.error||"Could not save.";return false;}config=d.settings;$("tabPatSecret").value="";applyDataSourceForm();$("dataSourceStatus").textContent="Saved.";await loadSourceStatus();if(closeAfter)closeOverlay("dataSourceOverlay");return true;}
-async function loadSourceStatus(){try{const {r,d}=await request("/api/source/options",{cache:"no-store"});if(!r.ok)return;$("effectiveDates").textContent=`Effective pull: ${d.effective_start} through ${d.effective_end} · Home Branch: Olympia`;if(d.source_status)$("sourceStatusLine").innerHTML=`<strong>${escapeHtml(d.source_status)}</strong>`;if(d.last_source_refresh)$("sourceStatusMsg").textContent=`Last refreshed ${d.last_source_refresh}.`;}catch(e){}}
-async function pullTableau(statusEl){statusEl.textContent="Pulling Olympia from Tableau…";try{const {r,d}=await request("/api/source/refresh",{method:"POST"});statusEl.textContent=r.ok?`Tableau — ${d.rows} Olympia reps, ${d.start} through ${d.end}.`:(d.error||"Pull failed.");if(r.ok){await refreshOrg();await loadSourceStatus();}}catch(e){if(e.message!=="locked")statusEl.textContent="Could not reach the Pi.";}}
-$("openDataSource").addEventListener("click",async()=>{applyDataSourceForm();await loadSourceStatus();$("dataSourceStatus").textContent="";openOverlay("dataSourceOverlay");});$("closeDataSource").addEventListener("click",()=>closeOverlay("dataSourceOverlay"));$("saveDataSource").addEventListener("click",()=>saveDataSource(true));
-$("useCurrentMonth").addEventListener("click",()=>{$("dateModeMonth").checked=true;syncDateMode();$("dataSourceStatus").textContent="Current month selected. Save to apply.";});
-$("clearOverrideQuick").addEventListener("click",async()=>{config.data_date_mode="current_month";const {r,d}=await request("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({...config,...FIXED_SOURCE})});if(r.ok){config=d.settings;applyDataSourceForm();await loadSourceStatus();}});
-$("testTableau").addEventListener("click",async()=>{$("dataSourceStatus").textContent="Saving, then testing…";if(!await saveDataSource(false))return;$("dataSourceStatus").textContent="Contacting Tableau…";const {r,d}=await request("/api/source/test",{method:"POST"});$("dataSourceStatus").textContent=r.ok?`Connected. ${d.total_rows} Olympia reps for ${d.start} through ${d.end}.`:(d.error||"Test failed.");});
-$("pullNow").addEventListener("click",async()=>{if(await saveDataSource(false))await pullTableau($("dataSourceStatus"));});$("pullNowOutside").addEventListener("click",()=>pullTableau($("sourceStatusMsg")));$("loadDemo").addEventListener("click",async()=>{await request("/api/demo/load",{method:"POST"});await refreshOrg();await loadSourceStatus();});
+/* Tableau login + selected-source status. Report selection itself lives in
+   the Tableau Report card injected by data-source-v90.js. */
+function applyDataSourceForm(){
+  $("tabPatSecret").value="";
+  $("tabSecretState").textContent=config.tableau_pat_configured
+    ? "PAT secret is saved on the Pi. Leave blank to keep it."
+    : "No PAT secret is saved yet.";
+  updateOverrideBanner();
+}
+function updateOverrideBanner(){
+  const custom=(config.data_date_mode||"current_month")==="custom",s=config.data_date_start||"",e=config.data_date_end||"";
+  $("dateOverrideBanner").style.display=custom&&s&&e?"":"none";
+  $("dateOverrideText").textContent=custom&&s&&e?`Pulling ${s} through ${e} instead of the current month.`:"";
+}
+function collectDataSource(){
+  const p={};
+  const secret=$("tabPatSecret").value.trim();
+  if(secret)p.tableau_pat_secret=secret;
+  return p;
+}
+async function saveDataSource(closeAfter=false){
+  $("dataSourceStatus").textContent="Saving…";
+  const {r,d}=await request("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({...config,...collectDataSource()})});
+  if(!r.ok){$("dataSourceStatus").textContent=d.error||"Could not save.";return false;}
+  config=d.settings;$("tabPatSecret").value="";applyDataSourceForm();$("dataSourceStatus").textContent="Login saved.";
+  await loadSourceStatus();if(closeAfter)closeOverlay("dataSourceOverlay");return true;
+}
+async function loadSourceStatus(){
+  try{
+    const {r,d}=await request("/api/source/options",{cache:"no-store"});if(!r.ok)return;
+    if(d.source_status)$("sourceStatusLine").innerHTML=`<strong>${escapeHtml(d.source_status)}</strong>`;
+    if(d.last_source_refresh)$("sourceStatusMsg").textContent=`Last refreshed ${d.last_source_refresh}.`;
+  }catch(e){}
+}
+async function pullTableau(statusEl){
+  statusEl.textContent="Pulling the selected Tableau report…";
+  try{
+    const {r,d}=await request("/api/source/refresh",{method:"POST"});
+    statusEl.textContent=r.ok?`Tableau — ${d.rows} reps, ${d.start} through ${d.end}.`:(d.error||"Pull failed.");
+    if(r.ok){await refreshOrg();await loadSourceStatus();}
+  }catch(e){if(e.message!=="locked")statusEl.textContent="Could not reach the Pi.";}
+}
+$("openDataSource").addEventListener("click",()=>{applyDataSourceForm();$("dataSourceStatus").textContent="";openOverlay("dataSourceOverlay");});
+$("closeDataSource").addEventListener("click",()=>closeOverlay("dataSourceOverlay"));
+$("saveDataSource").addEventListener("click",()=>saveDataSource(true));
+$("clearOverrideQuick").addEventListener("click",async()=>{
+  const {r,d}=await request("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({...config,data_date_mode:"current_month",data_date_start:"",data_date_end:""})});
+  if(r.ok){config=d.settings;applyDataSourceForm();await loadSourceStatus();}
+});
+$("pullNowOutside").addEventListener("click",()=>pullTableau($("sourceStatusMsg")));
+$("loadDemo").addEventListener("click",async()=>{await request("/api/demo/load",{method:"POST"});await refreshOrg();await loadSourceStatus();});
 
 $("save").addEventListener("click",async()=>{persistMode(displayMode);config.active_mode=$("activeMode").value;config.title=$("title").value;config.subtitle=$("subtitle").value;config.display_refresh_seconds=Number($("refresh").value||5);config.github_auto_update=$("githubAutoUpdate").checked;config.show_team_members_in_vs=true;const p=parseActive(config.active_mode);if(p.mode==="per_team")config.per_team_selected=p.team||"";const {r,d}=await request("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(config)});if(!r.ok){alert(d.error||"Could not save settings.");return;}config=d.settings;$("saved").textContent="Saved permanently.";setTimeout(()=>$("saved").textContent="",2500);});$("openTV").addEventListener("click",()=>window.open("/","_blank"));
 
