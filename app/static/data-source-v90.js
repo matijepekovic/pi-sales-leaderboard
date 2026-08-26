@@ -31,8 +31,9 @@
         stays where it was, under Tableau Data Source. It is never shown back.</div>
 
       <h3 style="margin:18px 0 4px">Report</h3>
-      <div class="small">Search every report this token can see, or pick the
-        workbook and sheet below.</div>
+      <div class="small">Search every <strong>published</strong> report this token can see, or pick the
+        workbook and sheet below. A worksheet that exists only inside a dashboard
+        (even if Download &gt; Crosstab shows it) will not appear here until it is published as a view.</div>
       <input id="v94Search" type="search" placeholder="Search reports…"
              autocomplete="off" style="width:100%;box-sizing:border-box;margin:8px 0 4px">
       <div id="v94Results" style="max-height:230px;overflow:auto;border:1px solid #262626;
