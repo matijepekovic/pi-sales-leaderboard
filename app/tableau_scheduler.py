@@ -160,7 +160,7 @@ def start_tableau_scheduler():
         # Attach the PIN-protected QR save route without expanding server.py's
         # already-large settings endpoint.
         try:
-            server_module = sys.modules.get("server")
+            server_module = sys.modules.get("server") or sys.modules.get("__main__")
             flask_app = getattr(server_module, "app", None) if server_module else None
             if flask_app is not None:
                 qr_controls_v110.install_routes(flask_app)
