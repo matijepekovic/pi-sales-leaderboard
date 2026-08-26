@@ -1,43 +1,28 @@
-/* v106: date is a normal report control, not a mapping task.
-   Keep only Current month / Custom range + Start / End date pickers visible.
-   Tableau's standard Start / End filter keys stay internal. */
+/* v106: the date picker is the only date setup the user sees.
+   Tableau's Start / End filter keys are internal implementation details.
+   Keep the legacy hidden controls pinned to those standard keys so existing
+   preview/save logic continues to work without exposing a mapping UI. */
 (function(){
   const $=id=>document.getElementById(id);
 
   function install(){
     const startField=$('v90DateStart');
     const endField=$('v90DateEnd');
-    const chooser=$('v105DateFieldChooser');
-    const status=$('v105DateFieldStatus');
     if(!startField||!endField) return false;
 
-    // Candidate previews/saves still read these legacy hidden controls.
-    // Keep them pinned to the standard Tableau date filter keys.
-    if(startField.value!=='Start'){
-      startField.value='Start';
-      startField.dispatchEvent(new Event('input',{bubbles:true}));
-    }
-    if(endField.value!=='End'){
-      endField.value='End';
-      endField.dispatchEvent(new Event('input',{bubbles:true}));
-    }
+    startField.value='Start';
+    endField.value='End';
 
     const legacyGrid=startField.closest('.grid');
     if(legacyGrid) legacyGrid.style.display='none';
-    if(chooser) chooser.remove();
-    if(status) status.remove();
 
-    const dateBlock=$('v104DateFilters');
-    if(dateBlock){
-      const helper=dateBlock.querySelector('.v106-date-helper');
-      if(!helper){
-        const note=document.createElement('div');
-        note.className='small v106-date-helper';
-        note.style.marginTop='8px';
-        note.textContent='';
-        dateBlock.appendChild(note);
-      }
-    }
+    // Clean up any v105 UI if a cached page happened to create it.
+    $('v105DateFieldChooser')?.remove();
+    $('v105DateFieldStatus')?.remove();
+
+    // Existing preview/save code listens to these hidden controls.
+    startField.dispatchEvent(new Event('input',{bubbles:true}));
+    endField.dispatchEvent(new Event('input',{bubbles:true}));
     return true;
   }
 
