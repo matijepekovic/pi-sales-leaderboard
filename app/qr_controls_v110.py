@@ -90,6 +90,9 @@ def install_routes(app):
         import starter_theme_v119
         if starter_theme_v119.install(app):
             changed = True
+        import starter_theme_assets_v119
+        if starter_theme_assets_v119.install(app):
+            changed = True
     except Exception as exc:
         set_meta("v119_starter_theme_status", f"Starter theme startup failed: {exc}")
 
