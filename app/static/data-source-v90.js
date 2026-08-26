@@ -517,6 +517,12 @@
     const app=document.getElementById("appWrap");
     if(!app||document.getElementById("v90SourceCard")) return;
     app.insertAdjacentHTML("beforeend",CARD);
+    const sourceCard=$("v90SourceCard");
+    const cards=[...app.querySelectorAll(":scope > .card")];
+    const pullCard=cards.find(card=>card.querySelector("h2")?.textContent.trim()==="Pull Status");
+    const tvCard=cards.find(card=>card.querySelector("h2")?.textContent.trim()==="TV Controls");
+    if(pullCard&&tvCard&&tvCard.nextElementSibling!==pullCard) tvCard.insertAdjacentElement("afterend",pullCard);
+    if(sourceCard&&pullCard&&pullCard.nextElementSibling!==sourceCard) pullCard.insertAdjacentElement("afterend",sourceCard);
 
     ["v90Server","v90Site","v90PatName","v90DateStart","v90DateEnd","v90KeepValue"]
       .forEach(id=>$(id).addEventListener("input",touched));
