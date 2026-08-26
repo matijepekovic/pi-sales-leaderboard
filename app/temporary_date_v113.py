@@ -3,6 +3,12 @@
 The override never writes to the reps table. It pulls a second in-memory row
 set, lets the display use those rows for up to 60 minutes, then automatically
 falls back to the regularly scheduled rows already stored on the Pi.
+
+v114 also enforces the appliance's standard Tableau date-filter captions at
+runtime. Older saved sources can contain blank date_start_field/date_end_field
+values even though the remote has treated those fields as internal Start/End
+keys since v106. Blank saved values must never make Tableau silently ignore a
+requested date range.
 """
 from datetime import date
 import threading
@@ -12,12 +18,14 @@ from flask import jsonify, request
 
 from database import get_settings
 import source_picker
+from sources.tableau_configured import ConfiguredTableauSource
 
 _ENDPOINT = "api_temporary_date_override_v113"
 _LOCK = threading.RLock()
 _PULL_LOCK = threading.Lock()
 _INSTALLED = False
 _BASE_PREVIEW_ROWS = None
+_BASE_CONFIGURED_INIT = None
 _STATE = {
     "rows": None,
     "until": 0.0,
@@ -66,6 +74,30 @@ def current_state():
         }
 
 
+def _install_standard_date_fields():
+    """Make blank legacy source date fields behave as internal Start / End.
+
+    Patch the configured source instance rather than source_picker.source_config
+    so the v108 fallback scope signature does not change for existing installs.
+    Nonblank explicitly saved field names are left alone for compatibility.
+    """
+    global _BASE_CONFIGURED_INIT
+    if _BASE_CONFIGURED_INIT is not None:
+        return False
+
+    _BASE_CONFIGURED_INIT = ConfiguredTableauSource.__init__
+
+    def init_with_standard_date_fields(self, config=None, source=None):
+        _BASE_CONFIGURED_INIT(self, config, source)
+        if not str(self.source.get("date_start_field") or "").strip():
+            self.source["date_start_field"] = "Start"
+        if not str(self.source.get("date_end_field") or "").strip():
+            self.source["date_end_field"] = "End"
+
+    ConfiguredTableauSource.__init__ = init_with_standard_date_fields
+    return True
+
+
 def install():
     """Layer the date override under the existing mapping-preview mechanism.
 
@@ -76,6 +108,11 @@ def install():
     with _LOCK:
         if _INSTALLED:
             return False
+
+        # v114: all configured Tableau pulls get the internal Start/End defaults
+        # when an older saved source left those implementation fields blank.
+        _install_standard_date_fields()
+
         _BASE_PREVIEW_ROWS = source_picker.preview_rows
 
         def combined_preview_rows():
@@ -140,6 +177,14 @@ def _apply_override():
     trial["data_date_mode"] = "custom"
     trial["data_date_start"] = start
     trial["data_date_end"] = end
+
+    # v114: the temporary override must send the requested range to Tableau even
+    # when an older saved source contains blank internal date-field captions.
+    # These values exist only in the temporary settings copy and are never saved.
+    source = dict(trial.get("source") or {})
+    source["date_start_field"] = "Start"
+    source["date_end_field"] = "End"
+    trial["source"] = source
 
     try:
         with _PULL_LOCK:
