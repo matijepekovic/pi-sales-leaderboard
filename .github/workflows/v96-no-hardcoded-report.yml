@@ -1,0 +1,154 @@
+name: v96 no hardcoded report
+permissions:
+  contents: write
+on:
+  push:
+    branches: [build/v96-no-hardcoded-report]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Remove compiled report fallback
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p=Path('app/sources/tableau_configured.py')
+          s=p.read_text()
+          old_intro='''The defaults below are not a guess. They were probed against the live site:\neach was chosen because that is what the server actually returns.\n'''
+          new_intro='''Connection defaults only tell the Pi how to reach Tableau. The report itself is\nnever compiled in: no workbook, sheet, filters or mapping exists until the\nuser saves one from the Data Source card.\n'''
+          if old_intro not in s:
+              raise SystemExit('tableau_configured intro changed unexpectedly')
+          s=s.replace(old_intro,new_intro,1)
+
+          start=s.index('DEFAULTS = {')
+          export_at=s.index('EXPORTS = ("auto", "csv", "crosstab")')
+          new_defaults='''DEFAULTS = {\n    # Connection only. These are what let a fresh Pi sign in and enumerate\n    # Tableau content; they do not choose any report or data.\n    "server": _base.TABLEAU_SERVER,\n    "site": _base.TABLEAU_SITE,\n    "pat_name": _base.TABLEAU_PAT_NAME,\n\n    # No report fallback. Until the user saves a tested source, scheduled and\n    # manual pulls fail closed and the existing leaderboard rows stay intact.\n    "workbook": "",\n    "sheet": "",\n    "export": "auto",\n    "filters": [],\n    "date_start_field": "",\n    "date_end_field": "",\n    "mapping": {},\n    "row_filter": {},\n}\n\n\n# Only the connection falls back when a saved value is blank. A blank workbook\n# or sheet is intentional and means that no report has been selected.\nCONNECTION_REQUIRED = ("server", "site", "pat_name")\n\n'''
+          s=s[:start]+new_defaults+s[export_at:]
+          if 'if key in REQUIRED and not str(value).strip():' not in s:
+              raise SystemExit('config_of required-fields guard changed unexpectedly')
+          s=s.replace('if key in REQUIRED and not str(value).strip():',
+                      'if key in CONNECTION_REQUIRED and not str(value).strip():',1)
+
+          wb='''    def _workbook_id(self, base, token, site_id):\n        key = _base.urllib.parse.quote(self.workbook, safe="")\n'''
+          wb_new='''    def _workbook_id(self, base, token, site_id):\n        if not self.workbook:\n            raise _base.TableauError(\n                "No Tableau report is selected. Choose a workbook and sheet "\n                "in Data Source, Check The Numbers, then Use This Source.")\n        key = _base.urllib.parse.quote(self.workbook, safe="")\n'''
+          if wb not in s:
+              raise SystemExit('_workbook_id anchor changed unexpectedly')
+          s=s.replace(wb,wb_new,1)
+
+          view='''    def _view_id(self, base, token, site_id):\n        workbook_id = self._workbook_id(base, token, site_id)\n'''
+          view_new='''    def _view_id(self, base, token, site_id):\n        if not self.sheet:\n            raise _base.TableauError(\n                "No Tableau report is selected. Choose a workbook and sheet "\n                "in Data Source, Check The Numbers, then Use This Source.")\n        workbook_id = self._workbook_id(base, token, site_id)\n'''
+          if view not in s:
+              raise SystemExit('_view_id anchor changed unexpectedly')
+          s=s.replace(view,view_new,1)
+          p.write_text(s)
+
+          p=Path('app/static/data-source-v90.js')
+          s=p.read_text()
+          s=s.replace('''   split (a "Data Source" card describing a fixed Olympia view, and a separate\n   "Report Source" picker that took over once you chose something) is gone;\n   the shipped report is now just the configuration this card starts with.\n''','''   split (a "Data Source" card describing a fixed view, and a separate report\n   picker) is gone. No report is selected until the user tests and saves one.\n''',1)
+          s=s.replace('<button id="v79Reset" class="btn danger" type="button">Reset to Default</button>',
+                      '<button id="v79Reset" class="btn danger" type="button">Clear Report</button>',1)
+
+          current='''      $("v79Current").innerHTML=d.is_default\n        ? `Currently reading the shipped default: <strong>${esc(d.workbook)} / ${esc(d.sheet)}</strong>`\n        : `Currently reading: <strong>${esc(d.workbook)} / ${esc(d.sheet)}</strong>`;\n'''
+          current_new='''      $("v79Current").innerHTML=(d.workbook&&d.sheet)\n        ? `Currently reading: <strong>${esc(d.workbook)} / ${esc(d.sheet)}</strong>`\n        : `<strong>No Tableau report selected.</strong> Choose one below, check the numbers, then save it.`;\n'''
+          if current not in s:
+              raise SystemExit('paintCurrent status anchor changed unexpectedly')
+          s=s.replace(current,current_new,1)
+
+          s=s.replace('placeholder="8-SalesRepLevelData"','placeholder="Workbook content URL"',1)
+          s=s.replace('placeholder="RepTotalsNEW3"','placeholder="Sheet content URL"',1)
+
+          reset='''    $("v79Reset").addEventListener("click",()=>{\n      touched(); mapping=null; headers=[]; choices=[]; samples={}; paintMapping();\n      $("v79PreviewRows").innerHTML=""; $("v79PreviewStatus").textContent="";\n      stopPreview();\n      $("v90DateMonth").checked=true; $("v90DateCustom").checked=false;\n      $("v90RangeStart").value=""; $("v90RangeEnd").value=""; paintDates();\n      save({data_date_mode:"current_month",data_date_start:"",data_date_end:""},\n           "Back to the shipped default source, on the current month.");\n    });\n'''
+          reset_new='''    $("v79Reset").addEventListener("click",()=>{\n      touched(); mapping=null; headers=[]; choices=[]; samples={}; paintMapping();\n      $("v79PreviewRows").innerHTML=""; $("v79PreviewStatus").textContent="";\n      stopPreview();\n      $("v90DateMonth").checked=true; $("v90DateCustom").checked=false;\n      $("v90RangeStart").value=""; $("v90RangeEnd").value=""; paintDates();\n      const workbook=$("v79Workbook"), sheet=$("v79Sheet");\n      if(workbook) workbook.value="";\n      if(sheet&&sheet.tagName==="SELECT")\n        sheet.innerHTML='<option value="">Pick a workbook first</option>';\n      else if(sheet) sheet.value="";\n      save({\n        server:$("v90Server").value.trim(),\n        site:$("v90Site").value.trim(),\n        pat_name:$("v90PatName").value.trim(),\n        workbook:"", sheet:"", export:"auto", filters:[],\n        date_start_field:"", date_end_field:"", mapping:{},\n        row_filter:{column:"",value:""},\n        data_date_mode:"current_month",data_date_start:"",data_date_end:""\n      }, "Report cleared. Existing leaderboard data stays in place until you choose, test and save another report.");\n    });\n'''
+          if reset not in s:
+              raise SystemExit('reset handler anchor changed unexpectedly')
+          s=s.replace(reset,reset_new,1)
+          p.write_text(s)
+
+          p=Path('app/templates/settings.html')
+          s=p.read_text()
+          old='/static/data-source-v90.js?v=94'
+          if old not in s:
+              raise SystemExit('settings cachebuster changed unexpectedly')
+          p.write_text(s.replace(old,'/static/data-source-v90.js?v=96',1))
+          Path('VERSION').write_text('96\n')
+          PY
+      - name: Compile and syntax
+        run: |
+          python -m py_compile app/sources/tableau_configured.py app/source_picker.py
+          node --check app/static/data-source-v90.js
+          test "$(cat VERSION)" = 96
+      - name: No-report behavior
+        env:
+          PYTHONPATH: app
+        run: |
+          python - <<'PY'
+          import source_picker
+          from sources.tableau import TableauError
+          from sources.tableau_configured import ConfiguredTableauSource, config_of
+
+          blank=config_of({})
+          assert blank['workbook']=='' and blank['sheet']==''
+          assert blank['export']=='auto'
+          assert blank['filters']==[] and blank['mapping']=={} and blank['row_filter']=={}
+          assert blank['date_start_field']=='' and blank['date_end_field']==''
+
+          # Blank is a real state, not a route back to some compiled report.
+          cleared=config_of({'source':{
+              'workbook':'','sheet':'','export':'auto','filters':[],
+              'mapping':{},'row_filter':{},'date_start_field':'','date_end_field':''
+          }})
+          assert cleared['workbook']=='' and cleared['sheet']==''
+
+          chosen=config_of({'source':{
+              'workbook':'MyWorkbook','sheet':'MyPublishedSheet','export':'crosstab',
+              'filters':[{'field':'Branch','value':'Olympia'}],
+              'mapping':{'rep_name':'Rep','home_branch':'','team':'','metrics':{'net_split':'Net'}},
+              'row_filter':{}
+          }})
+          assert chosen['workbook']=='MyWorkbook'
+          assert chosen['sheet']=='MyPublishedSheet'
+          assert chosen['export']=='crosstab'
+          assert chosen['filters']==[{'field':'Branch','value':'Olympia'}]
+          assert chosen['mapping']['metrics']=={'net_split':'Net'}
+
+          desc=source_picker.describe({})
+          assert desc['workbook']=='' and desc['sheet']==''
+          assert desc['default_workbook']=='' and desc['default_sheet']==''
+          src=source_picker.resolve_source({})
+          assert src.workbook=='' and src.sheet==''
+          src._request=lambda *a,**k: (_ for _ in ()).throw(AssertionError('network request made'))
+          try:
+              src._workbook_id('base','token','site')
+          except TableauError as exc:
+              assert 'No Tableau report is selected' in str(exc)
+          else:
+              raise AssertionError('blank source did not fail closed')
+
+          selected=source_picker.resolve_source({'source':chosen})
+          assert selected.workbook=='MyWorkbook' and selected.sheet=='MyPublishedSheet'
+          print('v96 no hardcoded report behavior passed')
+          PY
+      - name: No report-specific constants left
+        run: |
+          ! grep -Eq 'SalesReportingSiding|RepLeadKPIsDashboard|Issued Leads Split|Avg\. Gross Split' app/sources/tableau_configured.py
+          ! grep -Eq 'Reset to Default|shipped default|8-SalesRepLevelData|RepTotalsNEW3' app/static/data-source-v90.js
+          grep -q '>Clear Report</button>' app/static/data-source-v90.js
+          grep -q 'No Tableau report selected' app/static/data-source-v90.js
+          grep -q '/static/data-source-v90.js?v=96' app/templates/settings.html
+      - name: Production boundary
+        run: |
+          changed=$(git diff origin/main --name-only | grep -v '^.github/workflows/v96-no-hardcoded-report.yml$' | sort)
+          echo "$changed"
+          test "$(echo "$changed" | tr '\n' ' ')" = "VERSION app/sources/tableau_configured.py app/static/data-source-v90.js app/templates/settings.html "
+          ! git diff origin/main --name-only | grep -Eq '^(app/templates/display.html|app/sources/tableau_crosstab.py|app/sources/tableau_mapped.py|app/tableau_scheduler.py)$'
+      - name: Commit production files
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add VERSION app/sources/tableau_configured.py app/static/data-source-v90.js app/templates/settings.html
+          git diff --cached --quiet || git commit -m 'v96: no hardcoded Tableau report fallback'
+          git push origin HEAD:build/v96-no-hardcoded-report
