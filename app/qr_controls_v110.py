@@ -74,6 +74,18 @@ def _save():
 def install_routes(app):
     """Attach PIN-protected appliance-control routes during startup."""
     changed = False
+
+    # v116 must load here rather than at module import time. tableau_scheduler
+    # imports this module before themes.py has finished loading, so an eager
+    # import would create a themes <-> scheduler circular import. By this point
+    # server.py has registered the theme blueprint and initialized the DB.
+    try:
+        import applied_theme_assets_v116
+        if applied_theme_assets_v116.install(app):
+            changed = True
+    except Exception as exc:
+        set_meta("v116_applied_theme_assets_status", f"Migration startup failed: {exc}")
+
     if _ENDPOINT not in app.view_functions:
         app.add_url_rule(
             "/api/qr-overlay",
