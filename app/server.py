@@ -1754,7 +1754,7 @@ def api_source_preview():
             "preview": source_picker.preview_state(),
             # What the board will actually group these people under, so the
             # phone can show the team a previewed rep lands on.
-            "rows": apply_team_overlay([dict(row) for row in rows[:8]]),
+            "rows": apply_team_overlay([dict(row) for row in rows]),
         })
     except TableauError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
