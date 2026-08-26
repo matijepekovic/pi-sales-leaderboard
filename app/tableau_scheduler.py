@@ -13,6 +13,7 @@ from database import (get_meta, get_settings, replace_product_close,
                       replace_reps, set_meta)
 import source_picker
 import pull_policy_v108
+import remote_qr_v109
 from sources.tableau import TableauError, TableauSource, resolve_dates
 from sources.tableau_products import ProductCloseSource
 
@@ -152,6 +153,15 @@ def start_tableau_scheduler():
         # Seed the current-period fallback cache before removing any old source
         # team text from stored reps, then keep organization Pi-owned forever.
         pull_policy_v108.bootstrap(source_picker)
+
+        # v109: generate the phone-remote QR after the Pi is fully initialized.
+        # A QR failure must never stop the leaderboard from starting.
+        try:
+            url = remote_qr_v109.generate()
+            set_meta("remote_qr_url", url)
+        except Exception as exc:
+            set_meta("remote_qr_url", "")
+            set_meta("remote_qr_error", str(exc))
 
         _STARTED = True
         thread = threading.Thread(
