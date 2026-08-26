@@ -97,6 +97,15 @@ def install_routes(app):
     except Exception as exc:
         set_meta("v117_theme_asset_audit_status", f"Audit startup failed: {exc}")
 
+    # v118 is installed last: current protected /api/theme-assets URLs pass
+    # through unchanged, while any future static default fallback is suppressed.
+    try:
+        import removed_default_assets_v118
+        if removed_default_assets_v118.install():
+            changed = True
+    except Exception as exc:
+        set_meta("v118_removed_default_assets_status", f"Default removal guard failed: {exc}")
+
     if _ENDPOINT not in app.view_functions:
         app.add_url_rule(
             "/api/qr-overlay",
