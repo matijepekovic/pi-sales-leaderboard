@@ -1,0 +1,77 @@
+"""v110 remote controls for QR overlay size and position.
+
+The settings page is PIN-protected, so this save route intentionally remains
+behind the normal settings lock. The public TV reads the stored values through
+the already-public /api/config endpoint.
+"""
+from flask import jsonify, request
+
+from database import get_meta, get_settings, save_settings, set_meta
+
+DEFAULT_SIZE = 68
+DEFAULT_X = 100.0
+DEFAULT_Y = 0.0
+MIN_SIZE = 36
+MAX_SIZE = 180
+_ENDPOINT = "api_qr_overlay_v110"
+
+
+def _bounded_float(value, default, minimum, maximum):
+    try:
+        value = float(value)
+    except Exception:
+        value = float(default)
+    return min(max(value, minimum), maximum)
+
+
+def current_config(settings=None):
+    settings = settings or get_settings()
+    return {
+        "size": int(round(_bounded_float(
+            settings.get("qr_overlay_size"), DEFAULT_SIZE, MIN_SIZE, MAX_SIZE
+        ))),
+        "x": round(_bounded_float(
+            settings.get("qr_overlay_x"), DEFAULT_X, 0.0, 100.0
+        ), 2),
+        "y": round(_bounded_float(
+            settings.get("qr_overlay_y"), DEFAULT_Y, 0.0, 100.0
+        ), 2),
+    }
+
+
+def _save():
+    body = request.get_json(force=True, silent=True) or {}
+    settings = get_settings()
+    config = {
+        "size": int(round(_bounded_float(
+            body.get("size"), settings.get("qr_overlay_size", DEFAULT_SIZE),
+            MIN_SIZE, MAX_SIZE
+        ))),
+        "x": round(_bounded_float(
+            body.get("x"), settings.get("qr_overlay_x", DEFAULT_X),
+            0.0, 100.0
+        ), 2),
+        "y": round(_bounded_float(
+            body.get("y"), settings.get("qr_overlay_y", DEFAULT_Y),
+            0.0, 100.0
+        ), 2),
+    }
+    settings["qr_overlay_size"] = config["size"]
+    settings["qr_overlay_x"] = config["x"]
+    settings["qr_overlay_y"] = config["y"]
+    save_settings(settings)
+    set_meta("settings_version", int(get_meta("settings_version", "0")) + 1)
+    return jsonify({"ok": True, "qr_overlay": config})
+
+
+def install_routes(app):
+    """Attach the v110 save route while server.py is still initializing."""
+    if _ENDPOINT in app.view_functions:
+        return False
+    app.add_url_rule(
+        "/api/qr-overlay",
+        endpoint=_ENDPOINT,
+        view_func=_save,
+        methods=["POST"],
+    )
+    return True
