@@ -1,0 +1,87 @@
+name: v97 remote cleanup
+permissions:
+  contents: write
+on:
+  push:
+    branches: [build/v97-source-ux]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Remove legacy fixed-source remote UI
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p=Path('app/templates/settings_v34_base.html')
+          s=p.read_text()
+
+          # Make Pull Status about the selected source, and keep login separate.
+          s=s.replace('''    <p class="small">Status of the last pull. The report itself, its filters and the column mapping live in the Data Source card below.</p>\n    <div class="row"><button id="openDataSource" class="btn primary" type="button">Tableau Data Source</button><button id="pullNowOutside" class="btn" type="button">Pull From Tableau Now</button><button id="loadDemo" class="btn" type="button">Reload Sample Data</button></div>\n''',
+          '''    <p class="small">Status of the selected report's last manual or automatic pull.</p>\n    <div class="row"><button id="pullNowOutside" class="btn primary" type="button">Pull Selected Report Now</button><button id="openDataSource" class="btn" type="button">Tableau Login</button><button id="loadDemo" class="btn" type="button">Load Sample Data</button></div>\n''',1)
+
+          overlay_start=s.index('  <div id="dataSourceOverlay" class="overlay" aria-hidden="true">')
+          overlay_end=s.index('\n\n  <div class="card">\n    <h2>TV Controls</h2>', overlay_start)
+          overlay='''  <div id="dataSourceOverlay" class="overlay" aria-hidden="true">\n    <div class="panel narrow">\n      <div class="row" style="justify-content:space-between">\n        <div><h2 style="margin:0">Tableau Login</h2>\n          <div class="small">Authentication only. Choose the workbook, report, export and mapping in the Tableau Report card.</div></div>\n        <button id="closeDataSource" class="btn" type="button">Close</button>\n      </div>\n      <h3 style="margin:22px 0 6px">PAT secret</h3>\n      <input id="tabPatSecret" type="password" autocomplete="new-password" placeholder="Paste PAT secret">\n      <div id="tabSecretState" class="small" style="margin-top:7px"></div>\n      <div id="dataSourceStatus" class="small" style="margin-top:14px"></div>\n      <div class="row" style="justify-content:flex-end;margin-top:14px">\n        <button id="saveDataSource" class="btn primary" type="button">Save Login</button>\n      </div>\n    </div>\n  </div>'''
+          s=s[:overlay_start]+overlay+s[overlay_end:]
+
+          fixed_start=s.index('const FIXED_SOURCE={')
+          fixed_end=s.index('let config={}', fixed_start)
+          s=s[:fixed_start]+s[fixed_end:]
+
+          js_start=s.index('/* Tableau: fixed target, secret + date override only. */')
+          js_end=s.index('$("save").addEventListener("click"', js_start)
+          new_js='''/* Tableau login + selected-source status. Report selection itself lives in\n   the Tableau Report card injected by data-source-v90.js. */\nfunction applyDataSourceForm(){\n  $("tabPatSecret").value="";\n  $("tabSecretState").textContent=config.tableau_pat_configured\n    ? "PAT secret is saved on the Pi. Leave blank to keep it."\n    : "No PAT secret is saved yet.";\n  updateOverrideBanner();\n}\nfunction updateOverrideBanner(){\n  const custom=(config.data_date_mode||"current_month")==="custom",s=config.data_date_start||"",e=config.data_date_end||"";\n  $("dateOverrideBanner").style.display=custom&&s&&e?"":"none";\n  $("dateOverrideText").textContent=custom&&s&&e?`Pulling ${s} through ${e} instead of the current month.`:"";\n}\nfunction collectDataSource(){\n  const p={};\n  const secret=$("tabPatSecret").value.trim();\n  if(secret)p.tableau_pat_secret=secret;\n  return p;\n}\nasync function saveDataSource(closeAfter=false){\n  $("dataSourceStatus").textContent="Saving…";\n  const {r,d}=await request("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({...config,...collectDataSource()})});\n  if(!r.ok){$("dataSourceStatus").textContent=d.error||"Could not save.";return false;}\n  config=d.settings;$("tabPatSecret").value="";applyDataSourceForm();$("dataSourceStatus").textContent="Login saved.";\n  await loadSourceStatus();if(closeAfter)closeOverlay("dataSourceOverlay");return true;\n}\nasync function loadSourceStatus(){\n  try{\n    const {r,d}=await request("/api/source/options",{cache:"no-store"});if(!r.ok)return;\n    if(d.source_status)$("sourceStatusLine").innerHTML=`<strong>${escapeHtml(d.source_status)}</strong>`;\n    if(d.last_source_refresh)$("sourceStatusMsg").textContent=`Last refreshed ${d.last_source_refresh}.`;\n  }catch(e){}\n}\nasync function pullTableau(statusEl){\n  statusEl.textContent="Pulling the selected Tableau report…";\n  try{\n    const {r,d}=await request("/api/source/refresh",{method:"POST"});\n    statusEl.textContent=r.ok?`Tableau — ${d.rows} reps, ${d.start} through ${d.end}.`:(d.error||"Pull failed.");\n    if(r.ok){await refreshOrg();await loadSourceStatus();}\n  }catch(e){if(e.message!=="locked")statusEl.textContent="Could not reach the Pi.";}\n}\n$("openDataSource").addEventListener("click",()=>{applyDataSourceForm();$("dataSourceStatus").textContent="";openOverlay("dataSourceOverlay");});\n$("closeDataSource").addEventListener("click",()=>closeOverlay("dataSourceOverlay"));\n$("saveDataSource").addEventListener("click",()=>saveDataSource(true));\n$("clearOverrideQuick").addEventListener("click",async()=>{\n  const {r,d}=await request("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({...config,data_date_mode:"current_month",data_date_start:"",data_date_end:""})});\n  if(r.ok){config=d.settings;applyDataSourceForm();await loadSourceStatus();}\n});\n$("pullNowOutside").addEventListener("click",()=>pullTableau($("sourceStatusMsg")));\n$("loadDemo").addEventListener("click",async()=>{await request("/api/demo/load",{method:"POST"});await refreshOrg();await loadSourceStatus();});\n\n'''
+          s=s[:js_start]+new_js+s[js_end:]
+          p.write_text(s)
+
+          # Put the data workflow near the top: TV controls -> pull status -> report setup.
+          p=Path('app/static/data-source-v90.js')
+          s=p.read_text()
+          anchor='''    app.insertAdjacentHTML("beforeend",CARD);\n\n'''
+          repl='''    app.insertAdjacentHTML("beforeend",CARD);\n    const sourceCard=$("v90SourceCard");\n    const cards=[...app.querySelectorAll(":scope > .card")];\n    const pullCard=cards.find(card=>card.querySelector("h2")?.textContent.trim()==="Pull Status");\n    const tvCard=cards.find(card=>card.querySelector("h2")?.textContent.trim()==="TV Controls");\n    if(pullCard&&tvCard&&tvCard.nextElementSibling!==pullCard) tvCard.insertAdjacentElement("afterend",pullCard);\n    if(sourceCard&&pullCard&&pullCard.nextElementSibling!==sourceCard) pullCard.insertAdjacentElement("afterend",sourceCard);\n\n'''
+          if anchor not in s: raise SystemExit('mount insertion anchor changed')
+          s=s.replace(anchor,repl,1)
+          p.write_text(s)
+          PY
+      - name: Syntax and legacy cleanup checks
+        run: |
+          node --check app/static/data-source-v90.js
+          grep -q '>Tableau Login</button>' app/templates/settings_v34_base.html
+          grep -q 'Pull Selected Report Now' app/templates/settings_v34_base.html
+          grep -q 'Authentication only' app/templates/settings_v34_base.html
+          ! grep -q 'FIXED_SOURCE' app/templates/settings_v34_base.html
+          ! grep -q '8-SalesRepLevelData / RepTotals' app/templates/settings_v34_base.html
+          ! grep -q 'Pulling Olympia' app/templates/settings_v34_base.html
+          ! grep -q 'Home Branch: Olympia' app/templates/settings_v34_base.html
+          grep -q 'tvCard.insertAdjacentElement("afterend",pullCard)' app/static/data-source-v90.js
+          grep -q 'pullCard.insertAdjacentElement("afterend",sourceCard)' app/static/data-source-v90.js
+      - name: Persistence still exact
+        run: |
+          tmp=$(mktemp -d)
+          HOME="$tmp" PYTHONPATH=app python - <<'PY'
+          from database import init_db,get_settings,save_settings
+          import source_picker
+          init_db(); s=get_settings(); s['source']={'server':'https://x','site':'s','pat_name':'p','workbook':'Book','sheet':'Report','export':'crosstab','filters':[],'date_start_field':'','date_end_field':'','mapping':{'rep_name':'Rep','home_branch':'','team':'','metrics':{'gross_split':'Gross'}},'row_filter':{}}; save_settings(s)
+          src=source_picker.resolve_source(get_settings())
+          assert (src.workbook,src.sheet,src.export_mode)==('Book','Report','crosstab')
+          assert src.mapping['metrics']=={'gross_split':'Gross'}
+          PY
+          grep -q 'source = source_picker.resolve_source(settings)' app/tableau_scheduler.py
+          grep -q 'SCHEDULE_HOURS = (6, 14)' app/tableau_scheduler.py
+      - name: Production boundary
+        run: |
+          changed=$(git diff origin/main --name-only | grep -v '^.github/workflows/v97-remote-cleanup.yml$' | sort)
+          echo "$changed"
+          test "$(echo "$changed" | tr '\n' ' ')" = "VERSION app/database.py app/static/data-source-v90.js app/templates/settings.html app/templates/settings_v34_base.html "
+          ! git diff origin/main --name-only | grep -Eq '^(app/sources/|app/source_picker.py|app/tableau_scheduler.py|app/templates/display.html)'
+      - name: Commit production files
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add VERSION app/database.py app/static/data-source-v90.js app/templates/settings.html app/templates/settings_v34_base.html
+          git diff --cached --quiet || git commit -m 'v97: make report setup the clear scheduled-source workflow'
+          git push origin HEAD:build/v97-source-ux
