@@ -7,6 +7,7 @@ the already-public /api/config endpoint.
 from flask import jsonify, request
 
 from database import get_meta, get_settings, save_settings, set_meta
+import applied_theme_assets_v116
 import keyboard_controls_v112
 import product_controls_v115
 import temporary_date_v113
@@ -74,6 +75,8 @@ def _save():
 def install_routes(app):
     """Attach PIN-protected appliance-control routes during startup."""
     changed = False
+    if applied_theme_assets_v116.install(app):
+        changed = True
     if _ENDPOINT not in app.view_functions:
         app.add_url_rule(
             "/api/qr-overlay",
