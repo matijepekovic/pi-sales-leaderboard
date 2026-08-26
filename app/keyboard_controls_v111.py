@@ -22,7 +22,10 @@ def _available_views():
 
 
 def _normalize_key(value):
-    value = str(value or "").strip()
+    raw = str(value or "")
+    if raw == " ":
+        return " "
+    value = raw.strip()
     aliases = {
         "left": "ArrowLeft", "arrowleft": "ArrowLeft",
         "right": "ArrowRight", "arrowright": "ArrowRight",
