@@ -4,9 +4,10 @@ permissions:
 on:
   push:
     branches: [build/v101-preview-scroll]
+    paths:
+      - '.github/workflows/v101-preview-scroll.yml'
 jobs:
   build:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
