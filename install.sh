@@ -5,6 +5,7 @@ SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$HOME/pi-tableau-leaderboard"
 VENV="$APP_DIR/.venv"
 DATA_DIR="$HOME/.local/share/pi-tableau-leaderboard"
+APPLIED_THEME_DIR="$DATA_DIR/applied-theme-assets"
 USER_NAME="$(id -un)"
 
 echo "Installing / updating Pi Tableau Leaderboard..."
@@ -17,13 +18,17 @@ if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/
 fi
 
 # Persistent data lives OUTSIDE the application folder.
-# Updating the software never deletes settings, teams, assignments, or cached data.
+# Updating/reinstalling the software never deletes settings, teams,
+# assignments, cached data, or assets already applied to themes.
 mkdir -p "$DATA_DIR"
+mkdir -p "$APPLIED_THEME_DIR"
 if [ -f "$DATA_DIR/leaderboard.db" ]; then
   cp "$DATA_DIR/leaderboard.db" "$DATA_DIR/leaderboard.db.backup-before-update"
   echo "Backed up existing settings/database."
 fi
 
+# Only the replaceable application directory is removed. Never rm/copy over
+# DATA_DIR or APPLIED_THEME_DIR: those are appliance-owned persistent state.
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR"
 cp -R "$SRC_DIR/app" "$APP_DIR/app"
@@ -56,11 +61,13 @@ IP_ADDR=$(hostname -I 2>/dev/null | awk '{print $1}')
 
 echo
 echo "============================================="
-echo " Pi Tableau Leaderboard v21 installed"
+echo " Pi Tableau Leaderboard installed"
 echo "============================================="
 echo
-echo "Your saved settings and teams are persistent in:"
-echo "  $DATA_DIR/leaderboard.db"
+echo "Your persistent appliance data remains in:"
+echo "  $DATA_DIR"
+echo "Applied theme assets remain in:"
+echo "  $APPLIED_THEME_DIR"
 echo
 echo "TV display:"
 echo "  http://${IP_ADDR:-PI-IP}:8765/"
