@@ -5,6 +5,7 @@ The Flask app starts this lazily on the first request after boot/restart.
 Times use the Raspberry Pi's local clock. Only one daemon thread is created
 per app process.
 """
+import sys
 import threading
 import time
 from datetime import datetime, timedelta
@@ -14,6 +15,7 @@ from database import (get_meta, get_settings, replace_product_close,
 import source_picker
 import pull_policy_v108
 import remote_qr_v109
+import qr_controls_v110
 from sources.tableau import TableauError, TableauSource, resolve_dates
 from sources.tableau_products import ProductCloseSource
 
@@ -153,6 +155,19 @@ def start_tableau_scheduler():
         # Seed the current-period fallback cache before removing any old source
         # team text from stored reps, then keep organization Pi-owned forever.
         pull_policy_v108.bootstrap(source_picker)
+
+        # v110: server.py calls this only after its Flask app has been created.
+        # Attach the PIN-protected QR save route without expanding server.py's
+        # already-large settings endpoint.
+        try:
+            server_module = sys.modules.get("server")
+            flask_app = getattr(server_module, "app", None) if server_module else None
+            if flask_app is not None:
+                qr_controls_v110.install_routes(flask_app)
+            else:
+                set_meta("remote_qr_controls_error", "Flask app was not available during startup")
+        except Exception as exc:
+            set_meta("remote_qr_controls_error", str(exc))
 
         # v109: generate the phone-remote QR after the Pi is fully initialized.
         # A QR failure must never stop the leaderboard from starting.
