@@ -1,5 +1,6 @@
-/* v112 physical controls.
-   Five actions are mapped from one shared set of keyboard and mouse inputs. */
+/* v112/v115 physical controls.
+   Five actions are mapped from one shared set of keyboard and mouse inputs.
+   v115 adds Product Close Rates as a normal previous/next rotation screen. */
 (function(){
   const INACTIVITY_MS=5*60*1000;
   const NUMERIC_TYPES=new Set(["number","percent","currency"]);
@@ -51,7 +52,7 @@
   }
 
   function availableViews(){
-    return ["whole_office","team_vs_team","all_teams",...teamNames().map(name=>`per_team::${name}`)];
+    return ["whole_office","team_vs_team","all_teams","product_close",...teamNames().map(name=>`per_team::${name}`)];
   }
 
   function viewList(){

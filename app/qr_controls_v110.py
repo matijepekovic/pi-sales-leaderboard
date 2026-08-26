@@ -8,9 +8,10 @@ from flask import jsonify, request
 
 from database import get_meta, get_settings, save_settings, set_meta
 import keyboard_controls_v112
+import product_controls_v115
 import temporary_date_v113
 
-# v113: layer temporary date rows underneath the existing mapping preview.
+# v113+: layer temporary date rows underneath the existing mapping preview.
 # This happens during import, before the first display request is served.
 temporary_date_v113.install()
 
@@ -71,7 +72,7 @@ def _save():
 
 
 def install_routes(app):
-    """Attach PIN-protected remote-control save routes during startup."""
+    """Attach PIN-protected appliance-control routes during startup."""
     changed = False
     if _ENDPOINT not in app.view_functions:
         app.add_url_rule(
@@ -84,5 +85,7 @@ def install_routes(app):
     if keyboard_controls_v112.install_routes(app):
         changed = True
     if temporary_date_v113.install_routes(app):
+        changed = True
+    if product_controls_v115.install_routes(app):
         changed = True
     return changed
