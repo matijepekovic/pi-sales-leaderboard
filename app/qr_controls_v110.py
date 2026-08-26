@@ -110,4 +110,14 @@ def install_routes(app):
         changed = True
     if product_controls_v115.install_routes(app):
         changed = True
+
+    # Production-only restrictions install last so they see the final rotation
+    # list and all feature routes. This file is unchanged on development/main.
+    try:
+        import production_gates
+        if production_gates.install(app):
+            changed = True
+    except Exception as exc:
+        set_meta("production_gates_status", f"Production gates failed: {exc}")
+
     return changed
