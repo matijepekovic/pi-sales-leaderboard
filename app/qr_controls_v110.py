@@ -7,6 +7,7 @@ the already-public /api/config endpoint.
 from flask import jsonify, request
 
 from database import get_meta, get_settings, save_settings, set_meta
+import keyboard_controls_v111
 
 DEFAULT_SIZE = 68
 DEFAULT_X = 100.0
@@ -65,13 +66,16 @@ def _save():
 
 
 def install_routes(app):
-    """Attach the v110 save route while server.py is still initializing."""
-    if _ENDPOINT in app.view_functions:
-        return False
-    app.add_url_rule(
-        "/api/qr-overlay",
-        endpoint=_ENDPOINT,
-        view_func=_save,
-        methods=["POST"],
-    )
-    return True
+    """Attach PIN-protected remote-control save routes during startup."""
+    changed = False
+    if _ENDPOINT not in app.view_functions:
+        app.add_url_rule(
+            "/api/qr-overlay",
+            endpoint=_ENDPOINT,
+            view_func=_save,
+            methods=["POST"],
+        )
+        changed = True
+    if keyboard_controls_v111.install_routes(app):
+        changed = True
+    return changed
