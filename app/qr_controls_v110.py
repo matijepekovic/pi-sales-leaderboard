@@ -75,36 +75,23 @@ def install_routes(app):
     """Attach PIN-protected appliance-control routes during startup."""
     changed = False
 
-    # v116 must load here rather than at module import time. tableau_scheduler
-    # imports this module before themes.py has finished loading, so an eager
-    # import would create a themes <-> scheduler circular import. By this point
-    # server.py has registered the theme blueprint and initialized the DB.
+    # v116 remains the permanent storage layer for artwork that has actually
+    # been applied. It is no longer exposed as a user-facing audit/test feature.
     try:
         import applied_theme_assets_v116
         if applied_theme_assets_v116.install(app):
             changed = True
     except Exception as exc:
-        set_meta("v116_applied_theme_assets_status", f"Migration startup failed: {exc}")
+        set_meta("v116_applied_theme_assets_status", f"Applied asset startup failed: {exc}")
 
-    # v117 audits the actual Pi filesystem after v116 has had a chance to
-    # migrate/switch the theme store. It intentionally still installs when the
-    # v116 migration failed so the remote can report NOT SAFE instead of hiding
-    # the problem.
+    # v119 provides the neutral shipped Starter pack and teaches v116 how to
+    # materialize that pack into permanent storage when it becomes applied.
     try:
-        import theme_asset_audit_v117
-        if theme_asset_audit_v117.install(app):
+        import starter_theme_v119
+        if starter_theme_v119.install(app):
             changed = True
     except Exception as exc:
-        set_meta("v117_theme_asset_audit_status", f"Audit startup failed: {exc}")
-
-    # v118 is installed last: current protected /api/theme-assets URLs pass
-    # through unchanged, while any future static default fallback is suppressed.
-    try:
-        import removed_default_assets_v118
-        if removed_default_assets_v118.install():
-            changed = True
-    except Exception as exc:
-        set_meta("v118_removed_default_assets_status", f"Default removal guard failed: {exc}")
+        set_meta("v119_starter_theme_status", f"Starter theme startup failed: {exc}")
 
     if _ENDPOINT not in app.view_functions:
         app.add_url_rule(
