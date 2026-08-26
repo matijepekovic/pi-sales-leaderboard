@@ -1,16 +1,26 @@
 /* v107: Software is manual-only.
-   The settings UI shows exactly two actions: Check for Updates and Update.
+   Production uses semantic versions and checks only the production branch.
    Legacy ZIP upload / version / status / automatic-update controls stay in the
    DOM only so the older base script can finish safely, but they are hidden.
    Any previously saved automatic-update preference is forced off. */
 (function(){
   const $=id=>document.getElementById(id);
-  const REMOTE_VERSION_URL='https://raw.githubusercontent.com/matijepekovic/pi-sales-leaderboard/main/VERSION';
+  const REMOTE_VERSION_URL='https://raw.githubusercontent.com/matijepekovic/pi-sales-leaderboard/production/VERSION';
   let remoteVersion=null;
 
-  function versionNumber(value){
-    const m=String(value||'').match(/\d+/);
-    return m?Number(m[0]):0;
+  function versionKey(value){
+    const parts=String(value||'').match(/\d+/g)||[];
+    return parts.map(Number);
+  }
+
+  function compareVersions(a,b){
+    const left=versionKey(a),right=versionKey(b);
+    const n=Math.max(left.length,right.length);
+    for(let i=0;i<n;i++){
+      const av=left[i]||0,bv=right[i]||0;
+      if(av!==bv) return av>bv?1:-1;
+    }
+    return 0;
   }
 
   async function forceManualOnly(){
@@ -87,9 +97,9 @@
           fetch(REMOTE_VERSION_URL+'?ts='+Date.now(),{cache:'no-store'})
         ]);
         if(!localResponse.ok||!remoteResponse.ok) throw new Error('check failed');
-        const local=versionNumber((await localResponse.json()).version);
-        const remote=versionNumber(await remoteResponse.text());
-        if(remote>local){
+        const local=String((await localResponse.json()).version||'');
+        const remote=String(await remoteResponse.text()).trim();
+        if(compareVersions(remote,local)>0){
           remoteVersion=remote;
           check.textContent='Update Available';
           update.disabled=false;

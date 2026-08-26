@@ -120,4 +120,13 @@ def install_routes(app):
     except Exception as exc:
         set_meta("production_gates_status", f"Production gates failed: {exc}")
 
+    # Production has its own semantic release number and update branch. Never
+    # let a production install inspect or download the development/main branch.
+    try:
+        import production_versioning
+        if production_versioning.install():
+            changed = True
+    except Exception as exc:
+        set_meta("production_versioning_status", f"Production versioning failed: {exc}")
+
     return changed
