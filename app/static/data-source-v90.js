@@ -83,15 +83,9 @@
           <div><label for="v90DateEnd">End field</label><input id="v90DateEnd" type="text" placeholder="Optional"></div>
         </div>
 
-        <h3 style="margin:15px 0 6px">Tableau filters</h3>
+        <h3 style="margin:15px 0 6px">Report Filters</h3>
         <div id="v90Filters"></div>
-        <button id="v90AddFilter" class="btn" type="button" style="margin-top:6px">Add Filter</button>
-
-        <h3 style="margin:15px 0 6px">Keep only</h3>
-        <div class="grid">
-          <div><label for="v90KeepColumn">Column</label><select id="v90KeepColumn"></select></div>
-          <div><label for="v90KeepValue">Value</label><input id="v90KeepValue" type="text" placeholder="Optional"></div>
-        </div>
+        <button id="v90AddFilter" class="btn" type="button" style="margin-top:6px" disabled>Add Filter</button>
 
         <div style="margin-top:16px;padding-top:11px;border-top:1px solid #262626">
           <button id="v79Reset" class="btn danger" type="button">Clear Active Report</button>
@@ -105,7 +99,7 @@
 
   let proven=null;                       // the config that last pulled cleanly
   let headers=[], choices=[], samples={}, mapping=null, shape="";
-  let filters=[], defaults={};
+  let filters=[], filterFields=[], defaults={};
 
   const DIMENSIONS=[["rep_name","Sales Rep name"],["home_branch","Home Branch"],
                     ["team","Team Lead"]];
@@ -129,7 +123,7 @@
       date_start_field:$("v90DateStart").value.trim(),
       date_end_field:$("v90DateEnd").value.trim(),
       export:$("v90Export").value,
-      row_filter:{column:$("v90KeepColumn").value,value:$("v90KeepValue").value.trim()},
+      row_filter:{},
       mapping:mapping||{},
     };
   }
@@ -187,21 +181,61 @@
     }catch(e){}
   }
 
+  function filterFieldOptions(selected){
+    const fields=filterFields.map(f=>String(f.field||"")).filter(Boolean);
+    if(selected&&!fields.includes(selected)) fields.unshift(selected);
+    return '<option value="">Choose field…</option>'+fields.map(field=>
+      `<option value="${esc(field)}"${field===selected?" selected":""}>${esc(field)}</option>`
+    ).join("");
+  }
+
+  function filterValueControl(filter,index){
+    const entry=filterFields.find(item=>item.field===filter.field);
+    const values=(entry?.values||[]).map(value=>String(value));
+    const current=String(filter.value||"");
+    if(values.length&&!entry?.truncated){
+      const known=values.slice();
+      if(current&&!known.includes(current)) known.unshift(current);
+      return `<select class="v100FValue" data-i="${index}" style="flex:1 1 auto">`+
+        '<option value="">Choose value…</option>'+known.map(value=>
+          `<option value="${esc(value)}"${value===current?" selected":""}>${esc(value)}</option>`
+        ).join("")+`</select>`;
+    }
+    const placeholder=filter.field?(entry?.truncated?"Type exact value":"No values returned"):"Choose field first";
+    return `<input class="v100FValue" data-i="${index}" type="text" value="${esc(current)}" `+
+      `placeholder="${esc(placeholder)}" style="flex:1 1 auto">`;
+  }
+
   function paintFilters(){
+    const add=$("v90AddFilter");
+    if(add) add.disabled=!filterFields.length;
+    if(!filterFields.length){
+      const saved=filters.filter(f=>f.field).map(f=>`${f.field}${f.value?` = ${f.value}`:""}`).join(" · ");
+      $("v90Filters").innerHTML=`<div class="small">${saved?`Saved: ${esc(saved)} · `:""}Read Report to load filters.</div>`;
+      return;
+    }
+
+    // A field absent from the selected report is stale configuration from a
+    // different report. Do not silently send it to Tableau.
+    filters=filters.filter(f=>filterFields.some(item=>item.field===f.field));
     $("v90Filters").innerHTML=filters.map((f,i)=>`
-      <div class="row" style="gap:8px;align-items:center;margin-bottom:6px">
-        <input class="v90FField" data-i="${i}" type="text" value="${esc(f.field)}"
-               placeholder="Field name" style="flex:1 1 auto">
-        <input class="v90FValue" data-i="${i}" type="text" value="${esc(f.value)}"
-               placeholder="Value" style="flex:1 1 auto">
-        <button class="btn danger v90FDrop" data-i="${i}" type="button">Remove</button>
-      </div>`).join("")
-      || '';
-    $("v90Filters").querySelectorAll(".v90FField").forEach(el=>
-      el.addEventListener("input",()=>{filters[el.dataset.i].field=el.value;touched();}));
-    $("v90Filters").querySelectorAll(".v90FValue").forEach(el=>
-      el.addEventListener("input",()=>{filters[el.dataset.i].value=el.value;touched();}));
-    $("v90Filters").querySelectorAll(".v90FDrop").forEach(el=>
+      <div class="row" style="gap:8px;align-items:center;margin-bottom:8px">
+        <select class="v100FField" data-i="${i}" style="flex:1 1 auto">${filterFieldOptions(f.field)}</select>
+        ${filterValueControl(f,i)}
+        <button class="btn danger v100FDrop" data-i="${i}" type="button">Remove</button>
+      </div>`).join("") || '<div class="small">No filters.</div>';
+
+    $("v90Filters").querySelectorAll(".v100FField").forEach(el=>
+      el.addEventListener("change",()=>{
+        const i=Number(el.dataset.i);
+        filters[i].field=el.value; filters[i].value=""; paintFilters(); touched();
+      }));
+    $("v90Filters").querySelectorAll(".v100FValue").forEach(el=>{
+      const sync=()=>{filters[Number(el.dataset.i)].value=el.value;touched();};
+      el.addEventListener("change",sync);
+      if(el.tagName==="INPUT") el.addEventListener("input",sync);
+    });
+    $("v90Filters").querySelectorAll(".v100FDrop").forEach(el=>
       el.addEventListener("click",()=>{filters.splice(Number(el.dataset.i),1);paintFilters();touched();}));
   }
 
@@ -265,7 +299,7 @@
   }
 
   async function loadColumns(){
-    mapping=null; headers=[]; choices=[]; samples={}; paintMapping();
+    mapping=null; headers=[]; choices=[]; samples={}; filterFields=[]; paintMapping(); paintFilters();
     touched();
     $("v79PreviewRows").innerHTML=""; $("v79PreviewStatus").textContent="";
     $("v79Status").textContent="Reading…";
@@ -275,8 +309,9 @@
         body:JSON.stringify(payload())});
       if(!r.ok||!d.ok){$("v79Status").textContent=d.error||"Could not read that report.";return;}
       headers=d.headers||[]; choices=d.choices||[]; samples=d.samples||{}; shape=d.shape;
+      filterFields=d.filter_fields||[];
       mapping=d.suggested||{}; mapping.metrics=mapping.metrics||{};
-      paintMapping();
+      paintMapping(); paintFilters();
       const matched=Object.keys(mapping.metrics).length;
       $("v79Status").textContent=`${d.export||""} · ${choices.length} columns`+(matched?` · ${matched} matched`:"");
     }catch(e){
@@ -337,15 +372,9 @@
     paintExport();
     $("v90DateStart").value=source.date_start_field||"";
     $("v90DateEnd").value=source.date_end_field||"";
+    filterFields=[];
     filters=(source.filters||[]).map(f=>({field:f.field||"",value:f.value||""}));
     paintFilters();
-    const keep=source.row_filter||{};
-    // The columns a keep-only rule may name come from the API: the page's own
-    // metric list is not filled in yet when this card first paints.
-    $("v90KeepColumn").innerHTML='<option value="">— keep every row —</option>'+
-      (columns||[]).map(c=>
-        `<option value="${esc(c.key)}"${c.key===keep.column?" selected":""}>${esc(c.label)}</option>`).join("");
-    $("v90KeepValue").value=keep.value||"";
     mapping=(source.mapping&&source.mapping.rep_name)?{...source.mapping}:null;
 
     const saved=window.config||{};
@@ -468,22 +497,26 @@
     if(pullCard&&tvCard&&tvCard.nextElementSibling!==pullCard) tvCard.insertAdjacentElement("afterend",pullCard);
     if(sourceCard&&pullCard&&pullCard.nextElementSibling!==sourceCard) pullCard.insertAdjacentElement("afterend",sourceCard);
 
-    ["v90Server","v90Site","v90PatName","v90DateStart","v90DateEnd","v90KeepValue"]
+    ["v90Server","v90Site","v90PatName","v90DateStart","v90DateEnd"]
       .forEach(id=>$(id).addEventListener("input",touched));
-    $("v90KeepColumn").addEventListener("change",touched);
     $("v90Export").addEventListener("change",()=>{
       // The columns you map against depend on which export answers, so a
       // change here invalidates what is on screen.
-      mapping=null; headers=[]; choices=[]; samples={}; paintMapping(); touched();
+      mapping=null; headers=[]; choices=[]; samples={}; filterFields=[]; filters=[]; paintMapping(); paintFilters(); touched();
     });
     ["v90DateMonth","v90DateCustom","v90RangeStart","v90RangeEnd"]
       .forEach(id=>$(id).addEventListener("change",touched));
     $("v90AddFilter").addEventListener("click",()=>{
-      filters.push({field:"",value:""}); paintFilters(); touched();
+      if(!filterFields.length) return;
+      const used=new Set(filters.map(f=>f.field));
+      const next=filterFields.find(item=>!used.has(item.field))||filterFields[0];
+      filters.push({field:next?.field||"",value:""}); paintFilters(); touched();
     });
-    $("v79Workbook").addEventListener("change",()=>{touched();loadViews();});
+    $("v79Workbook").addEventListener("change",()=>{
+      filterFields=[]; filters=[]; paintFilters(); touched(); loadViews();
+    });
     $("v79Sheet").addEventListener("change",()=>{
-      mapping=null; headers=[]; choices=[]; samples={}; paintMapping(); touched();
+      mapping=null; headers=[]; choices=[]; samples={}; filterFields=[]; filters=[]; paintMapping(); paintFilters(); touched();
       $("v79Status").textContent=$("v79Sheet").value
         ? "Selected. Tap Read Report." : "";
     });
@@ -496,7 +529,7 @@
       save(proven,"Saved for auto refresh · 6 AM / 2 PM.");
     });
     $("v79Reset").addEventListener("click",()=>{
-      touched(); mapping=null; headers=[]; choices=[]; samples={}; paintMapping();
+      touched(); mapping=null; headers=[]; choices=[]; samples={}; filterFields=[]; filters=[]; paintMapping(); paintFilters();
       $("v79PreviewRows").innerHTML=""; $("v79PreviewStatus").textContent="";
       stopPreview();
       $("v90DateMonth").checked=true; $("v90DateCustom").checked=false;
