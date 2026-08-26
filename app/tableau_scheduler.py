@@ -12,8 +12,15 @@ from datetime import datetime, timedelta
 from database import (get_meta, get_settings, replace_product_close,
                       replace_reps, set_meta)
 import source_picker
+import pull_policy_v108
 from sources.tableau import TableauError, TableauSource, resolve_dates
 from sources.tableau_products import ProductCloseSource
+
+# Install v108's pull policy during import. server.py imports this module before
+# it calls database.init_db(), which is exactly when the legacy source-team sync
+# must be disabled. source_picker.resolve_source is also wrapped here so both
+# manual and scheduled rep pulls get the same fallback behavior.
+pull_policy_v108.install(source_picker)
 
 SCHEDULE_HOURS = (6, 14)
 STARTUP_GRACE_MINUTES = 15
@@ -87,7 +94,9 @@ def _refresh(slot):
             set_meta("scheduled_tableau_last_slot", slot_key)
             return
 
-        # Sales metrics only. replace_reps preserves persistent Pi team assignments.
+        # v108 policy has already removed Tableau organization text and merged
+        # any same-scope missing reps before rows reach storage. Persistent Pi
+        # team assignments remain separate and untouched.
         replace_reps(rows)
         start, end = resolve_dates(settings)
         status = (
@@ -138,6 +147,12 @@ def start_tableau_scheduler():
     with _START_LOCK:
         if _STARTED:
             return False
+
+        # database.init_db() has completed by the time server.py calls us.
+        # Seed the current-period fallback cache before removing any old source
+        # team text from stored reps, then keep organization Pi-owned forever.
+        pull_policy_v108.bootstrap(source_picker)
+
         _STARTED = True
         thread = threading.Thread(
             target=_worker,
