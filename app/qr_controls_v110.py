@@ -7,7 +7,7 @@ the already-public /api/config endpoint.
 from flask import jsonify, request
 
 from database import get_meta, get_settings, save_settings, set_meta
-import keyboard_controls_v111
+import keyboard_controls_v112
 
 DEFAULT_SIZE = 68
 DEFAULT_X = 100.0
@@ -76,6 +76,6 @@ def install_routes(app):
             methods=["POST"],
         )
         changed = True
-    if keyboard_controls_v111.install_routes(app):
+    if keyboard_controls_v112.install_routes(app):
         changed = True
     return changed
