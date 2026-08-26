@@ -8,6 +8,11 @@ from flask import jsonify, request
 
 from database import get_meta, get_settings, save_settings, set_meta
 import keyboard_controls_v112
+import temporary_date_v113
+
+# v113: layer temporary date rows underneath the existing mapping preview.
+# This happens during import, before the first display request is served.
+temporary_date_v113.install()
 
 DEFAULT_SIZE = 68
 DEFAULT_X = 100.0
@@ -77,5 +82,7 @@ def install_routes(app):
         )
         changed = True
     if keyboard_controls_v112.install_routes(app):
+        changed = True
+    if temporary_date_v113.install_routes(app):
         changed = True
     return changed

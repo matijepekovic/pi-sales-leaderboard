@@ -17,15 +17,15 @@
         position:fixed;
         z-index:2147483000;
         box-sizing:border-box;
-        padding:4px;
-        border-radius:5px;
-        background:rgba(255,255,255,.96);
-        box-shadow:0 0 0 1px rgba(0,0,0,.20);
+        padding:3px;
+        border-radius:7px;
+        background:#000;
+        box-shadow:0 0 0 1px rgba(255,255,255,.10);
         line-height:0;
         pointer-events:none;
         user-select:none;
       }
-      #remoteQrV110 img{display:block;height:auto}
+      #remoteQrV110 img{display:block;height:auto;border-radius:4px}
     `;
     document.head.appendChild(style);
 
@@ -36,7 +36,7 @@
     const image=document.createElement('img');
     image.alt='';
     image.draggable=false;
-    image.src='/static/remote-qr-v109.svg?v=109';
+    image.src='/static/remote-qr-v109.svg?v=113';
     image.addEventListener('error',()=>{overlay.style.display='none';},{once:true});
     overlay.appendChild(image);
     document.body.appendChild(overlay);
@@ -53,7 +53,7 @@
     const size=Math.round(clamp(state.size,LIMITS.min,LIMITS.max));
     const x=clamp(state.x,0,100);
     const y=clamp(state.y,0,100);
-    const pad=8;
+    const pad=6;
     const total=size+pad;
     const margin=Math.min(LIMITS.margin,Math.max(4,Math.floor(Math.min(innerWidth,innerHeight)*.01)));
     const travelX=Math.max(0,innerWidth-total-margin*2);
