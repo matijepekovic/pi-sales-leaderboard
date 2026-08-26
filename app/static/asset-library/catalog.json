@@ -1,30 +1,30 @@
 {
-  "version": 4,
+  "version": 5,
   "categories": [
-    {
-      "key": "logo_small",
-      "label": "Logo Small"
-    },
-    {
-      "key": "champion_row",
-      "label": "Champion Row"
-    },
-    {
-      "key": "leaderboard_row",
-      "label": "Leaderboard Row"
-    },
-    {
-      "key": "champion_medallion",
-      "label": "Champion Medallions"
-    },
-    {
-      "key": "totals_mark",
-      "label": "TL Marks"
-    },
-    {
-      "key": "corners",
-      "label": "Corner Sets"
-    }
+    {"key": "background", "label": "Background"},
+    {"key": "hero", "label": "Hero / Header Art"},
+    {"key": "logo_small", "label": "Logo Small"},
+    {"key": "champion_row", "label": "Champion Row"},
+    {"key": "leaderboard_row", "label": "Leaderboard Row"},
+    {"key": "champion_medallion", "label": "Champion Medallions"},
+    {"key": "totals_mark", "label": "TL Marks"},
+    {"key": "corners", "label": "Corner Sets"}
   ],
-  "collections": []
+  "collections": [
+    {
+      "key": "starter",
+      "label": "Starter",
+      "description": "Neutral black, charcoal and gold artwork with no company branding.",
+      "items": [
+        {"key": "starter-background", "category": "background", "label": "Background", "targets": {"background": "/static/theme-packs/starter/background.svg"}},
+        {"key": "starter-hero", "category": "hero", "label": "Hero", "targets": {"hero": "/static/theme-packs/starter/hero.svg"}},
+        {"key": "starter-logo-small", "category": "logo_small", "label": "Geometric Mark", "targets": {"logo_small": "/static/theme-packs/starter/hero.svg"}},
+        {"key": "starter-row", "category": "leaderboard_row", "label": "Leaderboard Row", "targets": {"row": "/static/theme-packs/starter/row.svg"}},
+        {"key": "starter-champion", "category": "champion_row", "label": "Champion Row", "targets": {"champion": "/static/theme-packs/starter/champion.svg"}},
+        {"key": "starter-medallion", "category": "champion_medallion", "label": "Champion Medallion", "targets": {"medallion": "/static/theme-packs/starter/medallion.svg"}},
+        {"key": "starter-totals", "category": "totals_mark", "label": "Totals Mark", "targets": {"totals_mark": "/static/theme-packs/starter/totals-mark.svg"}},
+        {"key": "starter-corners", "category": "corners", "label": "Corner Set", "targets": {"corner_tl": "/static/theme-packs/starter/corner-tl.svg", "corner_tr": "/static/theme-packs/starter/corner-tr.svg", "corner_bl": "/static/theme-packs/starter/corner-bl.svg", "corner_br": "/static/theme-packs/starter/corner-br.svg"}}
+      ]
+    }
+  ]
 }

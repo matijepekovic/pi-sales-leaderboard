@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 240">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f0d77a"/><stop offset=".5" stop-color="#d8b34a"/><stop offset="1" stop-color="#705b20"/></linearGradient></defs>
+  <g fill="none" stroke="url(#g)" stroke-linejoin="round">
+    <path d="M450 22L535 78L505 178L450 218L395 178L365 78Z" stroke-width="7"/>
+    <path d="M450 55L500 88L482 153L450 181L418 153L400 88Z" stroke-width="3" opacity=".75"/>
+    <path d="M90 120H360M540 120H810" stroke-width="3" opacity=".55"/>
+    <path d="M150 94H345M555 94H750M150 146H345M555 146H750" stroke-width="1" opacity=".28"/>
+  </g>
+  <path d="M450 73L475 103L450 151L425 103Z" fill="url(#g)" opacity=".85"/>
+</svg>
