@@ -1,0 +1,69 @@
+name: v100 real Tableau filters retry
+permissions:
+  contents: write
+on:
+  push:
+    branches: [build/v100-tableau-real-filters]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply corrected v100 transform
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          src=Path('.github/workflows/v100-build.yml').read_text()
+          marker="          python - <<'PY'\n"
+          start=src.index(marker)+len(marker)
+          end=src.index("\n          PY\n", start)
+          body=src[start:end]
+          lines=[]
+          for line in body.splitlines():
+              lines.append(line[10:] if line.startswith('          ') else line)
+          body='\n'.join(lines)+'\n'
+          body=body.replace("helper=r'''", "helper='''")
+          body=body.replace("replacement=r'''", "replacement='''")
+          Path('/tmp/apply-v100.py').write_text(body)
+          PY
+          python /tmp/apply-v100.py
+      - name: Syntax and behavior checks
+        run: |
+          python -m py_compile app/source_picker.py
+          node --check app/static/data-source-v90.js
+          cd app
+          python - <<'PY'
+          import source_picker
+          sample='Home Branch,SR-Name,Regional Manager,Gross Split\nOlympia,A,West,100\nSeattle,B,West,200\nOlympia,C,North,300\n'
+          fields=source_picker.report_filter_catalog(sample,'csv')
+          by={item['field']:item for item in fields}
+          assert by['Home Branch']['values']==['Olympia','Seattle'], by
+          assert by['Regional Manager']['values']==['North','West'], by
+          assert by['SR-Name']['values']==['A','B','C'], by
+          print('filter catalog ok')
+          PY
+      - name: UX and boundary checks
+        run: |
+          grep -q 'Report Filters' app/static/data-source-v90.js
+          grep -q 'filter_fields' app/source_picker.py
+          ! grep -q 'placeholder="Field name"' app/static/data-source-v90.js
+          ! grep -q '>Keep only<' app/static/data-source-v90.js
+          ! grep -q 'v90KeepColumn' app/static/data-source-v90.js
+          ! grep -q 'v90KeepValue' app/static/data-source-v90.js
+          git diff --name-only origin/main...HEAD > /tmp/current.txt
+          git diff --name-only >> /tmp/current.txt
+          python - <<'PY'
+          changed=set(open('/tmp/current.txt').read().splitlines())
+          protected={'app/sources/tableau.py','app/sources/tableau_v36_base.py','app/sources/tableau_crosstab.py','app/sources/tableau_mapped.py','app/tableau_scheduler.py','app/templates/display.html'}
+          if changed & protected: raise SystemExit(f'protected files changed: {sorted(changed & protected)}')
+          PY
+      - name: Commit production changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add VERSION app/source_picker.py app/static/data-source-v90.js app/templates/settings.html
+          git diff --cached --quiet && exit 0
+          git commit -m 'v100: populate filters from selected Tableau report'
+          git push
