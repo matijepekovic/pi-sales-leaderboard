@@ -1,0 +1,251 @@
+name: v99 clean data UX
+permissions:
+  contents: write
+on:
+  push:
+    branches: [build/v99-clean-data-ux]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply v99 cleanup
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          # ------------------------------------------------------- server
+          p=Path('app/server.py')
+          s=p.read_text()
+          for old in ('import printing\n', 'from sources.sample import SampleSource\n'):
+              if old not in s:
+                  raise SystemExit(f'missing server import anchor: {old!r}')
+              s=s.replace(old,'',1)
+
+          pattern=re.compile(r'\n# ------------------------------------------------------------------- printer\n.*?(?=\n@app\.post\("/api/tv/fullscreen"\))', re.S)
+          s,n=pattern.subn('\n',s,count=1)
+          if n!=1:
+              raise SystemExit('printer/demo route block changed')
+
+          pattern=re.compile(r'\n\ndef ensure_sample_data\(\):.*?(?=\n\n# Initialize on import)', re.S)
+          s,n=pattern.subn('',s,count=1)
+          if n!=1:
+              raise SystemExit('ensure_sample_data block changed')
+          if 'ensure_sample_data()\n' not in s:
+              raise SystemExit('ensure_sample_data call changed')
+          s=s.replace('ensure_sample_data()\n','',1)
+          p.write_text(s)
+
+          # ------------------------------------------------------ database
+          p=Path('app/database.py')
+          s=p.read_text()
+          printer_defaults='''    # Office printer, raw port 9100. Remembered so the test button works\n    # without retyping the address.\n    "printer_host": "",\n    "printer_port": 9100,\n\n'''
+          if printer_defaults not in s:
+              raise SystemExit('printer defaults changed')
+          s=s.replace(printer_defaults,'',1)
+
+          anchor='''        # v18: Team vs Team is a purpose-built two-team comparison. On an\n'''
+          if anchor not in s:
+              raise SystemExit('database migration anchor changed')
+          migration='''        # v99: remove the retired demo/printer feature state. Existing real\n        # Tableau rows are never touched. Rows are cleared only when the last\n        # source status proves they came from the old built-in demo source.\n        if not con.execute("SELECT 1 FROM meta WHERE key='v99_demo_printer_removed'").fetchone():\n            row = con.execute("SELECT value FROM settings WHERE key='config'").fetchone()\n            if row:\n                try:\n                    cfg = json.loads(row["value"])\n                    cfg.pop("printer_host", None)\n                    cfg.pop("printer_port", None)\n                    con.execute(\n                        "UPDATE settings SET value=? WHERE key='config'",\n                        (json.dumps(cfg),)\n                    )\n                except Exception:\n                    pass\n\n            status_row = con.execute(\n                "SELECT value FROM meta WHERE key='source_status'"\n            ).fetchone()\n            status = str(status_row["value"] if status_row else "").strip().lower()\n            if status.startswith("sample data"):\n                con.execute("DELETE FROM reps")\n                version_row = con.execute(\n                    "SELECT value FROM meta WHERE key='data_version'"\n                ).fetchone()\n                try:\n                    next_version = int(version_row["value"] if version_row else 0) + 1\n                except Exception:\n                    next_version = 1\n                con.execute(\n                    "INSERT INTO meta(key,value) VALUES('data_version',?) "\n                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",\n                    (str(next_version),)\n                )\n                con.execute(\n                    "INSERT INTO meta(key,value) VALUES('source_status','No Tableau data loaded') "\n                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value"\n                )\n                con.execute(\n                    "INSERT INTO meta(key,value) VALUES('last_source_refresh','') "\n                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value"\n                )\n\n            con.execute(\n                "INSERT INTO meta(key,value) VALUES('v99_demo_printer_removed','1')"\n            )\n\n'''
+          s=s.replace(anchor,migration+anchor,1)
+          p.write_text(s)
+
+          # --------------------------------------------- legacy settings UI
+          p=Path('app/templates/settings_v34_base.html')
+          s=p.read_text()
+          old='''  <div class="card">\n    <h2>Pull Status</h2>\n    <p id="sourceStatusLine"><strong>Checking Tableau status…</strong></p>\n    <div id="dateOverrideBanner" class="banner" style="display:none"><strong>Date override active.</strong> <span id="dateOverrideText" class="small"></span><br><button id="clearOverrideQuick" class="btn" type="button" style="margin-top:8px">Use Current Month</button></div>\n    <p class="small">Status of the selected report's last manual or automatic pull.</p>\n    <div class="row"><button id="pullNowOutside" class="btn primary" type="button">Pull Selected Report Now</button><button id="openDataSource" class="btn" type="button">Tableau Login</button><button id="loadDemo" class="btn" type="button">Load Sample Data</button></div>\n    <div id="sourceStatusMsg" class="small" style="margin-top:10px"></div>\n  </div>\n'''
+          new='''  <div class="card">\n    <h2>Pull Status</h2>\n    <p id="sourceStatusLine"><strong>Checking…</strong></p>\n    <div class="row"><button id="pullNowOutside" class="btn primary" type="button">Pull Now</button><button id="openDataSource" class="btn" type="button">Tableau Login</button></div>\n    <div id="sourceStatusMsg" class="small" style="margin-top:8px"></div>\n  </div>\n'''
+          if old not in s:
+              raise SystemExit('Pull Status card changed')
+          s=s.replace(old,new,1)
+
+          s=s.replace('''        <div><h2 style="margin:0">Tableau Login</h2>\n          <div class="small">Authentication only. Choose the workbook, report, export and mapping in the Tableau Report card.</div></div>\n''','''        <div><h2 style="margin:0">Tableau Login</h2></div>\n''',1)
+
+          old_apply='''function applyDataSourceForm(){\n  $("tabPatSecret").value="";\n  $("tabSecretState").textContent=config.tableau_pat_configured\n    ? "PAT secret is saved on the Pi. Leave blank to keep it."\n    : "No PAT secret is saved yet.";\n  updateOverrideBanner();\n}\nfunction updateOverrideBanner(){\n  const custom=(config.data_date_mode||"current_month")==="custom",s=config.data_date_start||"",e=config.data_date_end||"";\n  $("dateOverrideBanner").style.display=custom&&s&&e?"":"none";\n  $("dateOverrideText").textContent=custom&&s&&e?`Pulling ${s} through ${e} instead of the current month.`:"";\n}\n'''
+          new_apply='''function applyDataSourceForm(){\n  $("tabPatSecret").value="";\n  $("tabSecretState").textContent=config.tableau_pat_configured?"Saved on Pi.":"Not saved.";\n}\n'''
+          if old_apply not in s:
+              raise SystemExit('Tableau login helper changed')
+          s=s.replace(old_apply,new_apply,1)
+
+          old_clear='''$("clearOverrideQuick").addEventListener("click",async()=>{\n  const {r,d}=await request("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({...config,data_date_mode:"current_month",data_date_start:"",data_date_end:""})});\n  if(r.ok){config=d.settings;applyDataSourceForm();await loadSourceStatus();}\n});\n'''
+          if old_clear not in s:
+              raise SystemExit('clearOverrideQuick handler changed')
+          s=s.replace(old_clear,'',1)
+          s=s.replace('$("loadDemo").addEventListener("click",async()=>{await request("/api/demo/load",{method:"POST"});await refreshOrg();await loadSourceStatus();});\n','',1)
+
+          s=s.replace('if(d.last_source_refresh)$("sourceStatusMsg").textContent=`Last refreshed ${d.last_source_refresh}.`;','$("sourceStatusMsg").textContent=d.last_source_refresh?`Last: ${d.last_source_refresh}`:"";',1)
+          s=s.replace('statusEl.textContent="Pulling the selected Tableau report…";','statusEl.textContent="Pulling…";',1)
+          s=s.replace('statusEl.textContent=r.ok?`Tableau — ${d.rows} reps, ${d.start} through ${d.end}.`:(d.error||"Pull failed.");','statusEl.textContent=r.ok?`${d.rows} reps · ${d.start} → ${d.end}`:(d.error||"Pull failed.");',1)
+          p.write_text(s)
+
+          # --------------------------------------------------- Tableau card
+          p=Path('app/static/data-source-v90.js')
+          s=p.read_text()
+          start=s.index('  const CARD=`')
+          end=s.index(';\n\n  const $=id=>',start)
+          card='''  const CARD=`\n    <div class="card" id="v90SourceCard">\n      <h2>Tableau Report</h2>\n\n      <div style="padding:8px 0 12px;border-bottom:1px solid #2b2b2b">\n        <div id="v79Current" class="small"></div>\n        <div class="small" style="margin-top:4px;opacity:.72">\n          <span id="v97Schedule">Auto: <strong>6 AM · 2 PM</strong></span> ·\n          <span id="v97LastRefresh"></span>\n        </div>\n      </div>\n\n      <section style="margin-top:16px">\n        <h3 style="margin:0 0 9px">1. Report</h3>\n        <div class="grid">\n          <div><label for="v79Workbook">Workbook</label><select id="v79Workbook"><option value="">Loading…</option></select></div>\n          <div><label for="v79Sheet">Report</label><select id="v79Sheet"><option value="">Pick a workbook first</option></select></div>\n        </div>\n        <div style="margin-top:10px">\n          <label for="v90Export">Export</label>\n          <select id="v90Export">\n            <option value="auto">Auto</option>\n            <option value="csv">CSV</option>\n            <option value="crosstab">Crosstab</option>\n          </select>\n          <div id="v90ExportNote" class="small" style="display:none"></div>\n        </div>\n        <div class="row" style="margin-top:10px"><button id="v79Load" class="btn primary" type="button">Read Report</button></div>\n        <div id="v79Status" class="small" style="margin-top:7px"></div>\n      </section>\n\n      <div id="v79MapWrap" style="display:none;margin-top:18px;padding-top:15px;border-top:1px solid #262626">\n        <h3 style="margin:0 0 8px">2. Map</h3>\n        <div id="v79MapRows"></div>\n        <div id="v79Unmapped" class="small" style="margin-top:7px"></div>\n      </div>\n\n      <section style="margin-top:18px;padding-top:15px;border-top:1px solid #262626">\n        <h3 style="margin:0 0 8px">3. Verify</h3>\n        <div class="row" style="gap:8px;flex-wrap:wrap">\n          <button id="v79Check" class="btn" type="button">Check Numbers</button>\n          <button id="v79PreviewTv" class="btn" type="button">Preview TV</button>\n          <button id="v79PreviewStop" class="btn" type="button">Stop</button>\n        </div>\n        <div id="v79PreviewStatus" class="small" style="margin-top:7px"></div>\n        <div id="v79PreviewRows" style="margin-top:7px"></div>\n        <div class="row" style="margin-top:10px"><button id="v79Use" class="btn primary" type="button" disabled>Save for Auto Refresh</button></div>\n      </section>\n\n      <details id="v97Advanced" style="margin-top:18px;padding-top:12px;border-top:1px solid #262626">\n        <summary style="cursor:pointer;font-weight:700">Advanced</summary>\n\n        <h3 style="margin:15px 0 6px">Connection</h3>\n        <div class="grid">\n          <div><label for="v90Server">Server</label><input id="v90Server" type="text" placeholder="Tableau server"></div>\n          <div><label for="v90Site">Site</label><input id="v90Site" type="text" placeholder="Site"></div>\n          <div><label for="v90PatName">Token name</label><input id="v90PatName" type="text" placeholder="Token name"></div>\n        </div>\n\n        <h3 style="margin:15px 0 6px">Date</h3>\n        <label class="row" style="margin-bottom:6px"><input type="radio" name="v90DateMode" id="v90DateMonth" value="current_month"><span>Current month</span></label>\n        <label class="row"><input type="radio" name="v90DateMode" id="v90DateCustom" value="custom"><span>Custom range</span></label>\n        <div id="v90DateRow" class="grid" style="margin-top:9px;display:none">\n          <div><label for="v90RangeStart">Start</label><input id="v90RangeStart" type="date"></div>\n          <div><label for="v90RangeEnd">End</label><input id="v90RangeEnd" type="date"></div>\n        </div>\n        <div id="v90DateResolved" class="small" style="margin-top:6px;opacity:.72"></div>\n        <div class="grid" style="margin-top:9px">\n          <div><label for="v90DateStart">Start field</label><input id="v90DateStart" type="text" placeholder="Optional"></div>\n          <div><label for="v90DateEnd">End field</label><input id="v90DateEnd" type="text" placeholder="Optional"></div>\n        </div>\n\n        <h3 style="margin:15px 0 6px">Tableau filters</h3>\n        <div id="v90Filters"></div>\n        <button id="v90AddFilter" class="btn" type="button" style="margin-top:6px">Add Filter</button>\n\n        <h3 style="margin:15px 0 6px">Keep only</h3>\n        <div class="grid">\n          <div><label for="v90KeepColumn">Column</label><select id="v90KeepColumn"></select></div>\n          <div><label for="v90KeepValue">Value</label><input id="v90KeepValue" type="text" placeholder="Optional"></div>\n        </div>\n\n        <div style="margin-top:16px;padding-top:11px;border-top:1px solid #262626">\n          <button id="v79Reset" class="btn danger" type="button">Clear Active Report</button>\n        </div>\n      </details>\n    </div>`'''
+          s=s[:start]+card+s[end:]
+
+          old_dates='''    $("v90DateResolved").innerHTML=bad\n      ? '<strong>Start is after end — fix that before saving.</strong>'\n      : `The next pull asks for <strong>${esc(from)}</strong> to <strong>${esc(to)}</strong>`\n        +(custom&&!complete?" — fill in both dates to override the month." : "");\n'''
+          new_dates='''    $("v90DateResolved").textContent=bad ? "Fix the date range." : `${from} → ${to}`;\n'''
+          if old_dates not in s:
+              raise SystemExit('paintDates wording changed')
+          s=s.replace(old_dates,new_dates,1)
+
+          exp_start=s.index('  const EXPORT_NOTE={')
+          exp_end=s.index('  };\n\n  function paintExport()',exp_start)+5
+          s=s[:exp_start]+'  const EXPORT_NOTE={auto:"",csv:"",crosstab:""};\n'+s[exp_end:]
+
+          s=s.replace('''        el.textContent=d.last_source_refresh\n          ? `Last successful Tableau pull: ${d.last_source_refresh}`\n          : "No successful Tableau pull recorded yet.";\n''','''        el.textContent=d.last_source_refresh?`Last: ${d.last_source_refresh}`:"Last: —";\n''',1)
+
+          s=s.replace('''      || '<div class="small" style="opacity:.7">No filters — the report comes back as saved.</div>';\n''','''      || '';\n''',1)
+
+          old_unmapped='''    const note=!mapping.rep_name\n      ? "No rep column mapped — this report will be read by the board's own parser.<br>" : "";\n    $("v79Unmapped").innerHTML=note+(left.length\n      ? `Not used: ${esc(left.join(", "))}` : "Every column is being used.");\n'''
+          new_unmapped='''    const note=!mapping.rep_name?"Rep not mapped. ":"";\n    $("v79Unmapped").textContent=note+(left.length?`Unused: ${left.join(", ")}`:"");\n'''
+          if old_unmapped not in s:
+              raise SystemExit('paintUnmapped changed')
+          s=s.replace(old_unmapped,new_unmapped,1)
+
+          s=s.replace('$("v79Status").textContent="Reading that report…";','$("v79Status").textContent="Reading…";',1)
+          old_loaded='''      $("v79Status").textContent=\n        `${esc(d.export||"")} · ${shape==="long"?"pivoted":"one row per rep"}, `+\n        `${choices.length} column${choices.length===1?"":"s"}. `+\n        (matched?`${matched} stat${matched===1?"":"s"} matched by name — check them and fill in the rest.`\n                :"Nothing matched by name — match them below.");\n'''
+          new_loaded='''      $("v79Status").textContent=`${d.export||""} · ${choices.length} columns`+(matched?` · ${matched} matched`:"");\n'''
+          if old_loaded not in s:
+              raise SystemExit('loadColumns status changed')
+          s=s.replace(old_loaded,new_loaded,1)
+
+          s=s.replace('status.textContent=on_tv?"Pulling and putting it on the TV…":"Pulling…";','status.textContent="Pulling…";',1)
+          old_preview='''      const scaled=(notes.scaled||[]).length\n        ? " Rates came back as fractions and were scaled to percent." : "";\n      status.innerHTML=`<strong>${d.reps} reps</strong>, ${esc(d.start)} to ${esc(d.end)}`+\n        ` · ${esc(notes.export||"")}${esc(cost)}.`+esc(scaled)+\n        (d.on_tv?` <br>Showing on the TV for ${Math.round((d.preview.seconds_left||0)/60)} minutes — it reverts on its own.`\n                :" <br>Nothing was saved or shown on the TV.");\n'''
+          new_preview='''      const scaled=(notes.scaled||[]).length?" · % formatted":"";\n      status.textContent=`${d.reps} reps · ${d.start} → ${d.end} · ${notes.export||""}${cost}${scaled}`+(d.on_tv?" · TV preview active":"");\n'''
+          if old_preview not in s:
+              raise SystemExit('preview status changed')
+          s=s.replace(old_preview,new_preview,1)
+          s=s.replace('$("v79PreviewStatus").textContent="Preview stopped. The TV is back on the real numbers.";','$("v79PreviewStatus").textContent="Preview stopped.";',1)
+          s=s.replace('''        ? `<strong>Active scheduled report:</strong> ${esc(d.workbook)} / ${esc(d.sheet)} · ${esc(d.export||"auto")}`\n        : `<strong>No active report.</strong> Automatic refresh will keep the existing leaderboard data until you save one.`;\n''','''        ? `<strong>Active:</strong> ${esc(d.workbook)} / ${esc(d.sheet)} · ${esc(d.export||"auto")}`\n        : `<strong>No active report.</strong>`;\n''',1)
+          s=s.replace('(why?why+" ":"")+"Type the workbook and sheet names instead, then Read Its Columns.";','(why?why+" ":"")+"Type workbook and report names.";',1)
+          s=s.replace('? "Report selected. Press Read Report to see the columns." : "";','? "Selected. Tap Read Report." : "";',1)
+          s=s.replace('save(proven,"Saved for automatic refresh. This exact report will be used at 6:00 AM and 2:00 PM, and after restarts or updates.");','save(proven,"Saved for auto refresh · 6 AM / 2 PM.");',1)
+          s=s.replace('''      }, "Active report cleared. Existing leaderboard data stays in place; automatic pulls wait until you save another report.");\n''','''      }, "Active report cleared.");\n''',1)
+          p.write_text(s)
+
+          # ---------------------------------------------- accordion polish
+          p=Path('app/static/settings-accordion-v98.js')
+          s=p.read_text()
+          s=s.replace('''      .v98-inline-block{margin:14px 0;padding:12px;border:1px solid #2b2b2b;background:#101010}\n''','''      .v98-inline-block{margin:10px 0;padding:10px;border:1px solid #2b2b2b;background:#101010}\n''',1)
+          s=s.replace('h.textContent="Pull Status";','h.textContent="Status";',1)
+          s=s.replace('''      else if(/Printer/i.test(raw)) label="Printer";\n''','',1)
+          p.write_text(s)
+
+          # ------------------------------------------------ script includes
+          p=Path('app/templates/settings.html')
+          s=p.read_text()
+          if '<script src="/static/printer-v77.js?v=77"></script>\n' not in s:
+              raise SystemExit('printer script include missing')
+          s=s.replace('<script src="/static/printer-v77.js?v=77"></script>\n','',1)
+          s=s.replace('<script src="/static/data-source-v90.js?v=97"></script>', '<script src="/static/data-source-v90.js?v=99"></script>',1)
+          s=s.replace('<script src="/static/settings-accordion-v98.js?v=98"></script>', '<script src="/static/settings-accordion-v98.js?v=99"></script>',1)
+          p.write_text(s)
+
+          # --------------------------------------------------- deletions
+          for name in ('app/printing.py','app/static/printer-v77.js','app/sources/sample.py'):
+              q=Path(name)
+              if not q.exists():
+                  raise SystemExit(f'expected file missing: {name}')
+              q.unlink()
+
+          Path('VERSION').write_text('99\n')
+          PY
+
+      - name: Syntax checks
+        run: |
+          python -m py_compile app/server.py app/database.py app/source_picker.py app/tableau_scheduler.py
+          node --check app/static/data-source-v90.js
+          node --check app/static/settings-accordion-v98.js
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          html=Path('app/templates/settings_v34_base.html').read_text()
+          scripts=re.findall(r'<script(?:[^>]*)>(.*?)</script>',html,re.S)
+          Path('/tmp/settings-inline.js').write_text('\n'.join(scripts))
+          PY
+          node --check /tmp/settings-inline.js
+          test "$(cat VERSION)" = 99
+
+      - name: No sample or printer feature remains
+        run: |
+          test ! -e app/sources/sample.py
+          test ! -e app/printing.py
+          test ! -e app/static/printer-v77.js
+          ! grep -RniE 'SampleSource|/api/demo/load|loadDemo|ensure_sample_data' app
+          ! grep -RniE 'import printing|/api/printer/|printer_host|printer_port|printer-v77|>Printer<' app
+          ! grep -q 'Load Sample Data' app/templates/settings_v34_base.html
+
+      - name: Legacy fake rows and printer settings are purged safely
+        run: |
+          TMP_HOME=$(mktemp -d)
+          HOME="$TMP_HOME" PYTHONPATH=app python - <<'PY'
+          import json
+          from database import init_db, connect, get_settings, list_reps, get_meta
+
+          init_db()
+          with connect() as con:
+              row=con.execute("SELECT value FROM settings WHERE key='config'").fetchone()
+              cfg=json.loads(row['value'])
+              cfg['printer_host']='10.0.0.9'
+              cfg['printer_port']=9100
+              con.execute("UPDATE settings SET value=? WHERE key='config'",(json.dumps(cfg),))
+              con.execute("DELETE FROM meta WHERE key='v99_demo_printer_removed'")
+              con.execute("INSERT INTO meta(key,value) VALUES('source_status','sample data loaded') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+              con.execute("INSERT INTO reps(rep_key,rep_name,team) VALUES('demo-1','Demo Rep','Demo Team')")
+          init_db()
+          cfg=get_settings()
+          assert 'printer_host' not in cfg and 'printer_port' not in cfg, cfg
+          assert list_reps()==[], list_reps()
+          assert get_meta('source_status','')=='No Tableau data loaded'
+          assert get_meta('v99_demo_printer_removed','')=='1'
+          print('v99 legacy cleanup passed')
+          PY
+
+      - name: Compact Tableau UX checks
+        run: |
+          grep -q '>1. Report<' app/static/data-source-v90.js
+          grep -q '>2. Map<' app/static/data-source-v90.js
+          grep -q '>3. Verify<' app/static/data-source-v90.js
+          grep -q '>Advanced<' app/static/data-source-v90.js
+          grep -q 'Auto: <strong>6 AM · 2 PM</strong>' app/static/data-source-v90.js
+          grep -q 'h.textContent="Status"' app/static/settings-accordion-v98.js
+          ! grep -q 'Choose one report, map it, verify the numbers' app/static/data-source-v90.js
+          ! grep -q 'Dashboard-only worksheets' app/static/data-source-v90.js
+          ! grep -q 'Nothing was saved or shown on the TV' app/static/data-source-v90.js
+          ! grep -q 'Status of the selected report' app/templates/settings_v34_base.html
+          ! grep -q 'dateOverrideBanner\|clearOverrideQuick' app/templates/settings_v34_base.html
+
+      - name: Production boundary
+        run: |
+          changed=$(git diff origin/main --name-only | sort)
+          echo "$changed"
+          expected=$(printf '%s\n' \
+            VERSION \
+            app/database.py \
+            app/printing.py \
+            app/server.py \
+            app/sources/sample.py \
+            app/static/data-source-v90.js \
+            app/static/printer-v77.js \
+            app/static/settings-accordion-v98.js \
+            app/templates/settings.html \
+            app/templates/settings_v34_base.html | sort)
+          test "$changed" = "$expected"
+          ! git diff origin/main --name-only | grep -Eq '^(app/source_picker.py|app/sources/tableau|app/tableau_scheduler.py|app/templates/display.html)'
+
+      - name: Commit production files
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '4189826+github-actions[bot]@users.noreply.github.com'
+          git add -A VERSION app/database.py app/server.py app/templates/settings.html app/templates/settings_v34_base.html app/static/data-source-v90.js app/static/settings-accordion-v98.js app/printing.py app/static/printer-v77.js app/sources/sample.py
+          git commit -m 'v99: remove demo and printer features; compact Tableau remote'
+          git push origin HEAD:build/v99-clean-data-ux
