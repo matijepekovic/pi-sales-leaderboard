@@ -2,9 +2,8 @@
 
    Where to connect, which report, which filters to send, which column feeds
    which board stat — all of it settings, none of it compiled in. The old
-   split (a "Data Source" card describing a fixed Olympia view, and a separate
-   "Report Source" picker that took over once you chose something) is gone;
-   the shipped report is now just the configuration this card starts with.
+   split (a "Data Source" card describing a fixed view, and a separate report
+   picker) is gone. No report is selected until the user tests and saves one.
 
    Ids stay v79* so the v83 search helper keeps attaching to the two selects.
 
@@ -103,7 +102,7 @@
       <div class="row" style="margin-top:16px;gap:10px;flex-wrap:wrap">
         <button id="v79Load" class="btn" type="button">Read Its Columns</button>
         <button id="v79Use" class="btn primary" type="button" disabled>Use This Source</button>
-        <button id="v79Reset" class="btn danger" type="button">Reset to Default</button>
+        <button id="v79Reset" class="btn danger" type="button">Clear Report</button>
       </div>
       <div id="v79Status" class="small" style="margin-top:10px"></div>
 
@@ -457,9 +456,9 @@
       const {r,d}=await request("/api/source/report",{cache:"no-store"});
       if(!r.ok) return;
       defaults=d.defaults||{};
-      $("v79Current").innerHTML=d.is_default
-        ? `Currently reading the shipped default: <strong>${esc(d.workbook)} / ${esc(d.sheet)}</strong>`
-        : `Currently reading: <strong>${esc(d.workbook)} / ${esc(d.sheet)}</strong>`;
+      $("v79Current").innerHTML=(d.workbook&&d.sheet)
+        ? `Currently reading: <strong>${esc(d.workbook)} / ${esc(d.sheet)}</strong>`
+        : `<strong>No Tableau report selected.</strong> Choose one below, check the numbers, then save it.`;
       fill(d, d.row_filter_columns);
       if(d.workbook){
         const select=$("v79Workbook");
@@ -494,9 +493,9 @@
     const workbook=$("v79Workbook").value, sheet=$("v79Sheet").value;
     wrap.innerHTML=`
       <div><label for="v79Workbook">Workbook</label>
-        <input id="v79Workbook" type="text" value="${esc(workbook)}" placeholder="8-SalesRepLevelData"></div>
+        <input id="v79Workbook" type="text" value="${esc(workbook)}" placeholder="Workbook content URL"></div>
       <div><label for="v79Sheet">Sheet</label>
-        <input id="v79Sheet" type="text" value="${esc(sheet)}" placeholder="RepTotalsNEW3"></div>`;
+        <input id="v79Sheet" type="text" value="${esc(sheet)}" placeholder="Sheet content URL"></div>`;
     $("v79Status").textContent=
       (why?why+" ":"")+"Type the workbook and sheet names instead, then Read Its Columns.";
     ["v79Workbook","v79Sheet"].forEach(id=>{
@@ -585,8 +584,20 @@
       stopPreview();
       $("v90DateMonth").checked=true; $("v90DateCustom").checked=false;
       $("v90RangeStart").value=""; $("v90RangeEnd").value=""; paintDates();
-      save({data_date_mode:"current_month",data_date_start:"",data_date_end:""},
-           "Back to the shipped default source, on the current month.");
+      const workbook=$("v79Workbook"), sheet=$("v79Sheet");
+      if(workbook) workbook.value="";
+      if(sheet&&sheet.tagName==="SELECT")
+        sheet.innerHTML='<option value="">Pick a workbook first</option>';
+      else if(sheet) sheet.value="";
+      save({
+        server:$("v90Server").value.trim(),
+        site:$("v90Site").value.trim(),
+        pat_name:$("v90PatName").value.trim(),
+        workbook:"", sheet:"", export:"auto", filters:[],
+        date_start_field:"", date_end_field:"", mapping:{},
+        row_filter:{column:"",value:""},
+        data_date_mode:"current_month",data_date_start:"",data_date_end:""
+      }, "Report cleared. Existing leaderboard data stays in place until you choose, test and save another report.");
     });
 
     $("v94Search").addEventListener("input",paintResults);
