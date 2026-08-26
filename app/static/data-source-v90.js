@@ -94,7 +94,7 @@
           <div><label for="v90PatName">Token name</label>
             <input id="v90PatName" type="text" placeholder="Token name"></div>
         </div>
-        <div class="small" style="margin-top:5px;opacity:.68">The PAT secret remains write-only in Tableau Data Source.</div>
+        <div class="small" style="margin-top:5px;opacity:.68">The PAT secret remains write-only in Tableau Login.</div>
 
         <h3 style="margin:16px 0 5px">Date range</h3>
         <label class="row" style="margin-bottom:6px">
