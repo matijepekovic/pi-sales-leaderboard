@@ -1,0 +1,14 @@
+name: v107 manual software UI
+on:
+  pull_request:
+    paths:
+      - 'app/static/software-manual-v107.js'
+      - 'app/templates/settings.html'
+      - 'VERSION'
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check JavaScript syntax
+        run: node --check app/static/software-manual-v107.js
