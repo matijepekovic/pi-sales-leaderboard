@@ -196,10 +196,8 @@
     return `${base}?${params.toString()}`;
   };
 
-  document.addEventListener("keydown",async event=>{
-    if(event.repeat) return;
-    await refreshConfig();
-    if(!config) return;
+  document.addEventListener("keydown",event=>{
+    if(event.repeat||!config) return;
     const keys=screenKeys();
     const pressed=keyNorm(event.key);
     if(pressed===keys.previous){
@@ -228,4 +226,7 @@
   },{passive:false,capture:true});
 
   refreshConfig();
+  // Keep remapped keys and rotation choices current without making keydown
+  // itself asynchronous; synchronous preventDefault is important in kiosk mode.
+  setInterval(refreshConfig,1000);
 })();
