@@ -45,10 +45,8 @@ from database import (
     set_meta,
     set_rep_team_assignments,
 )
-import printing
 import source_picker
 from sources import tableau_configured
-from sources.sample import SampleSource
 from sources.tableau import TableauSource, TableauError, resolve_dates
 from tableau_scheduler import refresh_product_close, start_tableau_scheduler
 from themes import themes_blueprint, display_theme_state
@@ -1783,50 +1781,6 @@ def api_source_test_view():
         return jsonify({"ok": False, "error": f"Test failed: {exc}"}), 400
 
 
-# ------------------------------------------------------------------- printer
-# Raw port 9100. Both are actions -- one scans the office network, the other
-# consumes paper -- so neither belongs in PUBLIC_ENDPOINTS.
-
-@app.post("/api/printer/scan")
-def api_printer_scan():
-    return jsonify(printing.scan())
-
-
-@app.post("/api/printer/test")
-def api_printer_test():
-    body = request.get_json(silent=True) or {}
-    settings = get_settings()
-
-    host = str(body.get("host") or settings.get("printer_host") or "").strip()
-    try:
-        port = int(body.get("port") or settings.get("printer_port")
-                   or printing.RAW_PORT)
-    except Exception:
-        port = printing.RAW_PORT
-
-    ok, message = printing.print_test(host, port, software_version())
-
-    # Remember the address only once it has actually worked, so a typo never
-    # becomes the saved default and get quietly reused on the next press.
-    if ok and host:
-        settings["printer_host"] = host[:120]
-        settings["printer_port"] = port
-        save_settings(settings)
-
-    return jsonify({"ok": ok, "message" if ok else "error": message,
-                    "host": host, "port": port}), (200 if ok else 400)
-
-
-@app.post("/api/demo/load")
-def api_load_demo():
-    rows = SampleSource().fetch()
-    replace_reps(rows)
-    set_meta("last_source_refresh", time.strftime("%Y-%m-%d %H:%M:%S"))
-    set_meta("source_status", "sample data loaded")
-    return jsonify({"ok": True, "rows": len(rows)})
-
-
-
 
 @app.post("/api/tv/fullscreen")
 def api_tv_fullscreen():
@@ -2097,18 +2051,10 @@ def ensure_labwc_kiosk_autostart():
         set_meta("kiosk_startup_status", f"labwc setup failed: {exc}")
 
 
-def ensure_sample_data():
-    if not list_reps():
-        rows = SampleSource().fetch()
-        replace_reps(rows)
-        set_meta("source_status", "sample data — Tableau not connected")
-
-
 # Initialize on import because production runs through Waitress.
 init_db()
 app.secret_key = app_secret_key()
 ensure_labwc_kiosk_autostart()
-ensure_sample_data()
 start_github_auto_update_worker()
 # Twice-daily Tableau pull. Must come after init_db(); the call is idempotent,
 # so a re-import can never start a second worker.
