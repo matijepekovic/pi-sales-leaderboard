@@ -1,0 +1,33 @@
+name: v96 picker publishing note
+permissions:
+  contents: write
+on:
+  push:
+    branches: [build/v96-no-hardcoded-report]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Make published-view limit explicit
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('app/static/data-source-v90.js')
+          s=p.read_text()
+          old='''      <div class="small">Search every report this token can see, or pick the\n        workbook and sheet below.</div>\n'''
+          new='''      <div class="small">Search every <strong>published</strong> report this token can see, or pick the\n        workbook and sheet below. A worksheet that exists only inside a dashboard\n        (even if Download &gt; Crosstab shows it) will not appear here until it is published as a view.</div>\n'''
+          if old not in s:
+              raise SystemExit('report help text changed unexpectedly')
+          p.write_text(s.replace(old,new,1))
+          PY
+          node --check app/static/data-source-v90.js
+          grep -q 'will not appear here until it is published as a view' app/static/data-source-v90.js
+          ! grep -Eq 'SalesReportingSiding|RepLeadKPIsDashboard' app/static/data-source-v90.js
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/static/data-source-v90.js
+          git diff --cached --quiet || git commit -m 'v96: explain published-view picker limit'
+          git push origin HEAD:build/v96-no-hardcoded-report
