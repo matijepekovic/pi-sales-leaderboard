@@ -51,6 +51,7 @@ def describe(settings):
         "date_end_field": config["date_end_field"],
         "row_filter": config["row_filter"],
         "mapping": config["mapping"],
+        "export": config["export"],
         "defaults": DEFAULTS,
     }
 
@@ -316,6 +317,66 @@ def test_source(settings, overrides=None):
     }
 
 
+
+_FILTER_VALUE_LIMIT = 1000
+_FILTER_ROW_LIMIT = 5000
+
+
+def _filter_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def report_filter_catalog(payload, how):
+    """Fields and actual values from the selected report export.
+
+    Tableau REST accepts vf_<field>=<value> using workbook field captions.
+    Instead of asking the user to type those captions, expose the exact fields
+    and values that this report really returned. No KPI is calculated here.
+    """
+    if how == "crosstab":
+        described = describe_crosstab(payload)
+        headers = list(described.get("headers") or [])
+        rows = list(described.get("rows") or [])[:_FILTER_ROW_LIMIT]
+    else:
+        reader = _base.csv.DictReader(_base.io.StringIO(str(payload or "")))
+        headers = [str(h or "").strip() for h in (reader.fieldnames or [])
+                   if str(h or "").strip()]
+        rows = []
+        for index, row in enumerate(reader):
+            if index >= _FILTER_ROW_LIMIT:
+                break
+            rows.append(row)
+
+    catalog = []
+    for header in headers:
+        values, seen = [], set()
+        truncated = False
+        for row in rows:
+            text = _filter_text(row.get(header))
+            if not text or text.casefold() == "all":
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            if len(values) < _FILTER_VALUE_LIMIT:
+                values.append(text)
+            else:
+                truncated = True
+        values.sort(key=lambda value: value.casefold())
+        catalog.append({
+            "field": header,
+            "values": values,
+            "truncated": truncated,
+        })
+    return catalog
+
 def read_columns(settings, overrides=None):
     """What the candidate report offers to map against, and a first guess.
 
@@ -324,7 +385,14 @@ def read_columns(settings, overrides=None):
     """
     config = trial_config(settings, overrides)
     trial = trial_settings(settings, overrides)
-    source = ConfiguredTableauSource(trial, config)
+    # Discovery must not be narrowed by filters saved for an older report.
+    # Read the selected report itself, then let the user choose filters from
+    # the fields and values it actually returned. Preview/scheduled pulls still
+    # use the saved filters normally.
+    discovery = dict(config)
+    discovery["filters"] = []
+    discovery["row_filter"] = {}
+    source = ConfiguredTableauSource(trial, discovery)
     start, end = _base.resolve_dates(trial)
     base, token, site_id = source.signin()
     try:
@@ -349,6 +417,11 @@ def read_columns(settings, overrides=None):
         described["export"] = "Crosstab Excel"
         if csv_error:
             described["csv_error"] = csv_error
-    return {**described, "start": start, "end": end}
+    return {
+        **described,
+        "start": start,
+        "end": end,
+        "filter_fields": report_filter_catalog(payload, how),
+    }
 
 
