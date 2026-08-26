@@ -31,7 +31,8 @@ jobs:
       - name: Removed legacy controls have no live references
         run: |
           for id in dateModeMonth dateModeCustom dateStart dateEnd effectiveDates testTableau pullNow useCurrentMonth; do
-            ! grep -q "$id" app/templates/settings_v34_base.html || { echo "leftover legacy id: $id"; exit 1; }
+            ! grep -q "id=\"$id\"" app/templates/settings_v34_base.html || { echo "leftover legacy element: $id"; exit 1; }
+            ! grep -q "\\\$(\"$id\")" app/templates/settings_v34_base.html || { echo "leftover legacy JS reference: $id"; exit 1; }
           done
           ! grep -q 'FIXED_SOURCE' app/templates/settings_v34_base.html
           ! grep -q 'v94Search' app/static/data-source-v90.js
