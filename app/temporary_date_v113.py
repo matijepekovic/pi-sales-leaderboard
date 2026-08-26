@@ -1,14 +1,13 @@
-"""v113 temporary date-range override for the TV.
+"""Temporary date-range override for the TV.
 
 The override never writes to the reps table. It pulls a second in-memory row
 set, lets the display use those rows for up to 60 minutes, then automatically
 falls back to the regularly scheduled rows already stored on the Pi.
 
-v114 also enforces the appliance's standard Tableau date-filter captions at
-runtime. Older saved sources can contain blank date_start_field/date_end_field
-values even though the remote has treated those fields as internal Start/End
-keys since v106. Blank saved values must never make Tableau silently ignore a
-requested date range.
+v114 enforces the appliance's standard Tableau Start / End filter captions at
+runtime. v115 extends the same temporary window to Product Close Rates, using
+the currently selected product market. Both temporary datasets must pull
+successfully before the override becomes active.
 """
 from datetime import date
 import threading
@@ -18,6 +17,7 @@ from flask import jsonify, request
 
 from database import get_settings
 import source_picker
+from product_source_v115 import ProductCloseSourceV115, selected_market
 from sources.tableau_configured import ConfiguredTableauSource
 
 _ENDPOINT = "api_temporary_date_override_v113"
@@ -28,6 +28,8 @@ _BASE_PREVIEW_ROWS = None
 _BASE_CONFIGURED_INIT = None
 _STATE = {
     "rows": None,
+    "product_rows": None,
+    "product_market": "",
     "until": 0.0,
     "mode": "",
     "start": "",
@@ -36,26 +38,62 @@ _STATE = {
 }
 
 
+def _clear_locked():
+    _STATE.update({
+        "rows": None,
+        "product_rows": None,
+        "product_market": "",
+        "until": 0.0,
+        "mode": "",
+        "start": "",
+        "end": "",
+        "minutes": 0,
+    })
+
+
 def _expire_locked(now=None):
     now = time.time() if now is None else now
     if _STATE["rows"] is not None and now >= float(_STATE["until"] or 0):
-        _STATE.update({
-            "rows": None,
-            "until": 0.0,
-            "mode": "",
-            "start": "",
-            "end": "",
-            "minutes": 0,
-        })
+        _clear_locked()
 
 
 def override_rows():
-    """Return temporary rows while active, otherwise None."""
+    """Return temporary rep rows while active, otherwise None."""
     with _LOCK:
         _expire_locked()
         if _STATE["rows"] is None:
             return None
         return list(_STATE["rows"])
+
+
+def product_override_payload():
+    """Temporary product rows and their exact range/market, or None."""
+    with _LOCK:
+        _expire_locked()
+        if _STATE["rows"] is None or _STATE["product_rows"] is None:
+            return None
+        return {
+            "rows": [dict(row) for row in _STATE["product_rows"]],
+            "market": _STATE["product_market"],
+            "start": _STATE["start"],
+            "end": _STATE["end"],
+            "seconds_left": max(0, int(float(_STATE["until"] or 0) - time.time())),
+        }
+
+
+def replace_product_override(rows, market, expected_start=None, expected_end=None):
+    """Swap only the active temporary product rows after a market refresh."""
+    with _LOCK:
+        _expire_locked()
+        if _STATE["rows"] is None:
+            return False
+        if expected_start and str(expected_start) != str(_STATE["start"]):
+            return False
+        if expected_end and str(expected_end) != str(_STATE["end"]):
+            return False
+        _STATE["product_rows"] = [dict(row) for row in (rows or [])]
+        _STATE["product_market"] = str(market or "").strip()
+        return True
 
 
 def current_state():
@@ -71,6 +109,8 @@ def current_state():
             "minutes": int(_STATE["minutes"] or 0) if active else 0,
             "seconds_left": max(0, int(float(_STATE["until"] or 0) - now)) if active else 0,
             "rows": len(_STATE["rows"] or []) if active else 0,
+            "products": len(_STATE["product_rows"] or []) if active else 0,
+            "product_market": _STATE["product_market"] if active else "",
         }
 
 
@@ -171,33 +211,40 @@ def _apply_override():
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
 
-    # Pull into a separate row set. The saved date configuration and reps table
-    # are never changed, so a failed temporary pull cannot damage the live board.
+    # Pull into separate row sets. Saved date configuration, stored reps and
+    # stored product rows are untouched, so a failed temporary pull cannot
+    # damage the regular scheduled board.
     trial = dict(get_settings())
     trial["data_date_mode"] = "custom"
     trial["data_date_start"] = start
     trial["data_date_end"] = end
 
-    # v114: the temporary override must send the requested range to Tableau even
-    # when an older saved source contains blank internal date-field captions.
-    # These values exist only in the temporary settings copy and are never saved.
+    # v114: the temporary rep pull must always send Start / End to Tableau.
     source = dict(trial.get("source") or {})
     source["date_start_field"] = "Start"
     source["date_end_field"] = "End"
     trial["source"] = source
+    market = selected_market(trial)
 
     try:
         with _PULL_LOCK:
             rows = source_picker.resolve_source(trial).fetch()
+            if not rows:
+                return jsonify({
+                    "ok": False,
+                    "error": "Temporary pull returned no people. Regular numbers were kept.",
+                }), 400
+            _pstart, _pend, product_rows = ProductCloseSourceV115(trial).fetch_products(
+                start=start, end=end, market=market
+            )
     except Exception as exc:
         return jsonify({"ok": False, "error": f"Temporary pull failed: {exc}"}), 502
-
-    if not rows:
-        return jsonify({"ok": False, "error": "Temporary pull returned no people. Regular numbers were kept."}), 400
 
     with _LOCK:
         _STATE.update({
             "rows": list(rows),
+            "product_rows": [dict(row) for row in product_rows],
+            "product_market": market,
             "until": time.time() + minutes * 60,
             "mode": mode,
             "start": start,
