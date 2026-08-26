@@ -110,11 +110,6 @@ DEFAULT_SETTINGS = {
     # Empty means the screen's built-in SVG glyph is used.
     "product_icons": {},
 
-    # Office printer, raw port 9100. Remembered so the test button works
-    # without retyping the address.
-    "printer_host": "",
-    "printer_port": 9100,
-
     # Settings-page lock. Stores a salted PBKDF2 hash, never the PIN.
     "settings_pin_hash": "",
 }
@@ -317,6 +312,54 @@ def init_db():
         ):
             if not con.execute("SELECT 1 FROM meta WHERE key=?", (key,)).fetchone():
                 con.execute("INSERT INTO meta(key,value) VALUES(?,?)", (key, default))
+
+        # v99: remove the retired demo/printer feature state. Existing real
+        # Tableau rows are never touched. Rows are cleared only when the last
+        # source status proves they came from the old built-in demo source.
+        if not con.execute("SELECT 1 FROM meta WHERE key='v99_demo_printer_removed'").fetchone():
+            row = con.execute("SELECT value FROM settings WHERE key='config'").fetchone()
+            if row:
+                try:
+                    cfg = json.loads(row["value"])
+                    cfg.pop("printer_host", None)
+                    cfg.pop("printer_port", None)
+                    con.execute(
+                        "UPDATE settings SET value=? WHERE key='config'",
+                        (json.dumps(cfg),)
+                    )
+                except Exception:
+                    pass
+
+            status_row = con.execute(
+                "SELECT value FROM meta WHERE key='source_status'"
+            ).fetchone()
+            status = str(status_row["value"] if status_row else "").strip().lower()
+            if status.startswith("sample data"):
+                con.execute("DELETE FROM reps")
+                version_row = con.execute(
+                    "SELECT value FROM meta WHERE key='data_version'"
+                ).fetchone()
+                try:
+                    next_version = int(version_row["value"] if version_row else 0) + 1
+                except Exception:
+                    next_version = 1
+                con.execute(
+                    "INSERT INTO meta(key,value) VALUES('data_version',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (str(next_version),)
+                )
+                con.execute(
+                    "INSERT INTO meta(key,value) VALUES('source_status','No Tableau data loaded') "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+                )
+                con.execute(
+                    "INSERT INTO meta(key,value) VALUES('last_source_refresh','') "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+                )
+
+            con.execute(
+                "INSERT INTO meta(key,value) VALUES('v99_demo_printer_removed','1')"
+            )
 
         # v18: Team vs Team is a purpose-built two-team comparison. On an
         # existing install, expand its rep metrics once so the new layout starts

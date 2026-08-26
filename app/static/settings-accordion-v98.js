@@ -39,7 +39,7 @@
       .v98-subsection>summary{padding:11px 12px;font-size:15px}
       .v98-subsection[open]>summary{border-bottom:1px solid #292929}
       .v98-subsection-body{padding:12px}
-      .v98-inline-block{margin:14px 0;padding:12px;border:1px solid #2b2b2b;background:#101010}
+      .v98-inline-block{margin:10px 0;padding:10px;border:1px solid #2b2b2b;background:#101010}
       .v98-inline-block>h3{margin:0 0 8px}
       .v98-view-mode{margin-bottom:10px}
       .v98-view-help{margin:0 0 12px}
@@ -181,7 +181,7 @@
     block.id="v98PullStatus";
     block.className="v98-inline-block";
     const h=document.createElement("h3");
-    h.textContent="Pull Status";
+    h.textContent="Status";
     block.appendChild(h);
     Array.from(pullCard.childNodes).forEach(node=>{
       if(node.nodeType===1 && node.tagName==="H2") return;
@@ -234,7 +234,6 @@
       let label=raw;
       if(/Software Update/i.test(raw)) label="Software";
       else if(/Settings Lock/i.test(raw)) label="Security";
-      else if(/Printer/i.test(raw)) label="Printer";
       wrapSimpleCard(card,label,stack);
     });
 
