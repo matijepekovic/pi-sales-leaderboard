@@ -6,7 +6,6 @@ APP_DIR="$HOME/pi-tableau-leaderboard"
 VENV="$APP_DIR/.venv"
 DATA_DIR="$HOME/.local/share/pi-tableau-leaderboard"
 APPLIED_THEME_DIR="$DATA_DIR/applied-theme-assets"
-LEGACY_DEFAULT_STAGE="$DATA_DIR/v118-default-migration-source"
 USER_NAME="$(id -un)"
 
 echo "Installing / updating Pi Tableau Leaderboard..."
@@ -23,33 +22,9 @@ fi
 # assignments, cached data, or assets already applied to themes.
 mkdir -p "$DATA_DIR"
 mkdir -p "$APPLIED_THEME_DIR"
-THEME_ASSETS_MIGRATED="0"
 if [ -f "$DATA_DIR/leaderboard.db" ]; then
   cp "$DATA_DIR/leaderboard.db" "$DATA_DIR/leaderboard.db.backup-before-update"
   echo "Backed up existing settings/database."
-  THEME_ASSETS_MIGRATED="$(python3 - "$DATA_DIR/leaderboard.db" <<'PY'
-import sqlite3, sys
-try:
-    con = sqlite3.connect(sys.argv[1])
-    row = con.execute(
-        "SELECT value FROM meta WHERE key='v116_applied_theme_assets_migrated'"
-    ).fetchone()
-    print("1" if row and str(row[0]) == "1" else "0")
-except Exception:
-    print("0")
-PY
-)"
-fi
-
-# v118 removes bundled theme artwork. A Pi that skipped v116/v117 must not
-# lose its old bundled images before v116 can copy the ones it is actively
-# using. Preserve the OLD installed pack only when that migration marker is
-# still missing. v118 deletes this compatibility copy after migration succeeds.
-if [ "$THEME_ASSETS_MIGRATED" != "1" ] && [ -d "$APP_DIR/app/static/theme-packs/undisputed" ]; then
-  rm -rf "$LEGACY_DEFAULT_STAGE"
-  mkdir -p "$LEGACY_DEFAULT_STAGE"
-  cp -R "$APP_DIR/app/static/theme-packs/undisputed" "$LEGACY_DEFAULT_STAGE/undisputed"
-  echo "Preserved old theme defaults temporarily for applied-asset migration."
 fi
 
 # Only the replaceable application directory is removed. Never rm/copy over
@@ -62,15 +37,6 @@ cp "$SRC_DIR/VERSION" "$APP_DIR/VERSION"
 cp "$SRC_DIR/kiosk.sh" "$APP_DIR/kiosk.sh"
 chmod +x "$APP_DIR/kiosk.sh"
 chmod +x "$APP_DIR/app/kiosk_browser.sh" 2>/dev/null || true
-
-# Compatibility only for a direct pre-v116 -> v118 update. The repository no
-# longer ships these files. They came from this Pi's old installation and exist
-# only until v116 confirms the permanent applied copies.
-if [ "$THEME_ASSETS_MIGRATED" != "1" ] && [ -d "$LEGACY_DEFAULT_STAGE/undisputed" ]; then
-  mkdir -p "$APP_DIR/app/static/theme-packs"
-  cp -R "$LEGACY_DEFAULT_STAGE/undisputed" "$APP_DIR/app/static/theme-packs/undisputed"
-  echo "Restored old defaults temporarily until applied-theme migration completes."
-fi
 
 python3 -m venv "$VENV"
 "$VENV/bin/pip" install --upgrade pip
