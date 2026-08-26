@@ -10,11 +10,21 @@
   function forceWholeOffice(){
     const select=document.getElementById("activeMode");
     if(!select) return;
-    if(select.value!=="whole_office") select.value="whole_office";
+    let changed=false;
+    if(select.value!=="whole_office"){
+      select.value="whole_office";
+      changed=true;
+    }
     try{
-      if(typeof config==="object"&&config) config.active_mode="whole_office";
-      if(typeof displayMode!=="undefined") displayMode="whole_office";
-      if(typeof renderMode==="function") renderMode();
+      if(typeof config==="object"&&config&&config.active_mode!=="whole_office"){
+        config.active_mode="whole_office";
+        changed=true;
+      }
+      if(typeof displayMode!=="undefined"&&displayMode!=="whole_office"){
+        displayMode="whole_office";
+        changed=true;
+      }
+      if(changed&&typeof renderMode==="function") renderMode();
     }catch(_){ }
   }
 
