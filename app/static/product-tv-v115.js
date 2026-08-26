@@ -5,6 +5,7 @@
   if(typeof window.renderProductScreen!=="function"||typeof window.render!=="function") return;
   const baseRender=window.render;
   let overlay=null;
+  let lastProductSignature="";
 
   function ensureOverlay(){
     if(overlay) return overlay;
@@ -23,16 +24,26 @@
     if(data?.mode==="product_close"){
       const root=ensureOverlay();
       root.style.display="block";
-      window.renderProductScreen(root,{
+      const productData={
         rows:data.rows||[],
         start:data.product_start||"",
         end:data.product_end||"",
         market:data.product_market||"",
         icons:data.product_icons||{},
         temporary:!!data.product_temporary
-      });
+      };
+      const signature=JSON.stringify([
+        productData.rows.map(row=>[row.product,Number(row.close_rate||0)]),
+        productData.start,productData.end,productData.market,
+        productData.icons,productData.temporary
+      ]);
+      if(signature!==lastProductSignature){
+        window.renderProductScreen(root,productData);
+        lastProductSignature=signature;
+      }
       return;
     }
+    lastProductSignature="";
     if(overlay) overlay.style.display="none";
     return baseRender(data);
   };
