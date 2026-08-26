@@ -86,6 +86,17 @@ def install_routes(app):
     except Exception as exc:
         set_meta("v116_applied_theme_assets_status", f"Migration startup failed: {exc}")
 
+    # v117 audits the actual Pi filesystem after v116 has had a chance to
+    # migrate/switch the theme store. It intentionally still installs when the
+    # v116 migration failed so the remote can report NOT SAFE instead of hiding
+    # the problem.
+    try:
+        import theme_asset_audit_v117
+        if theme_asset_audit_v117.install(app):
+            changed = True
+    except Exception as exc:
+        set_meta("v117_theme_asset_audit_status", f"Audit startup failed: {exc}")
+
     if _ENDPOINT not in app.view_functions:
         app.add_url_rule(
             "/api/qr-overlay",
