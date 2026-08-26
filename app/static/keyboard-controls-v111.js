@@ -54,7 +54,9 @@
     const saved=config?.settings?.keyboard_cycle_views;
     if(!Array.isArray(saved)||!saved.length) return available;
     const chosen=saved.map(String).filter(view=>available.includes(view));
-    return chosen.length?chosen:available;
+    // A deleted/renamed team should never silently expand a deliberately
+    // restricted rotation back to every screen.
+    return chosen.length?chosen:available.slice(0,1);
   }
 
   function screenKeys(){
