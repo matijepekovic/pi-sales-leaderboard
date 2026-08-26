@@ -1,0 +1,63 @@
+name: v99 verify only
+on:
+  push:
+    branches:
+      - build/v99-clean-data-ux
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Syntax and removals
+        run: |
+          python -m py_compile app/server.py app/database.py app/source_picker.py app/tableau_scheduler.py
+          node --check app/static/data-source-v90.js
+          node --check app/static/settings-accordion-v98.js
+          test "$(cat VERSION)" = 99
+          test ! -e app/sources/sample.py
+          test ! -e app/printing.py
+          test ! -e app/static/printer-v77.js
+          ! grep -Rni --exclude-dir=__pycache__ -E 'SampleSource|/api/demo/load|loadDemo|ensure_sample_data' app
+          ! grep -Rni --exclude-dir=__pycache__ -E 'import printing|/api/printer/|printer-v77|>Printer<' app
+          ! grep -Rni --exclude-dir=__pycache__ --exclude=database.py -E 'printer_host|printer_port' app
+          test "$(grep -Ec 'printer_host|printer_port' app/database.py)" = 2
+          ! grep -q 'Load Sample Data' app/templates/settings_v34_base.html
+      - name: Compact Tableau UX
+        run: |
+          grep -q '>1. Report<' app/static/data-source-v90.js
+          grep -q '>2. Map<' app/static/data-source-v90.js
+          grep -q '>3. Verify<' app/static/data-source-v90.js
+          grep -q '>Advanced<' app/static/data-source-v90.js
+          grep -q 'Auto: <strong>6 AM · 2 PM</strong>' app/static/data-source-v90.js
+          ! grep -q 'Choose one report, map it, verify the numbers' app/static/data-source-v90.js
+          ! grep -q 'Dashboard-only worksheets' app/static/data-source-v90.js
+          ! grep -q 'Nothing was saved or shown on the TV' app/static/data-source-v90.js
+          ! grep -q 'Status of the selected report' app/templates/settings_v34_base.html
+      - name: Safe legacy cleanup
+        run: |
+          TMP_HOME=$(mktemp -d)
+          HOME="$TMP_HOME" PYTHONPATH=app python - <<'PY'
+          import json
+          from database import init_db, connect, get_settings, list_reps, get_meta
+          init_db()
+          with connect() as con:
+              row=con.execute("SELECT value FROM settings WHERE key='config'").fetchone()
+              cfg=json.loads(row['value'])
+              cfg['printer_host']='10.0.0.9'
+              cfg['printer_port']=9100
+              con.execute("UPDATE settings SET value=? WHERE key='config'",(json.dumps(cfg),))
+              con.execute("DELETE FROM meta WHERE key='v99_demo_printer_removed'")
+              con.execute("INSERT INTO meta(key,value) VALUES('source_status','sample data loaded') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+              con.execute("INSERT INTO reps(rep_key,rep_name,team) VALUES('demo-1','Demo Rep','Demo Team')")
+          init_db()
+          cfg=get_settings()
+          assert 'printer_host' not in cfg and 'printer_port' not in cfg
+          assert list_reps()==[]
+          assert get_meta('source_status','')=='No Tableau data loaded'
+          assert get_meta('v99_demo_printer_removed','')=='1'
+          PY
+      - name: Protected boundaries
+        run: |
+          ! git diff origin/main --name-only | grep -Eq '^(app/source_picker.py|app/sources/tableau|app/tableau_scheduler.py|app/templates/display.html)'
