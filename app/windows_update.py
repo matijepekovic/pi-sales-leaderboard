@@ -1,9 +1,9 @@
 """Signed Windows installer update client.
 
-Customer machines read only the public release repository. The release manifest
-must verify with the embedded Ed25519 public key, and the downloaded installer
-must match the signed SHA-256 and size before the detached updater helper is
-started. No GitHub credential or private key is present on the customer PC.
+Customer machines read only public GitHub Release download URLs. The release
+manifest must verify with the embedded Ed25519 public key, and the downloaded
+installer must match the signed SHA-256 and size before the detached updater
+helper is started. No GitHub credential or private key is present on the PC.
 """
 from __future__ import annotations
 
@@ -24,7 +24,8 @@ from flask import jsonify
 from update_signing_public_key import UPDATE_SIGNING_PUBLIC_KEY_B64
 
 UPDATE_REPO = "matijepekovic/pi-sales-leaderboard-updates"
-LATEST_RELEASE_API = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
+LATEST_MANIFEST_URL = f"https://github.com/{UPDATE_REPO}/releases/latest/download/release-manifest.json"
+LATEST_SIGNATURE_URL = f"https://github.com/{UPDATE_REPO}/releases/latest/download/release-manifest.json.sig"
 SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 MAX_METADATA_BYTES = 512 * 1024
@@ -33,7 +34,6 @@ CREATE_NO_WINDOW = 0x08000000
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 _INSTALLED = False
-_SERVER = None
 
 
 def _version_tuple(value: str) -> tuple[int, int, int]:
@@ -53,7 +53,7 @@ def _read_url(url: str, *, max_bytes: int = MAX_METADATA_BYTES) -> bytes:
     request = urllib.request.Request(
         url,
         headers={
-            "Accept": "application/vnd.github+json, application/octet-stream",
+            "Accept": "application/octet-stream",
             "User-Agent": "Stats-Windows-Updater",
         },
     )
@@ -62,28 +62,6 @@ def _read_url(url: str, *, max_bytes: int = MAX_METADATA_BYTES) -> bytes:
     if len(data) > max_bytes:
         raise ValueError("Update metadata is too large")
     return data
-
-
-def _read_json(url: str) -> dict:
-    data = _read_url(url)
-    value = json.loads(data.decode("utf-8"))
-    if not isinstance(value, dict):
-        raise ValueError("Invalid release metadata")
-    return value
-
-
-def _release_asset(release: dict, name: str) -> dict:
-    matches = [
-        item for item in release.get("assets", [])
-        if isinstance(item, dict) and item.get("name") == name
-    ]
-    if len(matches) != 1:
-        raise ValueError(f"Release asset is missing or duplicated: {name}")
-    asset = matches[0]
-    url = str(asset.get("browser_download_url") or "")
-    if not _trusted_release_asset_url(url):
-        raise ValueError(f"Untrusted release asset URL: {name}")
-    return asset
 
 
 def verify_manifest(manifest_bytes: bytes, signature_bytes: bytes,
@@ -140,36 +118,30 @@ def _manifest_asset(manifest: dict, name: str) -> dict:
 
 
 def latest_release_info(local_version: str) -> dict:
+    """Read latest signed metadata without using the rate-limited GitHub API."""
     local_version = str(local_version or "").strip()
     _version_tuple(local_version)
 
-    release = _read_json(LATEST_RELEASE_API)
-    if release.get("draft") or release.get("prerelease"):
-        raise ValueError("Latest public release is not a production release")
-
-    tag = str(release.get("tag_name") or "")
-    remote_version = tag[1:] if tag.startswith("v") else tag
-    _version_tuple(remote_version)
-
-    manifest_asset = _release_asset(release, "release-manifest.json")
-    signature_asset = _release_asset(release, "release-manifest.json.sig")
-    manifest_bytes = _read_url(manifest_asset["browser_download_url"])
-    signature_bytes = _read_url(signature_asset["browser_download_url"], max_bytes=16 * 1024)
+    manifest_bytes = _read_url(LATEST_MANIFEST_URL)
+    signature_bytes = _read_url(LATEST_SIGNATURE_URL, max_bytes=16 * 1024)
     manifest = verify_manifest(manifest_bytes, signature_bytes)
-
-    if manifest.get("version") != remote_version:
-        raise ValueError("Release tag and signed manifest version do not match")
+    remote_version = str(manifest["version"])
 
     installer_name = f"Stats-Setup-{remote_version}-windows-x64.exe"
     signed_installer = _manifest_asset(manifest, installer_name)
-    release_installer = _release_asset(release, installer_name)
+    installer_url = (
+        f"https://github.com/{UPDATE_REPO}/releases/download/"
+        f"v{remote_version}/{installer_name}"
+    )
+    if not _trusted_release_asset_url(installer_url):
+        raise ValueError("Could not construct trusted installer URL")
 
     return {
         "current": local_version,
         "latest": remote_version,
         "available": _version_tuple(remote_version) > _version_tuple(local_version),
         "installer_name": installer_name,
-        "installer_url": release_installer["browser_download_url"],
+        "installer_url": installer_url,
         "sha256": str(signed_installer["sha256"]).lower(),
         "size": int(signed_installer["size"]),
     }
@@ -254,10 +226,9 @@ def _start_detached_updater(installer: Path, version: str) -> None:
 
 
 def install(app, server_module) -> bool:
-    global _INSTALLED, _SERVER
+    global _INSTALLED
     if _INSTALLED:
         return False
-    _SERVER = server_module
 
     @app.post("/api/windows/update/check")
     def windows_update_check():
