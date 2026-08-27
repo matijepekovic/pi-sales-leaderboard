@@ -24,16 +24,11 @@ By default it creates a current-user Startup shortcut. At Windows sign-in the la
 3. opens Microsoft Edge in dedicated fullscreen mode (Chrome is the fallback);
 4. stays running while the fullscreen window is open;
 5. shuts down the backend and exits when the user closes the fullscreen window;
-6. only relaunches the fullscreen browser for an explicit in-app Fullscreen request;
-7. may restart the backend after a backend crash while the fullscreen app is still open.
+6. only relaunches the fullscreen browser for an explicit in-app Fullscreen request.
 
-Closing the fullscreen window is therefore a real user exit. It does not reopen until the user launches Stats again or Windows starts it at a later sign-in.
+Closing the fullscreen window is a real user exit. It does not reopen until the user launches Stats again or Windows starts it at a later sign-in.
 
 A desktop shortcut is optional during setup.
-
-## 1.0.0 rename migration
-
-The 1.0.1 installer keeps the same application identity so an existing installation is recognized. It stops the older running launcher/backend, removes the retired program folder and shortcuts, then installs the current Stats files and shortcuts. Persistent customer data is not part of that program-folder cleanup.
 
 ## Persistent data
 
@@ -55,11 +50,11 @@ The app's Linux labwc/systemd startup behavior is not used by the Windows launch
 
 `.github/workflows/windows-installer.yml` runs on production pull requests and production pushes. It:
 
-1. tests that closing the fullscreen browser exits the launcher instead of relaunching it;
-2. packages the backend and launcher with PyInstaller;
-3. starts the frozen backend and verifies `/health`, the production version API, and the main display page;
-4. compiles the Inno Setup installer;
-5. simulates the 1.0.0 program-folder migration and verifies it is removed;
+1. rejects the retired product name anywhere in tracked production files;
+2. tests that closing the fullscreen browser exits the launcher instead of relaunching it;
+3. packages the backend and launcher with PyInstaller;
+4. starts the frozen backend and verifies `/health`, the production version API, and the main display page;
+5. compiles the Inno Setup installer;
 6. silently installs the current build and verifies the Stats executable names and Startup shortcut;
 7. starts the installed backend, silently uninstalls Stats, and verifies the running backend is stopped and the program files/Startup shortcut are removed;
 8. signs and publishes production release assets only after those checks pass.
