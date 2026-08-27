@@ -34,7 +34,7 @@ env:
 jobs:
   build-windows-installer:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - uses: actions/checkout@v4
@@ -78,6 +78,10 @@ jobs:
         shell: pwsh
         run: python windows/test_launcher.py
 
+      - name: Test signed update verification
+        shell: pwsh
+        run: python windows/test_windows_update.py
+
       - name: Build packaged backend
         shell: pwsh
         run: |
@@ -96,6 +100,8 @@ jobs:
             --hidden-import starter_theme_assets_v119 `
             --hidden-import production_gates `
             --hidden-import production_versioning `
+            --hidden-import windows_update `
+            --hidden-import cryptography.hazmat.primitives.asymmetric.ed25519 `
             windows/server_entry.py
 
       - name: Build Windows fullscreen launcher
@@ -109,7 +115,22 @@ jobs:
             --name StatsLauncher `
             windows/launcher.py
 
-      - name: Smoke-test packaged backend
+      - name: Build detached update helper
+        shell: pwsh
+        run: |
+          pyinstaller `
+            --noconfirm `
+            --clean `
+            --onefile `
+            --noconsole `
+            --name StatsUpdater `
+            windows/updater.py
+          .\dist\StatsUpdater.exe --self-test
+          if ($LASTEXITCODE -ne 0) {
+            throw "StatsUpdater self-test failed"
+          }
+
+      - name: Smoke-test packaged backend and signed update feed
         shell: pwsh
         run: |
           $server = Resolve-Path ".\dist\StatsServer\StatsServer.exe"
@@ -141,6 +162,11 @@ jobs:
             $display = Invoke-WebRequest -Uri "http://127.0.0.1:8765/" -UseBasicParsing -TimeoutSec 5
             if ($display.StatusCode -ne 200) {
               throw "Leaderboard display did not render"
+            }
+
+            $update = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/windows/update/check" -Method Post -TimeoutSec 30
+            if ($update.ok -ne $true -or $update.latest -notmatch '^\d+\.\d+\.\d+$') {
+              throw "Packaged backend could not verify the signed public update feed"
             }
           } finally {
             if (-not $process.HasExited) {
@@ -180,6 +206,9 @@ jobs:
           $installedRoot = Join-Path $env:LOCALAPPDATA "Programs\Stats"
           if (-not (Test-Path (Join-Path $installedRoot "StatsLauncher.exe"))) {
             throw "Installed launcher is missing"
+          }
+          if (-not (Test-Path (Join-Path $installedRoot "StatsUpdater.exe"))) {
+            throw "Installed updater helper is missing"
           }
           if (-not (Test-Path (Join-Path $installedRoot "server\StatsServer.exe"))) {
             throw "Installed backend is missing"
@@ -227,7 +256,6 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($env:UPDATE_SIGNING_PRIVATE_KEY)) {
             throw "UPDATE_SIGNING_PRIVATE_KEY is not configured"
           }
-          python -m pip install --disable-pip-version-check cryptography
           $installer = Get-ChildItem ".\installer-output\Stats-Setup-*-windows-x64.exe" | Select-Object -First 1
           if (-not $installer) {
             throw "Tested Windows installer is missing"
@@ -246,37 +274,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Signed release verification failed"
           }
-
-      - name: Remove superseded zero-download test releases
-        if: github.event_name == 'push' && github.ref == 'refs/heads/production'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.UPDATE_PUBLISH_TOKEN }}
-        run: |
-          gh release view v1.0.0 --repo $env:PUBLIC_UPDATE_REPO *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release delete v1.0.0 --repo $env:PUBLIC_UPDATE_REPO --yes --cleanup-tag
-            if ($LASTEXITCODE -ne 0) {
-              throw "Could not remove superseded public release v1.0.0"
-            }
-          }
-
-          if ($env:STATS_VERSION -eq '1.0.1') {
-            $jsonText = gh api "repos/$env:PUBLIC_UPDATE_REPO/releases/tags/v1.0.1" 2>$null
-            if ($LASTEXITCODE -eq 0) {
-              $release = $jsonText | ConvertFrom-Json
-              $installerAsset = $release.assets | Where-Object { $_.name -eq 'Stats-Setup-1.0.1-windows-x64.exe' } | Select-Object -First 1
-              $downloadCount = ($release.assets | Measure-Object -Property download_count -Sum).Sum
-              $draftDigest = 'sha256:09727adbb432fc4c8f2eea844b1529a40eb310ade13066d933caf03ca591b0a5'
-              if ($installerAsset -and $installerAsset.digest -eq $draftDigest -and $downloadCount -eq 0) {
-                gh release delete v1.0.1 --repo $env:PUBLIC_UPDATE_REPO --yes --cleanup-tag
-                if ($LASTEXITCODE -ne 0) {
-                  throw "Could not remove zero-download v1.0.1 draft"
-                }
-              }
-            }
-          }
-          exit 0
 
       - name: Publish signed public Windows release
         if: github.event_name == 'push' && github.ref == 'refs/heads/production'
@@ -328,7 +325,7 @@ jobs:
           $notes = @"
           Official Stats production release $env:STATS_VERSION.
 
-          Windows x64 installer included. The release manifest is SHA-256 hashed and Ed25519 signed. Customer machines do not receive GitHub credentials or the private signing key.
+          Windows x64 installer included. Stats verifies the Ed25519-signed manifest and SHA-256 before any in-app update is installed. Customer machines do not receive GitHub credentials or the private signing key.
           "@
 
           gh release create $tag `
