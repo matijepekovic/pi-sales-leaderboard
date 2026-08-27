@@ -48,7 +48,7 @@ jobs:
       - name: Exercise manifest signing and verification
         run: |
           mkdir -p dist
-          printf 'Tablou Stats release signing self-test\n' > dist/self-test.bin
+          printf 'Stats release signing self-test\n' > dist/self-test.bin
 
           python - <<'PY'
           import base64
