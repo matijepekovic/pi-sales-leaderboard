@@ -1,10 +1,10 @@
 """Windows-only runtime adjustments for the packaged production build.
 
 The source application was originally an appliance service supervised by
-systemd/labwc.  The Windows installer supplies its own launcher/watchdog, so
-this module disables Linux-only startup work and blocks the old source-tree
-update installers.  Persistent leaderboard data remains in the existing
-per-user data directory and is never stored inside the replaceable app folder.
+systemd/labwc. The Windows installer supplies its own launcher, so this module
+disables Linux-only startup work and blocks the old source-tree update
+installers. Persistent leaderboard data remains in the existing per-user data
+directory and is never stored inside the replaceable app folder.
 """
 from __future__ import annotations
 
@@ -42,7 +42,6 @@ def _remove_linux_autostart_block() -> None:
             except OSError:
                 pass
     except Exception:
-        # This is housekeeping only. A failure must never stop the app.
         pass
 
 
@@ -53,18 +52,16 @@ def install(app, server_module) -> bool:
 
     _remove_linux_autostart_block()
 
-    # The Windows launcher owns kiosk startup and restarts. Replace the Linux
-    # labwc writer so a later Fullscreen request only creates the normal
-    # restart-kiosk.request file, which the Windows launcher watches.
+    # The Windows launcher owns fullscreen startup. A deliberate Fullscreen
+    # request still creates restart-kiosk.request for that launcher to honor.
     def windows_kiosk_startup_status():
-        set_meta("kiosk_startup_status", "Windows startup managed by Tablou Stats launcher")
+        set_meta("kiosk_startup_status", "Windows startup managed by Stats launcher")
 
     server_module.ensure_labwc_kiosk_autostart = windows_kiosk_startup_status
     windows_kiosk_startup_status()
 
-    # Never let the packaged executable replace its own frozen files with the
-    # legacy source ZIP updater. Signed public-release installers will own that
-    # path. The manual Check for Updates UI may still compare versions safely.
+    # A frozen executable must never replace itself with a legacy source ZIP.
+    # Signed public-release installers own Windows updates.
     settings = get_settings()
     if settings.get("github_auto_update"):
         settings["github_auto_update"] = False
@@ -74,8 +71,8 @@ def install(app, server_module) -> bool:
         return jsonify({
             "ok": False,
             "error": (
-                "This Windows build only accepts signed Tablou Stats installer "
-                "updates. Source ZIP updates are disabled."
+                "This Windows build only accepts signed Stats installer updates. "
+                "Source ZIP updates are disabled."
             ),
         }), 409
 
