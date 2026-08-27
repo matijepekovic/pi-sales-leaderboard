@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Windows watchdog for the packaged Tablou Stats server and kiosk browser."""
+"""Windows launcher for the packaged Stats server and fullscreen browser."""
 from __future__ import annotations
 
 import atexit
@@ -38,7 +38,7 @@ def acquire_single_instance() -> bool:
     global _MUTEX_HANDLE
     kernel32 = ctypes.windll.kernel32
     kernel32.CreateMutexW.restype = ctypes.c_void_p
-    handle = kernel32.CreateMutexW(None, False, "Local\\TablouStatsLauncher")
+    handle = kernel32.CreateMutexW(None, False, "Local\\StatsLauncher")
     if not handle:
         return False
     if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
@@ -55,7 +55,7 @@ def app_dir() -> Path:
 
 
 def server_exe() -> Path:
-    return app_dir() / "server" / "TablouStatsServer.exe"
+    return app_dir() / "server" / "StatsServer.exe"
 
 
 def health_ok(timeout: float = 1.5) -> bool:
@@ -123,7 +123,7 @@ def launch_browser():
     profile.mkdir(parents=True, exist_ok=True)
 
     for kind, exe in browser_candidates():
-        common = [
+        args = [
             exe,
             URL,
             f"--user-data-dir={profile}",
@@ -135,11 +135,11 @@ def launch_browser():
             "--disable-infobars",
         ]
         if kind == "edge":
-            common.append("--edge-kiosk-type=fullscreen")
+            args.append("--edge-kiosk-type=fullscreen")
         try:
-            log(f"Launching {kind} kiosk: {exe}")
+            log(f"Launching {kind} fullscreen: {exe}")
             return subprocess.Popen(
-                common,
+                args,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -148,19 +148,12 @@ def launch_browser():
         except Exception as exc:
             log(f"Could not launch {kind}: {exc}")
 
-    # Windows normally includes Edge. This fallback still makes the app usable
-    # on unusual systems, although it cannot guarantee kiosk mode.
-    log("No Edge/Chrome executable found; opening the default browser")
-    try:
-        os.startfile(URL)  # type: ignore[attr-defined]
-        return False
-    except Exception as exc:
-        log(f"Could not open a browser: {exc}")
-        return None
+    log("No supported Edge/Chrome browser was found")
+    return None
 
 
 def kill_process_tree(process) -> None:
-    if not process or process is False:
+    if process is None:
         return
     try:
         if process.poll() is None:
@@ -197,15 +190,10 @@ def cleanup() -> None:
         _MUTEX_HANDLE = None
 
 
-def main() -> int:
+def supervise() -> int:
+    """Run Stats until the user closes the fullscreen browser."""
     global _SERVER, _BROWSER
 
-    if os.name != "nt":
-        return 1
-    if not acquire_single_instance():
-        return 0
-
-    atexit.register(cleanup)
     request_file = data_dir() / "restart-kiosk.request"
     try:
         request_file.unlink(missing_ok=True)
@@ -213,7 +201,7 @@ def main() -> int:
         pass
     last_request = restart_request_stamp(request_file)
 
-    log("Tablou Stats Windows launcher started")
+    log("Stats Windows launcher started")
 
     while True:
         if _SERVER is None or _SERVER.poll() is not None:
@@ -231,7 +219,7 @@ def main() -> int:
         current_request = restart_request_stamp(request_file)
         requested = current_request is not None and current_request != last_request
         if requested:
-            log("Kiosk relaunch requested by the app")
+            log("Fullscreen relaunch requested by the app")
             last_request = current_request
             kill_process_tree(_BROWSER)
             _BROWSER = None
@@ -239,20 +227,30 @@ def main() -> int:
                 request_file.unlink(missing_ok=True)
             except Exception:
                 pass
-
-        browser_exited = (
-            _BROWSER is not None
-            and _BROWSER is not False
-            and _BROWSER.poll() is not None
-        )
-        if browser_exited:
-            log("Kiosk browser exited; relaunching")
-            _BROWSER = None
+            if health_ok():
+                _BROWSER = launch_browser()
+                if _BROWSER is None:
+                    return 1
+            continue
 
         if _BROWSER is None and health_ok():
             _BROWSER = launch_browser()
+            if _BROWSER is None:
+                return 1
+        elif _BROWSER is not None and _BROWSER.poll() is not None:
+            log("Fullscreen browser was closed; shutting down Stats")
+            return 0
 
         time.sleep(2)
+
+
+def main() -> int:
+    if os.name != "nt":
+        return 1
+    if not acquire_single_instance():
+        return 0
+    atexit.register(cleanup)
+    return supervise()
 
 
 if __name__ == "__main__":
