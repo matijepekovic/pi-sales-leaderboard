@@ -1,0 +1,166 @@
+name: Windows production installer
+
+on:
+  pull_request:
+    branches:
+      - production
+    paths:
+      - "app/**"
+      - "windows/**"
+      - "requirements.txt"
+      - "VERSION"
+      - ".github/workflows/windows-installer.yml"
+  push:
+    branches:
+      - production
+    paths:
+      - "app/**"
+      - "windows/**"
+      - "requirements.txt"
+      - "VERSION"
+      - ".github/workflows/windows-installer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller==6.15.0
+
+      - name: Read production version
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Production VERSION must be MAJOR.MINOR.PATCH"
+          }
+          "TABLOU_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build packaged backend
+        shell: pwsh
+        run: |
+          pyinstaller `
+            --noconfirm `
+            --clean `
+            --onedir `
+            --noconsole `
+            --name TablouStatsServer `
+            --paths app `
+            --add-data "app/templates;templates" `
+            --add-data "app/static;static" `
+            --add-data "VERSION;." `
+            --hidden-import applied_theme_assets_v116 `
+            --hidden-import starter_theme_v119 `
+            --hidden-import starter_theme_assets_v119 `
+            --hidden-import production_gates `
+            --hidden-import production_versioning `
+            windows/server_entry.py
+
+      - name: Build Windows kiosk launcher
+        shell: pwsh
+        run: |
+          pyinstaller `
+            --noconfirm `
+            --clean `
+            --onefile `
+            --noconsole `
+            --name TablouStatsLauncher `
+            windows/launcher.py
+
+      - name: Smoke-test packaged backend
+        shell: pwsh
+        run: |
+          $server = Resolve-Path ".\dist\TablouStatsServer\TablouStatsServer.exe"
+          $process = Start-Process -FilePath $server -PassThru
+          try {
+            $healthy = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              Start-Sleep -Seconds 1
+              if ($process.HasExited) {
+                throw "Packaged backend exited early with code $($process.ExitCode)"
+              }
+              try {
+                $health = Invoke-RestMethod -Uri "http://127.0.0.1:8765/health" -TimeoutSec 2
+                if ($health.ok -eq $true) {
+                  $healthy = $true
+                  break
+                }
+              } catch {}
+            }
+            if (-not $healthy) {
+              throw "Packaged backend did not become healthy"
+            }
+
+            $version = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/system/version" -TimeoutSec 5
+            if ($version.version -ne $env:TABLOU_VERSION) {
+              throw "Packaged backend version mismatch: $($version.version)"
+            }
+
+            $display = Invoke-WebRequest -Uri "http://127.0.0.1:8765/" -UseBasicParsing -TimeoutSec 5
+            if ($display.StatusCode -ne 200) {
+              throw "Leaderboard display did not render"
+            }
+          } finally {
+            if (-not $process.HasExited) {
+              Stop-Process -Id $process.Id -Force
+            }
+          }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            throw "Inno Setup compiler not found at $iscc"
+          }
+          & $iscc "windows\TablouStats.iss"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup compilation failed"
+          }
+
+      - name: Verify installer contents by silent install
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem ".\installer-output\Tablou-Stats-Setup-*-windows-x64.exe" | Select-Object -First 1
+          if (-not $installer) {
+            throw "Installer executable was not produced"
+          }
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=""' -PassThru -Wait
+          if ($install.ExitCode -ne 0) {
+            throw "Silent installer test failed with code $($install.ExitCode)"
+          }
+          $installedRoot = Join-Path $env:LOCALAPPDATA "Programs\Tablou Stats"
+          if (-not (Test-Path (Join-Path $installedRoot "TablouStatsLauncher.exe"))) {
+            throw "Installed launcher is missing"
+          }
+          if (-not (Test-Path (Join-Path $installedRoot "server\TablouStatsServer.exe"))) {
+            throw "Installed backend is missing"
+          }
+
+      - name: Upload tested installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tablou-Stats-Windows-${{ env.TABLOU_VERSION }}
+          path: installer-output/Tablou-Stats-Setup-*-windows-x64.exe
+          if-no-files-found: error
+          retention-days: 14
