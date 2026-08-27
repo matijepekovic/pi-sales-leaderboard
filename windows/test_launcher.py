@@ -8,7 +8,8 @@ import unittest
 from pathlib import Path
 
 WINDOWS_DIR = Path(__file__).resolve().parent
-APP_DIR = WINDOWS_DIR.parent / "app"
+ROOT_DIR = WINDOWS_DIR.parent
+APP_DIR = ROOT_DIR / "app"
 sys.path.insert(0, str(WINDOWS_DIR))
 sys.path.insert(0, str(APP_DIR))
 import launcher  # noqa: E402
@@ -113,6 +114,13 @@ class RemoteQrTests(unittest.TestCase):
             remote_qr_v109._lan_ipv4 = original_lan
             remote_qr_v109.STATIC_DIR = original_static
             remote_qr_v109.OUTPUT = original_output
+
+    def test_desktop_qr_double_click_opens_settings(self):
+        script = (APP_DIR / "static" / "remote-qr-overlay-v110.js").read_text(encoding="utf-8")
+        self.assertIn("pointer-events:auto", script)
+        self.assertIn("addEventListener('dblclick'", script)
+        self.assertIn("window.location.assign('/settings')", script)
+        self.assertIn("Double-click to open Settings", script)
 
 
 if __name__ == "__main__":
