@@ -35,10 +35,10 @@ A desktop shortcut is optional during setup.
 
 The Software card remains user-controlled with **Check for Updates** and **Update**. After the user presses Update, the rest of the process is automatic:
 
-1. Stats reads the latest public release from `matijepekovic/pi-sales-leaderboard-updates` without credentials.
-2. It downloads `release-manifest.json` and `release-manifest.json.sig`.
-3. It verifies the exact manifest bytes with the embedded Ed25519 public key.
-4. It requires the release tag, signed manifest version, Windows installer filename, size, and SHA-256 to agree.
+1. Stats reads the latest public `release-manifest.json` and `release-manifest.json.sig` through GitHub Release download URLs. It does not use the rate-limited GitHub API and does not need credentials.
+2. It verifies the exact manifest bytes with the embedded Ed25519 public key.
+3. The signed manifest supplies the production version, exact Windows installer filename, size, and SHA-256.
+4. Stats derives the exact versioned public installer URL from that signed version.
 5. It downloads the installer to the persistent updates directory and verifies its signed size and SHA-256 again immediately before launch.
 6. It copies and starts `StatsUpdater.exe` outside the replaceable program directory.
 7. The helper lets the API response return, silently runs the verified Inno Setup installer, then relaunches the new `StatsLauncher.exe`.
