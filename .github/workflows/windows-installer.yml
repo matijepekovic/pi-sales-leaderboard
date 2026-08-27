@@ -9,6 +9,8 @@ on:
       - "windows/**"
       - "requirements.txt"
       - "VERSION"
+      - "scripts/sign_release_manifest.py"
+      - "scripts/verify_release_manifest.py"
       - ".github/workflows/windows-installer.yml"
   push:
     branches:
@@ -18,11 +20,16 @@ on:
       - "windows/**"
       - "requirements.txt"
       - "VERSION"
+      - "scripts/sign_release_manifest.py"
+      - "scripts/verify_release_manifest.py"
       - ".github/workflows/windows-installer.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  PUBLIC_UPDATE_REPO: matijepekovic/pi-sales-leaderboard-updates
 
 jobs:
   build-windows-installer:
@@ -155,6 +162,99 @@ jobs:
           }
           if (-not (Test-Path (Join-Path $installedRoot "server\TablouStatsServer.exe"))) {
             throw "Installed backend is missing"
+          }
+
+      - name: Sign and verify public release manifest
+        if: github.event_name == 'push' && github.ref == 'refs/heads/production'
+        shell: pwsh
+        env:
+          UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:UPDATE_SIGNING_PRIVATE_KEY)) {
+            throw "UPDATE_SIGNING_PRIVATE_KEY is not configured"
+          }
+          python -m pip install --disable-pip-version-check cryptography
+          $installer = Get-ChildItem ".\installer-output\Tablou-Stats-Setup-*-windows-x64.exe" | Select-Object -First 1
+          if (-not $installer) {
+            throw "Tested Windows installer is missing"
+          }
+          python scripts/sign_release_manifest.py `
+            --version "$env:TABLOU_VERSION" `
+            --output-dir installer-output `
+            "$($installer.FullName)"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release manifest signing failed"
+          }
+          python scripts/verify_release_manifest.py `
+            --manifest installer-output/release-manifest.json `
+            --signature installer-output/release-manifest.json.sig `
+            --asset-dir installer-output
+          if ($LASTEXITCODE -ne 0) {
+            throw "Signed release verification failed"
+          }
+
+      - name: Publish signed public Windows release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/production'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.UPDATE_PUBLISH_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            throw "UPDATE_PUBLISH_TOKEN is not configured"
+          }
+
+          $tag = "v$env:TABLOU_VERSION"
+          $installer = Get-ChildItem ".\installer-output\Tablou-Stats-Setup-*-windows-x64.exe" | Select-Object -First 1
+          $manifest = Resolve-Path ".\installer-output\release-manifest.json"
+          $signature = Resolve-Path ".\installer-output\release-manifest.json.sig"
+
+          gh release view $tag --repo $env:PUBLIC_UPDATE_REPO *> $null
+          if ($LASTEXITCODE -eq 0) {
+            $existing = Join-Path $env:RUNNER_TEMP "existing-public-release"
+            New-Item -ItemType Directory -Force -Path $existing | Out-Null
+            gh release download $tag --repo $env:PUBLIC_UPDATE_REPO --dir $existing
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not verify existing public release $tag"
+            }
+
+            $remoteInstaller = Get-ChildItem $existing -Filter $installer.Name | Select-Object -First 1
+            $remoteManifest = Join-Path $existing "release-manifest.json"
+            $remoteSignature = Join-Path $existing "release-manifest.json.sig"
+            if (-not $remoteInstaller -or -not (Test-Path $remoteManifest) -or -not (Test-Path $remoteSignature)) {
+              throw "Public release $tag already exists but is incomplete"
+            }
+
+            $pairs = @(
+              @($installer.FullName, $remoteInstaller.FullName),
+              @($manifest.Path, $remoteManifest),
+              @($signature.Path, $remoteSignature)
+            )
+            foreach ($pair in $pairs) {
+              $localHash = (Get-FileHash -Algorithm SHA256 $pair[0]).Hash
+              $remoteHash = (Get-FileHash -Algorithm SHA256 $pair[1]).Hash
+              if ($localHash -ne $remoteHash) {
+                throw "Public release $tag already exists with different assets"
+              }
+            }
+            Write-Host "Public release $tag already exists with identical signed assets."
+            exit 0
+          }
+
+          $notes = @"
+          Official Tablou Stats production release $env:TABLOU_VERSION.
+
+          Windows x64 installer included. The release manifest is SHA-256 hashed and Ed25519 signed. Customer machines do not receive GitHub credentials or the private signing key.
+          "@
+
+          gh release create $tag `
+            "$($installer.FullName)" `
+            "$($manifest.Path)" `
+            "$($signature.Path)" `
+            --repo $env:PUBLIC_UPDATE_REPO `
+            --title "Tablou Stats $env:TABLOU_VERSION" `
+            --notes $notes
+          if ($LASTEXITCODE -ne 0) {
+            throw "Public release publication failed"
           }
 
       - name: Upload tested installer artifact
