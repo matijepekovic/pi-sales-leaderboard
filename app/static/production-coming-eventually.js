@@ -2,6 +2,8 @@
 (function(){
   const MESSAGE="Coming eventually";
   const DISABLED_ROTATION=new Set(["team_vs_team","all_teams"]);
+  let applying=false;
+  let applyQueued=false;
 
   function coming(){
     alert(MESSAGE);
@@ -9,11 +11,21 @@
 
   function forceWholeOffice(){
     const select=document.getElementById("activeMode");
-    if(!select) return;
+    if(!select) return false;
+
+    // Settings loads /api/config asynchronously. Before that response returns,
+    // activeMode has no options. Assigning a value that has no matching option
+    // leaves select.value empty. The old MutationObserver interpreted that as a
+    // new change forever, called renderMode(), observed its DOM rewrite, and
+    // immediately repeated the cycle until Chromium reported Page Unresponsive.
+    // Do nothing until the actual production option has been mounted.
+    const wholeOfficeOption=select.querySelector('option[value="whole_office"]');
+    if(!wholeOfficeOption) return false;
+
     let changed=false;
     if(select.value!=="whole_office"){
       select.value="whole_office";
-      changed=true;
+      if(select.value==="whole_office") changed=true;
     }
     try{
       if(typeof config==="object"&&config&&config.active_mode!=="whole_office"){
@@ -26,6 +38,7 @@
       }
       if(changed&&typeof renderMode==="function") renderMode();
     }catch(_){ }
+    return true;
   }
 
   function lockRotationRows(){
@@ -77,21 +90,41 @@
   },true);
 
   function apply(){
-    forceWholeOffice();
-    lockRotationRows();
-    const date=document.getElementById("v113DateOverride");
-    if(date){
-      date.open=false;
-      date.title=MESSAGE;
+    if(applying) return;
+    applying=true;
+    try{
+      // If Settings is still booting, wait for a later DOM mutation instead of
+      // touching the incomplete select and creating a self-triggering loop.
+      if(!forceWholeOffice()) return;
+      lockRotationRows();
+      const date=document.getElementById("v113DateOverride");
+      if(date){
+        date.open=false;
+        date.title=MESSAGE;
+      }
+    }finally{
+      applying=false;
     }
   }
 
-  const observer=new MutationObserver(apply);
-  observer.observe(document.documentElement,{childList:true,subtree:true});
+  function scheduleApply(){
+    if(applyQueued) return;
+    applyQueued=true;
+    setTimeout(()=>{
+      applyQueued=false;
+      apply();
+    },0);
+  }
+
+  // Only watch the settings application subtree, and debounce callbacks onto a
+  // later task. DOM changes made by apply() can therefore never recurse inside
+  // the same MutationObserver turn.
+  const observer=new MutationObserver(scheduleApply);
+  observer.observe(document.getElementById("appWrap")||document.body,{childList:true,subtree:true});
 
   if(document.readyState==="loading"){
-    document.addEventListener("DOMContentLoaded",()=>setTimeout(apply,0),{once:true});
+    document.addEventListener("DOMContentLoaded",scheduleApply,{once:true});
   }else{
-    setTimeout(apply,0);
+    scheduleApply();
   }
 })();
