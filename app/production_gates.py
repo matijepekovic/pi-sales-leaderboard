@@ -10,6 +10,7 @@ from flask import jsonify, request
 
 from database import get_meta, get_settings, save_settings, set_meta
 import keyboard_controls_v112
+from sources import tableau_configured
 
 COMING_EVENTUALLY = "Coming eventually"
 DISABLED_VIEW_MODES = {"team_vs_team", "all_teams"}
@@ -17,6 +18,17 @@ _INSTALLED = False
 _BASE_CONFIG = None
 _BASE_SAVE_CONFIG = None
 _BASE_GET_MODE_PAYLOAD = None
+
+
+def _remove_compiled_connection_defaults():
+    """Fresh production installs must never inherit one office's connection.
+
+    Saved customer connection values still live in settings and still win.
+    Only the old compiled fallback is removed, so an unconfigured install shows
+    blank fields with examples instead of somebody else's server/site/token.
+    """
+    for key in ("server", "site", "pat_name"):
+        tableau_configured.DEFAULTS[key] = ""
 
 
 def _bump_settings_version():
@@ -159,6 +171,7 @@ def install(app):
     if _INSTALLED:
         return False
 
+    _remove_compiled_connection_defaults()
     _patch_rotation_choices()
     _sanitize_saved_settings()
     _patch_config_read(app)
