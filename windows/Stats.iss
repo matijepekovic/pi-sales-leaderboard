@@ -58,7 +58,7 @@ var
 begin
   { The launcher records only the browser process used by Stats. Killing that
     exact PID avoids closing unrelated Edge/Chrome windows on the PC. }
-  PidFile := ExpandConstant('{userprofile}\.local\share\pi-tableau-leaderboard\windows-kiosk-browser.pid');
+  PidFile := GetEnv('USERPROFILE') + '\.local\share\pi-tableau-leaderboard\windows-kiosk-browser.pid';
   if FileExists(PidFile) then
   begin
     Command := '/C for /F "usebackq delims=" %P in ("' + PidFile + '") do taskkill /PID %P /T /F >NUL 2>&1';
