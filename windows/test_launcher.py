@@ -122,6 +122,16 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("window.location.assign('/settings')", script)
         self.assertIn("Double-click to open Settings", script)
 
+    def test_production_settings_guard_cannot_spin_before_options_load(self):
+        script = (APP_DIR / "static" / "production-coming-eventually.js").read_text(encoding="utf-8")
+        self.assertIn("wholeOfficeOption", script)
+        self.assertIn("if(!wholeOfficeOption) return false", script)
+        self.assertIn("let applying=false", script)
+        self.assertIn("let applyQueued=false", script)
+        self.assertIn("new MutationObserver(scheduleApply)", script)
+        self.assertNotIn("new MutationObserver(apply)", script)
+        self.assertNotIn("observer.observe(document.documentElement", script)
+
 
 if __name__ == "__main__":
     unittest.main()
