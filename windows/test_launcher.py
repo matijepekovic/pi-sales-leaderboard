@@ -132,6 +132,20 @@ class RemoteQrTests(unittest.TestCase):
         self.assertNotIn("new MutationObserver(apply)", script)
         self.assertNotIn("observer.observe(document.documentElement", script)
 
+    def test_settings_back_button_and_connection_examples(self):
+        script = (APP_DIR / "static" / "settings-production-v107.js").read_text(encoding="utf-8")
+        template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
+        gates = (APP_DIR / "production_gates.py").read_text(encoding="utf-8")
+
+        self.assertIn("← Back to Stats", script)
+        self.assertIn("window.location.assign('/')", script)
+        self.assertIn("Example: https://your-pod.online.tableau.com", script)
+        self.assertIn("Example: your-site", script)
+        self.assertIn("Example: stats-pat", script)
+        self.assertIn("settings-production-v107.js", template)
+        self.assertIn("_remove_compiled_connection_defaults", gates)
+        self.assertIn('tableau_configured.DEFAULTS[key] = ""', gates)
+
 
 if __name__ == "__main__":
     unittest.main()
