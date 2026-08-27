@@ -16,6 +16,7 @@ URL = "http://127.0.0.1:8765/"
 HEALTH_URL = URL + "health"
 CREATE_NO_WINDOW = 0x08000000
 ERROR_ALREADY_EXISTS = 183
+KIOSK_BROWSER_PID_NAME = "windows-kiosk-browser.pid"
 _MUTEX_HANDLE = None
 _SERVER = None
 _BROWSER = None
@@ -25,6 +26,24 @@ def data_dir() -> Path:
     path = Path.home() / ".local" / "share" / "pi-tableau-leaderboard"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def kiosk_browser_pid_file() -> Path:
+    return data_dir() / KIOSK_BROWSER_PID_NAME
+
+
+def write_kiosk_browser_pid(process) -> None:
+    try:
+        kiosk_browser_pid_file().write_text(str(int(process.pid)), encoding="ascii")
+    except Exception as exc:
+        log(f"Could not record kiosk browser PID: {exc}")
+
+
+def clear_kiosk_browser_pid() -> None:
+    try:
+        kiosk_browser_pid_file().unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def log(message: str) -> None:
@@ -138,16 +157,19 @@ def launch_browser():
             args.append("--edge-kiosk-type=fullscreen")
         try:
             log(f"Launching {kind} fullscreen: {exe}")
-            return subprocess.Popen(
+            process = subprocess.Popen(
                 args,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 creationflags=CREATE_NO_WINDOW,
             )
+            write_kiosk_browser_pid(process)
+            return process
         except Exception as exc:
             log(f"Could not launch {kind}: {exc}")
 
+    clear_kiosk_browser_pid()
     log("No supported Edge/Chrome browser was found")
     return None
 
@@ -181,6 +203,7 @@ def restart_request_stamp(path: Path):
 def cleanup() -> None:
     global _MUTEX_HANDLE
     kill_process_tree(_BROWSER)
+    clear_kiosk_browser_pid()
     kill_process_tree(_SERVER)
     if _MUTEX_HANDLE:
         try:
@@ -222,6 +245,7 @@ def supervise() -> int:
             log("Fullscreen relaunch requested by the app")
             last_request = current_request
             kill_process_tree(_BROWSER)
+            clear_kiosk_browser_pid()
             _BROWSER = None
             try:
                 request_file.unlink(missing_ok=True)
@@ -238,6 +262,7 @@ def supervise() -> int:
             if _BROWSER is None:
                 return 1
         elif _BROWSER is not None and _BROWSER.poll() is not None:
+            clear_kiosk_browser_pid()
             log("Fullscreen browser was closed; shutting down Stats")
             return 0
 
