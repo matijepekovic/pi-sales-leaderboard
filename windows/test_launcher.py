@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small behavior tests for the Windows Stats launcher."""
+"""Small behavior tests for the Windows Stats launcher and phone QR."""
 from __future__ import annotations
 
 import sys
@@ -7,8 +7,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+WINDOWS_DIR = Path(__file__).resolve().parent
+APP_DIR = WINDOWS_DIR.parent / "app"
+sys.path.insert(0, str(WINDOWS_DIR))
+sys.path.insert(0, str(APP_DIR))
 import launcher  # noqa: E402
+import remote_qr_v109  # noqa: E402
 
 
 class FakeProcess:
@@ -81,6 +85,34 @@ class LauncherBehaviorTests(unittest.TestCase):
             launcher.log = lambda message: None
 
             self.assertEqual(launcher.supervise(), 1)
+
+
+class RemoteQrTests(unittest.TestCase):
+    def test_generate_uses_current_lan_address(self):
+        original_lan = remote_qr_v109._lan_ipv4
+        original_static = remote_qr_v109.STATIC_DIR
+        original_output = remote_qr_v109.OUTPUT
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                remote_qr_v109._lan_ipv4 = lambda: "192.168.50.25"
+                remote_qr_v109.STATIC_DIR = Path(temp)
+                remote_qr_v109.OUTPUT = Path(temp) / "remote-qr-v109.svg"
+
+                self.assertEqual(
+                    remote_qr_v109.remote_url(),
+                    "http://192.168.50.25:8765/settings",
+                )
+                self.assertEqual(
+                    remote_qr_v109.generate(),
+                    "http://192.168.50.25:8765/settings",
+                )
+                svg = remote_qr_v109.OUTPUT.read_text(encoding="utf-8")
+                self.assertIn("<svg", svg)
+                self.assertIn("fill=\"#fff\"", svg)
+        finally:
+            remote_qr_v109._lan_ipv4 = original_lan
+            remote_qr_v109.STATIC_DIR = original_static
+            remote_qr_v109.OUTPUT = original_output
 
 
 if __name__ == "__main__":

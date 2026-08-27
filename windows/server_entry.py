@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 
@@ -17,6 +19,30 @@ def _install_file_logging() -> None:
     log = (log_dir / "windows-server.log").open("a", encoding="utf-8", buffering=1)
     sys.stdout = log
     sys.stderr = log
+
+
+def _start_remote_qr_refresh() -> None:
+    """Keep the phone QR tied to the current Windows LAN address."""
+    import remote_qr_v109
+
+    def refresh_once() -> None:
+        try:
+            url = remote_qr_v109.generate()
+            print(f"Stats phone remote QR: {url}")
+        except Exception as exc:
+            print(f"Stats phone remote QR refresh failed: {exc}")
+
+    # Generate synchronously so the file exists before the launcher opens the
+    # fullscreen browser. Then refresh periodically in case DHCP/VPN/Wi-Fi
+    # changes the address while Stats stays open.
+    refresh_once()
+
+    def worker() -> None:
+        while True:
+            time.sleep(30)
+            refresh_once()
+
+    threading.Thread(target=worker, name="stats-remote-qr", daemon=True).start()
 
 
 def main() -> int:
@@ -41,6 +67,7 @@ def main() -> int:
     import windows_runtime
 
     windows_runtime.install(server.app, server)
+    _start_remote_qr_refresh()
 
     from waitress import serve
 

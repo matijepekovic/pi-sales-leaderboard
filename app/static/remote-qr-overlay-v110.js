@@ -4,8 +4,18 @@
   const LIMITS={min:36,max:180,margin:12};
   let state={...DEFAULT};
   let overlay=null;
+  let qrImage=null;
 
   const clamp=(value,min,max)=>Math.min(max,Math.max(min,Number(value)||0));
+
+  function qrSrc(){
+    return `/static/remote-qr-v109.svg?v=114&t=${Date.now()}`;
+  }
+
+  function reloadQr(){
+    if(!qrImage) return;
+    qrImage.src=qrSrc();
+  }
 
   function mount(){
     if(document.getElementById('remoteQrV110')) return;
@@ -33,17 +43,21 @@
     overlay.id='remoteQrV110';
     overlay.setAttribute('aria-hidden','true');
 
-    const image=document.createElement('img');
-    image.alt='';
-    image.draggable=false;
-    image.src='/static/remote-qr-v109.svg?v=113';
-    image.addEventListener('error',()=>{overlay.style.display='none';},{once:true});
-    overlay.appendChild(image);
+    qrImage=document.createElement('img');
+    qrImage.alt='';
+    qrImage.draggable=false;
+    qrImage.addEventListener('load',()=>{overlay.style.display='block';});
+    qrImage.addEventListener('error',()=>{overlay.style.display='none';});
+    overlay.appendChild(qrImage);
     document.body.appendChild(overlay);
 
     apply();
+    reloadQr();
     refresh();
     setInterval(refresh,2000);
+    // Windows regenerates the underlying QR whenever its LAN address changes.
+    // Reload the tiny SVG so a restart/update can never leave a stale link on TV.
+    setInterval(reloadQr,15000);
     window.addEventListener('resize',apply);
   }
 
