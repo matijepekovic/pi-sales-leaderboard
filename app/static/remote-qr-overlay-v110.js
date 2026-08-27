@@ -9,12 +9,16 @@
   const clamp=(value,min,max)=>Math.min(max,Math.max(min,Number(value)||0));
 
   function qrSrc(){
-    return `/static/remote-qr-v109.svg?v=114&t=${Date.now()}`;
+    return `/static/remote-qr-v109.svg?v=115&t=${Date.now()}`;
   }
 
   function reloadQr(){
     if(!qrImage) return;
     qrImage.src=qrSrc();
+  }
+
+  function openSettings(){
+    window.location.assign('/settings');
   }
 
   function mount(){
@@ -32,7 +36,8 @@
         background:#000;
         box-shadow:0 0 0 1px rgba(255,255,255,.10);
         line-height:0;
-        pointer-events:none;
+        pointer-events:auto;
+        cursor:pointer;
         user-select:none;
       }
       #remoteQrV110 img{display:block;height:auto;border-radius:4px}
@@ -41,7 +46,15 @@
 
     overlay=document.createElement('div');
     overlay.id='remoteQrV110';
-    overlay.setAttribute('aria-hidden','true');
+    overlay.setAttribute('role','button');
+    overlay.setAttribute('tabindex','0');
+    overlay.setAttribute('aria-label','Open Settings');
+    overlay.title='Double-click to open Settings';
+    overlay.addEventListener('dblclick',(event)=>{
+      event.preventDefault();
+      event.stopPropagation();
+      openSettings();
+    });
 
     qrImage=document.createElement('img');
     qrImage.alt='';
