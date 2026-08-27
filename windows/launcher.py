@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""Windows watchdog for the packaged Tablou Stats server and kiosk browser."""
+from __future__ import annotations
+
+import atexit
+import ctypes
+import os
+import shutil
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+URL = "http://127.0.0.1:8765/"
+HEALTH_URL = URL + "health"
+CREATE_NO_WINDOW = 0x08000000
+ERROR_ALREADY_EXISTS = 183
+_MUTEX_HANDLE = None
+_SERVER = None
+_BROWSER = None
+
+
+def data_dir() -> Path:
+    path = Path.home() / ".local" / "share" / "pi-tableau-leaderboard"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def log(message: str) -> None:
+    log_dir = data_dir() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with (log_dir / "windows-launcher.log").open("a", encoding="utf-8") as handle:
+        handle.write(time.strftime("%Y-%m-%d %H:%M:%S") + " " + message + "\n")
+
+
+def acquire_single_instance() -> bool:
+    global _MUTEX_HANDLE
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    handle = kernel32.CreateMutexW(None, False, "Local\\TablouStatsLauncher")
+    if not handle:
+        return False
+    if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        kernel32.CloseHandle(handle)
+        return False
+    _MUTEX_HANDLE = handle
+    return True
+
+
+def app_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+def server_exe() -> Path:
+    return app_dir() / "server" / "TablouStatsServer.exe"
+
+
+def health_ok(timeout: float = 1.5) -> bool:
+    try:
+        with urllib.request.urlopen(HEALTH_URL, timeout=timeout) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
+def start_server():
+    exe = server_exe()
+    if not exe.is_file():
+        raise FileNotFoundError(f"Missing backend: {exe}")
+    log(f"Starting backend: {exe}")
+    return subprocess.Popen(
+        [str(exe)],
+        cwd=str(exe.parent),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=CREATE_NO_WINDOW,
+    )
+
+
+def wait_for_server(seconds: int = 60) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if _SERVER is not None and _SERVER.poll() is not None:
+            return False
+        if health_ok():
+            return True
+        time.sleep(1)
+    return False
+
+
+def browser_candidates() -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add(kind: str, value: str | None) -> None:
+        if not value:
+            return
+        path = str(Path(value))
+        key = path.lower()
+        if key not in seen and Path(path).is_file():
+            seen.add(key)
+            found.append((kind, path))
+
+    add("edge", shutil.which("msedge.exe") or shutil.which("msedge"))
+    add("chrome", shutil.which("chrome.exe") or shutil.which("chrome"))
+
+    for env_name in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        base = os.environ.get(env_name)
+        if not base:
+            continue
+        add("edge", str(Path(base) / "Microsoft" / "Edge" / "Application" / "msedge.exe"))
+        add("chrome", str(Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe"))
+
+    return found
+
+
+def launch_browser():
+    profile = data_dir() / "windows-kiosk-browser"
+    profile.mkdir(parents=True, exist_ok=True)
+
+    for kind, exe in browser_candidates():
+        common = [
+            exe,
+            URL,
+            f"--user-data-dir={profile}",
+            "--kiosk",
+            "--start-maximized",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-session-crashed-bubble",
+            "--disable-infobars",
+        ]
+        if kind == "edge":
+            common.append("--edge-kiosk-type=fullscreen")
+        try:
+            log(f"Launching {kind} kiosk: {exe}")
+            return subprocess.Popen(
+                common,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=CREATE_NO_WINDOW,
+            )
+        except Exception as exc:
+            log(f"Could not launch {kind}: {exc}")
+
+    # Windows normally includes Edge. This fallback still makes the app usable
+    # on unusual systems, although it cannot guarantee kiosk mode.
+    log("No Edge/Chrome executable found; opening the default browser")
+    try:
+        os.startfile(URL)  # type: ignore[attr-defined]
+        return False
+    except Exception as exc:
+        log(f"Could not open a browser: {exc}")
+        return None
+
+
+def kill_process_tree(process) -> None:
+    if not process or process is False:
+        return
+    try:
+        if process.poll() is None:
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=8,
+                creationflags=CREATE_NO_WINDOW,
+            )
+    except Exception:
+        try:
+            process.kill()
+        except Exception:
+            pass
+
+
+def restart_request_stamp(path: Path):
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
+def cleanup() -> None:
+    global _MUTEX_HANDLE
+    kill_process_tree(_BROWSER)
+    kill_process_tree(_SERVER)
+    if _MUTEX_HANDLE:
+        try:
+            ctypes.windll.kernel32.CloseHandle(_MUTEX_HANDLE)
+        except Exception:
+            pass
+        _MUTEX_HANDLE = None
+
+
+def main() -> int:
+    global _SERVER, _BROWSER
+
+    if os.name != "nt":
+        return 1
+    if not acquire_single_instance():
+        return 0
+
+    atexit.register(cleanup)
+    request_file = data_dir() / "restart-kiosk.request"
+    try:
+        request_file.unlink(missing_ok=True)
+    except Exception:
+        pass
+    last_request = restart_request_stamp(request_file)
+
+    log("Tablou Stats Windows launcher started")
+
+    while True:
+        if _SERVER is None or _SERVER.poll() is not None:
+            if _SERVER is not None:
+                log(f"Backend exited with code {_SERVER.returncode}; restarting")
+            _SERVER = start_server()
+            if not wait_for_server():
+                log("Backend failed to become healthy; retrying")
+                kill_process_tree(_SERVER)
+                _SERVER = None
+                time.sleep(3)
+                continue
+            log("Backend is healthy")
+
+        current_request = restart_request_stamp(request_file)
+        requested = current_request is not None and current_request != last_request
+        if requested:
+            log("Kiosk relaunch requested by the app")
+            last_request = current_request
+            kill_process_tree(_BROWSER)
+            _BROWSER = None
+            try:
+                request_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        browser_exited = (
+            _BROWSER is not None
+            and _BROWSER is not False
+            and _BROWSER.poll() is not None
+        )
+        if browser_exited:
+            log("Kiosk browser exited; relaunching")
+            _BROWSER = None
+
+        if _BROWSER is None and health_ok():
+            _BROWSER = launch_browser()
+
+        time.sleep(2)
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(0)
+    except Exception as exc:
+        try:
+            log(f"Launcher fatal error: {exc}")
+        finally:
+            raise
