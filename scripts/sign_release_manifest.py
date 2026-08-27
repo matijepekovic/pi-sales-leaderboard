@@ -21,6 +21,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+PRIVATE_KEY_BEGIN = "-----BEGIN PRIVATE KEY-----"
+PRIVATE_KEY_END = "-----END PRIVATE KEY-----"
 
 
 def _sha256(path: Path) -> str:
@@ -31,11 +33,45 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _canonical_private_key_pem(value: str) -> str:
+    """Normalize safe GitHub-secret formatting without changing key bytes.
+
+    GitHub preserves multiline secrets, but copy/paste from some mobile/file
+    viewers can flatten PEM line breaks into spaces or literal ``\\n`` text.
+    Rebuild the standard PKCS#8 PEM framing from the existing BEGIN/END markers
+    so the same private key works in all of those representations.
+    """
+    value = (value or "").strip().lstrip("\ufeff")
+    value = value.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
+
+    begin = value.find(PRIVATE_KEY_BEGIN)
+    end = value.find(PRIVATE_KEY_END)
+    if begin >= 0 and end > begin:
+        body = value[begin + len(PRIVATE_KEY_BEGIN):end]
+        body = re.sub(r"\s+", "", body)
+        if not body or re.fullmatch(r"[A-Za-z0-9+/=]+", body) is None:
+            raise SystemExit("UPDATE_SIGNING_PRIVATE_KEY has invalid PEM content")
+        wrapped = "\n".join(body[i:i + 64] for i in range(0, len(body), 64))
+        return f"{PRIVATE_KEY_BEGIN}\n{wrapped}\n{PRIVATE_KEY_END}\n"
+
+    return value
+
+
 def _load_private_key() -> Ed25519PrivateKey:
-    pem = os.environ.get("UPDATE_SIGNING_PRIVATE_KEY", "").strip()
-    if not pem:
+    pem = os.environ.get("UPDATE_SIGNING_PRIVATE_KEY", "")
+    if not pem.strip():
         raise SystemExit("UPDATE_SIGNING_PRIVATE_KEY is not set")
-    key = serialization.load_pem_private_key(pem.encode("utf-8"), password=None)
+
+    normalized = _canonical_private_key_pem(pem)
+    try:
+        key = serialization.load_pem_private_key(
+            normalized.encode("utf-8"), password=None
+        )
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(
+            "UPDATE_SIGNING_PRIVATE_KEY could not be read as a PKCS#8 PEM key"
+        ) from exc
+
     if not isinstance(key, Ed25519PrivateKey):
         raise SystemExit("UPDATE_SIGNING_PRIVATE_KEY is not an Ed25519 private key")
     return key
@@ -84,7 +120,10 @@ def main() -> int:
 
     manifest_path.write_bytes(manifest_bytes)
     signature = _load_private_key().sign(manifest_bytes)
-    signature_path.write_text(base64.b64encode(signature).decode("ascii") + "\n", encoding="utf-8")
+    signature_path.write_text(
+        base64.b64encode(signature).decode("ascii") + "\n",
+        encoding="utf-8",
+    )
 
     print(manifest_path)
     print(signature_path)
