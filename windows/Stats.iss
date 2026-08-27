@@ -46,16 +46,38 @@ Name: "{userdesktop}\Stats"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{ap
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Stats"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "{cmd}"; Parameters: "/C taskkill /IM StatsLauncher.exe /T /F >NUL 2>&1"; Flags: runhidden; RunOnceId: "StopLauncher"
-Filename: "{cmd}"; Parameters: "/C taskkill /IM StatsServer.exe /T /F >NUL 2>&1"; Flags: runhidden; RunOnceId: "StopServer"
+Filename: "{cmd}"; Parameters: "/C taskkill /IM StatsLauncher.exe /F >NUL 2>&1"; Flags: runhidden; RunOnceId: "StopLauncher"
+Filename: "{cmd}"; Parameters: "/C taskkill /IM StatsServer.exe /F >NUL 2>&1"; Flags: runhidden; RunOnceId: "StopServer"
 
 [Code]
+procedure StopKioskBrowser();
+var
+  ResultCode: Integer;
+  PidFile: String;
+  Command: String;
+begin
+  { The launcher records only the browser process used by Stats. Killing that
+    exact PID avoids closing unrelated Edge/Chrome windows on the PC. }
+  PidFile := GetEnv('USERPROFILE') + '\.local\share\pi-tableau-leaderboard\windows-kiosk-browser.pid';
+  if FileExists(PidFile) then
+  begin
+    Command := '/C for /F "usebackq delims=" %P in ("' + PidFile + '") do taskkill /PID %P /T /F >NUL 2>&1';
+    Exec(ExpandConstant('{cmd}'), Command, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    DeleteFile(PidFile);
+  end;
+end;
+
 procedure StopStatsProcesses();
 var
   ResultCode: Integer;
 begin
-  Exec(ExpandConstant('{cmd}'), '/C taskkill /IM StatsLauncher.exe /T /F >NUL 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{cmd}'), '/C taskkill /IM StatsServer.exe /T /F >NUL 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  StopKioskBrowser();
+
+  { Do NOT use taskkill /T for the launcher or server here. The detached OTA
+    helper is launched by StatsServer.exe, so /T would kill the helper and the
+    installer it just started before the update could finish. }
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /IM StatsLauncher.exe /F >NUL 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /IM StatsServer.exe /F >NUL 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

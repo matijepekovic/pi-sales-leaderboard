@@ -32,9 +32,10 @@ def run_update(installer: Path, launcher: Path, version: str) -> int:
         return 3
 
     # Give the API response time to reach the browser before Inno Setup stops
-    # StatsLauncher.exe and StatsServer.exe as part of PrepareToInstall.
+    # the Stats processes in PrepareToInstall.
     time.sleep(3)
     _write_log(log_dir, f"Installing Stats {version}: {installer.name}")
+    inno_log = log_dir / "windows-installer-update.log"
 
     try:
         completed = subprocess.run(
@@ -44,6 +45,7 @@ def run_update(installer: Path, launcher: Path, version: str) -> int:
                 "/SUPPRESSMSGBOXES",
                 "/NORESTART",
                 "/CLOSEAPPLICATIONS",
+                f"/LOG={inno_log}",
             ],
             cwd=str(installer.parent),
             stdin=subprocess.DEVNULL,
@@ -57,7 +59,10 @@ def run_update(installer: Path, launcher: Path, version: str) -> int:
         return 4
 
     if completed.returncode != 0:
-        _write_log(log_dir, f"Installer failed with exit code {completed.returncode}")
+        _write_log(
+            log_dir,
+            f"Installer failed with exit code {completed.returncode}; see {inno_log.name}",
+        )
         return completed.returncode or 5
 
     # The installer keeps the same application directory and identity. Wait a

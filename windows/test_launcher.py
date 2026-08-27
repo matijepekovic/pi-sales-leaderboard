@@ -87,6 +87,27 @@ class LauncherBehaviorTests(unittest.TestCase):
 
             self.assertEqual(launcher.supervise(), 1)
 
+    def test_kiosk_browser_pid_is_recorded_and_cleared(self):
+        browser = FakeProcess(None)
+        browser.pid = 45678
+        with tempfile.TemporaryDirectory() as temp:
+            launcher.data_dir = lambda: Path(temp)
+            launcher.log = lambda message: None
+            launcher.write_kiosk_browser_pid(browser)
+            pid_file = Path(temp) / launcher.KIOSK_BROWSER_PID_NAME
+            self.assertEqual(pid_file.read_text(encoding="ascii"), "45678")
+            launcher.clear_kiosk_browser_pid()
+            self.assertFalse(pid_file.exists())
+
+    def test_installer_never_kills_the_ota_parent_tree(self):
+        iss = (WINDOWS_DIR / "Stats.iss").read_text(encoding="utf-8")
+        updater = (WINDOWS_DIR / "updater.py").read_text(encoding="utf-8")
+        self.assertNotIn("taskkill /IM StatsLauncher.exe /T /F", iss)
+        self.assertNotIn("taskkill /IM StatsServer.exe /T /F", iss)
+        self.assertIn("windows-kiosk-browser.pid", iss)
+        self.assertIn("taskkill /PID %P /T /F", iss)
+        self.assertIn("/LOG=", updater)
+
 
 class RemoteQrTests(unittest.TestCase):
     def test_generate_uses_current_lan_address(self):
