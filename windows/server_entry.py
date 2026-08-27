@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Frozen Windows entrypoint for the Tablou Stats backend."""
+"""Frozen Windows entrypoint for the Stats backend."""
 from __future__ import annotations
 
 import os
@@ -21,7 +21,7 @@ def _install_file_logging() -> None:
 
 def main() -> int:
     _install_file_logging()
-    os.environ["TABLOU_WINDOWS_BUILD"] = "1"
+    os.environ["STATS_WINDOWS_BUILD"] = "1"
 
     # The app modules are collected as top-level modules from app/. In a
     # PyInstaller bundle their __file__ paths live directly under _MEIPASS,
@@ -44,7 +44,7 @@ def main() -> int:
 
     from waitress import serve
 
-    print(f"Starting Tablou Stats Windows server {server.software_version()} on port 8765")
+    print(f"Starting Stats Windows server {server.software_version()} on port 8765")
     serve(server.app, host="0.0.0.0", port=8765, threads=8)
     return 0
 
