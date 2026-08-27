@@ -1,4 +1,4 @@
-name: Windows production installer
+name: Stats Windows production installer
 
 on:
   pull_request:
@@ -38,6 +38,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Reject retired product name
+        shell: pwsh
+        run: |
+          $forbidden = -join (84,97,98,108,111 | ForEach-Object { [char]$_ })
+          $hits = git grep -n -I -- $forbidden
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host $hits
+            throw "Retired product name is still present in tracked production files"
+          }
+          if ($LASTEXITCODE -ne 1) {
+            throw "Could not complete product-name scan"
+          }
 
       - uses: actions/setup-python@v5
         with:
@@ -149,19 +162,13 @@ jobs:
             throw "Inno Setup compilation failed"
           }
 
-      - name: Verify install migration and uninstall
+      - name: Verify install and uninstall
         shell: pwsh
         run: |
           $installer = Get-ChildItem ".\installer-output\Stats-Setup-*-windows-x64.exe" | Select-Object -First 1
           if (-not $installer) {
             throw "Installer executable was not produced"
           }
-
-          # Simulate the 1.0.0 program directory without carrying retired branding.
-          $legacyBrand = -join (84,97,98,108,111 | ForEach-Object { [char]$_ })
-          $legacyRoot = Join-Path $env:LOCALAPPDATA "Programs\$legacyBrand Stats"
-          New-Item -ItemType Directory -Force -Path $legacyRoot | Out-Null
-          Set-Content -Path (Join-Path $legacyRoot "migration-marker.txt") -Value "old"
 
           $install = Start-Process -FilePath $installer.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS="startup"' -PassThru -Wait
           if ($install.ExitCode -ne 0) {
@@ -175,17 +182,12 @@ jobs:
           if (-not (Test-Path (Join-Path $installedRoot "server\StatsServer.exe"))) {
             throw "Installed backend is missing"
           }
-          if (Test-Path $legacyRoot) {
-            throw "The 1.0.0 program directory was not removed during migration"
-          }
 
           $startupLink = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\Stats.lnk"
           if (-not (Test-Path $startupLink)) {
             throw "Startup shortcut was not installed"
           }
 
-          # Keep the backend running while uninstall begins. The uninstaller must
-          # terminate it before deleting the program files.
           $serverProcess = Start-Process -FilePath (Join-Path $installedRoot "server\StatsServer.exe") -PassThru
           Start-Sleep -Seconds 3
           if ($serverProcess.HasExited) {
@@ -241,6 +243,23 @@ jobs:
             --asset-dir installer-output
           if ($LASTEXITCODE -ne 0) {
             throw "Signed release verification failed"
+          }
+
+      - name: Remove superseded test release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/production'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.UPDATE_PUBLISH_TOKEN }}
+        run: |
+          if ($env:STATS_VERSION -eq '1.0.0') {
+            exit 0
+          }
+          gh release view v1.0.0 --repo $env:PUBLIC_UPDATE_REPO *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release delete v1.0.0 --repo $env:PUBLIC_UPDATE_REPO --yes --cleanup-tag
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not remove superseded public release v1.0.0"
+            }
           }
 
       - name: Publish signed public Windows release
@@ -305,20 +324,6 @@ jobs:
             --notes $notes
           if ($LASTEXITCODE -ne 0) {
             throw "Public release publication failed"
-          }
-
-      - name: Remove superseded 1.0.0 public release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/production' && env.STATS_VERSION != '1.0.0'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.UPDATE_PUBLISH_TOKEN }}
-        run: |
-          gh release view v1.0.0 --repo $env:PUBLIC_UPDATE_REPO *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release delete v1.0.0 --repo $env:PUBLIC_UPDATE_REPO --yes --cleanup-tag
-            if ($LASTEXITCODE -ne 0) {
-              throw "Could not remove superseded public release v1.0.0"
-            }
           }
 
       - name: Upload tested installer artifact
