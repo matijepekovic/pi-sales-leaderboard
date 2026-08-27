@@ -1,27 +1,10 @@
-/* v107: Software is manual-only.
-   Production uses semantic versions and checks only the production branch.
-   Legacy ZIP upload / version / status / automatic-update controls stay in the
-   DOM only so the older base script can finish safely, but they are hidden.
-   Any previously saved automatic-update preference is forced off. */
+/* Software stays user-controlled: Check for Updates + Update.
+   On the packaged Windows build, both actions go through the signed public
+   installer update API. Download, signature/hash verification, silent install,
+   shutdown, and relaunch happen automatically after Update is pressed. */
 (function(){
   const $=id=>document.getElementById(id);
-  const REMOTE_VERSION_URL='https://raw.githubusercontent.com/matijepekovic/pi-sales-leaderboard/production/VERSION';
   let remoteVersion=null;
-
-  function versionKey(value){
-    const parts=String(value||'').match(/\d+/g)||[];
-    return parts.map(Number);
-  }
-
-  function compareVersions(a,b){
-    const left=versionKey(a),right=versionKey(b);
-    const n=Math.max(left.length,right.length);
-    for(let i=0;i<n;i++){
-      const av=left[i]||0,bv=right[i]||0;
-      if(av!==bv) return av>bv?1:-1;
-    }
-    return 0;
-  }
 
   async function forceManualOnly(){
     const legacy=$('githubAutoUpdate');
@@ -45,13 +28,13 @@
   }
 
   async function waitForRestart(button){
-    button.textContent='Restarting…';
+    button.textContent='Installing…';
     let sawOffline=false;
-    for(let i=0;i<75;i++){
+    for(let i=0;i<100;i++){
       await new Promise(resolve=>setTimeout(resolve,1200));
       try{
         const r=await fetch('/health?ts='+Date.now(),{cache:'no-store'});
-        if(r.ok&&(sawOffline||i>4)){
+        if(r.ok&&(sawOffline||i>8)){
           location.reload();
           return;
         }
@@ -68,7 +51,6 @@
     if(!card) return false;
     if($('v107SoftwareManual')) return true;
 
-    // Keep the heading so the accordion can still discover/name the section.
     Array.from(card.children).forEach(child=>{
       if(child.tagName!=='H2') child.style.display='none';
     });
@@ -92,15 +74,14 @@
       update.disabled=true;
       check.textContent='Checking…';
       try{
-        const [localResponse,remoteResponse]=await Promise.all([
-          fetch('/api/system/version',{cache:'no-store'}),
-          fetch(REMOTE_VERSION_URL+'?ts='+Date.now(),{cache:'no-store'})
-        ]);
-        if(!localResponse.ok||!remoteResponse.ok) throw new Error('check failed');
-        const local=String((await localResponse.json()).version||'');
-        const remote=String(await remoteResponse.text()).trim();
-        if(compareVersions(remote,local)>0){
-          remoteVersion=remote;
+        const r=await fetch('/api/windows/update/check',{
+          method:'POST',
+          cache:'no-store'
+        });
+        const d=await r.json();
+        if(!r.ok||!d.ok) throw new Error(d.error||'check failed');
+        if(d.available){
+          remoteVersion=String(d.latest||'');
           check.textContent='Update Available';
           update.disabled=false;
         }else{
@@ -119,12 +100,15 @@
       if(!remoteVersion) return;
       check.disabled=true;
       update.disabled=true;
-      update.textContent='Updating…';
+      update.textContent='Downloading…';
       try{
-        const r=await fetch('/api/github/check',{method:'POST'});
+        const r=await fetch('/api/windows/update/install',{
+          method:'POST',
+          cache:'no-store'
+        });
         const d=await r.json();
-        if(!r.ok) throw new Error(d.error||'update failed');
-        if(d.installed){
+        if(!r.ok||!d.ok) throw new Error(d.error||'update failed');
+        if(d.installed||d.installing){
           await waitForRestart(update);
           return;
         }
@@ -143,8 +127,6 @@
       }
     });
 
-    // The old page can populate the hidden checkbox slightly after this patch
-    // runs. Clear it again after the base load settles, and persist false.
     forceManualOnly();
     setTimeout(forceManualOnly,500);
     setTimeout(forceManualOnly,1500);
