@@ -44,13 +44,15 @@ jobs:
         run: |
           $forbidden = -join (84,97,98,108,111 | ForEach-Object { [char]$_ })
           $hits = git grep -n -I -- $forbidden
-          if ($LASTEXITCODE -eq 0) {
+          $grepExit = $LASTEXITCODE
+          if ($grepExit -eq 0) {
             Write-Host $hits
             throw "Retired product name is still present in tracked production files"
           }
-          if ($LASTEXITCODE -ne 1) {
+          if ($grepExit -ne 1) {
             throw "Could not complete product-name scan"
           }
+          exit 0
 
       - uses: actions/setup-python@v5
         with:
@@ -274,6 +276,7 @@ jobs:
               }
             }
           }
+          exit 0
 
       - name: Publish signed public Windows release
         if: github.event_name == 'push' && github.ref == 'refs/heads/production'
