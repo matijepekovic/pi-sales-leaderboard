@@ -34,6 +34,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 Source: "..\dist\StatsLauncher.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\StatsUpdater.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\StatsServer\*"; DestDir: "{app}\server"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

@@ -2,9 +2,9 @@
 
 The source application was originally an appliance service supervised by
 systemd/labwc. The Windows installer supplies its own launcher, so this module
-disables Linux-only startup work and blocks the old source-tree update
-installers. Persistent leaderboard data remains in the existing per-user data
-directory and is never stored inside the replaceable app folder.
+disables Linux-only startup work and replaces the legacy source ZIP updater
+with the signed public Windows installer update path. Persistent leaderboard
+data remains in the existing per-user data directory.
 """
 from __future__ import annotations
 
@@ -52,36 +52,37 @@ def install(app, server_module) -> bool:
 
     _remove_linux_autostart_block()
 
-    # The Windows launcher owns fullscreen startup. A deliberate Fullscreen
-    # request still creates restart-kiosk.request for that launcher to honor.
     def windows_kiosk_startup_status():
         set_meta("kiosk_startup_status", "Windows startup managed by Stats launcher")
 
     server_module.ensure_labwc_kiosk_autostart = windows_kiosk_startup_status
     windows_kiosk_startup_status()
 
-    # A frozen executable must never replace itself with a legacy source ZIP.
-    # Signed public-release installers own Windows updates.
+    # Automatic source-tree updates remain forbidden. Windows updates are
+    # verified against the public Ed25519 release key and installed by Inno.
     settings = get_settings()
     if settings.get("github_auto_update"):
         settings["github_auto_update"] = False
         save_settings(settings)
 
-    def packaged_update_only():
+    def source_zip_disabled():
         return jsonify({
             "ok": False,
             "error": (
-                "This Windows build only accepts signed Stats installer updates. "
-                "Source ZIP updates are disabled."
+                "Source ZIP updates are disabled on Windows. Use the signed "
+                "Stats installer updater in Software."
             ),
         }), 409
 
     if "api_github_check" in app.view_functions:
-        app.view_functions["api_github_check"] = packaged_update_only
+        app.view_functions["api_github_check"] = source_zip_disabled
     if "api_system_update" in app.view_functions:
-        app.view_functions["api_system_update"] = packaged_update_only
+        app.view_functions["api_system_update"] = source_zip_disabled
+
+    import windows_update
+    windows_update.install(app, server_module)
 
     set_meta("runtime_platform", "windows")
-    set_meta("github_update_status", "Windows signed-installer updates")
+    set_meta("github_update_status", "Windows signed-installer updater ready")
     _INSTALLED = True
     return True
