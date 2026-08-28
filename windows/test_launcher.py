@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small behavior tests for the Windows Stats launcher and phone QR."""
+"""Small behavior tests for the Windows Stats launcher and desktop UI."""
 from __future__ import annotations
 
 import sys
@@ -14,6 +14,7 @@ sys.path.insert(0, str(WINDOWS_DIR))
 sys.path.insert(0, str(APP_DIR))
 import launcher  # noqa: E402
 import remote_qr_v109  # noqa: E402
+import windows_theme_editor_v122  # noqa: E402
 
 
 class FakeProcess:
@@ -179,6 +180,54 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn('section.id!=="v110QrSection"', script)
         self.assertIn("max-width:1600px", script)
         self.assertIn("windows-settings-sidebar-v121.js", template)
+
+
+class WindowsThemeEditorTests(unittest.TestCase):
+    def test_transform_values_are_bounded(self):
+        cleaned = windows_theme_editor_v122.clean_transform({
+            "x": 999,
+            "y": -999,
+            "scale_x": 1,
+            "scale_y": 900,
+            "rotation": 720,
+            "opacity": -5,
+        })
+        self.assertEqual(cleaned["x"], 300)
+        self.assertEqual(cleaned["y"], -300)
+        self.assertEqual(cleaned["scale_x"], 20)
+        self.assertEqual(cleaned["scale_y"], 500)
+        self.assertEqual(cleaned["rotation"], 180)
+        self.assertEqual(cleaned["opacity"], 0)
+
+    def test_visual_theme_editor_is_wired_into_windows_build(self):
+        server_entry = (WINDOWS_DIR / "server_entry.py").read_text(encoding="utf-8")
+        display = (APP_DIR / "templates" / "display.html").read_text(encoding="utf-8")
+        settings = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
+        preview = (APP_DIR / "static" / "theme-editor-preview-v122.js").read_text(encoding="utf-8")
+        runtime = (APP_DIR / "static" / "theme-transform-runtime-v122.js").read_text(encoding="utf-8")
+        host = (APP_DIR / "static" / "windows-theme-visual-editor-v122.js").read_text(encoding="utf-8")
+
+        self.assertIn("windows_theme_editor_v122.install(server.app, server.PUBLIC_ENDPOINTS)", server_entry)
+        self.assertIn("theme-transform-runtime-v122.js", display)
+        self.assertIn("theme-editor-preview-v122.js", display)
+        self.assertLess(display.index("theme-editor-preview-v122.js"), display.index("tv-preview-v63.js"))
+        self.assertIn("windows-theme-visual-editor-v122.js", settings)
+        self.assertIn('addEventListener("dblclick"', preview)
+        self.assertIn('addEventListener("contextmenu"', preview)
+        self.assertIn('data-handle="rotate"', preview)
+        self.assertIn("nwse-resize", preview)
+        self.assertIn("Upload New Asset", preview)
+        self.assertIn("Change Color", preview)
+        self.assertIn("Opacity", preview)
+        self.assertIn("Remove Asset", preview)
+        self.assertIn("theme_editor_sample:true", preview)
+        self.assertIn("assigned_team_id:teamId", preview)
+        self.assertIn("/api/windows/theme-transforms/", preview)
+        self.assertIn("StatsThemeTransforms", runtime)
+        self.assertIn("te-transform-row", runtime)
+        self.assertIn("StatsThemeEditorHost", host)
+        self.assertIn('searchParams.set("themeEditor","1")', host)
+        self.assertIn("↻ Sample", host)
 
 
 if __name__ == "__main__":
