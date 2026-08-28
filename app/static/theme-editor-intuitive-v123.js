@@ -1,6 +1,9 @@
-/* v123 discoverability polish for the Windows visual Theme Builder preview.
-   The v122 editor continues to own transforms and actions. This layer only
-   makes those controls obvious before the user already knows how they work. */
+/* v127 Theme Builder discoverability hotfix.
+   The previous observer rewrote menu text on every DOM mutation. Setting
+   textContent itself creates a child mutation, so Chromium could get trapped
+   in a self-triggering observer loop and mark the entire Settings page
+   unresponsive. All decoration below is idempotent and observer work is
+   coalesced to one animation frame. */
 (function(){
   const params=new URLSearchParams(location.search);
   if(params.get("themeEditor")!=="1") return;
@@ -12,6 +15,7 @@
     totals_mark:"Totals Mark"
   };
   const COACH_KEY="stats.themeEditor.coach.v123.dismissed";
+  let decorateQueued=false;
 
   function injectStyles(){
     if(document.getElementById("themeEditorIntuitiveV123Styles"))return;
@@ -53,31 +57,47 @@
     document.head.appendChild(style);
   }
 
+  function setTextIfChanged(el,text){
+    if(el&&el.textContent!==text)el.textContent=text;
+  }
+
   function simplifyMenu(){
     const menu=document.getElementById("teContext");if(!menu)return;
     const names={upload:"Replace Image…",color:"Color…","reset-transform":"Reset",remove:"Remove"};
     Object.entries(names).forEach(([action,label])=>{
-      const button=menu.querySelector(`button[data-action="${action}"]`);
-      if(button)button.textContent=label;
+      setTextIfChanged(menu.querySelector(`button[data-action="${action}"]`),label);
     });
-    const opacity=menu.querySelector(".te-opacity-row span");if(opacity)opacity.textContent="Opacity";
+    setTextIfChanged(menu.querySelector(".te-opacity-row span"),"Opacity");
   }
 
   function decorateEditable(){
     document.querySelectorAll("[data-theme-edit-key]").forEach(el=>{
       const key=String(el.dataset.themeEditKey||"");
       const label=LABELS[key]||key;
-      if(label&&!el.title)el.title=`Double-click to edit ${label}`;
+      const title=label?`Double-click to edit ${label}`:"";
+      if(title&&!el.title)el.title=title;
     });
+
     document.querySelectorAll(".te-placeholder[data-theme-edit-key]").forEach(el=>{
       const key=String(el.dataset.themeEditKey||"");
-      if(el.dataset.v123Empty==="1")return;
-      el.dataset.v123Empty="1";
       const label=LABELS[key]||key;
-      el.innerHTML=`<span class="te-empty-label">${label}</span><span class="te-empty-action">Double-click to add</span>`;
-      el.title=`Double-click to add ${label}`;
+      if(el.dataset.v123Empty!=="1"){
+        el.dataset.v123Empty="1";
+        el.innerHTML=`<span class="te-empty-label">${label}</span><span class="te-empty-action">Double-click to add</span>`;
+      }
+      const title=`Double-click to add ${label}`;
+      if(el.title!==title)el.title=title;
     });
     simplifyMenu();
+  }
+
+  function scheduleDecorate(){
+    if(decorateQueued)return;
+    decorateQueued=true;
+    requestAnimationFrame(()=>{
+      decorateQueued=false;
+      decorateEditable();
+    });
   }
 
   function showCoach(force=false){
@@ -107,11 +127,15 @@
   });
 
   function boot(){
-    injectStyles();decorateEditable();
-    const observer=new MutationObserver(()=>decorateEditable());
-    observer.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:["data-theme-edit-key"]});
+    injectStyles();
+    decorateEditable();
+    const observer=new MutationObserver(scheduleDecorate);
+    observer.observe(document.documentElement,{
+      childList:true,subtree:true,attributes:true,attributeFilter:["data-theme-edit-key"]
+    });
     setTimeout(()=>showCoach(false),450);
   }
+
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot,{once:true});
   else boot();
 })();
