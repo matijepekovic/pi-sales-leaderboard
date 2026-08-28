@@ -167,6 +167,19 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("_remove_compiled_connection_defaults", gates)
         self.assertIn('tableau_configured.DEFAULTS[key] = ""', gates)
 
+    def test_windows_settings_use_sidebar_workspace(self):
+        script = (APP_DIR / "static" / "windows-settings-sidebar-v121.js").read_text(encoding="utf-8")
+        template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
+
+        self.assertIn("const isWindows=/windows|win32|win64/i.test(platform);", script)
+        self.assertIn("grid-template-columns:clamp(220px,20vw,280px) minmax(0,1fr)", script)
+        self.assertIn("windowsSettingsNav", script)
+        self.assertIn("windowsSettingsContent", script)
+        self.assertIn("activateSection", script)
+        self.assertIn('section.id!=="v110QrSection"', script)
+        self.assertIn("max-width:1600px", script)
+        self.assertIn("windows-settings-sidebar-v121.js", template)
+
 
 if __name__ == "__main__":
     unittest.main()
