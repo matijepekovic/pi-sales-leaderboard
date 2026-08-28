@@ -74,6 +74,12 @@ def main() -> int:
     import windows_theme_editor_v122
 
     windows_theme_editor_v122.install(server.app, server.PUBLIC_ENDPOINTS)
+
+    # Test Tableau credentials without saving them. The existing /api/config
+    # path remains the only place that persists Tableau login changes.
+    import windows_tableau_login_v124
+
+    windows_tableau_login_v124.install(server.app)
     _start_remote_qr_refresh()
 
     from waitress import serve
