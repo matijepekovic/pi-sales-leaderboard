@@ -201,21 +201,24 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("tableau.signin()", endpoint)
         self.assertNotIn("save_settings", endpoint)
 
-    def test_team_builder_members_follow_tableau_pull(self):
-        script = (APP_DIR / "static" / "team-builder-tableau-members-v125.js").read_text(encoding="utf-8")
+    def test_team_builder_members_follow_tableau_pull_and_hide_claimed_reps(self):
+        script = (APP_DIR / "static" / "team-builder-tableau-members-v126.js").read_text(encoding="utf-8")
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
 
-        self.assertIn("team-builder-tableau-members-v125.js", template)
+        self.assertIn("team-builder-tableau-members-v126.js", template)
+        self.assertNotIn("team-builder-tableau-members-v125.js", template)
         self.assertIn('originalRequest("/api/config"', script)
         self.assertIn('cleanPath==="/api/source/preview"', script)
-        self.assertIn("result.d.rows", script)
         self.assertIn("previewPool=normalizeRows(result.d.rows)", script)
-        self.assertIn('cleanPath==="/api/source/refresh"', script)
+        self.assertIn("mergeAssignments(previewPool,persistedPool)", script)
+        self.assertIn("assigned_team_id:assigned>0?assigned:null", script)
+        self.assertIn("return !assigned || (current>0 && assigned===current);", script)
+        self.assertIn("No unassigned Tableau reps available.", script)
+        self.assertIn("already assigned to another team", script)
+        self.assertIn("No Tableau reps loaded yet.", script)
         self.assertIn("openTeamBuilder=function", script)
         self.assertIn("setBuilderStep=function", script)
         self.assertIn("renderBuilderMembers=function", script)
-        self.assertIn("No Tableau reps loaded yet.", script)
-        self.assertIn("names from that Tableau data will appear here automatically", script)
 
 
 class WindowsThemeEditorTests(unittest.TestCase):
@@ -244,12 +247,17 @@ class WindowsThemeEditorTests(unittest.TestCase):
         host = (APP_DIR / "static" / "windows-theme-visual-editor-v122.js").read_text(encoding="utf-8")
         intuitive = (APP_DIR / "static" / "theme-editor-intuitive-v123.js").read_text(encoding="utf-8")
         help_ui = (APP_DIR / "static" / "windows-theme-editor-help-v123.js").read_text(encoding="utf-8")
+        policy = (APP_DIR / "static" / "theme-editor-data-policy-v126.js").read_text(encoding="utf-8")
+        stability = (APP_DIR / "static" / "windows-theme-stability-v126.js").read_text(encoding="utf-8")
 
         self.assertIn("windows_theme_editor_v122.install(server.app, server.PUBLIC_ENDPOINTS)", server_entry)
         self.assertIn("theme-transform-runtime-v122.js", display)
         self.assertIn("theme-editor-preview-v122.js", display)
-        self.assertLess(display.index("theme-editor-preview-v122.js"), display.index("tv-preview-v63.js"))
+        self.assertIn("theme-editor-data-policy-v126.js", display)
+        self.assertLess(display.index("theme-editor-preview-v122.js"), display.index("theme-editor-data-policy-v126.js"))
+        self.assertLess(display.index("theme-editor-data-policy-v126.js"), display.index("tv-preview-v63.js"))
         self.assertIn("windows-theme-visual-editor-v122.js", settings)
+        self.assertIn("windows-theme-stability-v126.js", settings)
         self.assertIn('addEventListener("dblclick"', preview)
         self.assertIn('addEventListener("contextmenu"', preview)
         self.assertIn('data-handle="rotate"', preview)
@@ -265,7 +273,20 @@ class WindowsThemeEditorTests(unittest.TestCase):
         self.assertIn("te-transform-row", runtime)
         self.assertIn("StatsThemeEditorHost", host)
         self.assertIn('searchParams.set("themeEditor","1")', host)
-        self.assertIn("↻ Sample", host)
+
+        # v126: populated teams use real assigned data; only empty teams can
+        # fall through to v122's mock sample. The editor refresh loop is made
+        # one-shot so it cannot keep churning the iframe while editing.
+        self.assertIn("XMLHttpRequest", policy)
+        self.assertIn("assignedRows", policy)
+        self.assertIn("Number(row?.assigned_team_id||0)>0", policy)
+        self.assertIn("return responseFrom(real.data", policy)
+        self.assertIn("return previousFetch(input,init)", policy)
+        self.assertIn("getRefresh=async function", policy)
+        self.assertIn("MOCK PREVIEW · no assigned reps yet", policy)
+        self.assertIn("te-mock-bg", policy)
+        self.assertIn("#teamDesignOverlay #tdNewSample{display:none!important}", stability)
+        self.assertIn("Real team stats are used when members exist", stability)
 
         self.assertIn("theme-editor-intuitive-v123.js", display)
         self.assertIn("windows-theme-editor-help-v123.js", settings)
