@@ -1,8 +1,11 @@
-"""Production-only feature gates.
+"""Production feature-access policy.
 
-Keep unfinished views visible in Settings, but prevent them from being activated
-or placed in the physical screen rotation. Development/main does not import this
-module, so the office Pi keeps every feature available.
+Phase 1 keeps every feature that already exists in the application available for
+Windows testing.  The policy stays centralized here so a later entitlement
+phase can allow/deny individual features without deleting or rebuilding them.
+
+This module also keeps the production-only connection-default cleanup from the
+Phase 0/1.0.18 baseline.  That cleanup is not a feature restriction.
 """
 import sys
 
@@ -13,11 +16,49 @@ import keyboard_controls_v112
 from sources import tableau_configured
 
 COMING_EVENTUALLY = "Coming eventually"
-DISABLED_VIEW_MODES = {"team_vs_team", "all_teams"}
+
+# Central Phase 1 access policy.  Keep all existing functionality unlocked for
+# testing.  Later phases can replace these booleans with entitlement results
+# while feature code continues to ask only whether a feature is allowed.
+FEATURE_ACCESS = {
+    "whole_office": True,
+    "per_team": True,
+    "team_vs_team": True,
+    "all_teams": True,
+    "product_close": True,
+    "temporary_date": True,
+    "themes": True,
+    "theme_editor": True,
+    "controls": True,
+    "settings": True,
+}
+
 _INSTALLED = False
 _BASE_CONFIG = None
 _BASE_SAVE_CONFIG = None
 _BASE_GET_MODE_PAYLOAD = None
+
+
+def can_use(feature):
+    """Return whether one existing product feature is currently accessible."""
+    return bool(FEATURE_ACCESS.get(str(feature or "").strip(), False))
+
+
+def feature_access_snapshot():
+    """Expose a copy for the Settings UI without allowing client mutation."""
+    return dict(FEATURE_ACCESS)
+
+
+def _feature_for_view(value):
+    raw = str(value or "").strip()
+    if raw.startswith("per_team::"):
+        return "per_team"
+    return raw.split("::", 1)[0]
+
+
+def _view_allowed(value):
+    feature = _feature_for_view(value)
+    return can_use(feature) if feature else False
 
 
 def _remove_compiled_connection_defaults():
@@ -40,21 +81,20 @@ def _bump_settings_version():
 
 
 def _sanitize_saved_settings():
+    """Remove only selections that the central policy explicitly disallows."""
     settings = get_settings()
     changed = False
 
-    if str(settings.get("active_mode") or "whole_office").strip() != "whole_office":
+    active = str(settings.get("active_mode") or "whole_office").strip()
+    if not _view_allowed(active):
         settings["active_mode"] = "whole_office"
         changed = True
 
     raw = settings.get("keyboard_cycle_views")
     if isinstance(raw, list):
-        cleaned = [
-            str(value)
-            for value in raw
-            if str(value).strip() not in DISABLED_VIEW_MODES
-        ]
-        if cleaned != [str(value) for value in raw]:
+        cleaned = [str(value) for value in raw if _view_allowed(value)]
+        current = [str(value) for value in raw]
+        if cleaned != current:
             settings["keyboard_cycle_views"] = cleaned or ["whole_office"]
             changed = True
 
@@ -65,21 +105,14 @@ def _sanitize_saved_settings():
 
 
 def _patch_rotation_choices():
+    """Keep fixed rotation choices aligned with the central access policy."""
     keyboard_controls_v112.FIXED_VIEWS = tuple(
-        value
-        for value in keyboard_controls_v112.FIXED_VIEWS
-        if value not in DISABLED_VIEW_MODES
+        value for value in keyboard_controls_v112.FIXED_VIEWS if _view_allowed(value)
     )
 
 
 def _patch_config_read(app):
-    """Give the TV only production-allowed rotation choices.
-
-    The TV's physical-control script reads keyboard_cycle_views directly from
-    /api/config. When the user has never saved a custom rotation, supply the
-    current allowed list dynamically so Team vs Team and All Teams can never be
-    reached by Previous/Next, while new Per-Team screens still appear normally.
-    """
+    """Publish feature access and filter only explicitly restricted screens."""
     global _BASE_CONFIG
     if _BASE_CONFIG is not None:
         return
@@ -91,14 +124,24 @@ def _patch_config_read(app):
         response = _BASE_CONFIG()
         data = response.get_json() or {}
         settings = data.get("settings") if isinstance(data.get("settings"), dict) else {}
-        settings["active_mode"] = "whole_office"
 
-        available = keyboard_controls_v112._available_views()
+        # This is response-only metadata. api_save_config ignores unknown keys,
+        # so the browser cannot persist or change the server-side access policy.
+        settings["feature_access"] = feature_access_snapshot()
+
+        active = str(settings.get("active_mode") or "whole_office").strip()
+        if not _view_allowed(active):
+            settings["active_mode"] = "whole_office"
+
+        available = [
+            value for value in keyboard_controls_v112._available_views()
+            if _view_allowed(value)
+        ]
         raw = settings.get("keyboard_cycle_views")
         if isinstance(raw, list) and raw:
             settings["keyboard_cycle_views"] = [
                 str(value) for value in raw if str(value) in available
-            ] or ["whole_office"]
+            ] or list(available[:1])
         else:
             settings["keyboard_cycle_views"] = list(available)
 
@@ -109,6 +152,7 @@ def _patch_config_read(app):
 
 
 def _patch_config_save(app):
+    """Reject a screen only when the central policy says it is unavailable."""
     global _BASE_SAVE_CONFIG
     if _BASE_SAVE_CONFIG is not None:
         return
@@ -120,7 +164,7 @@ def _patch_config_save(app):
         body = request.get_json(silent=True) or {}
         if isinstance(body, dict) and "active_mode" in body:
             requested = str(body.get("active_mode") or "").strip()
-            if requested != "whole_office":
+            if requested and not _view_allowed(requested):
                 return jsonify({"ok": False, "error": COMING_EVENTUALLY}), 409
         return _BASE_SAVE_CONFIG()
 
@@ -128,6 +172,7 @@ def _patch_config_save(app):
 
 
 def _patch_disabled_view_rendering():
+    """Keep a server-side failsafe for any future restricted screen."""
     global _BASE_GET_MODE_PAYLOAD
     if _BASE_GET_MODE_PAYLOAD is not None:
         return
@@ -143,8 +188,7 @@ def _patch_disabled_view_rendering():
         mode=None, sort_metric_override=None, team_vs_team_override=None
     ):
         raw = str(mode or "").strip()
-        parsed = raw.split("::", 1)[0]
-        if parsed in DISABLED_VIEW_MODES:
+        if raw and not _view_allowed(raw):
             mode = "whole_office"
         return _BASE_GET_MODE_PAYLOAD(
             mode,
@@ -156,6 +200,10 @@ def _patch_disabled_view_rendering():
 
 
 def _patch_temporary_date(app):
+    """Preserve the old route gate, but activate it only when policy denies it."""
+    if can_use("temporary_date"):
+        return
+
     endpoint = "api_temporary_date_override_v113"
     if endpoint not in app.view_functions:
         return
