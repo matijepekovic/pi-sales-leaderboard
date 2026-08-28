@@ -43,7 +43,8 @@
         background-image:var(--te-row-image,none);background-position:center;
         background-size:100% 100%;background-repeat:no-repeat;
         transform-origin:center center;transform:var(--te-row-transform,none);
-        opacity:var(--te-row-opacity,1);will-change:transform,opacity
+        opacity:var(--te-row-opacity,1);will-change:transform,opacity;
+        animation:none!important
       }
       #themedTeamBroadcast .bt-row.te-transform-row::before{z-index:1}
       #themedTeamBroadcast .bt-row.te-transform-row>*{z-index:2}
