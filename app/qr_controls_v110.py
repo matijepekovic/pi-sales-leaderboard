@@ -96,6 +96,16 @@ def install_routes(app):
     except Exception as exc:
         set_meta("v119_starter_theme_status", f"Starter theme startup failed: {exc}")
 
+    # v127 fixes the one old theme route that still hard-coded pre-Starter
+    # bases. Install after v116/v119 so it reuses their final storage/runtime
+    # helpers and preserves Starter while activating an edited design.
+    try:
+        import theme_asset_apply_v127
+        if theme_asset_apply_v127.install(app):
+            changed = True
+    except Exception as exc:
+        set_meta("v127_theme_asset_apply_status", f"Theme asset apply startup failed: {exc}")
+
     if _ENDPOINT not in app.view_functions:
         app.add_url_rule(
             "/api/qr-overlay",
