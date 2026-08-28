@@ -201,6 +201,22 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("tableau.signin()", endpoint)
         self.assertNotIn("save_settings", endpoint)
 
+    def test_team_builder_members_follow_tableau_pull(self):
+        script = (APP_DIR / "static" / "team-builder-tableau-members-v125.js").read_text(encoding="utf-8")
+        template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
+
+        self.assertIn("team-builder-tableau-members-v125.js", template)
+        self.assertIn('originalRequest("/api/config"', script)
+        self.assertIn('cleanPath==="/api/source/preview"', script)
+        self.assertIn("result.d.rows", script)
+        self.assertIn("previewPool=normalizeRows(result.d.rows)", script)
+        self.assertIn('cleanPath==="/api/source/refresh"', script)
+        self.assertIn("openTeamBuilder=function", script)
+        self.assertIn("setBuilderStep=function", script)
+        self.assertIn("renderBuilderMembers=function", script)
+        self.assertIn("No Tableau reps loaded yet.", script)
+        self.assertIn("names from that Tableau data will appear here automatically", script)
+
 
 class WindowsThemeEditorTests(unittest.TestCase):
     def test_transform_values_are_bounded(self):
