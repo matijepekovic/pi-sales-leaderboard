@@ -3,7 +3,7 @@
 /* v37 precision formatting.
    Tableau shows split counts fractionally, rates to two decimals, and dollar
    calculations with cents. Do not round those values on the TV. */
-fmt = function(v, type, symbol="$\u0022){
+fmt = function(v, type, symbol="$" ){
   const n = Number(v || 0);
   if(type === "currency"){
     return symbol + n.toLocaleString(undefined, {
