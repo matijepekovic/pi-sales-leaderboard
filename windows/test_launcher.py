@@ -206,6 +206,8 @@ class WindowsThemeEditorTests(unittest.TestCase):
         preview = (APP_DIR / "static" / "theme-editor-preview-v122.js").read_text(encoding="utf-8")
         runtime = (APP_DIR / "static" / "theme-transform-runtime-v122.js").read_text(encoding="utf-8")
         host = (APP_DIR / "static" / "windows-theme-visual-editor-v122.js").read_text(encoding="utf-8")
+        intuitive = (APP_DIR / "static" / "theme-editor-intuitive-v123.js").read_text(encoding="utf-8")
+        help_ui = (APP_DIR / "static" / "windows-theme-editor-help-v123.js").read_text(encoding="utf-8")
 
         self.assertIn("windows_theme_editor_v122.install(server.app, server.PUBLIC_ENDPOINTS)", server_entry)
         self.assertIn("theme-transform-runtime-v122.js", display)
@@ -228,6 +230,18 @@ class WindowsThemeEditorTests(unittest.TestCase):
         self.assertIn("StatsThemeEditorHost", host)
         self.assertIn('searchParams.set("themeEditor","1")', host)
         self.assertIn("↻ Sample", host)
+
+        self.assertIn("theme-editor-intuitive-v123.js", display)
+        self.assertIn("windows-theme-editor-help-v123.js", settings)
+        self.assertIn("Double-click to add", intuitive)
+        self.assertIn("Replace Image", intuitive)
+        self.assertIn('content:"↻"', intuitive)
+        self.assertIn("stats.themeEditor.coach.v123.dismissed", intuitive)
+        self.assertIn("Move your mouse over artwork", intuitive)
+        self.assertIn("tdThemeHelpButton", help_ui)
+        self.assertIn("Editing:", help_ui)
+        self.assertIn("scrollIntoView", help_ui)
+        self.assertIn("Show canvas guide", help_ui)
 
 
 if __name__ == "__main__":
