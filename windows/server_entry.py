@@ -68,6 +68,12 @@ def main() -> int:
 
     windows_runtime.install(server.app, server)
 
+    # Keep the detached updater's result available to the unlocked Software
+    # page after Stats comes back, including failed/rolled-back installs.
+    import windows_update_status_v128
+
+    windows_update_status_v128.install(server.app, server)
+
     # Direct Theme Builder transforms are Windows-only. Reading the transform
     # state is public so the fullscreen display can apply it; writes remain
     # behind the normal Settings lock.
