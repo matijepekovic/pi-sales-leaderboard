@@ -48,7 +48,7 @@ Keep a recoverable copy of the current Windows production application so future 
 
 # Phase 1 — Unlock every existing feature for testing
 
-**Status: ⬜ NOT STARTED**
+**Status: ✅ COMPLETE — CONFIRMED 2026-08-28**
 
 ## Goal
 
@@ -56,24 +56,40 @@ Make every feature that already exists in the code accessible on the Windows tes
 
 ## Work
 
-- [ ] Inventory every current feature restriction and `Coming eventually` gate.
-- [ ] Make Whole Office accessible.
-- [ ] Make Per Team accessible.
-- [ ] Make Team vs Team accessible.
-- [ ] Make All Teams accessible.
-- [ ] Make Product Close Rates accessible.
-- [ ] Make Temporary Date functionality accessible.
-- [ ] Make every existing Theme/Theme Editor capability accessible.
-- [ ] Make every existing control/settings capability accessible.
-- [ ] Remove the `Coming eventually` testing restriction/UX where it blocks existing features.
-- [ ] Preserve a central mechanism that can later allow/deny individual features.
-- [ ] Do not add new product functionality during this phase.
+- [x] Inventory every current feature restriction and `Coming eventually` gate.
+- [x] Make Whole Office accessible.
+- [x] Make Per Team accessible.
+- [x] Make Team vs Team accessible.
+- [x] Make All Teams accessible.
+- [x] Make Product Close Rates accessible.
+- [x] Make Temporary Date functionality accessible.
+- [x] Make every existing Theme/Theme Editor capability accessible.
+- [x] Make every existing control/settings capability accessible.
+- [x] Remove the `Coming eventually` testing restriction/UX where it blocks existing features.
+- [x] Preserve a central mechanism that can later allow/deny individual features.
+- [x] Do not add new product functionality during this phase.
+
+## Confirmed evidence
+
+- [x] Production restrictions are centralized in `app/production_gates.py` and the matching production settings guard.
+- [x] A central `FEATURE_ACCESS` policy and `can_use(feature)` interface now allow all existing Phase 1 features while preserving later per-feature restriction capability.
+- [x] The production UI reads the central feature-access policy instead of hard-coding Whole Office / `Coming eventually` restrictions.
+- [x] The Settings startup-loop safety guard remains intact after the unlock change.
+- [x] Windows launcher regression tests passed: 14/14.
+- [x] Windows signed-update tests passed: 3/3.
+- [x] Packaged Windows backend, fullscreen launcher, and updater built successfully.
+- [x] Packaged backend health/display/signed-update-feed smoke test passed.
+- [x] Windows installer compiled successfully.
+- [x] Silent Windows install/uninstall verification passed.
+- [x] Release manifest signing and verification passed.
+- [x] No new public `v1.0.18` release was published; the immutable-release guard correctly rejected replacing the preserved Phase 0 release with different assets.
+- [x] Phase 1 implementation head before checklist confirmation: `2c6129fd2c9baec80b1d4fbdcf2d0c875d009134`.
 
 ## Exit criteria
 
-- [ ] Every feature already present in the codebase can be opened and tested on Windows.
-- [ ] Individual features can still be restricted later without deleting/rebuilding the feature.
-- [ ] Phase 1 confirmed.
+- [x] Every feature already present in the codebase can be opened and tested on Windows.
+- [x] Individual features can still be restricted later without deleting/rebuilding the feature.
+- [x] Phase 1 confirmed.
 
 ---
 
@@ -521,6 +537,6 @@ Reuse the modular Stats core/services/UI for a hosted web product.
 
 # Current position
 
-`Phase 0 ✅` → **Phase 1 is next.**
+`Phase 0 ✅` → `Phase 1 ✅` → **Phase 2 is next.**
 
-Do not begin Phase 2 until Phase 1 has been completed, tested, and explicitly confirmed in this file.
+Do not begin Phase 3 until Phase 2 has been completed, tested, and explicitly confirmed in this file.
