@@ -41,7 +41,14 @@
 
   function enforceAllowedMode(){
     const select=document.getElementById("activeMode");
-    if(!select||!select.options.length) return false;
+    if(!select) return false;
+
+    // Keep the production startup safety guard: Settings loads /api/config
+    // asynchronously, so do not touch the select until its real options exist.
+    // This prevents a MutationObserver/render loop while the page is booting.
+    const wholeOfficeOption=select.querySelector('option[value="whole_office"]');
+    if(!wholeOfficeOption) return false;
+
     if(viewAllowed(select.value)) return true;
 
     const fallback=[...select.options].find(option=>viewAllowed(option.value));
