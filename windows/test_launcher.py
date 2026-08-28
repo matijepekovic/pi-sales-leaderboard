@@ -300,6 +300,34 @@ class WindowsThemeEditorTests(unittest.TestCase):
         self.assertIn("scrollIntoView", help_ui)
         self.assertIn("Show canvas guide", help_ui)
 
+    def test_theme_colors_use_in_app_picker_and_always_apply(self):
+        settings = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
+        display = (APP_DIR / "templates" / "display.html").read_text(encoding="utf-8")
+        editor = (APP_DIR / "static" / "windows-theme-color-editor-v127.js").read_text(encoding="utf-8")
+        runtime = (APP_DIR / "static" / "theme-color-runtime-v127.js").read_text(encoding="utf-8")
+
+        self.assertIn("windows-theme-color-editor-v127.js", settings)
+        self.assertIn("theme-color-runtime-v127.js", display)
+        self.assertIn("Frame & Borders", editor)
+        self.assertIn("Main Accent", editor)
+        self.assertIn("Shadow / Depth", editor)
+        self.assertIn("Background Glow", editor)
+        self.assertIn("Rows & Panels", editor)
+        self.assertIn("Champion Highlight", editor)
+        self.assertIn('id="tcpHue" type="range"', editor)
+        self.assertIn('id="tcpSat" type="range"', editor)
+        self.assertIn('id="tcpLight" type="range"', editor)
+        self.assertIn('id="tcpHex" class="tcp-hex" type="text"', editor)
+        self.assertNotIn('id="tcpHex" class="tcp-hex" type="color"', editor)
+        self.assertIn("event.stopImmediatePropagation()", editor)
+        self.assertIn("paintThemeColor", editor)
+        self.assertIn("Save & Apply Design", editor)
+        self.assertIn("enabled:true", editor)
+        self.assertIn("ensureActiveSoon", editor)
+        self.assertIn("var(--bt-panel)", runtime)
+        self.assertIn("var(--bt-dark)", runtime)
+        self.assertIn("var(--bt-secondary)", runtime)
+
 
 if __name__ == "__main__":
     unittest.main()
