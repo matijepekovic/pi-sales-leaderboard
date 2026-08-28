@@ -123,8 +123,8 @@
       try{window.config=config;}catch(_){ }
       window.dispatchEvent(new CustomEvent("stats-tableau-login-saved",{detail:connectionValues()}));
       const status=document.getElementById("dataSourceStatus");
-      if(status)status.textContent="Login saved. Tableau Report has been refreshed.";
-      if(closeAfter)setTimeout(()=>closeOverlay("dataSourceOverlay"),350);
+      if(status)status.textContent=closeAfter?"Login saved. Refreshing Tableau Report…":"Login saved.";
+      if(closeAfter)setTimeout(()=>location.reload(),450);
       return true;
     };
   }
