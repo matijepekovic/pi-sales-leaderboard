@@ -67,6 +67,13 @@ def main() -> int:
     import windows_runtime
 
     windows_runtime.install(server.app, server)
+
+    # Direct Theme Builder transforms are Windows-only. Reading the transform
+    # state is public so the fullscreen display can apply it; writes remain
+    # behind the normal Settings lock.
+    import windows_theme_editor_v122
+
+    windows_theme_editor_v122.install(server.app, server.PUBLIC_ENDPOINTS)
     _start_remote_qr_refresh()
 
     from waitress import serve
