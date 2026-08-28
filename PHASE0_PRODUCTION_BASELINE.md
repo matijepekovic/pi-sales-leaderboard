@@ -1,145 +1,135 @@
 # Phase 0 — Production 1.0.18 recovery baseline
 
-This document freezes the current Windows production state before any stabilization or future production work.
+## Goal
 
-## Scope
+Preserve the current working Windows production release so we can always return to it.
 
-Production only. Do not merge development/main into this baseline.
+Production only. Development/main is out of scope.
 
-No refactors, renames, folder reorganization, features, or database schema changes are part of Phase 0.
+## Do not change during Phase 0
 
-## Frozen source baseline
+- no refactors
+- no file renames
+- no folder reorganization
+- no new features
+- no database-structure changes
+
+## Frozen production source
 
 - Production version: `1.0.18`
 - Source commit: `111399f998686ad2aba94bae382c7302acc72d3e`
-- Frozen baseline branch: `baseline/production-1.0.18`
-- Phase 0 recovery branch: `backup/phase0-production-1.0.18-20260828`
+- Frozen baseline ref: `baseline/production-1.0.18`
+- Recovery ref: `backup/phase0-production-1.0.18-20260828`
 - Stabilization branch: `stabilization/production-1.0.18-phase0`
-- Live production branch remains: `production`
+- Live branch: `production`
 
-The public release repository contains the published Windows release `v1.0.18` and is the reinstall source for the current Windows installer.
+`baseline/production-1.0.18` points to the exact production 1.0.18 source commit and must not be used for ongoing work.
 
-Published installer identity:
+## Published Windows baseline
+
+The public update repository contains the current published Windows release `v1.0.18`.
+
+Installer identity:
 
 - File: `Stats-Setup-1.0.18-windows-x64.exe`
 - Size: `30220768` bytes
 - SHA-256: `c6b37bcf64ef3ab0d2a7f0196f52bb9b0877e75b2329308c4e835bee773fa1f8`
 
-## Current Windows installation
+The release also contains:
 
-Stats is installed per user under:
+- `release-manifest.json`
+- `release-manifest.json.sig`
+
+These provide the signed production update baseline.
+
+## What is protected by the source baseline
+
+The frozen 1.0.18 source preserves everything that actually ships with the app, including:
+
+- Windows packaging/build configuration
+- `StatsServer.exe` source/package inputs
+- `StatsLauncher.exe` source/package inputs
+- `StatsUpdater.exe` source/package inputs
+- Flask templates and static files
+- built-in themes and built-in assets
+- Starter/default assets
+- application defaults
+- SQLite schema/default-setting code
+- Tableau configuration logic
+- production feature gates
+- production `VERSION`
+- embedded Ed25519 public update-verification key
+- release-signing/verification workflow code
+
+## Customer runtime data is not part of the Phase 0 product baseline
+
+Stats keeps customer-created runtime data under:
+
+`%USERPROFILE%\.local\share\pi-tableau-leaderboard\`
+
+That may include a customer's database, saved settings, Tableau credentials/configuration, teams, uploaded themes, uploaded assets and applied-theme assets.
+
+This data is deliberately separate from the installed program and is **not shipped with Stats**. It is therefore not required to define or preserve the production 1.0.18 application baseline.
+
+Phase 0 does not require backing up the current development/test Windows machine's customer data.
+
+## Current Windows installation process
+
+Stats installs per user under:
 
 `%LOCALAPPDATA%\Programs\Stats`
 
-The package contains:
+The installer contains the packaged production application and does not require Python, Git, GitHub credentials or administrator rights.
+
+The package includes:
 
 - `StatsServer.exe`
 - `StatsLauncher.exe`
 - `StatsUpdater.exe`
 - production templates/static assets
 - production `VERSION`
-- the embedded Ed25519 public update-verification key
+- embedded Ed25519 public update-verification key
 
-The installer does not require Python, Git, GitHub credentials, or administrator rights.
-
-At sign-in, the Startup shortcut launches Stats. The launcher starts the packaged server on port 8765, waits for `/health`, then opens the fullscreen browser.
+At Windows sign-in, the Startup shortcut launches Stats. The launcher starts the packaged backend on port 8765, waits for `/health`, then opens the fullscreen browser.
 
 ## Current Windows update process
 
-Updates are user-triggered from Software using Check for Updates / Update.
+Updates are user-triggered from Software using **Check for Updates** / **Update**.
 
-1. Stats downloads `release-manifest.json` and `release-manifest.json.sig` from the public update release.
+1. Stats downloads `release-manifest.json` and `release-manifest.json.sig` from the public release repository.
 2. The manifest is verified with the embedded Ed25519 public key.
-3. The manifest supplies the exact version, installer filename, byte size, and SHA-256.
-4. The installer is downloaded into the persistent data directory under `updates/windows/<version>/`.
-5. Stats verifies the installer size and SHA-256 again immediately before launch.
-6. `StatsUpdater.exe` is copied outside the replaceable program directory and starts the verified Inno Setup installer.
-7. The installer replaces the program files under `%LOCALAPPDATA%\Programs\Stats`.
+3. The signed manifest supplies the exact production version, installer filename, byte size and SHA-256.
+4. Stats downloads the installer.
+5. Stats verifies its signed size and SHA-256 immediately before installation.
+6. `StatsUpdater.exe` runs outside the replaceable program directory.
+7. The verified Inno Setup installer replaces the installed program files.
 8. The updater relaunches `StatsLauncher.exe`.
 
-The legacy source-tree updater is disabled in the packaged Windows build.
+The packaged Windows application does not use the legacy source-tree ZIP updater.
 
-## Persistent customer data
+## Recovery procedure
 
-All customer-owned runtime data is deliberately outside the Windows program directory under:
+If future stabilization work fails completely:
 
-`%USERPROFILE%\.local\share\pi-tableau-leaderboard\`
-
-The entire directory must be backed up as one unit. This protects more safely than selecting individual files.
-
-Known contents include:
-
-- `leaderboard.db` — SQLite database
-  - settings
-  - Tableau server/site/PAT configuration
-  - selected Tableau source/mapping
-  - teams and assignments
-  - theme configuration
-  - other persisted application state
-- `themes\` — persistent/custom theme files
-- `asset-library\` — user-uploaded/recolored reusable assets
-- `applied-theme-assets\` — permanent copies of assets currently applied to themes
-- team logos and other customer-owned persistent files referenced by the database
-- `updates\windows\` — downloaded verified Windows update installers/helpers when present
-
-Because `leaderboard.db` includes the stored Tableau PAT secret, a backup of this directory is sensitive and must be kept private.
-
-## Phase 0 backup procedure on the current Windows machine
-
-Close Stats completely before copying the data directory so SQLite and asset files are captured consistently.
-
-PowerShell:
-
-```powershell
-$Source = Join-Path $HOME ".local\share\pi-tableau-leaderboard"
-$Backup = Join-Path $HOME "Desktop\Stats-Phase0-1.0.18-data"
-
-if (-not (Test-Path -LiteralPath $Source)) {
-    throw "Stats persistent data directory was not found: $Source"
-}
-
-if (Test-Path -LiteralPath $Backup) {
-    throw "Backup destination already exists: $Backup"
-}
-
-Copy-Item -LiteralPath $Source -Destination $Backup -Recurse
-
-Get-ChildItem -LiteralPath $Backup -Recurse -File |
-    Get-FileHash -Algorithm SHA256 |
-    Sort-Object Path |
-    Format-Table -AutoSize
-```
-
-Do not delete or move the original persistent data directory after making the copy.
-
-For strongest recovery protection, keep a second copy of `Stats-Phase0-1.0.18-data` on storage separate from the Windows PC.
-
-## Restore procedure
-
-If future production work fails completely:
-
-1. Obtain the published `Stats-Setup-1.0.18-windows-x64.exe` installer.
-2. Verify its SHA-256 is exactly:
+1. Reset/recover the source from `baseline/production-1.0.18` or commit `111399f998686ad2aba94bae382c7302acc72d3e`.
+2. Use the published `Stats-Setup-1.0.18-windows-x64.exe` installer.
+3. Confirm its SHA-256 is exactly:
    `c6b37bcf64ef3ab0d2a7f0196f52bb9b0877e75b2329308c4e835bee773fa1f8`
-3. Install Stats 1.0.18.
-4. Close Stats completely.
-5. Preserve or rename any newly created `%USERPROFILE%\.local\share\pi-tableau-leaderboard\` directory.
-6. Restore the complete Phase 0 backup directory to `%USERPROFILE%\.local\share\pi-tableau-leaderboard\`.
-7. Launch Stats.
-8. Confirm:
-   - saved teams/assignments are present;
-   - themes render correctly;
-   - applied assets and uploaded library assets are present;
-   - settings are retained;
-   - Tableau configuration/source selection is retained;
-   - the leaderboard loads normally.
+4. Install Stats 1.0.18 normally.
+5. Confirm the packaged application launches and reports production version 1.0.18.
 
-## Phase 0 exit check
+Customer/runtime data restoration is a separate concern and is not required to recover the application itself.
 
-Phase 0 is complete only when all of the following are true:
+## Phase 0 exit criteria
 
-- the 1.0.18 source commit remains preserved by immutable/pinned recovery references;
-- the 1.0.18 installer is still recoverable and its hash is recorded;
-- a copy of the current Windows persistent data directory exists outside the live data location;
-- that backup contains the database, themes, applied assets, uploaded assets, settings, and Tableau configuration;
-- a reinstall of 1.0.18 plus restoration of that full data directory is sufficient to return to the current production state.
+Phase 0 passes when:
+
+- the exact 1.0.18 production source is pinned and recoverable;
+- a dedicated stabilization branch exists from that baseline;
+- the published 1.0.18 Windows installer remains available;
+- the exact installer filename, size and SHA-256 are recorded;
+- the signed release manifest/signature are preserved in the published release;
+- the Windows installation process is documented;
+- the Windows update process is documented;
+- rebuilding/reinstalling 1.0.18 does not depend on development/main;
+- no Phase 0 work changed app behavior, file organization or database structures.
