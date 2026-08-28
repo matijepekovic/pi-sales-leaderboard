@@ -67,17 +67,27 @@ begin
   end;
 end;
 
-procedure StopStatsProcesses();
+procedure KillStatsImages();
 var
   ResultCode: Integer;
 begin
-  StopKioskBrowser();
-
-  { Do NOT use taskkill /T for the launcher or server here. The detached OTA
-    helper is launched by StatsServer.exe, so /T would kill the helper and the
-    installer it just started before the update could finish. }
+  { Never use /T for these two images. The detached OTA helper was started by
+    StatsServer.exe and must survive while this installer is replacing files. }
   Exec(ExpandConstant('{cmd}'), '/C taskkill /IM StatsLauncher.exe /F >NUL 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{cmd}'), '/C taskkill /IM StatsServer.exe /F >NUL 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+procedure StopStatsProcesses();
+begin
+  StopKioskBrowser();
+  KillStatsImages();
+
+  { Windows Defender/indexing can keep a just-terminated executable mapped for
+    a short moment. Give the OS time to release it, then make one more stop pass
+    before Inno begins copying the new server/launcher files. }
+  Sleep(1500);
+  KillStatsImages();
+  Sleep(800);
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
