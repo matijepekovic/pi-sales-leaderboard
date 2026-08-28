@@ -181,6 +181,26 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("max-width:1600px", script)
         self.assertIn("windows-settings-sidebar-v121.js", template)
 
+    def test_tableau_login_owns_connection_fields_on_windows(self):
+        ui = (APP_DIR / "static" / "windows-tableau-login-v124.js").read_text(encoding="utf-8")
+        template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
+        server_entry = (WINDOWS_DIR / "server_entry.py").read_text(encoding="utf-8")
+        endpoint = (APP_DIR / "windows_tableau_login_v124.py").read_text(encoding="utf-8")
+
+        self.assertIn("windows-tableau-login-v124.js", template)
+        self.assertIn('document.getElementById("v90Server")', ui)
+        self.assertIn('document.getElementById("v90Site")', ui)
+        self.assertIn('document.getElementById("v90PatName")', ui)
+        self.assertIn("tableauLoginConnectionV124", ui)
+        self.assertIn("Test Connection", ui)
+        self.assertIn("collectDataSource=function", ui)
+        self.assertIn("source:{...current,...values}", ui)
+        self.assertIn("/api/windows/tableau-login/test", ui)
+        self.assertIn("windows_tableau_login_v124.install(server.app)", server_entry)
+        self.assertIn("ConfiguredTableauSource", endpoint)
+        self.assertIn("tableau.signin()", endpoint)
+        self.assertNotIn("save_settings", endpoint)
+
 
 class WindowsThemeEditorTests(unittest.TestCase):
     def test_transform_values_are_bounded(self):
