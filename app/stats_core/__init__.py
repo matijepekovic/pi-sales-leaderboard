@@ -1,0 +1,1 @@
+"""Stats application core package."""

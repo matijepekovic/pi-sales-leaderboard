@@ -157,7 +157,8 @@ class RemoteQrTests(unittest.TestCase):
     def test_settings_back_button_and_connection_examples(self):
         script = (APP_DIR / "static" / "settings-production-v107.js").read_text(encoding="utf-8")
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
-        gates = (APP_DIR / "production_gates.py").read_text(encoding="utf-8")
+        settings_service = (APP_DIR / "stats_core" / "services" / "settings.py").read_text(encoding="utf-8")
+        tableau_service = (APP_DIR / "stats_core" / "services" / "tableau.py").read_text(encoding="utf-8")
 
         self.assertIn("← Back to Stats", script)
         self.assertIn("window.location.assign('/')", script)
@@ -165,8 +166,9 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("Example: your-site", script)
         self.assertIn("Example: stats-pat", script)
         self.assertIn("settings-production-v107.js", template)
-        self.assertIn("_remove_compiled_connection_defaults", gates)
-        self.assertIn('tableau_configured.DEFAULTS[key] = ""', gates)
+        self.assertIn("FEATURE_ACCESS", settings_service)
+        self.assertIn('current["github_auto_update"] = False', settings_service)
+        self.assertIn("config[source_key] = explicit or top", tableau_service)
 
     def test_windows_settings_use_sidebar_workspace(self):
         script = (APP_DIR / "static" / "windows-settings-sidebar-v121.js").read_text(encoding="utf-8")
@@ -185,6 +187,7 @@ class RemoteQrTests(unittest.TestCase):
         ui = (APP_DIR / "static" / "windows-tableau-login-v124.js").read_text(encoding="utf-8")
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
         server_entry = (WINDOWS_DIR / "server_entry.py").read_text(encoding="utf-8")
+        platform = (APP_DIR / "stats_core" / "platform" / "windows.py").read_text(encoding="utf-8")
         endpoint = (APP_DIR / "windows_tableau_login_v124.py").read_text(encoding="utf-8")
 
         self.assertIn("windows-tableau-login-v124.js", template)
@@ -196,7 +199,9 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("collectDataSource=function", ui)
         self.assertIn("source:{...current,...values}", ui)
         self.assertIn("/api/windows/tableau-login/test", ui)
-        self.assertIn("windows_tableau_login_v124.install(server.app)", server_entry)
+        self.assertIn("windows_tableau_login_v124.install(app)", platform)
+        self.assertIn("stats_core.bootstrap", server_entry)
+        self.assertNotIn("windows_tableau_login_v124.install", server_entry)
         self.assertIn("ConfiguredTableauSource", endpoint)
         self.assertIn("tableau.signin()", endpoint)
         self.assertNotIn("save_settings", endpoint)
@@ -240,6 +245,7 @@ class WindowsThemeEditorTests(unittest.TestCase):
 
     def test_visual_theme_editor_is_wired_into_windows_build(self):
         server_entry = (WINDOWS_DIR / "server_entry.py").read_text(encoding="utf-8")
+        platform = (APP_DIR / "stats_core" / "platform" / "windows.py").read_text(encoding="utf-8")
         display = (APP_DIR / "templates" / "display.html").read_text(encoding="utf-8")
         settings = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
         preview = (APP_DIR / "static" / "theme-editor-preview-v122.js").read_text(encoding="utf-8")
@@ -250,7 +256,9 @@ class WindowsThemeEditorTests(unittest.TestCase):
         policy = (APP_DIR / "static" / "theme-editor-data-policy-v126.js").read_text(encoding="utf-8")
         stability = (APP_DIR / "static" / "windows-theme-stability-v126.js").read_text(encoding="utf-8")
 
-        self.assertIn("windows_theme_editor_v122.install(server.app, server.PUBLIC_ENDPOINTS)", server_entry)
+        self.assertIn("windows_theme_editor_v122.install(app, public_endpoints)", platform)
+        self.assertIn("stats_core.bootstrap", server_entry)
+        self.assertNotIn("windows_theme_editor_v122.install", server_entry)
         self.assertIn("theme-transform-runtime-v122.js", display)
         self.assertIn("theme-editor-preview-v122.js", display)
         self.assertIn("theme-editor-data-policy-v126.js", display)

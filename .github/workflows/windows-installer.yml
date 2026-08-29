@@ -24,6 +24,12 @@ on:
       - "scripts/verify_release_manifest.py"
       - ".github/workflows/windows-installer.yml"
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the tested build as the public signed release
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -74,6 +80,10 @@ jobs:
           }
           "STATS_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Test restructured runtime ownership
+        shell: pwsh
+        run: python windows/test_restructured_runtime.py
+
       - name: Test launcher close behavior
         shell: pwsh
         run: python windows/test_launcher.py
@@ -98,9 +108,13 @@ jobs:
             --hidden-import applied_theme_assets_v116 `
             --hidden-import starter_theme_v119 `
             --hidden-import starter_theme_assets_v119 `
-            --hidden-import production_gates `
-            --hidden-import production_versioning `
+            --hidden-import theme_asset_apply_v127 `
             --hidden-import windows_update `
+            --hidden-import windows_update_status_v128 `
+            --hidden-import windows_update_diagnostics `
+            --hidden-import windows_tableau_login_v124 `
+            --hidden-import windows_theme_editor_v122 `
+            --hidden-import windows_https `
             --hidden-import cryptography.hazmat.primitives.asymmetric.ed25519 `
             windows/server_entry.py
 
@@ -248,7 +262,7 @@ jobs:
           }
 
       - name: Sign and verify public release manifest
-        if: github.event_name == 'push' && github.ref == 'refs/heads/production'
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
         shell: pwsh
         env:
           UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
@@ -276,7 +290,7 @@ jobs:
           }
 
       - name: Publish signed public Windows release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/production'
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.UPDATE_PUBLISH_TOKEN }}
@@ -342,7 +356,7 @@ jobs:
       - name: Upload tested installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Stats-Windows-${{ env.STATS_VERSION }}
+          name: Stats-Windows-${{ env.STATS_VERSION }}-${{ github.sha }}
           path: installer-output/Stats-Setup-*-windows-x64.exe
           if-no-files-found: error
           retention-days: 14
