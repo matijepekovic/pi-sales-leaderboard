@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import ssl
 import sys
-from pathlib import Path
 
 from flask import jsonify
 
+import windows_https
 import windows_update
 
 _INSTALLED = False
@@ -39,6 +39,14 @@ def collect_diagnostics(server_module):
     checks.append(_check(
         "installed_version",
         lambda: f"{windows_update._version_tuple(installed_version)} ({installed_version})",
+    ))
+
+    checks.append(_check(
+        "https_trust",
+        lambda: (
+            f"provider={windows_https.diagnostics()['provider']}; "
+            f"windows_certificates_loaded={windows_https.diagnostics()['windows_certificates_loaded']}"
+        ),
     ))
 
     state = {}
@@ -80,16 +88,16 @@ def collect_diagnostics(server_module):
 
     checks.append(_check("latest_release_resolution", resolve_latest))
 
-    verify_paths = ssl.get_default_verify_paths()
+    trust = {}
+    try:
+        trust = windows_https.diagnostics()
+    except Exception as exc:
+        trust = {"provider": "unavailable", "error": _error_text(exc)}
+
     environment = {
         "packaged": bool(getattr(sys, "frozen", False)),
         "openssl": ssl.OPENSSL_VERSION,
-        "default_cafile_available": bool(
-            verify_paths.cafile and Path(verify_paths.cafile).is_file()
-        ),
-        "default_capath_available": bool(
-            verify_paths.capath and Path(verify_paths.capath).is_dir()
-        ),
+        "https_trust": trust,
     }
 
     return {
