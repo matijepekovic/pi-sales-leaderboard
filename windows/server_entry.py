@@ -74,6 +74,12 @@ def main() -> int:
 
     windows_update_status_v128.install(server.app, server)
 
+    # Read-only updater diagnostics stay separate from the updater itself so
+    # Phase 4 can move them behind a Windows platform/service boundary cleanly.
+    import windows_update_diagnostics
+
+    windows_update_diagnostics.install(server.app, server)
+
     # Direct Theme Builder transforms are Windows-only. Reading the transform
     # state is public so the fullscreen display can apply it; writes remain
     # behind the normal Settings lock.
