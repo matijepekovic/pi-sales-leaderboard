@@ -22,6 +22,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from flask import jsonify
 
 from update_signing_public_key import UPDATE_SIGNING_PUBLIC_KEY_B64
+import windows_https
 
 UPDATE_REPO = "matijepekovic/pi-sales-leaderboard-updates"
 LATEST_MANIFEST_URL = f"https://github.com/{UPDATE_REPO}/releases/latest/download/release-manifest.json"
@@ -57,7 +58,11 @@ def _read_url(url: str, *, max_bytes: int = MAX_METADATA_BYTES) -> bytes:
             "User-Agent": "Stats-Windows-Updater",
         },
     )
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with urllib.request.urlopen(
+        request,
+        timeout=30,
+        context=windows_https.ssl_context(),
+    ) as response:
         data = response.read(max_bytes + 1)
     if len(data) > max_bytes:
         raise ValueError("Update metadata is too large")
@@ -172,7 +177,11 @@ def _download_installer(info: dict, destination: Path) -> None:
     written = 0
     digest = hashlib.sha256()
     try:
-        with urllib.request.urlopen(request, timeout=60) as response, temporary.open("wb") as handle:
+        with urllib.request.urlopen(
+            request,
+            timeout=60,
+            context=windows_https.ssl_context(),
+        ) as response, temporary.open("wb") as handle:
             while True:
                 chunk = response.read(1024 * 1024)
                 if not chunk:
