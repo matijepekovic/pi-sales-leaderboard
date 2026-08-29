@@ -16,6 +16,18 @@
     const legacy=select.querySelector('option[value="undisputed"]');
     if(legacy) legacy.textContent="UNDISPUTED (existing)";
 
+    // Phase 2: the base theme picker used to change only the live editor state.
+    // Persist it immediately through Theme Studio's existing Save Design path,
+    // just like the other theme controls, so closing/restarting Stats cannot
+    // silently restore the previous base theme.
+    if(!select.dataset.v119Autosave){
+      select.dataset.v119Autosave="1";
+      select.addEventListener("change",()=>{
+        const save=document.getElementById("tdSave");
+        if(save&&!save.disabled) save.click();
+      });
+    }
+
     const reset=document.getElementById("tdReset");
     if(reset&&!reset.dataset.v119Reset){
       reset.dataset.v119Reset="1";
