@@ -4,9 +4,8 @@ from __future__ import annotations
 import re
 
 from sources import tableau_configured
-from stats_core.config import METRIC_DEFS, SECRET_SETTING_KEYS
+from stats_core.config import FEATURE_ACCESS, METRIC_DEFS, SECRET_SETTING_KEYS
 from stats_core.errors import ValidationError
-from stats_core.services.entitlement import FEATURE_ACCESS
 from stats_core.services.product import PRODUCT_MODE
 
 CORE_MODES = {
@@ -72,10 +71,9 @@ def clean_source(raw):
 
 
 class SettingsService:
-    def __init__(self, settings_repo, meta_repo, entitlement):
+    def __init__(self, settings_repo, meta_repo):
         self.settings_repo = settings_repo
         self.meta_repo = meta_repo
-        self.entitlement = entitlement
 
     def get(self):
         return self.settings_repo.get()
@@ -89,7 +87,7 @@ class SettingsService:
         data.pop("github_repo", None)
         data["tableau_pat_configured"] = configured
         data["settings_pin_set"] = has_pin
-        data["feature_access"] = self.entitlement.snapshot()
+        data["feature_access"] = dict(FEATURE_ACCESS)
         return data
 
     def bump(self):
@@ -101,8 +99,8 @@ class SettingsService:
         active = str(incoming.get("active_mode") or "").strip()
         parsed, team = split_active_mode(active)
         if active and (
-            (parsed in CORE_MODES and self.entitlement.can_use(parsed))
-            or (active == PRODUCT_MODE and self.entitlement.can_use("product_close"))
+            (parsed in CORE_MODES and FEATURE_ACCESS.get(parsed, False))
+            or (active == PRODUCT_MODE and FEATURE_ACCESS.get("product_close", False))
         ):
             current["active_mode"] = active
             if parsed == "per_team" and team:

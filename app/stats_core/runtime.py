@@ -6,7 +6,6 @@ class Runtime:
     repos: object
     settings: object
     auth: object
-    entitlement: object
     organization: object
     tableau: object
     pull_policy: object

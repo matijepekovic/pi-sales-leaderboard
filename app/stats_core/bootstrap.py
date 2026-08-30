@@ -18,7 +18,6 @@ from stats_core.runtime import Runtime
 from stats_core.screens.registry import ScreenRegistry
 from stats_core.services.auth import AuthService
 from stats_core.services.controls import ControlsService
-from stats_core.services.entitlement import EntitlementService
 from stats_core.services.leaderboard import LeaderboardService
 from stats_core.services.organization import OrganizationService
 from stats_core.services.preview import PreviewService
@@ -94,8 +93,7 @@ def create_app(platform_name="windows", start_background=True):
 
     Repositories.initialize()
     repos = Repositories(static_root=root / "static", data_root=data_root)
-    entitlement = EntitlementService()
-    settings = SettingsService(repos.settings, repos.meta, entitlement)
+    settings = SettingsService(repos.settings, repos.meta)
     auth = AuthService(repos.settings, repos.meta)
     app.secret_key = auth.app_secret_key()
 
@@ -132,7 +130,6 @@ def create_app(platform_name="windows", start_background=True):
         repos=repos,
         settings=settings,
         auth=auth,
-        entitlement=entitlement,
         organization=organization,
         tableau=tableau,
         pull_policy=pull_policy,
