@@ -8,7 +8,7 @@ The application has explicit runtime ownership while preserving the production S
 
 ## Configuration and storage
 
-`app/stats_core/config.py` owns application defaults, metric definitions and secret-setting keys. Repositories and services read those definitions directly; storage does not define UI or domain policy.
+`app/stats_core/config.py` owns application defaults, feature-access flags, metric definitions and secret-setting keys. Repositories and services read those definitions directly; storage does not define UI or domain policy.
 
 `app/stats_core/repositories/` owns persistence adapters:
 
@@ -42,7 +42,7 @@ Product Close Rates has separate source, repository, refresh service and screen 
 
 ## Access and security
 
-`EntitlementService` is the single feature-access boundary and currently grants every existing feature for testing. It contains no account, subscription or payment logic. `AuthService` owns settings PIN behavior and throttling.
+Feature availability is a plain `FEATURE_ACCESS` mapping in `stats_core/config.py`; there is no entitlement/account/payment service in the runtime. `AuthService` owns settings PIN behavior and throttling.
 
 ## Platform
 
