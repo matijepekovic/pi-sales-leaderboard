@@ -1,4 +1,4 @@
-"""v42 Tableau connector: pivot Rep Totals NEW summary measures.
+"""Tableau connector: pivot Rep Totals NEW summary measures.
 
 The exact published worksheet is:
     8-SalesRepLevelData/sheets/RepTotalsNEW3
@@ -12,8 +12,8 @@ then derive rates/averages from those finished Tableau totals.
 
 No LEAD-Id parsing, no Rep Details reconstruction, and no fallback worksheet.
 """
-from .tableau_v36_base import *
-from . import tableau_v36_base as _base
+from .tableau_base import *
+from . import tableau_base as _base
 
 
 TARGET_CONTENT_TAIL = "/sheets/RepTotalsNEW3"
@@ -152,7 +152,7 @@ def parse_summary_rows(csv_text):
     return reps
 
 
-# TableauSource._pull_rows is defined in tableau_v36_base and resolves
+# TableauSource._pull_rows is defined in tableau_base and resolves
 # parse_rows from that module at runtime. Replace only that parser.
 _base.parse_rows = parse_summary_rows
 
