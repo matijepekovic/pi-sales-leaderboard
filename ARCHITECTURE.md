@@ -26,6 +26,8 @@ The application has explicit runtime ownership while preserving the production S
 
 Shared Tableau HTTP and parsing primitives live in `sources/tableau_base.py`. Configured rep sources, the rep-summary parser, Product Close, mapped CSV and Crosstab modules depend on that stable source boundary; version-numbered Tableau base modules are retired.
 
+`sources/discovery.py` owns workbook/view discovery, trial source pulls, mapping introspection and filter catalogs for the settings UI. `SourceService` owns the application workflow around those operations and delegates temporary TV preview state to `PreviewService`. There is no separate top-level source-picker runtime or second preview store.
+
 Product Close Rates has separate source, repository, refresh service and screen ownership under `stats_core/product`, `stats_core/repositories`, `stats_core/services`, and `stats_core/screens`.
 
 ## Screens and controls
@@ -34,7 +36,7 @@ Product Close Rates has separate source, repository, refresh service and screen 
 
 ## Themes and assets
 
-`stats_core/theme/` owns the Theme API. Theme configuration, reusable library assets and currently-applied assets are separate repositories. Applied artwork is stored outside the application directory and built-in materialization uses hash-verified copies. The old runtime monkey-patch chain is not part of application composition.
+`stats_core/theme/` owns the Theme API. Theme configuration, reusable library assets and currently-applied assets are separate repositories. Applied artwork is stored outside the application directory and built-in materialization uses hash-verified copies. The old runtime monkey-patch chain and duplicate theme-service adapter are not part of application composition.
 
 ## Access and security
 
