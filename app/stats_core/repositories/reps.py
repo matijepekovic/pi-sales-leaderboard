@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-import database
+from stats_core.storage import sqlite as database
 
 _CACHE_TABLE = "rep_fallback_cache_v108"
 
