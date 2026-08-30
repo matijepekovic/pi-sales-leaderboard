@@ -255,7 +255,9 @@ def _start_detached_updater(installer: Path, version: str) -> None:
     )
 
 
-def install(app, server_module) -> bool:
+def install(app, data_dir, version) -> bool:
+    """Install the update routes. `version` is a callable returning the
+    installed version string; `data_dir` is where downloads are cached."""
     global _INSTALLED
     if _INSTALLED:
         return False
@@ -263,7 +265,7 @@ def install(app, server_module) -> bool:
     @app.post("/api/windows/update/check")
     def windows_update_check():
         try:
-            info = latest_release_info(server_module.software_version())
+            info = latest_release_info(version())
             return jsonify({
                 "ok": True,
                 "current": info["current"],
@@ -276,7 +278,7 @@ def install(app, server_module) -> bool:
     @app.post("/api/windows/update/install")
     def windows_update_install():
         try:
-            info = latest_release_info(server_module.software_version())
+            info = latest_release_info(version())
             if not info["available"]:
                 return jsonify({
                     "ok": True,
@@ -286,7 +288,7 @@ def install(app, server_module) -> bool:
                 })
 
             update_root = (
-                Path(server_module.PERSISTENT_DATA_DIR)
+                Path(data_dir)
                 / "updates"
                 / "windows"
                 / info["latest"]

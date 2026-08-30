@@ -9,9 +9,6 @@ import os
 import threading
 import time
 from pathlib import Path
-from types import SimpleNamespace
-
-from flask import jsonify
 
 from stats_core.windows import qr
 
@@ -57,11 +54,29 @@ class WindowsPlatform:
     def restart_application(delay_seconds=1.2):
         threading.Timer(float(delay_seconds), lambda: os._exit(0)).start()
 
-    def updater_facade(self):
-        return SimpleNamespace(
-            PERSISTENT_DATA_DIR=self.data_dir,
-            software_version=self.version_service.current,
-        )
+    def update_channel(self):
+        """Windows updates arrive as a signed installer, not from GitHub."""
+        return {
+            "ok": True,
+            "auto_update": False,
+            "installed_version": self.version_service.current(),
+            "remote_version": "",
+            "last_check": "",
+            "status": self.repos.meta.get(
+                "github_update_status",
+                "Windows signed-installer updater ready",
+            ),
+            "check_minutes": 0,
+        }
+
+    def apply_source_update(self):
+        return {
+            "ok": False,
+            "error": (
+                "Source ZIP updates are disabled on Windows. "
+                "Use the signed Stats installer updater in Software."
+            ),
+        }, 409
 
     def register(self, app, public_endpoints):
         from stats_core.windows import (
@@ -72,55 +87,11 @@ class WindowsPlatform:
             update_status,
         )
 
-        facade = self.updater_facade()
-        update.install(app, facade)
-        update_status.install(app, facade)
-        update_diagnostics.install(app, facade)
+        update.install(app, self.data_dir, self.version_service.current)
+        update_status.install(app, self.data_dir)
+        update_diagnostics.install(app, self.version_service.current)
         tableau_login.install(app, self.repos.settings)
         theme_editor.install(app, self.repos, public_endpoints)
-
-        if "api_github_status" not in app.view_functions:
-            app.add_url_rule(
-                "/api/github/status",
-                endpoint="api_github_status",
-                methods=["GET"],
-                view_func=lambda: jsonify({
-                    "ok": True,
-                    "auto_update": False,
-                    "installed_version": self.version_service.current(),
-                    "remote_version": "",
-                    "last_check": "",
-                    "status": self.repos.meta.get(
-                        "github_update_status",
-                        "Windows signed-installer updater ready",
-                    ),
-                    "check_minutes": 0,
-                }),
-            )
-
-        def source_update_disabled():
-            return jsonify({
-                "ok": False,
-                "error": (
-                    "Source ZIP updates are disabled on Windows. "
-                    "Use the signed Stats installer updater in Software."
-                ),
-            }), 409
-
-        if "api_github_check" not in app.view_functions:
-            app.add_url_rule(
-                "/api/github/check",
-                endpoint="api_github_check",
-                methods=["POST"],
-                view_func=source_update_disabled,
-            )
-        if "api_system_update" not in app.view_functions:
-            app.add_url_rule(
-                "/api/system/update",
-                endpoint="api_system_update",
-                methods=["POST"],
-                view_func=source_update_disabled,
-            )
 
         self.repos.meta.set("runtime_platform", "windows")
         self.repos.meta.set(

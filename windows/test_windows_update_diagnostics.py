@@ -12,10 +12,8 @@ from stats_core.windows import update as windows_update  # noqa: E402
 from stats_core.windows import update_diagnostics as windows_update_diagnostics  # noqa: E402
 
 
-class FakeServer:
-    @staticmethod
-    def software_version():
-        return "1.0.20"
+def installed_version():
+    return "1.0.20"
 
 
 class WindowsUpdateDiagnosticsTests(unittest.TestCase):
@@ -35,7 +33,7 @@ class WindowsUpdateDiagnosticsTests(unittest.TestCase):
                      "installer_name": "Stats-Setup-1.0.20-windows-x64.exe",
                  },
              ):
-            result = windows_update_diagnostics.collect_diagnostics(FakeServer)
+            result = windows_update_diagnostics.collect_diagnostics(installed_version)
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["installed_version"], "1.0.20")
@@ -62,7 +60,7 @@ class WindowsUpdateDiagnosticsTests(unittest.TestCase):
             "latest_release_info",
             side_effect=OSError("test network failure"),
         ):
-            result = windows_update_diagnostics.collect_diagnostics(FakeServer)
+            result = windows_update_diagnostics.collect_diagnostics(installed_version)
 
         self.assertFalse(result["ok"])
         failures = {item["name"]: item for item in result["checks"] if not item["ok"]}

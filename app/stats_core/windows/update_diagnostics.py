@@ -24,9 +24,9 @@ def _check(name, action):
         return {"name": name, "ok": False, "error": _error_text(exc)}
 
 
-def collect_diagnostics(server_module):
+def collect_diagnostics(version):
     """Run the update-check path in observable stages without changing state."""
-    installed_version = str(server_module.software_version() or "").strip()
+    installed_version = str(version() or "").strip()
     checks = []
 
     checks.append(_check(
@@ -94,14 +94,14 @@ def collect_diagnostics(server_module):
     }
 
 
-def install(app, server_module):
+def install(app, version):
     global _INSTALLED
     if _INSTALLED:
         return False
 
     @app.get("/api/windows/update/diagnostics")
     def windows_update_diagnostics():
-        return jsonify(collect_diagnostics(server_module))
+        return jsonify(collect_diagnostics(version))
 
     _INSTALLED = True
     return True

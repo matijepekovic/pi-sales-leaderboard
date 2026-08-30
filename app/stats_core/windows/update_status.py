@@ -33,7 +33,7 @@ def _latest_status(data_root: Path):
     }
 
 
-def install(app, server_module) -> bool:
+def install(app, data_dir) -> bool:
     global _INSTALLED
     if _INSTALLED:
         return False
@@ -41,7 +41,7 @@ def install(app, server_module) -> bool:
     def status():
         return jsonify({
             "ok": True,
-            "status": _latest_status(Path(server_module.PERSISTENT_DATA_DIR)),
+            "status": _latest_status(Path(data_dir)),
         })
 
     app.add_url_rule(

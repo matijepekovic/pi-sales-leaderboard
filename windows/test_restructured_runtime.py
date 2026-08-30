@@ -139,17 +139,33 @@ class RestructuredRuntimeTests(unittest.TestCase):
         self.assertFalse((APP / "stats_core" / "services" / "entitlement.py").exists())
 
     def test_stats_core_import_is_platform_neutral(self):
-        code = (
-            "import sys\n"
-            f"sys.path.insert(0, {str(APP)!r})\n"
-            "import stats_core\n"
-            "forbidden = [name for name in sys.modules if "
-            "name == 'stats_core.platform.windows' or name == 'stats_core.windows' "
-            "or name.startswith('stats_core.windows.') or name.startswith('windows_') "
-            "or name == 'remote_qr']\n"
-            "assert not forbidden, forbidden\n"
-        )
-        subprocess.run([sys.executable, "-c", code], check=True)
+        # stats_core/__init__.py is a docstring, so importing the package alone
+        # proves nothing. The composition root is what used to name a concrete
+        # OS, so that is what has to come up clean.
+        for module in ("stats_core", "stats_core.bootstrap", "stats_core.platform"):
+            code = (
+                "import sys\n"
+                f"sys.path.insert(0, {str(APP)!r})\n"
+                f"import {module}\n"
+                "forbidden = [name for name in sys.modules if "
+                "name == 'stats_core.platform.windows' or name == 'stats_core.windows' "
+                "or name.startswith('stats_core.windows.') or name.startswith('windows_') "
+                "or name == 'remote_qr']\n"
+                "assert not forbidden, forbidden\n"
+            )
+            with self.subTest(module=module):
+                subprocess.run([sys.executable, "-c", code], check=True)
+
+    def test_platform_is_selected_by_name_not_imported_by_the_root(self):
+        from stats_core.platform import PLATFORMS, Platform, create_platform
+
+        bootstrap = (APP / "stats_core" / "bootstrap.py").read_text(encoding="utf-8")
+        self.assertNotIn("WindowsPlatform", bootstrap)
+        self.assertIn("create_platform(platform_name", bootstrap)
+        self.assertIn("windows", PLATFORMS)
+        self.assertIsInstance(self.runtime.platform, Platform)
+        with self.assertRaises(ValueError):
+            create_platform("beos", None, None, None)
 
     def test_theme_preview_and_source_have_single_owners(self):
         bootstrap = (APP / "stats_core" / "bootstrap.py").read_text(encoding="utf-8")

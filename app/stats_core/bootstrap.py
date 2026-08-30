@@ -12,7 +12,7 @@ from pathlib import Path
 from flask import Flask
 
 from stats_core.paths import prepare_data_dir
-from stats_core.platform.windows import WindowsPlatform
+from stats_core.platform import create_platform
 from stats_core.repositories import Repositories
 from stats_core.runtime import Runtime
 from stats_core.screens.registry import ScreenRegistry
@@ -41,6 +41,7 @@ from stats_core.web import core as core_web
 from stats_core.web import organization as organization_web
 from stats_core.web import product as product_web
 from stats_core.web import source as source_web
+from stats_core.web import system as system_web
 from stats_core.web import tv as tv_web
 
 
@@ -56,9 +57,6 @@ def asset_root():
 
 
 def create_app(platform_name="windows", start_background=True):
-    if platform_name != "windows":
-        raise ValueError("Only the Windows reference platform is active during restructuring.")
-
     root = asset_root()
     data_root = prepare_data_dir()
     app = Flask(
@@ -75,7 +73,7 @@ def create_app(platform_name="windows", start_background=True):
     app.secret_key = auth.app_secret_key()
 
     version = VersionService(application_root())
-    platform = WindowsPlatform(repos, data_root, version)
+    platform = create_platform(platform_name, repos, data_root, version)
     organization = OrganizationService(repos, data_root / "team-logos")
     tableau = TableauService()
     pull_policy = RepPullPolicy(repos, tableau)
@@ -131,6 +129,7 @@ def create_app(platform_name="windows", start_background=True):
     app.register_blueprint(controls_web.blueprint(controls, temporary_date))
     app.register_blueprint(tv_web.blueprint(tv))
     app.register_blueprint(theme_web.blueprint(theme))
+    app.register_blueprint(system_web.blueprint(platform))
 
     platform.register(app, public_endpoints)
     auth_web.install_gate(app, auth, public_endpoints)
