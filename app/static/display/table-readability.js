@@ -102,7 +102,7 @@
         width:100%!important;flex:0 0 auto!important;align-self:stretch!important;margin:2px 0 0!important
       }
     `;
-    document.head.appendChild(style);
+    Display.placeStyle(260, style);
   }
 
   function applyPerTeam(root){

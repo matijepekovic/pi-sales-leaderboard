@@ -114,7 +114,7 @@
       .all-card.team-themed-card{border-color:var(--card-primary)!important;background-color:var(--card-panel)!important}
       .team-themed-card .all-top,.team-themed-card .all-mvp{border-color:color-mix(in srgb,var(--card-primary) 30%,transparent)!important}
     `;
-    document.head.appendChild(style);
+    Display.placeStyle(30, style);
   }
 
 

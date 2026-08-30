@@ -44,5 +44,5 @@
       background:color-mix(in srgb,var(--theme-panel) 88%,black)!important
     }
   `;
-  document.head.appendChild(style);
+  Display.placeStyle(160, style);
 })();

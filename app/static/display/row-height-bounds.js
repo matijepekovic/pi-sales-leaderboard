@@ -50,5 +50,5 @@
       max-height:78px!important;
     }
   `;
-  document.head.appendChild(style);
+  Display.placeStyle(240, style);
 })();

@@ -42,7 +42,7 @@
       }
       #remoteQrV110 img{display:block;height:auto;border-radius:4px}
     `;
-    document.head.appendChild(style);
+    Display.placeStyle(320, style);
 
     overlay=document.createElement('div');
     overlay.id='remoteQrV110';

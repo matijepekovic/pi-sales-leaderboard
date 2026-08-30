@@ -89,7 +89,7 @@
         grid-column:span 3!important;
       }
     `;
-    document.head.appendChild(style);
+    Display.placeStyle(130, style);
   }
 
   function patch(root){

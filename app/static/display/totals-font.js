@@ -12,5 +12,5 @@
       font-size:clamp(9px,.76vw,13px)!important;
     }
   `;
-  document.head.appendChild(style);
+  Display.placeStyle(60, style);
 })();

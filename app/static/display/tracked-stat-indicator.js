@@ -35,5 +35,5 @@
       pointer-events:none;
     }
   `;
-  document.head.appendChild(style);
+  Display.placeStyle(270, style);
 })();

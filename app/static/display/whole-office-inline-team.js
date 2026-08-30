@@ -46,5 +46,5 @@
       flex:0 0 auto!important;
     }
   `;
-  document.head.appendChild(style);
+  Display.placeStyle(120, style);
 })();

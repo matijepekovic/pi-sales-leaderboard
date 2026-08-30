@@ -410,17 +410,15 @@ const Display = (function(){
       if(!chain) chain = compose();
       return chain(data);
     },
-    /* Style blocks are injected by script, so the cascade resolves by
-       insertion order. Ordering them here keeps the specificity fights
-       between table-readability and number-scale resolving the same way
-       regardless of which bundle each ends up in. */
-    style(id, order, css){
-      const el = document.createElement("style");
-      if(id) el.id = id;
-      el.textContent = css;
+    /* There are no stylesheets on this page -- every rule is either inline
+       above or injected by a script, so the cascade resolves by insertion
+       order. That is load-bearing: number-scale deliberately outranks
+       table-readability, and several files are pure !important overrides of
+       an earlier one. Placing by order keeps those fights resolving the same
+       way no matter which bundle each rule ends up in. */
+    placeStyle(order, el){
       const entry = {order: Number(order), el};
-      const after = styleOrder.filter(s => s.order > entry.order)
-        .sort(byOrder)[0];
+      const after = styleOrder.filter(s => s.order > entry.order).sort(byOrder)[0];
       styleOrder.push(entry);
       if(after) after.el.parentNode.insertBefore(el, after.el);
       else document.head.appendChild(el);
