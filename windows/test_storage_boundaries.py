@@ -22,7 +22,7 @@ class StorageBoundaryTests(unittest.TestCase):
                 violations.append(str(path.relative_to(ROOT)))
         self.assertEqual(violations, [])
 
-    def test_repository_adapters_use_explicit_storage_module(self):
+    def test_repositories_use_explicit_storage_boundary(self):
         repository_root = APP / "stats_core" / "repositories"
         for filename in (
             "__init__.py",
@@ -33,7 +33,20 @@ class StorageBoundaryTests(unittest.TestCase):
             "products.py",
         ):
             text = (repository_root / filename).read_text(encoding="utf-8")
-            self.assertIn("from stats_core.storage import sqlite as database", text, filename)
+            self.assertIn("stats_core.storage", text, filename)
+
+    def test_simple_domains_own_their_sql(self):
+        repository_root = APP / "stats_core" / "repositories"
+        forbidden_delegates = {
+            "settings.py": ("get_settings(", "save_settings("),
+            "meta.py": ("get_meta(", "set_meta("),
+            "products.py": ("get_product_close(", "replace_product_close("),
+        }
+        for filename, tokens in forbidden_delegates.items():
+            text = (repository_root / filename).read_text(encoding="utf-8")
+            self.assertIn(".execute(", text, filename)
+            for token in tokens:
+                self.assertNotIn(token, text, filename)
 
 
 if __name__ == "__main__":
