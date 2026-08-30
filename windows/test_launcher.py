@@ -138,7 +138,7 @@ class RemoteQrTests(unittest.TestCase):
             remote_qr.OUTPUT = original_output
 
     def test_desktop_qr_double_click_opens_settings(self):
-        script = (APP_DIR / "static" / "remote-qr-overlay-v110.js").read_text(encoding="utf-8")
+        script = (APP_DIR / "static" / "display" / "remote-qr-overlay.js").read_text(encoding="utf-8")
         self.assertIn("pointer-events:auto", script)
         self.assertIn("addEventListener('dblclick'", script)
         self.assertIn("window.location.assign('/settings')", script)
@@ -155,7 +155,7 @@ class RemoteQrTests(unittest.TestCase):
         self.assertNotIn("observer.observe(document.documentElement", script)
 
     def test_settings_back_button_and_connection_examples(self):
-        script = (APP_DIR / "static" / "settings-production-v107.js").read_text(encoding="utf-8")
+        script = (APP_DIR / "static" / "settings" / "production.js").read_text(encoding="utf-8")
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
         settings_service = (APP_DIR / "stats_core" / "services" / "settings.py").read_text(encoding="utf-8")
         tableau_service = (APP_DIR / "stats_core" / "services" / "tableau.py").read_text(encoding="utf-8")
@@ -165,13 +165,13 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("Example: https://your-pod.online.tableau.com", script)
         self.assertIn("Example: your-site", script)
         self.assertIn("Example: stats-pat", script)
-        self.assertIn("settings-production-v107.js", template)
+        self.assertIn("/static/settings/production.js", template)
         self.assertIn("FEATURE_ACCESS", settings_service)
         self.assertIn('current["github_auto_update"] = False', settings_service)
         self.assertIn("config[source_key] = explicit or top", tableau_service)
 
     def test_windows_settings_use_sidebar_workspace(self):
-        script = (APP_DIR / "static" / "windows-settings-sidebar-v121.js").read_text(encoding="utf-8")
+        script = (APP_DIR / "static" / "settings" / "windows-sidebar.js").read_text(encoding="utf-8")
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
 
         self.assertIn("const isWindows=/windows|win32|win64/i.test(platform);", script)
@@ -181,16 +181,16 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("activateSection", script)
         self.assertIn('section.id!=="v110QrSection"', script)
         self.assertIn("max-width:1600px", script)
-        self.assertIn("windows-settings-sidebar-v121.js", template)
+        self.assertIn("/static/settings/windows-sidebar.js", template)
 
     def test_tableau_login_owns_connection_fields_on_windows(self):
-        ui = (APP_DIR / "static" / "windows-tableau-login-v124.js").read_text(encoding="utf-8")
+        ui = (APP_DIR / "static" / "settings" / "windows-tableau-login.js").read_text(encoding="utf-8")
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
         server_entry = (WINDOWS_DIR / "server_entry.py").read_text(encoding="utf-8")
         platform = (APP_DIR / "stats_core" / "platform" / "windows.py").read_text(encoding="utf-8")
         endpoint = (APP_DIR / "stats_core" / "windows" / "tableau_login.py").read_text(encoding="utf-8")
 
-        self.assertIn("windows-tableau-login-v124.js", template)
+        self.assertIn("/static/settings/windows-tableau-login.js", template)
         self.assertIn('document.getElementById("v90Server")', ui)
         self.assertIn('document.getElementById("v90Site")', ui)
         self.assertIn('document.getElementById("v90PatName")', ui)
@@ -207,10 +207,10 @@ class RemoteQrTests(unittest.TestCase):
         self.assertNotIn("save_settings", endpoint)
 
     def test_team_builder_members_follow_tableau_pull_and_hide_claimed_reps(self):
-        script = (APP_DIR / "static" / "team-builder-tableau-members-v126.js").read_text(encoding="utf-8")
+        script = (APP_DIR / "static" / "settings" / "tableau-team-members.js").read_text(encoding="utf-8")
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
 
-        self.assertIn("team-builder-tableau-members-v126.js", template)
+        self.assertIn("/static/settings/tableau-team-members.js", template)
         self.assertNotIn("team-builder-tableau-members-v125.js", template)
         self.assertIn('originalRequest("/api/config"', script)
         self.assertIn('cleanPath==="/api/source/preview"', script)
@@ -248,24 +248,24 @@ class WindowsThemeEditorTests(unittest.TestCase):
         platform = (APP_DIR / "stats_core" / "platform" / "windows.py").read_text(encoding="utf-8")
         display = (APP_DIR / "templates" / "display.html").read_text(encoding="utf-8")
         settings = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
-        preview = (APP_DIR / "static" / "theme-editor-preview-v122.js").read_text(encoding="utf-8")
-        runtime = (APP_DIR / "static" / "theme-transform-runtime-v122.js").read_text(encoding="utf-8")
-        host = (APP_DIR / "static" / "windows-theme-visual-editor-v122.js").read_text(encoding="utf-8")
-        intuitive = (APP_DIR / "static" / "theme-editor-intuitive-v123.js").read_text(encoding="utf-8")
-        help_ui = (APP_DIR / "static" / "windows-theme-editor-help-v123.js").read_text(encoding="utf-8")
-        policy = (APP_DIR / "static" / "theme-editor-data-policy-v126.js").read_text(encoding="utf-8")
-        stability = (APP_DIR / "static" / "windows-theme-stability-v126.js").read_text(encoding="utf-8")
+        preview = (APP_DIR / "static" / "display" / "theme-editor-preview.js").read_text(encoding="utf-8")
+        runtime = (APP_DIR / "static" / "display" / "theme-transforms.js").read_text(encoding="utf-8")
+        host = (APP_DIR / "static" / "settings" / "theme-visual-editor.js").read_text(encoding="utf-8")
+        intuitive = (APP_DIR / "static" / "display" / "theme-editor-controls.js").read_text(encoding="utf-8")
+        help_ui = (APP_DIR / "static" / "settings" / "theme-editor-help.js").read_text(encoding="utf-8")
+        policy = (APP_DIR / "static" / "display" / "theme-editor-data-policy.js").read_text(encoding="utf-8")
+        stability = (APP_DIR / "static" / "settings" / "theme-stability.js").read_text(encoding="utf-8")
 
         self.assertIn("theme_editor.install(app, self.repos, public_endpoints)", platform)
         self.assertIn("stats_core.bootstrap", server_entry)
         self.assertNotIn("theme_editor.install", server_entry)
-        self.assertIn("theme-transform-runtime-v122.js", display)
-        self.assertIn("theme-editor-preview-v122.js", display)
-        self.assertIn("theme-editor-data-policy-v126.js", display)
-        self.assertLess(display.index("theme-editor-preview-v122.js"), display.index("theme-editor-data-policy-v126.js"))
-        self.assertLess(display.index("theme-editor-data-policy-v126.js"), display.index("tv-preview-v63.js"))
-        self.assertIn("windows-theme-visual-editor-v122.js", settings)
-        self.assertIn("windows-theme-stability-v126.js", settings)
+        self.assertIn("/static/display/theme-transforms.js", display)
+        self.assertIn("/static/display/theme-editor-preview.js", display)
+        self.assertIn("/static/display/theme-editor-data-policy.js", display)
+        self.assertLess(display.index("theme-editor-preview.js"), display.index("theme-editor-data-policy.js"))
+        self.assertLess(display.index("theme-editor-data-policy.js"), display.index("tv-preview.js"))
+        self.assertIn("/static/settings/theme-visual-editor.js", settings)
+        self.assertIn("/static/settings/theme-stability.js", settings)
         self.assertIn('addEventListener("dblclick"', preview)
         self.assertIn('addEventListener("contextmenu"', preview)
         self.assertIn('data-handle="rotate"', preview)
@@ -293,8 +293,8 @@ class WindowsThemeEditorTests(unittest.TestCase):
         self.assertIn("#teamDesignOverlay #tdNewSample{display:none!important}", stability)
         self.assertIn("Real team stats are used when members exist", stability)
 
-        self.assertIn("theme-editor-intuitive-v123.js", display)
-        self.assertIn("windows-theme-editor-help-v123.js", settings)
+        self.assertIn("/static/display/theme-editor-controls.js", display)
+        self.assertIn("/static/settings/theme-editor-help.js", settings)
         self.assertIn("Double-click to add", intuitive)
         self.assertIn("Replace Image", intuitive)
         self.assertIn('content:"↻"', intuitive)
@@ -308,11 +308,11 @@ class WindowsThemeEditorTests(unittest.TestCase):
     def test_theme_colors_use_in_app_picker_and_always_apply(self):
         settings = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
         display = (APP_DIR / "templates" / "display.html").read_text(encoding="utf-8")
-        editor = (APP_DIR / "static" / "windows-theme-color-editor-v127.js").read_text(encoding="utf-8")
-        runtime = (APP_DIR / "static" / "theme-color-runtime-v127.js").read_text(encoding="utf-8")
+        editor = (APP_DIR / "static" / "settings" / "theme-color-editor.js").read_text(encoding="utf-8")
+        runtime = (APP_DIR / "static" / "display" / "theme-colors.js").read_text(encoding="utf-8")
 
-        self.assertIn("windows-theme-color-editor-v127.js", settings)
-        self.assertIn("theme-color-runtime-v127.js", display)
+        self.assertIn("/static/settings/theme-color-editor.js", settings)
+        self.assertIn("/static/display/theme-colors.js", display)
         self.assertIn("Frame & Borders", editor)
         self.assertIn("Main Accent", editor)
         self.assertIn("Shadow / Depth", editor)

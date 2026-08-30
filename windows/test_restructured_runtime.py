@@ -2,6 +2,7 @@
 """Architecture smoke tests for the Windows runtime."""
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import unittest
@@ -234,12 +235,40 @@ class RestructuredRuntimeTests(unittest.TestCase):
         self.assertIn("Display + layout runtime", display)
         self.assertIn("Controls runtime", display)
         self.assertIn("Product runtime", display)
+        self.assertIn("/static/display/keyboard-controls.js", display)
         self.assertIn("/static/runtime/formatting.js", display)
         self.assertIn("minimumFractionDigits: 2", formatting)
         self.assertIn("Tableau/data settings", settings)
         self.assertIn("Windows theme workspace", settings)
+        self.assertIn("/static/settings/controls.js", settings)
         self.assertIn("/static/settings/team-builder-workflow.js", settings)
         self.assertIn("renderLeaderFromMembers", team_builder)
+
+    def test_frontend_has_no_versioned_patch_files(self):
+        for retired in (
+            "display_v35_base.html",
+            "display_v36_base.html",
+            "settings_v34_base.html",
+        ):
+            self.assertFalse((APP / "templates" / retired).exists(), retired)
+
+        versioned_static = sorted(
+            path.name
+            for path in (APP / "static").glob("*.js")
+            if re.search(r"-v\d+\.js$", path.name)
+        )
+        self.assertEqual(versioned_static, [])
+
+        for template_name in ("display.html", "settings.html"):
+            text = (APP / "templates" / template_name).read_text(encoding="utf-8")
+            self.assertIsNone(
+                re.search(r"/static/[^\"']*[-_]v\d+", text),
+                template_name,
+            )
+            self.assertIsNone(
+                re.search(r"(?:display|settings)_v\d+_base", text),
+                template_name,
+            )
 
     def test_server_entry_contains_no_feature_install_chain(self):
         text = (ROOT / "windows" / "server_entry.py").read_text(encoding="utf-8")

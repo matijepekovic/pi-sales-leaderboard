@@ -1,6 +1,6 @@
 # Stats architecture
 
-Phase 4 establishes explicit ownership without changing the Phase 3 product behavior or SQLite schema.
+The application has explicit runtime ownership while preserving the production SQLite schema and external behavior.
 
 ## Composition root
 
@@ -18,7 +18,7 @@ Phase 4 establishes explicit ownership without changing the Phase 3 product beha
 - reusable asset library
 - protected applied-theme assets
 
-The underlying database tables and persistent data locations remain compatible with the pre-refactor application.
+`app/stats_core/storage/sqlite.py` owns SQLite connection, schema initialization and migrations. Domain SQL belongs to repositories. Persistent data locations remain compatible with pre-refactor installs through the data-path migration.
 
 ## Data and Tableau
 
@@ -28,15 +28,15 @@ Product Close Rates has separate source, repository, refresh service and screen 
 
 ## Screens and controls
 
-`ScreenRegistry` owns the five existing display modes: Whole Office, Per Team, Team vs Team, All Teams and Product Close Rates. `LeaderboardService` owns shared calculations. Individual screen modules own mode-specific payload shape. `ControlsService` gets valid screen choices from the registry rather than mutating display implementations.
+`ScreenRegistry` owns the five display modes: Whole Office, Per Team, Team vs Team, All Teams and Product Close Rates. `LeaderboardService` owns shared calculations. Individual screen modules own mode-specific payload shape. `ControlsService` gets valid screen choices from the registry rather than mutating display implementations.
 
 ## Themes and assets
 
-`stats_core/theme/` owns the Theme API. Theme configuration, reusable library assets and currently-applied assets are separate repositories. Applied artwork is stored outside the application directory and built-in/legacy materialization uses hash-verified copies. The old v116/v119/v127 runtime monkey-patch chain is not part of application composition.
+`stats_core/theme/` owns the Theme API. Theme configuration, reusable library assets and currently-applied assets are separate repositories. Applied artwork is stored outside the application directory and built-in materialization uses hash-verified copies. The old runtime monkey-patch chain is not part of application composition.
 
 ## Access and security
 
-`EntitlementService` is the single feature-access boundary and currently grants every existing feature for testing. It contains no account, subscription or payment logic. `AuthService` owns settings PIN behavior.
+`EntitlementService` is the single feature-access boundary and currently grants every existing feature for testing. It contains no account, subscription or payment logic. `AuthService` owns settings PIN behavior and throttling.
 
 ## Platform
 
@@ -44,4 +44,6 @@ Core services are platform-neutral. `stats_core/platform/windows.py` owns Window
 
 ## Frontend ownership
 
-Display and Settings templates group scripts by runtime responsibility. The precision-formatting override and Team Builder workflow are stable modules under `static/runtime/` and `static/settings/` instead of inline template patches. Existing versioned scripts remain in their Phase 3 order until each can be replaced and verified individually.
+`templates/display.html` and `templates/settings.html` are thin runtime manifests. Their base markup lives under `templates/display/` and `templates/settings/`, and scripts are grouped by responsibility under `static/display/`, `static/settings/` and `static/runtime/`.
+
+The numbered frontend patch stack is retired. Active frontend files have stable responsibility-based names, obsolete superseded files are deleted, and CI rejects versioned root JavaScript or old versioned base templates from returning.
