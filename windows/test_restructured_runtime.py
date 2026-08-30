@@ -205,8 +205,25 @@ class RestructuredRuntimeTests(unittest.TestCase):
         )
         self.assertNotIn("tableau_scheduler.configure", bootstrap)
         self.assertNotIn("app.view_functions[", theme_service)
-        self.assertNotIn("source_picker.preview_rows", snapshot)
+        self.assertNotIn("source_picker", snapshot)
         self.assertIn("self.preview.rows()", snapshot)
+
+    def test_source_domain_has_one_owner(self):
+        self.assertFalse((APP / "source_picker.py").exists())
+        discovery = APP / "sources" / "discovery.py"
+        self.assertTrue(discovery.is_file())
+        self.assertFalse((APP / "stats_core" / "services" / "theme.py").exists())
+
+        text = discovery.read_text(encoding="utf-8")
+        for retired in ("_PREVIEW", "start_preview", "stop_preview", "preview_rows", "preview_state"):
+            self.assertNotIn(retired, text)
+
+        violations = []
+        for path in APP.rglob("*.py"):
+            source = path.read_text(encoding="utf-8")
+            if "source_picker" in source:
+                violations.append(str(path.relative_to(ROOT)))
+        self.assertEqual(violations, [])
 
     def test_windows_helpers_do_not_bypass_repositories(self):
         for filename in ("tableau_login.py", "theme_editor.py"):
