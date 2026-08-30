@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sources import tableau_v36_base as _base
+from sources import tableau_base as _base
 from sources.tableau_products import (
     ProductCloseSource as _BaseProductCloseSource,
     TABLEAU_MARKET_FIELD,
