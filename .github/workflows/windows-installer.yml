@@ -104,6 +104,18 @@ jobs:
         shell: pwsh
         run: python windows/test_windows_update.py
 
+      - name: Test updater diagnostics
+        shell: pwsh
+        run: python windows/test_windows_update_diagnostics.py
+
+      - name: Test repository persistence
+        shell: pwsh
+        run: python windows/test_repository_persistence.py
+
+      - name: Test Tableau source contracts
+        shell: pwsh
+        run: python windows/test_tableau_source.py
+
       - name: Build packaged backend
         shell: pwsh
         run: |

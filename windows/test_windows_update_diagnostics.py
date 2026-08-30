@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
-import windows_update  # noqa: E402
-import windows_update_diagnostics  # noqa: E402
+from stats_core.windows import update as windows_update  # noqa: E402
+from stats_core.windows import update_diagnostics as windows_update_diagnostics  # noqa: E402
 
 
 class FakeServer:
@@ -43,6 +43,7 @@ class WindowsUpdateDiagnosticsTests(unittest.TestCase):
             [item["name"] for item in result["checks"]],
             [
                 "installed_version",
+                "https_trust",
                 "manifest_download",
                 "signature_download",
                 "signature_verification",
