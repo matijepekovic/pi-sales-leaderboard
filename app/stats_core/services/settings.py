@@ -4,9 +4,9 @@ from __future__ import annotations
 import re
 
 from sources import tableau_configured
+from stats_core.config import METRIC_DEFS, SECRET_SETTING_KEYS
 from stats_core.errors import ValidationError
 from stats_core.services.entitlement import FEATURE_ACCESS
-from stats_core.metrics import METRIC_DEFS, SECRET_SETTING_KEYS
 from stats_core.services.product import PRODUCT_MODE
 
 CORE_MODES = {
