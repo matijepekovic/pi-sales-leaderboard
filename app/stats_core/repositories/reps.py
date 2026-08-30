@@ -5,21 +5,45 @@ import json
 from stats_core.storage import sqlite as database
 
 _CACHE_TABLE = "rep_fallback_cache_v108"
+_REP_COLUMNS = sorted({
+    "rep_key", "rep_name", "team", "team_lead", "home_branch", "lead_branch",
+    "regional", "district", "title", "hire_date", "issued_leads",
+    "pitched_leads", "pitched_rate", "sold_leads", "close_rate",
+    "gross_split", "pending_split", "net_split", "dpl", "sales_retention",
+    "avg_gross_sale", "avg_net_sale", "product", "position_filter",
+    "pir_result", "source_updated_at", "raw_json",
+})
 
 
 class RepRepository:
+    def __init__(self, meta_repo, organization_repo):
+        self.meta = meta_repo
+        self.organization = organization_repo
+
     def list(self):
-        return database.list_reps()
+        return self.organization.apply_overlay(self.raw_list())
 
     def raw_list(self):
         with database.connect() as con:
             return [dict(row) for row in con.execute("SELECT * FROM reps").fetchall()]
 
     def replace(self, rows):
-        return database.replace_reps(rows)
+        placeholders = ",".join("?" for _ in _REP_COLUMNS)
+        sql = f"INSERT INTO reps ({','.join(_REP_COLUMNS)}) VALUES ({placeholders})"
+        with database.connect() as con:
+            con.execute("DELETE FROM reps")
+            for row in rows:
+                clean = {key: row.get(key) for key in _REP_COLUMNS}
+                if not clean["rep_key"]:
+                    clean["rep_key"] = clean["rep_name"]
+                if not clean["team"]:
+                    clean["team"] = "Unassigned"
+                con.execute(sql, tuple(clean[key] for key in _REP_COLUMNS))
+                self.organization.ensure_source_team_in_connection(con, clean["team"])
+        self.meta.bump("data_version")
 
     def apply_organization(self, rows):
-        return database.apply_team_overlay(rows)
+        return self.organization.apply_overlay(rows)
 
     def ensure_fallback_cache(self):
         with database.connect() as con:
@@ -35,7 +59,8 @@ class RepRepository:
         self.ensure_fallback_cache()
         with database.connect() as con:
             rows = con.execute(
-                f"SELECT rep_key,row_json FROM {_CACHE_TABLE} WHERE scope=?", (scope,)
+                f"SELECT rep_key,row_json FROM {_CACHE_TABLE} WHERE scope=?",
+                (scope,),
             ).fetchall()
         result = {}
         for row in rows:
@@ -71,5 +96,5 @@ class RepRepository:
             )
             changed = max(0, int(cur.rowcount or 0))
         if changed:
-            database.bump_version()
+            self.meta.bump("data_version")
         return changed
