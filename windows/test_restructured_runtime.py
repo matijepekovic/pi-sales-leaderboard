@@ -270,6 +270,19 @@ class RestructuredRuntimeTests(unittest.TestCase):
                 template_name,
             )
 
+    def test_tableau_sources_have_stable_names(self):
+        sources = APP / "sources"
+        self.assertTrue((sources / "tableau_base.py").is_file())
+        self.assertFalse((sources / "tableau_v36_base.py").exists())
+        self.assertFalse((sources / "tableau_v37_base.py").exists())
+
+        violations = []
+        for path in APP.rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            if "tableau_v36_base" in text or "tableau_v37_base" in text:
+                violations.append(str(path.relative_to(ROOT)))
+        self.assertEqual(violations, [])
+
     def test_server_entry_contains_no_feature_install_chain(self):
         text = (ROOT / "windows" / "server_entry.py").read_text(encoding="utf-8")
         self.assertIn("stats_core.bootstrap", text)
