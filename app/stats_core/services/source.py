@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import threading
 
-import source_picker
+from sources import discovery
 from sources.tableau import resolve_dates
 from stats_core.errors import BusyError, ValidationError
 from stats_core.metrics import METRIC_DEFS
@@ -26,7 +26,7 @@ class SourceService:
     @staticmethod
     def overrides(body):
         body = body if isinstance(body, dict) else {}
-        keys = SOURCE_FIELDS + source_picker.DATE_KEYS
+        keys = SOURCE_FIELDS + discovery.DATE_KEYS
         return {key: body[key] for key in keys if key in body}
 
     def options(self):
@@ -110,29 +110,29 @@ class SourceService:
         }
 
     def workbooks(self):
-        return source_picker.list_workbooks(self._configured_settings())
+        return discovery.list_workbooks(self._configured_settings())
 
     def all_views(self):
-        return source_picker.list_all_views(self._configured_settings())
+        return discovery.list_all_views(self._configured_settings())
 
     def views(self, workbook):
-        return source_picker.list_views(self._configured_settings(), workbook)
+        return discovery.list_views(self._configured_settings(), workbook)
 
     def columns(self, body):
-        return source_picker.read_columns(self._configured_settings(), self.overrides(body))
+        return discovery.read_columns(self._configured_settings(), self.overrides(body))
 
     def preview(self, body):
         body = body if isinstance(body, dict) else {}
         overrides = self.overrides(body)
         on_tv = bool(body.get("on_tv"))
         configured = self._configured_settings()
-        start, end, rows, notes = source_picker.preview_pull(configured, overrides)
+        start, end, rows, notes = discovery.preview_pull(configured, overrides)
         if not rows:
             raise ValidationError(
                 "That pull came back with no people, so there is nothing to preview. "
                 "Check the column mapped to the rep name."
             )
-        config = source_picker.trial_config(configured, overrides)
+        config = discovery.trial_config(configured, overrides)
         if on_tv:
             self.preview_store.start(rows, f"{config['workbook']} / {config['sheet']}")
         return {
@@ -148,4 +148,4 @@ class SourceService:
         return self.preview_store.state()
 
     def test_view(self, body):
-        return source_picker.test_source(self._configured_settings(), self.overrides(body))
+        return discovery.test_source(self._configured_settings(), self.overrides(body))
