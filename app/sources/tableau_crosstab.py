@@ -1,13 +1,13 @@
 """Read a chosen Tableau worksheet through its Crosstab Excel export.
 
 This is intentionally separate from the shipped rep connector and from the
-v81 generic CSV mapper.  A custom report selected in the settings page can
+generic CSV mapper. A custom report selected in the settings page can
 therefore use the same summary table Tableau exports from Download > Crosstab
 without changing the working default source.
 
 The rule here is deliberately strict: Tableau has already calculated the
-worksheet.  The Pi maps one finished Crosstab cell to one board stat.  It does
-not sum duplicate rep rows and it does not derive missing KPIs.  If the
+worksheet. The Pi maps one finished Crosstab cell to one board stat. It does
+not sum duplicate rep rows and it does not derive missing KPIs. If the
 selected worksheet is not already one row per rep, the pull fails and asks the
 user to choose the summarized worksheet instead.
 """
@@ -17,7 +17,7 @@ import re
 import zipfile
 import xml.etree.ElementTree as ET
 
-from . import tableau_v36_base as _base
+from . import tableau_base as _base
 from .tableau_mapped import (STAT_TO_CAMEL, PERCENT_STATS, _scale_percent,
                              suggest_mapping, unmapped_columns)
 
