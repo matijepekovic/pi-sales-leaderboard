@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import database
+from stats_core.storage import sqlite as database
 
 
 class ProductRepository:
