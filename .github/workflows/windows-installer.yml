@@ -105,15 +105,11 @@ jobs:
             --add-data "app/templates;templates" `
             --add-data "app/static;static" `
             --add-data "VERSION;." `
-            --hidden-import applied_theme_assets_v116 `
-            --hidden-import starter_theme_v119 `
-            --hidden-import starter_theme_assets_v119 `
-            --hidden-import theme_asset_apply_v127 `
             --hidden-import windows_update `
-            --hidden-import windows_update_status_v128 `
+            --hidden-import windows_update_status `
             --hidden-import windows_update_diagnostics `
-            --hidden-import windows_tableau_login_v124 `
-            --hidden-import windows_theme_editor_v122 `
+            --hidden-import windows_tableau_login `
+            --hidden-import windows_theme_editor `
             --hidden-import windows_https `
             --hidden-import cryptography.hazmat.primitives.asymmetric.ed25519 `
             windows/server_entry.py
