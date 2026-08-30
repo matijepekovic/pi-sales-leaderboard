@@ -71,8 +71,8 @@ class WindowsPlatform:
         update.install(app, facade)
         update_status.install(app, facade)
         update_diagnostics.install(app, facade)
-        tableau_login.install(app)
-        theme_editor.install(app, public_endpoints)
+        tableau_login.install(app, self.repos.settings)
+        theme_editor.install(app, self.repos, public_endpoints)
 
         if "api_github_status" not in app.view_functions:
             app.add_url_rule(
