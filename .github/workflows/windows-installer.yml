@@ -104,6 +104,10 @@ jobs:
         shell: pwsh
         run: python windows/test_windows_update.py
 
+      - name: Test display runtime ordering
+        shell: pwsh
+        run: python windows/test_display_runtime.py
+
       - name: Test screen controller
         shell: pwsh
         run: python windows/test_screen_controller.py

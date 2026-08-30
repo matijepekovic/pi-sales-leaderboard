@@ -8,7 +8,6 @@
 (function(){
   if(typeof render!=="function") return;
 
-  const previousRender=render;
   const STYLE_ID="comparisonTeamCardsV69Styles";
   const ROOT_CLASS="v69-comparison-board";
   const comparisonModes=new Set(["team_vs_team","all_teams"]);
@@ -235,10 +234,10 @@
     return true;
   }
 
-  render=function(data){
-    const result=previousRender(data);
+  Display.stage(90, function(data, next){
+    const result=next(data);
     cleanup();
     if(comparisonModes.has(data?.mode))renderComparison(data);
     return result;
-  };
+  });
 })();

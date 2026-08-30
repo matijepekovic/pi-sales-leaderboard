@@ -4,7 +4,6 @@
    can never be applied to a neighboring team after that filtering step. */
 (function(){
   if(typeof render!=="function") return;
-  const previousRender=render;
 
   function themeForName(data,name){
     const key=String(name||"").trim().toLowerCase();
@@ -46,9 +45,9 @@
     }
   }
 
-  render=function(data){
-    const result=previousRender(data);
+  Display.stage(40, function(data, next){
+    const result=next(data);
     correctFinalCards(data);
     return result;
-  };
+  });
 })();

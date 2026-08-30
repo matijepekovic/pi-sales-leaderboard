@@ -4,7 +4,6 @@
    cell padding, and keeps comparison totals directly under the last row. */
 (function(){
   if(typeof render!=="function") return;
-  const previousRender=render;
   const STYLE_ID="tableReadabilityV72Styles";
   let scheduled=false;
 
@@ -148,7 +147,7 @@
     requestAnimationFrame(()=>requestAnimationFrame(()=>{scheduled=false;apply();}));
   }
 
-  render=function(data){const result=previousRender(data);schedule();setTimeout(schedule,90);return result;};
+  Display.stage(260, function(data, next){const result=next(data);schedule();setTimeout(schedule,90);return result;});
   window.addEventListener('resize',schedule);
   const observer=new MutationObserver(mutations=>{
     for(const m of mutations){

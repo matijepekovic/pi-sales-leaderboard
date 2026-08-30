@@ -4,7 +4,6 @@
    This layer only moves that already-rendered rep row to the bottom and marks it TL. */
 (function(){
   if(typeof render!=="function") return;
-  const previousRender=render;
   const norm=value=>String(value||"").trim().toLowerCase();
 
   function savedLeaderName(data){
@@ -54,9 +53,9 @@
     }
   }
 
-  render=function(data){
-    const result=previousRender(data);
+  Display.stage(20, function(data, next){
+    const result=next(data);
     applyTeamLeadPresentation(data);
     return result;
-  };
+  });
 })();

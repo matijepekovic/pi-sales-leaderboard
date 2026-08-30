@@ -6,8 +6,6 @@
    are recalculated from assigned reps so hidden rows never contribute to
    displayed totals or rankings. */
 (function(){
-  if(typeof render!=="function") return;
-  const baseRender=render;
   const SUM_FIELDS=["issued_leads","pitched_leads","sold_leads","gross_split","pending_split","net_split"];
   const n=v=>{const x=Number(v||0);return Number.isFinite(x)?x:0;};
   const assigned=row=>Number(row?.assigned_team_id||0)>0;
@@ -53,8 +51,10 @@
     return d;
   }
 
-  render=function(data){
-    return baseRender(assignedOnly(data));
-  };
+  // Order 0: the innermost stage, so every later stage sees the filtered
+  // rows rather than the raw pull.
+  Display.stage(0, function(data, next){
+    return next(assignedOnly(data));
+  });
 })();
 </script>

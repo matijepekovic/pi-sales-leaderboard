@@ -129,9 +129,8 @@
   }
   function getLocal(tid,key){return cfg(Number(tid)||0,key);}
 
-  const previousRender=render;
-  render=function(data){
-    const result=previousRender(data);
+  Display.stage(170, function(data, next){
+    const result=next(data);
     currentData=data;
     apply(data);
     const version=Number(data?.settings_version||0);
@@ -141,7 +140,7 @@
     }
     requestAnimationFrame(()=>{if(currentData===data)apply(data);});
     return result;
-  };
+  });
 
   window.StatsThemeTransforms={get:getLocal,setLocal,apply:()=>currentData&&apply(currentData),reload};
   reload().then(()=>{if(currentData)apply(currentData);});

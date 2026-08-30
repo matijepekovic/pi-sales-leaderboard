@@ -131,12 +131,11 @@
   }
 
   if(typeof render==="function"){
-    const previousRender=render;
-    render=function(data){
-      const result=previousRender(data);
+    Display.stage(190, function(data, next){
+      const result=next(data);
       requestAnimationFrame(decorateMockPreview);
       return result;
-    };
+    });
   }
 
   /* The base display script has already scheduled one refresh timer by the time

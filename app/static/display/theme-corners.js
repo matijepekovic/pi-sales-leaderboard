@@ -4,7 +4,6 @@
    All Teams without changing data/layout logic. */
 (function(){
   if(typeof render!=="function")return;
-  const previousRender=render;
   const CORNERS={
     corner_tl:{pos:"tl",sx:-1,sy:-1,origin:"left top"},
     corner_tr:{pos:"tr",sx:1,sy:-1,origin:"right top"},
@@ -71,11 +70,11 @@
     }
   }
 
-  render=function(data){
-    const result=previousRender(data);
+  Display.stage(140, function(data, next){
+    const result=next(data);
     apply(data);
     requestAnimationFrame(()=>apply(data));
     setTimeout(()=>apply(data),80);
     return result;
-  };
+  });
 })();

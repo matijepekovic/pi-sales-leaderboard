@@ -4,7 +4,6 @@
    deliberately no-op (stripe strength 0, hero 100%). */
 (function(){
   if(typeof render!=="function")return;
-  const previousRender=render;
   const STYLE_ID="themeExtrasV69Styles";
   const norm=v=>String(v||"").trim().toLowerCase();
 
@@ -88,11 +87,11 @@
     }
   }
 
-  render=function(data){
-    const result=previousRender(data);
+  Display.stage(150, function(data, next){
+    const result=next(data);
     apply(data);
     requestAnimationFrame(()=>apply(data));
     setTimeout(()=>apply(data),80);
     return result;
-  };
+  });
 })();

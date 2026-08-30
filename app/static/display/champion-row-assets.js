@@ -3,7 +3,6 @@
    inside the themed champion row instead of relying on CSS background stacking. */
 (function(){
   if(typeof render!=="function") return;
-  const previousRender=render;
 
   function teamTheme(data){
     const summary=data?.team_summary||{};
@@ -59,9 +58,9 @@
     row.style.backgroundImage="none";
   }
 
-  render=function(data){
-    const result=previousRender(data);
+  Display.stage(70, function(data, next){
+    const result=next(data);
     applyChampionAsset(data);
     return result;
-  };
+  });
 })();

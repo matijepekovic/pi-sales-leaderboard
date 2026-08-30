@@ -4,7 +4,6 @@
 (function(){
   if(typeof render!=="function") return;
 
-  const previousRender=render;
   const STYLE_ID="teamTotalsTableFooterV54Styles";
 
   function ensureStyles(){
@@ -30,12 +29,12 @@
     if(board&&footer) board.appendChild(footer);
   }
 
-  render=function(data){
-    const result=previousRender(data);
+  Display.stage(100, function(data, next){
+    const result=next(data);
     if(data?.mode==="per_team"){
       ensureStyles();
       attachTotalsToTable();
     }
     return result;
-  };
+  });
 })();

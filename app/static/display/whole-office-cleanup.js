@@ -3,7 +3,6 @@
    the redundant mode label and adds a small team identity asset beside Team. */
 (function(){
   if(typeof render!=="function") return;
-  const previousRender=render;
   const STYLE_ID="v50WholeOfficeIdentityStyles";
 
   function ensureStyles(){
@@ -65,9 +64,9 @@
     });
   }
 
-  render=function(data){
-    const result=previousRender(data);
+  Display.stage(80, function(data, next){
+    const result=next(data);
     decorateWholeOffice(data);
     return result;
-  };
+  });
 })();

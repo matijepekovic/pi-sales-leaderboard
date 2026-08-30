@@ -416,12 +416,11 @@
   }
 
   injectStyles();bindEvents();ensureSelection();ensureMenu();
-  const previousRender=render;
-  render=function(data){
-    const result=previousRender(data);
+  Display.stage(180, function(data, next){
+    const result=next(data);
     decorate();requestAnimationFrame(decorate);setTimeout(decorate,80);
     return result;
-  };
+  });
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",()=>setTimeout(decorate,0),{once:true});
   else setTimeout(decorate,0);
 })();

@@ -3,7 +3,6 @@
    the product cards. The QR overlay remains above it. */
 (function(){
   if(typeof window.renderProductScreen!=="function"||typeof window.render!=="function") return;
-  const baseRender=window.render;
   let overlay=null;
   let lastProductSignature="";
 
@@ -20,7 +19,7 @@
     return overlay;
   }
 
-  window.render=function(data){
+  Display.stage(310, function(data, next){
     if(data?.mode==="product_close"){
       const root=ensureOverlay();
       root.style.display="block";
@@ -45,6 +44,6 @@
     }
     lastProductSignature="";
     if(overlay) overlay.style.display="none";
-    return baseRender(data);
-  };
+    return next(data);
+  });
 })();

@@ -117,7 +117,6 @@
     document.head.appendChild(style);
   }
 
-  const baseRender=render;
 
   function hexTheme(theme){
     return theme && theme.enabled && theme.colors ? theme : null;
@@ -320,8 +319,8 @@
     if(typeof fitLeaderboard==="function") setTimeout(fitLeaderboard,0);
   }
 
-  render=function(data){
-    baseRender(data);
+  Display.stage(30, function(data, next){
+    next(data);
     applyTheme(data);
-  };
+  });
 })();

@@ -5,7 +5,6 @@
    team-lead-display.js; this file only re-composes that display into the theme. */
 (function(){
   if(typeof render!=="function") return;
-  const previousRender=render;
   const ROOT_ID="themedTeamBroadcast";
   const STYLE_ID="themedTeamBroadcastStyles";
   const TEXT_METRICS=new Set(["rank","rep_name","team","home_branch","title","hire_date"]);
@@ -165,12 +164,12 @@
     document.body.appendChild(root);
   }
 
-  render=function(data){
-    const result=previousRender(data); // all existing app functionality runs first
+  Display.stage(50, function(data, next){
+    const result=next(data); // all existing app functionality runs first
     const theme=activeTheme(data);
     if(!theme){removeBroadcast();return result;}
     const display=extractClassicDisplay(data); // consume exactly what Classic rendered
     if(display) build(data,theme,display); else removeBroadcast();
     return result;
-  };
+  });
 })();

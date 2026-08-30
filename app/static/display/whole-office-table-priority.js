@@ -4,7 +4,6 @@
    intentionally untouched. */
 (function(){
   if(typeof render!=="function") return;
-  const previousRender=render;
 
   const clamp=(value,min,max)=>Math.min(max,Math.max(min,Number(value)||min));
   const px=value=>{
@@ -62,11 +61,11 @@
     root.style.setProperty("--v55-office-row-h",`${rowHeight.toFixed(2)}px`);
   }
 
-  render=function(data){
-    const result=previousRender(data);
+  Display.stage(250, function(data, next){
+    const result=next(data);
     if(data?.mode==="whole_office") applyOfficePriority();
     return result;
-  };
+  });
 
   window.addEventListener("resize",()=>requestAnimationFrame(applyOfficePriority));
 })();

@@ -8,7 +8,6 @@
   const match=/^team-(\d+)$/.exec(String(params.get("preview")||""));
   if(!match) return;
   const teamId=Number(match[1]);
-  const previousRender=render;
 
   function editorData(data){
     if(!data||data.mode!=="per_team")return data;
@@ -24,5 +23,5 @@
     return {...data,theme_state:{...state,teams,by_name:byName}};
   }
 
-  render=function(data){return previousRender(editorData(data));};
+  Display.stage(200, function(data, next){return next(editorData(data));});
 })();

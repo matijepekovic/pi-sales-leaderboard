@@ -6,7 +6,6 @@
 (function(){
   if(typeof render!=="function") return;
 
-  const previousRender=render;
   const OFFICE_ROOT="v55OfficeBroadcast";
   const STYLE_ID="v55BroadcastViewsStyles";
   const TEXT_METRICS=new Set(["rank","rep_name","team","home_branch","title","hire_date"]);
@@ -481,8 +480,8 @@
     return true;
   }
 
-  render=function(data){
-    const result=previousRender(data);
+  Display.stage(110, function(data, next){
+    const result=next(data);
     clearV55();
 
     if(data?.mode==="whole_office"){
@@ -494,5 +493,5 @@
       return result;
     }
     return result;
-  };
+  });
 })();

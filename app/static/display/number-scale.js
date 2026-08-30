@@ -73,22 +73,19 @@
     return Math.min(Math.max(percent,MIN),MAX)/100;
   }
 
-  const baseRender=window.render;
-  if(typeof baseRender==="function"){
-    window.render=function(data){
-      const result=baseRender.apply(this,arguments);
-      try{
-        const factor=scaleFromData(data);
-        /* Inject nothing at all while the size is untouched, so a board at
-           100% is byte-for-byte what it was before this file existed. */
-        if(factor!==1) ensureStyles();
-        document.documentElement.style.setProperty("--v75-num-scale",factor);
-        scalePlainCells(factor);
-        /* The board auto-fits itself; re-run that now the numbers have
-           their final size. */
-        if(factor!==1&&typeof fitLeaderboard==="function") setTimeout(fitLeaderboard,0);
-      }catch(_){}
-      return result;
-    };
-  }
+  Display.stage(280, function(data, next){
+    const result=next(data);
+    try{
+      const factor=scaleFromData(data);
+      /* Inject nothing at all while the size is untouched, so a board at
+         100% is byte-for-byte what it was before this file existed. */
+      if(factor!==1) ensureStyles();
+      document.documentElement.style.setProperty("--v75-num-scale",factor);
+      scalePlainCells(factor);
+      /* The board auto-fits itself; re-run that now the numbers have
+         their final size. */
+      if(factor!==1&&typeof fitLeaderboard==="function") setTimeout(fitLeaderboard,0);
+    }catch(_){}
+    return result;
+  });
 })();

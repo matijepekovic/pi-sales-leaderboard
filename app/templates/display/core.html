@@ -370,6 +370,76 @@ let refreshMs = 5000;
 let tvRefreshVersion = null;
 let appRestartVersion = null;
 
+/* The display runtime registry.
+   Every script after this one used to extend the board by capturing render()
+   and reassigning it. That worked, but it made the execution order a property
+   of where a <script> tag happened to sit in the template -- invisible in the
+   code, and impossible to change without changing behaviour. Sixteen files
+   deep, nobody could say what ran when.
+   Stages register with an explicit order instead. The number is the position
+   the file already had, so the sequence is identical; the difference is that
+   it is now written down, and moving a file between bundles cannot alter it.
+   A stage receives (data, next). Call next() to continue inward, skip it to
+   stop the chain -- product-tv does exactly that in product mode -- and
+   transform the argument to change what everything inside it sees. */
+const Display = (function(){
+  const stages = [];
+  const styleOrder = [];
+  let chain = null;
+
+  const byOrder = (a, b) => a.order - b.order;
+
+  function compose(){
+    // Ascending order wraps outward from the board itself, which reproduces
+    // load order exactly: the first script loaded is the innermost wrapper.
+    let next = renderBoard;
+    stages.slice().sort(byOrder).forEach(stage => {
+      const inner = next;
+      next = data => stage.fn(data, inner);
+    });
+    return next;
+  }
+
+  return {
+    stage(order, fn){
+      stages.push({order: Number(order), fn});
+      chain = null;
+      return fn;
+    },
+    dispatch(data){
+      if(!chain) chain = compose();
+      return chain(data);
+    },
+    /* Style blocks are injected by script, so the cascade resolves by
+       insertion order. Ordering them here keeps the specificity fights
+       between table-readability and number-scale resolving the same way
+       regardless of which bundle each ends up in. */
+    style(id, order, css){
+      const el = document.createElement("style");
+      if(id) el.id = id;
+      el.textContent = css;
+      const entry = {order: Number(order), el};
+      const after = styleOrder.filter(s => s.order > entry.order)
+        .sort(byOrder)[0];
+      styleOrder.push(entry);
+      if(after) after.el.parentNode.insertBefore(el, after.el);
+      else document.head.appendChild(el);
+      return el;
+    },
+    trace(){
+      return {
+        stages: stages.slice().sort(byOrder).map(s => s.order),
+        styles: styleOrder.slice().sort(byOrder).map(s => s.el.id || "(anonymous)"),
+      };
+    },
+  };
+})();
+window.Display = Display;
+
+function render(data){
+  return Display.dispatch(data);
+}
+
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 function fmt(v, type, symbol="$"){
@@ -643,7 +713,7 @@ function fitLeaderboard(){
   });
 }
 
-function render(data){
+function renderBoard(data){
   titleEl.textContent = data.title || "SALES LEADERBOARD";
   subtitleEl.textContent = data.subtitle || "";
   modeEl.textContent = data.mode_label || "";
