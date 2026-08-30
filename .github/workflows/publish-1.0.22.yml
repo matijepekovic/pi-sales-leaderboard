@@ -1,0 +1,21 @@
+name: Publish Stats 1.0.22 once
+
+on:
+  push:
+    branches:
+      - production
+    paths:
+      - ".github/workflows/publish-1.0.22.yml"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch-signed-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch existing signed release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run windows-installer.yml --repo ${{ github.repository }} --ref production -f publish=true
