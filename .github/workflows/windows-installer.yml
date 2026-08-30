@@ -92,6 +92,10 @@ jobs:
         shell: pwsh
         run: python windows/test_paths.py
 
+      - name: Test storage boundaries
+        shell: pwsh
+        run: python windows/test_storage_boundaries.py
+
       - name: Test launcher close behavior
         shell: pwsh
         run: python windows/test_launcher.py

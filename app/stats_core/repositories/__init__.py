@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import database
-
 from stats_core.paths import persistent_data_dir
+from stats_core.storage import sqlite as database
 
 from .applied_assets import AppliedAssetRepository
 from .asset_library import AssetLibraryRepository
