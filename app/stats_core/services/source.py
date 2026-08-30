@@ -5,8 +5,8 @@ import threading
 
 from sources import discovery
 from sources.tableau import resolve_dates
+from stats_core.config import METRIC_DEFS
 from stats_core.errors import BusyError, ValidationError
-from stats_core.metrics import METRIC_DEFS
 from stats_core.services.tableau import TableauService
 
 SOURCE_FIELDS = (
