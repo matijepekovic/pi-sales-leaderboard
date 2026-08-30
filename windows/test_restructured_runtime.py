@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Architecture smoke tests for the Phase 4 Windows runtime."""
+"""Architecture smoke tests for the Windows runtime."""
 from __future__ import annotations
 
-import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -10,9 +10,32 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "app"
 sys.path.insert(0, str(APP))
-os.environ["STATS_WINDOWS_BUILD"] = "1"
 
 from stats_core.bootstrap import create_app  # noqa: E402
+
+
+LEGACY_PATCH_FILES = (
+    "applied_theme_assets_v116.py",
+    "keyboard_controls_v111.py",
+    "keyboard_controls_v112.py",
+    "product_controls_v115.py",
+    "product_source_v115.py",
+    "production_gates.py",
+    "production_versioning.py",
+    "pull_policy_v108.py",
+    "qr_controls_v110.py",
+    "remote_qr_v109.py",
+    "starter_theme_assets_v119.py",
+    "starter_theme_v119.py",
+    "tableau_scheduler.py",
+    "temporary_date_v113.py",
+    "theme_asset_apply_v127.py",
+    "themes.py",
+    "windows_runtime.py",
+    "windows_tableau_login_v124.py",
+    "windows_theme_editor_v122.py",
+    "windows_update_status_v128.py",
+)
 
 
 class RestructuredRuntimeTests(unittest.TestCase):
@@ -101,17 +124,22 @@ class RestructuredRuntimeTests(unittest.TestCase):
         ):
             self.assertIn(key, payload)
 
-    def test_old_patch_stack_is_not_loaded(self):
-        forbidden = {
-            "qr_controls_v110", "keyboard_controls_v112", "product_controls_v115",
-            "temporary_date_v113", "pull_policy_v108", "production_gates",
-            "production_versioning", "windows_runtime", "themes",
-            "applied_theme_assets_v116", "starter_theme_v119",
-            "starter_theme_assets_v119", "theme_asset_apply_v127",
-            "product_source_v115", "tableau_scheduler",
-        }
-        loaded = forbidden.intersection(sys.modules)
-        self.assertFalse(loaded, f"Legacy patch modules loaded: {sorted(loaded)}")
+    def test_legacy_patch_files_do_not_exist(self):
+        remaining = [name for name in LEGACY_PATCH_FILES if (APP / name).exists()]
+        self.assertEqual(remaining, [])
+
+    def test_stats_core_import_is_platform_neutral(self):
+        code = (
+            "import sys\n"
+            f"sys.path.insert(0, {str(APP)!r})\n"
+            "import stats_core\n"
+            "forbidden = [name for name in sys.modules "
+            "if name == 'stats_core.platform.windows' "
+            "or name.startswith('windows_') "
+            "or name == 'remote_qr']\n"
+            "assert not forbidden, forbidden\n"
+        )
+        subprocess.run([sys.executable, "-c", code], check=True)
 
     def test_theme_and_preview_are_not_monkey_patched(self):
         bootstrap = (APP / "stats_core" / "bootstrap.py").read_text(encoding="utf-8")
@@ -142,9 +170,12 @@ class RestructuredRuntimeTests(unittest.TestCase):
         text = (ROOT / "windows" / "server_entry.py").read_text(encoding="utf-8")
         self.assertIn("stats_core.bootstrap", text)
         for token in (
-            "qr_controls_v110", "windows_runtime.install",
-            "windows_update_status_v128.install", "windows_theme_editor_v122.install",
-            "windows_tableau_login_v124.install", "starter_theme_v119",
+            "qr_controls_v110",
+            "starter_theme_v119",
+            "windows_runtime.install",
+            "windows_tableau_login.install",
+            "windows_theme_editor.install",
+            "windows_update_status.install",
         ):
             self.assertNotIn(token, text)
 

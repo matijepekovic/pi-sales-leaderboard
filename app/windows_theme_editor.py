@@ -1,9 +1,4 @@
-"""Windows-only persistent visual Theme Builder transforms.
-
-The existing theme engine continues to own assets, colors, corner seating and
-hero scale. This module stores only the extra desktop-canvas transforms needed
-for direct mouse editing, so old themes remain valid and unchanged.
-"""
+"""Windows-only persistent visual Theme Builder transforms."""
 from __future__ import annotations
 
 import threading

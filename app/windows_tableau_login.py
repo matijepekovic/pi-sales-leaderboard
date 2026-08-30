@@ -1,10 +1,4 @@
-"""Windows-only Tableau login test endpoint.
-
-The Settings UI already persists Tableau credentials through /api/config. This
-module only provides a non-persistent authentication test so a user can verify
-server/site/PAT-name/PAT-secret before saving them. No secret is returned or
-written by this endpoint.
-"""
+"""Windows-only Tableau connection test endpoint."""
 from __future__ import annotations
 
 from flask import jsonify, request

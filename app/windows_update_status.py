@@ -1,4 +1,4 @@
-"""Expose the last detached Windows update result to the unlocked Software UI."""
+"""Expose the last detached Windows update result to the Software UI."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ from pathlib import Path
 from flask import jsonify
 
 _INSTALLED = False
-_ENDPOINT = "api_windows_update_status_v128"
+_ENDPOINT = "api_windows_update_status"
 
 
 def _latest_status(data_root: Path):

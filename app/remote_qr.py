@@ -1,12 +1,6 @@
-"""TV remote QR overlay support.
+"""Generate the Settings QR code for devices on the local network."""
+from __future__ import annotations
 
-Generate a small local QR asset that points phones at this Pi's Settings page.
-The kiosk itself opens the board through 127.0.0.1, so the QR must use the
-Pi's LAN address instead of the browser's current host.
-
-v113 keeps one permanent appearance: black background, white modules, and
-slightly rounded module/outer corners. There is no style selector.
-"""
 from pathlib import Path
 import socket
 import subprocess
@@ -19,10 +13,9 @@ OUTPUT = STATIC_DIR / "remote-qr-v109.svg"
 
 
 def _lan_ipv4():
-    """Return the address used by the Pi's default LAN route when possible."""
+    """Return the address used by the machine's default LAN route."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        # UDP connect chooses a route without needing to send application data.
         sock.connect(("8.8.8.8", 80))
         address = str(sock.getsockname()[0] or "").strip()
         if address and not address.startswith("127."):
@@ -51,7 +44,7 @@ def remote_url():
     if address:
         return f"http://{address}:{PORT}/settings"
 
-    hostname = str(socket.gethostname() or "raspberrypi").strip() or "raspberrypi"
+    hostname = str(socket.gethostname() or "localhost").strip() or "localhost"
     return f"http://{hostname}.local:{PORT}/settings"
 
 
@@ -72,8 +65,6 @@ def _styled_svg(url):
         'shape-rendering="geometricPrecision">',
         f'<rect width="{size}" height="{size}" rx="1.2" ry="1.2" fill="#000"/>',
     ]
-    # No gaps between modules: the QR stays structurally conservative for
-    # scanning, while rx/ry softens exposed corners and gives the requested look.
     for y, row in enumerate(matrix):
         for x, enabled in enumerate(row):
             if enabled:
@@ -81,8 +72,8 @@ def _styled_svg(url):
                     f'<rect x="{x}" y="{y}" width="1" height="1" '
                     'rx=".18" ry=".18" fill="#fff"/>'
                 )
-    parts.append('</svg>')
-    return ''.join(parts).encode('utf-8')
+    parts.append("</svg>")
+    return "".join(parts).encode("utf-8")
 
 
 def generate():

@@ -6,7 +6,6 @@ process logging and serving the already-composed Flask application.
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -27,7 +26,6 @@ def _install_file_logging() -> None:
 
 def main() -> int:
     _install_file_logging()
-    os.environ["STATS_WINDOWS_BUILD"] = "1"
 
     from stats_core.bootstrap import create_app
     from waitress import serve
