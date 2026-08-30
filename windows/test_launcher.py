@@ -13,8 +13,8 @@ APP_DIR = ROOT_DIR / "app"
 sys.path.insert(0, str(WINDOWS_DIR))
 sys.path.insert(0, str(APP_DIR))
 import launcher  # noqa: E402
-import remote_qr  # noqa: E402
-import windows_theme_editor  # noqa: E402
+from stats_core.windows import qr as remote_qr  # noqa: E402
+from stats_core.windows import theme_editor as windows_theme_editor  # noqa: E402
 
 
 class FakeProcess:
@@ -188,7 +188,7 @@ class RemoteQrTests(unittest.TestCase):
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
         server_entry = (WINDOWS_DIR / "server_entry.py").read_text(encoding="utf-8")
         platform = (APP_DIR / "stats_core" / "platform" / "windows.py").read_text(encoding="utf-8")
-        endpoint = (APP_DIR / "windows_tableau_login.py").read_text(encoding="utf-8")
+        endpoint = (APP_DIR / "stats_core" / "windows" / "tableau_login.py").read_text(encoding="utf-8")
 
         self.assertIn("windows-tableau-login-v124.js", template)
         self.assertIn('document.getElementById("v90Server")', ui)
@@ -199,9 +199,9 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("collectDataSource=function", ui)
         self.assertIn("source:{...current,...values}", ui)
         self.assertIn("/api/windows/tableau-login/test", ui)
-        self.assertIn("windows_tableau_login.install(app)", platform)
+        self.assertIn("tableau_login.install(app)", platform)
         self.assertIn("stats_core.bootstrap", server_entry)
-        self.assertNotIn("windows_tableau_login.install", server_entry)
+        self.assertNotIn("tableau_login.install", server_entry)
         self.assertIn("ConfiguredTableauSource", endpoint)
         self.assertIn("tableau.signin()", endpoint)
         self.assertNotIn("save_settings", endpoint)
@@ -256,9 +256,9 @@ class WindowsThemeEditorTests(unittest.TestCase):
         policy = (APP_DIR / "static" / "theme-editor-data-policy-v126.js").read_text(encoding="utf-8")
         stability = (APP_DIR / "static" / "windows-theme-stability-v126.js").read_text(encoding="utf-8")
 
-        self.assertIn("windows_theme_editor.install(app, public_endpoints)", platform)
+        self.assertIn("theme_editor.install(app, public_endpoints)", platform)
         self.assertIn("stats_core.bootstrap", server_entry)
-        self.assertNotIn("windows_theme_editor.install", server_entry)
+        self.assertNotIn("theme_editor.install", server_entry)
         self.assertIn("theme-transform-runtime-v122.js", display)
         self.assertIn("theme-editor-preview-v122.js", display)
         self.assertIn("theme-editor-data-policy-v126.js", display)
@@ -282,9 +282,6 @@ class WindowsThemeEditorTests(unittest.TestCase):
         self.assertIn("StatsThemeEditorHost", host)
         self.assertIn('searchParams.set("themeEditor","1")', host)
 
-        # v126: populated teams use real assigned data; only empty teams can
-        # fall through to v122's mock sample. The editor refresh loop is made
-        # one-shot so it cannot keep churning the iframe while editing.
         self.assertIn("XMLHttpRequest", policy)
         self.assertIn("assignedRows", policy)
         self.assertIn("Number(row?.assigned_team_id||0)>0", policy)
