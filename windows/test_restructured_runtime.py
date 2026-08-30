@@ -24,6 +24,7 @@ LEGACY_PATCH_FILES = (
     "production_versioning.py",
     "pull_policy_v108.py",
     "qr_controls_v110.py",
+    "remote_qr_v109.py",
     "starter_theme_assets_v119.py",
     "starter_theme_v119.py",
     "tableau_scheduler.py",
@@ -31,6 +32,9 @@ LEGACY_PATCH_FILES = (
     "theme_asset_apply_v127.py",
     "themes.py",
     "windows_runtime.py",
+    "windows_tableau_login_v124.py",
+    "windows_theme_editor_v122.py",
+    "windows_update_status_v128.py",
 )
 
 
@@ -132,7 +136,7 @@ class RestructuredRuntimeTests(unittest.TestCase):
             "forbidden = [name for name in sys.modules "
             "if name == 'stats_core.platform.windows' "
             "or name.startswith('windows_') "
-            "or name == 'remote_qr_v109']\n"
+            "or name == 'remote_qr']\n"
             "assert not forbidden, forbidden\n"
         )
         subprocess.run([sys.executable, "-c", code], check=True)
@@ -166,9 +170,12 @@ class RestructuredRuntimeTests(unittest.TestCase):
         text = (ROOT / "windows" / "server_entry.py").read_text(encoding="utf-8")
         self.assertIn("stats_core.bootstrap", text)
         for token in (
-            "qr_controls_v110", "windows_runtime.install",
-            "windows_update_status_v128.install", "windows_theme_editor_v122.install",
-            "windows_tableau_login_v124.install", "starter_theme_v119",
+            "qr_controls_v110",
+            "starter_theme_v119",
+            "windows_runtime.install",
+            "windows_tableau_login.install",
+            "windows_theme_editor.install",
+            "windows_update_status.install",
         ):
             self.assertNotIn(token, text)
 
