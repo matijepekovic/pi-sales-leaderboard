@@ -1,3 +1,15 @@
+/* Data source -- connecting to Tableau, choosing a report, mapping its
+   columns, and the accordion those controls are arranged into.
+
+   Consolidated from the settings patch stack. Each section below was its own
+   file and they are concatenated in their original load order, so what runs
+   when is unchanged -- several of these mount by polling for a node the
+   previous one creates. */
+
+
+/* ------------------------------------------------------------------
+   data-source.js
+   ------------------------------------------------------------------ */
 /* v90 Data Source: one card for the whole pull.
 
    Where to connect, which report, which filters to send, which column feeds
@@ -568,4 +580,879 @@
   }else{
     setTimeout(mount,0);
   }
+})();
+
+
+/* ------------------------------------------------------------------
+   tableau-team-members.js
+   ------------------------------------------------------------------ */
+/* v126 Team Builder member availability.
+
+   Tableau remains the source of candidate rep names, while Stats owns local
+   team assignments. A rep can belong to only one local team at a time:
+   - creating a team shows only unassigned Tableau reps;
+   - editing a team shows its existing members plus unassigned reps;
+   - reps assigned to any other team are hidden completely.
+
+   Successful Tableau preview rows are merged with the persisted assignment
+   metadata from /api/config before they reach the picker, so a fresh preview
+   cannot accidentally make already-assigned people available again. */
+(function(){
+  if(typeof request!=="function" ||
+     typeof renderBuilderMembers!=="function" ||
+     typeof openTeamBuilder!=="function" ||
+     typeof setBuilderStep!=="function") return;
+
+  const memberList=document.getElementById("builderMembers");
+  const overlay=document.getElementById("teamBuilderOverlay");
+  if(!memberList||!overlay) return;
+
+  const originalRequest=request;
+  const originalRenderBuilderMembers=renderBuilderMembers;
+  const originalOpenTeamBuilder=openTeamBuilder;
+  const originalSetBuilderStep=setBuilderStep;
+
+  let previewPool=null;
+  let persistedPool=[];
+  let refreshSequence=0;
+
+  function repKeyFromName(name){
+    return String(name||"")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g,"-")
+      .replace(/^-+|-+$/g,"") || "unknown";
+  }
+
+  function normalizeRows(rows){
+    const seen=new Set();
+    return (Array.isArray(rows)?rows:[])
+      .map(row=>{
+        row=row&&typeof row==="object"?row:{};
+        const rep_name=String(row.rep_name||row.name||"").trim();
+        const rep_key=String(row.rep_key||repKeyFromName(rep_name)).trim();
+        if(!rep_name||!rep_key||seen.has(rep_key)) return null;
+        seen.add(rep_key);
+        const tableau_team=String(row.tableau_team||row.team||"Unassigned").trim()||"Unassigned";
+        const effective_team=String(row.effective_team||row.team||row.tableau_team||"Unassigned").trim()||"Unassigned";
+        const assigned=Number(row.assigned_team_id||0);
+        return {
+          ...row,
+          rep_key,
+          rep_name,
+          tableau_team,
+          effective_team,
+          // Only an explicit Pi assignment counts as occupied. Tableau's own
+          // team text/effective fallback must never hide a candidate rep.
+          assigned_team_id:assigned>0?assigned:null,
+        };
+      })
+      .filter(Boolean)
+      .sort((a,b)=>a.rep_name.localeCompare(b.rep_name));
+  }
+
+  function mergeAssignments(rows,persisted){
+    const byKey=new Map();
+    const byName=new Map();
+    normalizeRows(persisted).forEach(rep=>{
+      byKey.set(String(rep.rep_key),rep);
+      byName.set(String(rep.rep_name||"").trim().toLowerCase(),rep);
+    });
+    return normalizeRows(rows).map(rep=>{
+      const saved=byKey.get(String(rep.rep_key)) ||
+        byName.get(String(rep.rep_name||"").trim().toLowerCase());
+      if(!saved) return rep;
+      const assigned=Number(saved.assigned_team_id||0);
+      return {
+        ...rep,
+        assigned_team_id:assigned>0?assigned:null,
+        effective_team:assigned>0
+          ? String(saved.effective_team||rep.effective_team||"Unassigned")
+          : rep.effective_team,
+        local_team_override:!!saved.local_team_override,
+      };
+    });
+  }
+
+  function memberStepVisible(){
+    return overlay.classList.contains("open") && Number(builderStep)===2;
+  }
+
+  function eligibleRows(rows){
+    const current=Number(builderTeamId||0);
+    return normalizeRows(rows).filter(rep=>{
+      const assigned=Number(rep.assigned_team_id||0);
+      return !assigned || (current>0 && assigned===current);
+    });
+  }
+
+  function paintEmptyState(fullPool,eligible){
+    if(eligible.length) return;
+    const hasTableau=Array.isArray(fullPool)&&fullPool.length>0;
+    memberList.innerHTML=hasTableau
+      ? `<div class="small" id="tableauMemberEmptyV126" style="grid-column:1/-1;border:1px solid #2b2b2b;background:#0c0c0c;padding:14px;line-height:1.45">
+          <strong style="color:var(--text)">No unassigned Tableau reps available.</strong><br>
+          Everyone in the current Tableau pull is already assigned to another team.
+        </div>`
+      : `<div class="small" id="tableauMemberEmptyV126" style="grid-column:1/-1;border:1px solid #2b2b2b;background:#0c0c0c;padding:14px;line-height:1.45">
+          <strong style="color:var(--text)">No Tableau reps loaded yet.</strong><br>
+          Pull or preview a Tableau report first. The names from that Tableau data will appear here automatically.
+        </div>`;
+    const count=document.getElementById("selectedMemberCount");
+    if(count) count.textContent=`${builderMembers.size} member${builderMembers.size===1?"":"s"}`;
+  }
+
+  function renderCurrentPool(){
+    const full=Array.isArray(reps)?reps:[];
+    const eligible=eligibleRows(full);
+    // Reuse the established checklist/search renderer rather than introducing
+    // a second membership UI. Restore the full pool immediately afterward so
+    // review and Team Lead selection still resolve every selected member.
+    reps=eligible;
+    try{originalRenderBuilderMembers();}
+    finally{reps=full;}
+    paintEmptyState(full,eligible);
+  }
+
+  renderBuilderMembers=function(){renderCurrentPool();};
+
+  function applyPool(rows){
+    reps=normalizeRows(rows);
+    if(memberStepVisible()) renderCurrentPool();
+  }
+
+  async function refreshPersistedPool(){
+    const sequence=++refreshSequence;
+    if(memberStepVisible() && (!Array.isArray(reps)||!reps.length)){
+      memberList.innerHTML='<div class="small" style="grid-column:1/-1;padding:12px">Loading reps from Tableau…</div>';
+    }
+    try{
+      const {r,d}=await originalRequest("/api/config",{cache:"no-store"});
+      if(sequence!==refreshSequence||!r.ok) return;
+      persistedPool=normalizeRows(d.reps||[]);
+      const current=previewPool&&previewPool.length
+        ?mergeAssignments(previewPool,persistedPool)
+        :persistedPool;
+      applyPool(current);
+    }catch(_){
+      if(sequence!==refreshSequence) return;
+      if(memberStepVisible()) renderCurrentPool();
+    }
+  }
+
+  request=async function(path,options={}){
+    const result=await originalRequest(path,options);
+    const cleanPath=String(path||"").split("?",1)[0];
+
+    if(cleanPath==="/api/source/preview" &&
+       result?.r?.ok && result?.d?.ok && Array.isArray(result.d.rows)){
+      previewPool=normalizeRows(result.d.rows);
+      applyPool(mergeAssignments(previewPool,persistedPool));
+      // Re-read Pi-owned assignments after the preview so even a Settings page
+      // that was open for hours cannot offer somebody already claimed elsewhere.
+      setTimeout(refreshPersistedPool,0);
+      window.dispatchEvent(new CustomEvent("stats-tableau-reps-updated",{
+        detail:{source:"preview",count:previewPool.length}
+      }));
+    }
+
+    if(cleanPath==="/api/source/refresh" && result?.r?.ok){
+      previewPool=null;
+      setTimeout(refreshPersistedPool,0);
+    }
+
+    return result;
+  };
+
+  openTeamBuilder=function(id=null){
+    originalOpenTeamBuilder(id);
+    refreshPersistedPool();
+  };
+
+  setBuilderStep=function(n){
+    originalSetBuilderStep(n);
+    if(Number(builderStep)===2) refreshPersistedPool();
+  };
+
+  if(!Array.isArray(reps)||!reps.length) paintEmptyState([],[]);
+})();
+
+
+/* ------------------------------------------------------------------
+   windows-tableau-login.js
+   ------------------------------------------------------------------ */
+/* v124 Windows Tableau Login layout.
+   Move the existing connection inputs out of Tableau Report > Advanced and
+   into the existing Tableau Login dialog. The same DOM inputs and config APIs
+   are reused so report discovery/mapping logic keeps one source of truth. */
+(function(){
+  const platform=String(navigator.userAgentData?.platform||navigator.platform||navigator.userAgent||"");
+  if(!/windows|win32|win64/i.test(platform))return;
+
+  let mounted=false;
+  let wrapped=false;
+
+  function addStyles(){
+    if(document.getElementById("windowsTableauLoginV124Styles"))return;
+    const style=document.createElement("style");
+    style.id="windowsTableauLoginV124Styles";
+    style.textContent=`
+      #dataSourceOverlay .tableau-login-note{margin:8px 0 18px;color:var(--muted);font-size:13px;line-height:1.45}
+      #dataSourceOverlay .tableau-login-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:18px}
+      #dataSourceOverlay .tableau-login-grid .tableau-login-wide{grid-column:1/-1}
+      #dataSourceOverlay .tableau-login-secret{margin-top:14px}
+      #dataSourceOverlay .tableau-login-actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:16px}
+      #dataSourceOverlay #testDataSource{min-width:132px}
+      @media(max-width:720px){#dataSourceOverlay .tableau-login-grid{grid-template-columns:1fr}}
+    `;
+    document.head.appendChild(style);
+  }
+
+  function connectionValues(){
+    return {
+      server:String(document.getElementById("v90Server")?.value||"").trim(),
+      site:String(document.getElementById("v90Site")?.value||"").trim(),
+      pat_name:String(document.getElementById("v90PatName")?.value||"").trim(),
+    };
+  }
+
+  function mount(){
+    if(mounted)return true;
+    const overlay=document.getElementById("dataSourceOverlay");
+    const panel=overlay?.querySelector(".panel");
+    const server=document.getElementById("v90Server");
+    const site=document.getElementById("v90Site");
+    const patName=document.getElementById("v90PatName");
+    const secret=document.getElementById("tabPatSecret");
+    const save=document.getElementById("saveDataSource");
+    if(!panel||!server||!site||!patName||!secret||!save)return false;
+
+    addStyles();
+    mounted=true;
+
+    const oldGrid=server.closest(".grid");
+    const oldHeading=oldGrid?.previousElementSibling?.tagName==="H3"?oldGrid.previousElementSibling:null;
+
+    const header=panel.querySelector(":scope > .row");
+    const note=document.createElement("div");
+    note.className="tableau-login-note";
+    note.textContent="These credentials control the Tableau connection. Report, mapping, filters and dates are configured separately in Tableau Report.";
+    header?.insertAdjacentElement("afterend",note);
+
+    const grid=document.createElement("div");
+    grid.id="tableauLoginConnectionV124";
+    grid.className="tableau-login-grid";
+    [server,site,patName].forEach(input=>{
+      const field=input.parentElement;
+      if(field)grid.appendChild(field);
+    });
+    note.insertAdjacentElement("afterend",grid);
+
+    const secretHeading=secret.previousElementSibling;
+    if(secretHeading?.tagName==="H3"){
+      secretHeading.textContent="PAT secret";
+      secretHeading.classList.add("tableau-login-secret");
+    }
+
+    if(oldGrid&&oldGrid.children.length===0)oldGrid.remove();
+    if(oldHeading)oldHeading.remove();
+
+    const originalActions=save.parentElement;
+    originalActions?.classList.add("tableau-login-actions");
+    if(originalActions)originalActions.style.justifyContent="flex-end";
+
+    const test=document.createElement("button");
+    test.id="testDataSource";
+    test.className="btn";
+    test.type="button";
+    test.textContent="Test Connection";
+    test.addEventListener("click",testConnection);
+    originalActions?.insertBefore(test,save);
+
+    wrapExistingLoginFunctions();
+    applyDataSourceForm();
+    return true;
+  }
+
+  function wrapExistingLoginFunctions(){
+    if(wrapped)return;
+    wrapped=true;
+
+    const previousApply=applyDataSourceForm;
+    applyDataSourceForm=function(){
+      previousApply();
+      const source=(config&&config.source&&typeof config.source==="object")?config.source:{};
+      const server=document.getElementById("v90Server");
+      const site=document.getElementById("v90Site");
+      const patName=document.getElementById("v90PatName");
+      if(server&&source.server!==undefined)server.value=source.server||"";
+      if(site&&source.site!==undefined)site.value=source.site||"";
+      if(patName&&source.pat_name!==undefined)patName.value=source.pat_name||"";
+    };
+
+    collectDataSource=function(){
+      const values=connectionValues();
+      const current=(config&&config.source&&typeof config.source==="object")?config.source:{};
+      const payload={source:{...current,...values}};
+      const secret=String(document.getElementById("tabPatSecret")?.value||"").trim();
+      if(secret)payload.tableau_pat_secret=secret;
+      return payload;
+    };
+
+    const previousSave=saveDataSource;
+    saveDataSource=async function(closeAfter=false){
+      const ok=await previousSave(false);
+      if(!ok)return false;
+      try{window.config=config;}catch(_){ }
+      window.dispatchEvent(new CustomEvent("stats-tableau-login-saved",{detail:connectionValues()}));
+      const status=document.getElementById("dataSourceStatus");
+      if(status)status.textContent=closeAfter?"Login saved. Refreshing Tableau Report…":"Login saved.";
+      if(closeAfter)setTimeout(()=>location.reload(),450);
+      return true;
+    };
+  }
+
+  async function testConnection(){
+    const status=document.getElementById("dataSourceStatus");
+    const test=document.getElementById("testDataSource");
+    const save=document.getElementById("saveDataSource");
+    const values=connectionValues();
+    const pat_secret=String(document.getElementById("tabPatSecret")?.value||"").trim();
+    if(!values.server||!values.site||!values.pat_name){
+      if(status)status.textContent="Enter Server, Site and PAT Token Name first.";
+      return;
+    }
+    if(status)status.textContent="Testing Tableau login…";
+    if(test)test.disabled=true;
+    if(save)save.disabled=true;
+    try{
+      const {r,d}=await request("/api/windows/tableau-login/test",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...values,pat_secret})
+      });
+      if(status){
+        status.classList.toggle("ok",!!r.ok&&!!d.ok);
+        status.textContent=(r.ok&&d.ok)?"Connection successful.":(d.error||"Connection failed.");
+      }
+    }catch(e){
+      if(e.message!=="locked"&&status)status.textContent="Could not test the Tableau connection.";
+    }finally{
+      if(test)test.disabled=false;
+      if(save)save.disabled=false;
+    }
+  }
+
+  function boot(){
+    if(mount())return;
+    const observer=new MutationObserver(()=>{if(mount())observer.disconnect();});
+    observer.observe(document.documentElement,{childList:true,subtree:true});
+  }
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot,{once:true});
+  else boot();
+})();
+
+
+/* ------------------------------------------------------------------
+   flow.js
+   ------------------------------------------------------------------ */
+/* v102 Tableau settings workflow.
+   UX ONLY: keep the report setup in dependency order.
+   - Read Report first.
+   - Report Filters appear immediately after Read Report.
+   - Everything else that lived under Advanced moves into Tableau Login.
+   Existing DOM nodes are moved intact so current listeners and API behavior stay unchanged. */
+(function(){
+  const $=id=>document.getElementById(id);
+
+  function setStepHeading(container,text){
+    const heading=container?.querySelector('h3');
+    if(heading) heading.textContent=text;
+  }
+
+  function organize(){
+    const source=$('v90SourceCard');
+    const advanced=$('v97Advanced');
+    const loginPanel=$('dataSourceOverlay')?.querySelector('.panel');
+    const readButton=$('v79Load');
+    const filtersWrap=$('v90Filters');
+    const addFilter=$('v90AddFilter');
+    if(!source||!advanced||!loginPanel||!readButton||!filtersWrap||!addFilter) return false;
+    if($('v102FiltersStep')) return true;
+
+    const reportSection=readButton.closest('section');
+    const mapWrap=$('v79MapWrap');
+    if(!reportSection||!mapWrap) return false;
+
+    // Filters depend on Read Report, so make them the next visible step.
+    const filterHeading=Array.from(advanced.querySelectorAll(':scope > h3'))
+      .find(h=>/report filters/i.test(h.textContent||''));
+    if(filterHeading) filterHeading.remove();
+
+    const filterSection=document.createElement('section');
+    filterSection.id='v102FiltersStep';
+    filterSection.style.cssText='margin-top:18px;padding-top:15px;border-top:1px solid #262626';
+    filterSection.innerHTML='<h3 style="margin:0 0 8px">2. Filters</h3><div class="small" style="margin-bottom:9px">Read Report first, then choose the report filters to send to Tableau.</div>';
+    filterSection.append(filtersWrap,addFilter);
+    reportSection.insertAdjacentElement('afterend',filterSection);
+
+    // Renumber the remaining report flow so the screen matches the real dependency order.
+    setStepHeading(mapWrap,'3. Map');
+    const verifySection=$('v79Check')?.closest('section');
+    setStepHeading(verifySection,'4. Verify');
+
+    // Move every remaining Advanced control into the existing Tableau Login overlay.
+    const loginExtras=document.createElement('section');
+    loginExtras.id='v102LoginExtras';
+    loginExtras.style.cssText='margin-top:18px;padding-top:15px;border-top:1px solid #2b2b2b';
+    const note=document.createElement('div');
+    note.className='small';
+    note.style.marginBottom='10px';
+    note.textContent='Connection and date defaults for this Tableau source.';
+    loginExtras.appendChild(note);
+
+    Array.from(advanced.children).forEach(node=>{
+      if(node.tagName==='SUMMARY') return;
+      loginExtras.appendChild(node);
+    });
+
+    const status=$('dataSourceStatus');
+    if(status) loginPanel.insertBefore(loginExtras,status);
+    else loginPanel.appendChild(loginExtras);
+    advanced.remove();
+
+    return true;
+  }
+
+  function start(){
+    let tries=0;
+    (function attempt(){
+      if(organize()) return;
+      if(++tries<50) setTimeout(attempt,50);
+    })();
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(start,0),{once:true});
+  else setTimeout(start,0);
+})();
+
+
+/* ------------------------------------------------------------------
+   accordion.js
+   ------------------------------------------------------------------ */
+/* v98 remote settings accordion.
+   UX ONLY: moves existing controls into clearer collapsible groups without
+   changing any API calls, source logic, scheduler behavior, team logic, or TV
+   rendering. Existing DOM nodes are moved intact so their event listeners and
+   saved settings behavior stay exactly as shipped. */
+(function(){
+  const $=id=>document.getElementById(id);
+  const app=()=>$("appWrap");
+  const STATE_KEY="leaderboard.settings.v98.open";
+  let state={};
+  try{ state=JSON.parse(localStorage.getItem(STATE_KEY)||"{}"); }catch(_){ state={}; }
+
+  function saveState(){
+    try{ localStorage.setItem(STATE_KEY,JSON.stringify(state)); }catch(_){ }
+  }
+
+  function injectStyles(){
+    if($("v98AccordionStyles")) return;
+    const style=document.createElement("style");
+    style.id="v98AccordionStyles";
+    style.textContent=`
+      #v98Sections{display:grid;gap:10px;margin-top:14px}
+      .v98-section{background:var(--card);border:1px solid var(--line);margin:0}
+      .v98-section>summary,.v98-subsection>summary{
+        list-style:none;cursor:pointer;user-select:none;display:flex;align-items:center;
+        justify-content:space-between;gap:12px;font-weight:900
+      }
+      .v98-section>summary::-webkit-details-marker,.v98-subsection>summary::-webkit-details-marker{display:none}
+      .v98-section>summary{font-size:19px;padding:15px 17px}
+      .v98-section>summary::after,.v98-subsection>summary::after{
+        content:"+";font-size:22px;line-height:1;color:var(--muted);font-weight:400
+      }
+      .v98-section[open]>summary::after,.v98-subsection[open]>summary::after{content:"−"}
+      .v98-section[open]>summary{border-bottom:1px solid var(--line)}
+      .v98-section-body{padding:16px 17px 18px}
+      .v98-inner-card{margin:0!important;padding:0!important;border:0!important;background:transparent!important}
+      .v98-inner-card>h2:first-child{display:none!important}
+      .v98-subsection{border:1px solid #2b2b2b;background:#101010;margin:10px 0}
+      .v98-subsection>summary{padding:11px 12px;font-size:15px}
+      .v98-subsection[open]>summary{border-bottom:1px solid #292929}
+      .v98-subsection-body{padding:12px}
+      .v98-inline-block{margin:10px 0;padding:10px;border:1px solid #2b2b2b;background:#101010}
+      .v98-inline-block>h3{margin:0 0 8px}
+      .v98-view-mode{margin-bottom:10px}
+      .v98-view-help{margin:0 0 12px}
+      .v98-save-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid #262626}
+      #v98LegacyModeCard{display:none!important}
+      @media(max-width:760px){
+        #v98Sections{gap:8px}
+        .v98-section>summary{padding:14px 13px;font-size:18px}
+        .v98-section-body{padding:13px}
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function keyOf(label){
+    return String(label||"section").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"section";
+  }
+
+  function buildDetails(label,key,sub=false){
+    const details=document.createElement("details");
+    details.className=sub?"v98-subsection":"v98-section";
+    details.dataset.v98Key=key;
+    details.open=!!state[key];
+    const summary=document.createElement("summary");
+    summary.textContent=label;
+    const body=document.createElement("div");
+    body.className=sub?"v98-subsection-body":"v98-section-body";
+    details.append(summary,body);
+    details.addEventListener("toggle",()=>{state[key]=details.open;saveState();});
+    return {details,body};
+  }
+
+  function directCards(){
+    const root=app();
+    if(!root) return [];
+    return Array.from(root.children).filter(el=>el.classList&&el.classList.contains("card"));
+  }
+
+  function directCardWith(selector){
+    return directCards().find(card=>card.querySelector(selector))||null;
+  }
+
+  function headingOf(card){
+    return String(card?.querySelector("h2")?.textContent||"").replace(/\s+/g," ").trim();
+  }
+
+  function putCardInBody(card,body){
+    if(!card||!body) return;
+    card.classList.remove("card");
+    card.classList.add("v98-inner-card");
+    body.appendChild(card);
+  }
+
+  function wrapSimpleCard(card,label,stack){
+    if(!card||card.dataset.v98Wrapped) return null;
+    const key=keyOf(label);
+    const {details,body}=buildDetails(label,key,false);
+    card.dataset.v98Wrapped="1";
+    putCardInBody(card,body);
+    stack.appendChild(details);
+    return details;
+  }
+
+  function makeNestedCard(card,label,key,parentBody){
+    if(!card) return null;
+    const {details,body}=buildDetails(label,key,true);
+    putCardInBody(card,body);
+    parentBody.appendChild(details);
+    return details;
+  }
+
+  function prepareView(stack){
+    const displayCard=directCardWith("#displaySettingsTitle");
+    const modeCard=directCardWith("#activeMode");
+    if(!displayCard) return null;
+
+    const {details,body}=buildDetails("View","view",false);
+
+    if(modeCard){
+      modeCard.id="v98LegacyModeCard";
+      const active=$("activeMode");
+      const field=active?.parentElement;
+      if(field){
+        field.classList.add("v98-view-mode");
+        body.appendChild(field);
+      }
+      const help=$("activeModeHelp");
+      if(help){ help.classList.add("v98-view-help"); body.appendChild(help); }
+    }
+
+    const filters=buildDetails("Filters","view-filters",true);
+    const shownHeading=Array.from(displayCard.querySelectorAll("h3"))
+      .find(h=>/data shown on tv/i.test(h.textContent||""));
+    if(shownHeading) shownHeading.textContent="Fields shown on TV";
+    putCardInBody(displayCard,filters.body);
+    body.appendChild(filters.details);
+
+    const numCard=directCardWith("#v75NumCard")||$("v75NumCard");
+    if(numCard) makeNestedCard(numCard,"Number Size","view-number-size",body);
+
+    const actions=document.querySelector("#appWrap > .actions");
+    const save=$("save"), saved=$("saved");
+    if(save||saved){
+      const row=document.createElement("div");
+      row.className="v98-save-row";
+      if(save){ save.textContent="Save View"; row.appendChild(save); }
+      if(saved) row.appendChild(saved);
+      body.appendChild(row);
+    }
+
+    stack.appendChild(details);
+    return {details,actions};
+  }
+
+  function prepareTv(stack,actions){
+    const tvCard=directCards().find(card=>/TV Controls/i.test(headingOf(card)))||directCardWith("#refreshTV");
+    if(!tvCard) return null;
+    const openTv=$("openTV");
+    if(openTv){
+      openTv.textContent="Open TV View";
+      const row=tvCard.querySelector(".row")||tvCard;
+      row.appendChild(openTv);
+    }
+    const wrapped=wrapSimpleCard(tvCard,"TV Remote",stack);
+    if(actions && !actions.querySelector("button")) actions.style.display="none";
+    return wrapped;
+  }
+
+  function prepareTeam(stack){
+    const card=directCards().find(card=>/Team Builder/i.test(headingOf(card)))||directCardWith("#newTeamBuilder");
+    return wrapSimpleCard(card,"Team Builder",stack);
+  }
+
+  function movePullStatusIntoReport(sourceCard){
+    if(!sourceCard||$("v98PullStatus")) return;
+    const pullCard=directCardWith("#sourceStatusLine");
+    if(!pullCard) return;
+    const block=document.createElement("section");
+    block.id="v98PullStatus";
+    block.className="v98-inline-block";
+    const h=document.createElement("h3");
+    h.textContent="Status";
+    block.appendChild(h);
+    Array.from(pullCard.childNodes).forEach(node=>{
+      if(node.nodeType===1 && node.tagName==="H2") return;
+      block.appendChild(node);
+    });
+    const current=$("v79Current");
+    const scheduleBox=current?.parentElement;
+    if(scheduleBox&&scheduleBox.parentElement===sourceCard) scheduleBox.insertAdjacentElement("afterend",block);
+    else sourceCard.insertBefore(block,sourceCard.children[2]||null);
+    pullCard.remove();
+  }
+
+  function prepareData(stack){
+    const sourceCard=$("v90SourceCard");
+    if(!sourceCard) return null;
+    movePullStatusIntoReport(sourceCard);
+
+    const {details,body}=buildDetails("Data","data",false);
+    makeNestedCard(sourceCard,"Tableau Report","data-tableau-report",body);
+
+    const product=$("v75ProductCard");
+    if(product) makeNestedCard(product,"Close Rate by Product — Beta","data-product",body);
+
+    stack.appendChild(details);
+    return details;
+  }
+
+  function organize(){
+    const root=app();
+    if(!root||$("v98Sections")) return !!$("v98Sections");
+    const source=$("v90SourceCard");
+    if(!source) return false; // wait until the v97 report card has mounted
+
+    injectStyles();
+    const stack=document.createElement("div");
+    stack.id="v98Sections";
+    const note=root.querySelector(".persist-note");
+    if(note) note.insertAdjacentElement("afterend",stack); else root.prepend(stack);
+
+    const view=prepareView(stack);
+    prepareTv(stack,view?.actions||null);
+    prepareTeam(stack);
+    prepareData(stack);
+
+    // Everything else remains functionally untouched, but gets the same
+    // collapsible shell so the phone page stays compact.
+    const leftovers=directCards().filter(card=>card.id!=="v98LegacyModeCard");
+    leftovers.forEach(card=>{
+      const raw=headingOf(card)||"Settings";
+      let label=raw;
+      if(/Software Update/i.test(raw)) label="Software";
+      else if(/Settings Lock/i.test(raw)) label="Security";
+      wrapSimpleCard(card,label,stack);
+    });
+
+    const actions=document.querySelector("#appWrap > .actions");
+    if(actions && !actions.querySelector("button")) actions.style.display="none";
+    return true;
+  }
+
+  function start(){
+    let tries=0;
+    (function attempt(){
+      if(organize()) return;
+      if(++tries<40) setTimeout(attempt,50);
+    })();
+  }
+
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",()=>setTimeout(start,0),{once:true});
+  else setTimeout(start,0);
+})();
+
+
+/* ------------------------------------------------------------------
+   preview-scroll.js
+   ------------------------------------------------------------------ */
+/* v103 iPhone settings preview containment.
+   The Check Numbers table is intentionally wider than the phone, but that
+   intrinsic width must never widen the settings page itself. Only the preview
+   shell may scroll horizontally. */
+(function(){
+  function install(){
+    if(document.getElementById('v103PreviewContainment')) return;
+    const style=document.createElement('style');
+    style.id='v103PreviewContainment';
+    style.textContent=`
+      html,body{
+        max-width:100%;
+        overflow-x:hidden;
+      }
+      #appWrap,
+      #v98Sections,
+      .v98-section,
+      .v98-section-body,
+      .v98-subsection,
+      .v98-subsection-body,
+      #v90SourceCard,
+      #v90SourceCard>section,
+      #v79PreviewRows{
+        min-width:0!important;
+        max-width:100%!important;
+      }
+      #v79PreviewRows{
+        width:100%!important;
+        overflow:hidden!important;
+      }
+      #v79PreviewRows>.v101-number-preview{
+        box-sizing:border-box!important;
+        display:block!important;
+        width:100%!important;
+        min-width:0!important;
+        max-width:100%!important;
+        overflow-x:auto!important;
+        overflow-y:auto!important;
+        overscroll-behavior:contain;
+        -webkit-overflow-scrolling:touch;
+        touch-action:pan-x pan-y;
+        contain:inline-size;
+      }
+      #v79PreviewRows>.v101-number-preview>table{
+        width:max-content!important;
+        min-width:max-content!important;
+        max-width:none!important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',install,{once:true});
+  else install();
+})();
+
+
+/* ------------------------------------------------------------------
+   date-filter.js
+   ------------------------------------------------------------------ */
+/* v104: Date belongs with report filters, not Tableau login.
+   UX ONLY. Move the existing date controls after v102 has organized the page.
+   Existing DOM nodes keep their event listeners and saved-setting behavior. */
+(function(){
+  const $=id=>document.getElementById(id);
+
+  function organize(){
+    const filtersStep=$('v102FiltersStep');
+    const loginExtras=$('v102LoginExtras');
+    if(!filtersStep||!loginExtras) return false;
+    if($('v104DateFilters')) return true;
+
+    const month=$('v90DateMonth')?.closest('label');
+    const custom=$('v90DateCustom')?.closest('label');
+    const range=$('v90DateRow');
+    const resolved=$('v90DateResolved');
+    const fields=$('v90DateStart')?.closest('.grid');
+    if(!month||!custom||!range||!resolved||!fields) return false;
+
+    // Remove the old Date heading from Tableau Login.
+    const dateHeading=Array.from(loginExtras.querySelectorAll('h3'))
+      .find(h=>/^date$/i.test((h.textContent||'').trim()));
+    if(dateHeading) dateHeading.remove();
+
+    const dateBlock=document.createElement('div');
+    dateBlock.id='v104DateFilters';
+    dateBlock.style.cssText='margin:12px 0 15px;padding-bottom:15px;border-bottom:1px solid #262626';
+
+    const heading=document.createElement('h4');
+    heading.textContent='Date';
+    heading.style.margin='0 0 8px';
+    dateBlock.append(heading,month,custom,range,resolved,fields);
+
+    const reportFilters=$('v90Filters');
+    if(reportFilters) filtersStep.insertBefore(dateBlock,reportFilters);
+    else filtersStep.appendChild(dateBlock);
+
+    const help=filtersStep.querySelector('.small');
+    if(help) help.textContent='Set the date window, then choose report filters loaded by Read Report.';
+
+    return true;
+  }
+
+  function start(){
+    let tries=0;
+    (function attempt(){
+      if(organize()) return;
+      if(++tries<60) setTimeout(attempt,50);
+    })();
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(start,0),{once:true});
+  else setTimeout(start,0);
+})();
+
+
+/* ------------------------------------------------------------------
+   date-simple.js
+   ------------------------------------------------------------------ */
+/* v106: the date picker is the only date setup the user sees.
+   Tableau's Start / End filter keys are internal implementation details.
+   Keep the legacy hidden controls pinned to those standard keys so existing
+   preview/save logic continues to work without exposing a mapping UI. */
+(function(){
+  const $=id=>document.getElementById(id);
+
+  function install(){
+    const startField=$('v90DateStart');
+    const endField=$('v90DateEnd');
+    if(!startField||!endField) return false;
+
+    startField.value='Start';
+    endField.value='End';
+
+    const legacyGrid=startField.closest('.grid');
+    if(legacyGrid) legacyGrid.style.display='none';
+
+    // Clean up any v105 UI if a cached page happened to create it.
+    $('v105DateFieldChooser')?.remove();
+    $('v105DateFieldStatus')?.remove();
+
+    // Existing preview/save code listens to these hidden controls.
+    startField.dispatchEvent(new Event('input',{bubbles:true}));
+    endField.dispatchEvent(new Event('input',{bubbles:true}));
+    return true;
+  }
+
+  function start(){
+    let tries=0;
+    (function attempt(){
+      if(install()) return;
+      if(++tries<80) setTimeout(attempt,50);
+    })();
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(start,0),{once:true});
+  else setTimeout(start,0);
 })();

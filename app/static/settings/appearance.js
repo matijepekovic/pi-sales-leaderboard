@@ -1,3 +1,15 @@
+/* Appearance -- team design, the starting preset, and the page chrome
+   that surrounds them.
+
+   Consolidated from the settings patch stack. Each section below was its own
+   file and they are concatenated in their original load order, so what runs
+   when is unchanged -- several of these mount by polling for a node the
+   previous one creates. */
+
+
+/* ------------------------------------------------------------------
+   theme-studio.js
+   ------------------------------------------------------------------ */
 /* v65 Team Design.
 
    There is no team picker: a design is always opened FROM a specific team, so
@@ -1172,4 +1184,143 @@
   }).observe(document.documentElement,{childList:true,subtree:true});
 
   window.openTeamDesign=openDesign;
+})();
+
+
+/* ------------------------------------------------------------------
+   starter-theme.js
+   ------------------------------------------------------------------ */
+/* v119: Starter is the default theme pack; Classic remains the plain option. */
+(function(){
+  function install(){
+    const select=document.getElementById("tdPreset");
+    if(!select) return false;
+
+    if(!select.querySelector('option[value="starter"]')){
+      const option=document.createElement("option");
+      option.value="starter";
+      option.textContent="Starter";
+      select.insertBefore(option,select.firstChild);
+    }
+
+    const classic=select.querySelector('option[value="classic"]');
+    if(classic) classic.textContent="Plain";
+    const legacy=select.querySelector('option[value="undisputed"]');
+    if(legacy) legacy.textContent="UNDISPUTED (existing)";
+
+    const reset=document.getElementById("tdReset");
+    if(reset&&!reset.dataset.v119Reset){
+      reset.dataset.v119Reset="1";
+      reset.textContent="Reset to Starter";
+      reset.addEventListener("click",async e=>{
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const name=String(document.getElementById("tdWhoName")?.textContent||"").trim();
+        const team=(window.teamDefs||[]).find(t=>String(t.name||"").trim()===name);
+        if(!team) return;
+        if(!confirm("Reset this team's design to Starter? Custom artwork stops being used, but nothing is deleted.")) return;
+        const status=document.getElementById("tdStatus");
+        try{
+          const response=await fetch(`/api/themes/team-${Number(team.team_id)}`,{method:"DELETE",cache:"no-store"});
+          const data=await response.json().catch(()=>({}));
+          if(!response.ok||data.ok===false) throw new Error(data.error||"Could not reset theme.");
+          if(typeof window.openTeamDesign==="function") await window.openTeamDesign(Number(team.team_id));
+          if(status) status.textContent="Reset to Starter.";
+        }catch(err){
+          if(status) status.textContent=err.message||"Could not reset theme.";
+        }
+      },true);
+    }
+    return true;
+  }
+
+  function start(){
+    let tries=0;
+    (function attempt(){
+      if(install()) return;
+      if(++tries<160) setTimeout(attempt,50);
+    })();
+  }
+
+  if(document.readyState==="loading"){
+    document.addEventListener("DOMContentLoaded",()=>setTimeout(start,0),{once:true});
+  }else{
+    setTimeout(start,0);
+  }
+})();
+
+
+/* ------------------------------------------------------------------
+   layout.js
+   ------------------------------------------------------------------ */
+/* v60 settings presentation cleanup.
+   VISUAL ONLY: legacy title/subtitle/TV polling values remain in config, but
+   are no longer shown in Settings. TV Controls is moved to the top. */
+(function(){
+  const DEFAULT_SCHEDULE_TEXT=
+    "Automatic Tableau pulls: <strong>6:00 AM</strong> and <strong>2:00 PM</strong> every day (Pi local time).";
+
+  function fieldWrap(id){
+    const el=document.getElementById(id);
+    if(!el) return null;
+    const parent=el.parentElement;
+    return parent && parent !== document.body ? parent : el;
+  }
+
+  function apply(){
+    const app=document.getElementById("appWrap");
+    if(!app) return;
+
+    ["title","subtitle","refresh"].forEach(id=>{
+      const wrap=fieldWrap(id);
+      if(wrap) wrap.style.display="none";
+    });
+
+    const active=document.getElementById("activeMode");
+    if(active?.parentElement){
+      active.parentElement.style.gridColumn="1 / -1";
+    }
+
+    const tvCard=[...app.querySelectorAll(":scope > .card")].find(card=>
+      card.querySelector("h2")?.textContent.trim()==="TV Controls"
+    );
+    const note=app.querySelector(".persist-note");
+    if(tvCard && note && note.nextElementSibling!==tvCard){
+      note.insertAdjacentElement("afterend",tvCard);
+    }
+
+    const dataCard=[...app.querySelectorAll(":scope > .card")].find(card=>
+      card.querySelector("h2")?.textContent.trim()==="Data Source"
+    );
+    if(dataCard && !document.getElementById("v60TableauScheduleNote")){
+      const schedule=document.createElement("div");
+      schedule.id="v60TableauScheduleNote";
+      schedule.className="small";
+      schedule.style.margin="10px 0 0";
+      schedule.innerHTML=DEFAULT_SCHEDULE_TEXT;
+      const heading=dataCard.querySelector("h2");
+      if(heading) heading.insertAdjacentElement("afterend",schedule);
+      refreshScheduleNote();
+    }
+  }
+
+  /* This note used to be a hardcoded promise, which is how a scheduler that
+     never started still looked like one that was running. Show what the worker
+     itself reports instead. */
+  async function refreshScheduleNote(){
+    const note=document.getElementById("v60TableauScheduleNote");
+    if(!note) return;
+    try{
+      const response=await fetch("/api/source/options",{cache:"no-store"});
+      if(!response.ok) return;
+      const data=await response.json();
+      const status=String(data.scheduled_tableau_status||"").trim();
+      if(!status) return;
+      const attempt=String(data.scheduled_tableau_last_attempt||"").trim();
+      note.textContent=attempt?`${status} — last attempt ${attempt}`:status;
+    }catch(e){/* leave the default text if the Pi is unreachable */}
+  }
+
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",apply,{once:true});
+  else apply();
 })();

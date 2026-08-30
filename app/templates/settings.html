@@ -1,46 +1,14 @@
 {% include "settings/base.html" %}
-<script src="/static/settings/team-builder-workflow.js"></script>
 
-{# Theme settings #}
-<script src="/static/settings/theme-studio.js"></script>
-<script src="/static/settings/starter-theme.js"></script>
-<script src="/static/settings/layout.js"></script>
-
-{# Product settings #}
-<script src="/static/settings/product-settings.js"></script>
-<script src="/static/settings/product-market.js"></script>
-<script src="/static/settings/number-size.js"></script>
-
-{# Tableau/data settings #}
+{# Eight feature modules, loaded in the order the patch stack ran in. Several
+   of these mount by polling for a node the previous one creates, so this
+   order is still the contract -- the modules are a partition of the old
+   sequence, not a reordering of it. #}
+<script src="/static/settings/team-builder.js"></script>
+<script src="/static/settings/appearance.js"></script>
+<script src="/static/settings/product.js"></script>
 <script src="/static/settings/data-source.js"></script>
-<script src="/static/settings/tableau-team-members.js"></script>
-<script src="/static/settings/windows-tableau-login.js"></script>
-<script src="/static/settings/flow.js"></script>
-<script src="/static/settings/accordion.js"></script>
-<script src="/static/settings/preview-scroll.js"></script>
-<script src="/static/settings/date-filter.js"></script>
-<script src="/static/settings/date-simple.js"></script>
-
-{# Software/update settings #}
-<script src="/static/settings/software-manual.js"></script>
-<script src="/static/settings/software-update-status.js"></script>
-<script src="/static/settings/software-version.js"></script>
-<script src="/static/settings/software-update-diagnostics.js"></script>
-
-{# Controls + temporary date #}
-<script src="/static/settings/qr.js"></script>
+<script src="/static/settings/software.js"></script>
 <script src="/static/settings/controls.js"></script>
-<script src="/static/settings/qr-style.js"></script>
-<script src="/static/settings/temporary-date.js"></script>
-
-{# Production shell/settings #}
-<script src="/static/production-coming-eventually.js"></script>
 <script src="/static/settings/production.js"></script>
-
-{# Windows theme workspace #}
-<script src="/static/settings/theme-workspace.js"></script>
-<script src="/static/settings/theme-visual-editor.js"></script>
-<script src="/static/settings/theme-editor-help.js"></script>
-<script src="/static/settings/theme-stability.js"></script>
-<script src="/static/settings/theme-color-editor.js"></script>
-<script src="/static/settings/windows-sidebar.js"></script>
+<script src="/static/settings/theme-editor.js"></script>

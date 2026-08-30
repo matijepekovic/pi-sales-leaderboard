@@ -145,7 +145,7 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("Double-click to open Settings", script)
 
     def test_production_settings_guard_cannot_spin_before_options_load(self):
-        script = (APP_DIR / "static" / "production-coming-eventually.js").read_text(encoding="utf-8")
+        script = (APP_DIR / "static" / "settings" / "production.js").read_text(encoding="utf-8")
         self.assertIn("wholeOfficeOption", script)
         self.assertIn("if(!wholeOfficeOption) return false", script)
         self.assertIn("let applying=false", script)
@@ -171,7 +171,7 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("config[source_key] = explicit or top", tableau_service)
 
     def test_windows_settings_use_sidebar_workspace(self):
-        script = (APP_DIR / "static" / "settings" / "windows-sidebar.js").read_text(encoding="utf-8")
+        script = (APP_DIR / "static" / "settings" / "theme-editor.js").read_text(encoding="utf-8")
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
 
         self.assertIn("const isWindows=/windows|win32|win64/i.test(platform);", script)
@@ -181,16 +181,16 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("activateSection", script)
         self.assertIn('section.id!=="v110QrSection"', script)
         self.assertIn("max-width:1600px", script)
-        self.assertIn("/static/settings/windows-sidebar.js", template)
+        self.assertIn("/static/settings/theme-editor.js", template)
 
     def test_tableau_login_owns_connection_fields_on_windows(self):
-        ui = (APP_DIR / "static" / "settings" / "windows-tableau-login.js").read_text(encoding="utf-8")
+        ui = (APP_DIR / "static" / "settings" / "data-source.js").read_text(encoding="utf-8")
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
         server_entry = (WINDOWS_DIR / "server_entry.py").read_text(encoding="utf-8")
         platform = (APP_DIR / "stats_core" / "platform" / "windows.py").read_text(encoding="utf-8")
         endpoint = (APP_DIR / "stats_core" / "windows" / "tableau_login.py").read_text(encoding="utf-8")
 
-        self.assertIn("/static/settings/windows-tableau-login.js", template)
+        self.assertIn("/static/settings/data-source.js", template)
         self.assertIn('document.getElementById("v90Server")', ui)
         self.assertIn('document.getElementById("v90Site")', ui)
         self.assertIn('document.getElementById("v90PatName")', ui)
@@ -207,10 +207,10 @@ class RemoteQrTests(unittest.TestCase):
         self.assertNotIn("save_settings", endpoint)
 
     def test_team_builder_members_follow_tableau_pull_and_hide_claimed_reps(self):
-        script = (APP_DIR / "static" / "settings" / "tableau-team-members.js").read_text(encoding="utf-8")
+        script = (APP_DIR / "static" / "settings" / "data-source.js").read_text(encoding="utf-8")
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
 
-        self.assertIn("/static/settings/tableau-team-members.js", template)
+        self.assertIn("/static/settings/data-source.js", template)
         self.assertNotIn("team-builder-tableau-members-v125.js", template)
         self.assertIn('originalRequest("/api/config"', script)
         self.assertIn('cleanPath==="/api/source/preview"', script)
@@ -250,11 +250,11 @@ class WindowsThemeEditorTests(unittest.TestCase):
         settings = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
         preview = (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8")
         runtime = (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8")
-        host = (APP_DIR / "static" / "settings" / "theme-visual-editor.js").read_text(encoding="utf-8")
+        host = (APP_DIR / "static" / "settings" / "theme-editor.js").read_text(encoding="utf-8")
         intuitive = (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8")
-        help_ui = (APP_DIR / "static" / "settings" / "theme-editor-help.js").read_text(encoding="utf-8")
+        help_ui = (APP_DIR / "static" / "settings" / "theme-editor.js").read_text(encoding="utf-8")
         policy = (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8")
-        stability = (APP_DIR / "static" / "settings" / "theme-stability.js").read_text(encoding="utf-8")
+        stability = (APP_DIR / "static" / "settings" / "theme-editor.js").read_text(encoding="utf-8")
 
         self.assertIn("theme_editor.install(app, self.repos, public_endpoints)", platform)
         self.assertIn("stats_core.bootstrap", server_entry)
@@ -276,8 +276,8 @@ class WindowsThemeEditorTests(unittest.TestCase):
             display.index("/static/runtime/theme.js"),
             display.index("/static/runtime/layout.js"),
         )
-        self.assertIn("/static/settings/theme-visual-editor.js", settings)
-        self.assertIn("/static/settings/theme-stability.js", settings)
+        self.assertIn("/static/settings/theme-editor.js", settings)
+        self.assertIn("/static/settings/theme-editor.js", settings)
         self.assertIn('addEventListener("dblclick"', preview)
         self.assertIn('addEventListener("contextmenu"', preview)
         self.assertIn('data-handle="rotate"', preview)
@@ -306,7 +306,7 @@ class WindowsThemeEditorTests(unittest.TestCase):
         self.assertIn("Real team stats are used when members exist", stability)
 
         self.assertIn("theme-editor-controls.js", (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8"))
-        self.assertIn("/static/settings/theme-editor-help.js", settings)
+        self.assertIn("/static/settings/theme-editor.js", settings)
         self.assertIn("Double-click to add", intuitive)
         self.assertIn("Replace Image", intuitive)
         self.assertIn('content:"↻"', intuitive)
@@ -320,10 +320,10 @@ class WindowsThemeEditorTests(unittest.TestCase):
     def test_theme_colors_use_in_app_picker_and_always_apply(self):
         settings = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
         display = (APP_DIR / "templates" / "display.html").read_text(encoding="utf-8")
-        editor = (APP_DIR / "static" / "settings" / "theme-color-editor.js").read_text(encoding="utf-8")
+        editor = (APP_DIR / "static" / "settings" / "theme-editor.js").read_text(encoding="utf-8")
         runtime = (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8")
 
-        self.assertIn("/static/settings/theme-color-editor.js", settings)
+        self.assertIn("/static/settings/theme-editor.js", settings)
         self.assertIn("theme-colors.js", (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8"))
         self.assertIn("Frame & Borders", editor)
         self.assertIn("Main Accent", editor)

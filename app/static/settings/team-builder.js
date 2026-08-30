@@ -1,3 +1,14 @@
+/* Team Builder -- the wizard that turns Tableau reps into local teams.
+
+   Consolidated from the settings patch stack. Each section below was its own
+   file and they are concatenated in their original load order, so what runs
+   when is unchanged -- several of these mount by polling for a node the
+   previous one creates. */
+
+
+/* ------------------------------------------------------------------
+   team-builder-workflow.js
+   ------------------------------------------------------------------ */
 /* Team Builder settings runtime.
    Members are chosen before the team lead, and the lead can only be one of
    the reps selected for this team. */

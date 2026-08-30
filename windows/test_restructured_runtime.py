@@ -224,7 +224,7 @@ class RestructuredRuntimeTests(unittest.TestCase):
         display = (APP / "templates" / "display.html").read_text(encoding="utf-8")
         settings = (APP / "templates" / "settings.html").read_text(encoding="utf-8")
         formatting = (APP / "static" / "runtime" / "formatting.js").read_text(encoding="utf-8")
-        team_builder = (APP / "static" / "settings" / "team-builder-workflow.js").read_text(encoding="utf-8")
+        team_builder = (APP / "static" / "settings" / "team-builder.js").read_text(encoding="utf-8")
         for token in (
             "/static/runtime/display.js", "/static/runtime/theme.js",
             "/static/runtime/layout.js", "/static/runtime/formatting.js",
@@ -233,8 +233,10 @@ class RestructuredRuntimeTests(unittest.TestCase):
             self.assertIn(token, display)
         self.assertIn("minimumFractionDigits: 2", formatting)
         for token in (
-            "Tableau/data settings", "Windows theme workspace",
-            "/static/settings/controls.js", "/static/settings/team-builder-workflow.js",
+            "/static/settings/team-builder.js", "/static/settings/appearance.js",
+            "/static/settings/product.js", "/static/settings/data-source.js",
+            "/static/settings/software.js", "/static/settings/controls.js",
+            "/static/settings/production.js", "/static/settings/theme-editor.js",
         ):
             self.assertIn(token, settings)
         self.assertIn("renderLeaderFromMembers", team_builder)
