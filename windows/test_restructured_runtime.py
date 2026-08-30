@@ -225,6 +225,29 @@ class RestructuredRuntimeTests(unittest.TestCase):
                 violations.append(str(path.relative_to(ROOT)))
         self.assertEqual(violations, [])
 
+    def test_app_config_owns_defaults_and_metrics(self):
+        config = APP / "stats_core" / "config.py"
+        sqlite = APP / "stats_core" / "storage" / "sqlite.py"
+        self.assertTrue(config.is_file())
+        self.assertFalse((APP / "stats_core" / "metrics.py").exists())
+
+        config_text = config.read_text(encoding="utf-8")
+        sqlite_text = sqlite.read_text(encoding="utf-8")
+        for name in ("DEFAULT_METRICS", "DEFAULT_SETTINGS", "SECRET_SETTING_KEYS", "METRIC_DEFS"):
+            self.assertIn(f"{name} =", config_text)
+        self.assertNotIn("METRIC_DEFS =", sqlite_text)
+        self.assertNotIn("SECRET_SETTING_KEYS =", sqlite_text)
+        self.assertNotIn("DEFAULT_SETTINGS =", sqlite_text)
+        self.assertNotIn("DEFAULT_METRICS =", sqlite_text)
+        self.assertIn("from stats_core.config import DEFAULT_METRICS, DEFAULT_SETTINGS", sqlite_text)
+
+        violations = []
+        for path in APP.rglob("*.py"):
+            source = path.read_text(encoding="utf-8")
+            if "stats_core.metrics" in source:
+                violations.append(str(path.relative_to(ROOT)))
+        self.assertEqual(violations, [])
+
     def test_windows_helpers_do_not_bypass_repositories(self):
         for filename in ("tableau_login.py", "theme_editor.py"):
             text = (APP / "stats_core" / "windows" / filename).read_text(
