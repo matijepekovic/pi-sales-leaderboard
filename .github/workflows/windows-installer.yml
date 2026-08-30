@@ -84,6 +84,10 @@ jobs:
         shell: pwsh
         run: python windows/test_restructured_runtime.py
 
+      - name: Test PIN authentication
+        shell: pwsh
+        run: python windows/test_auth.py
+
       - name: Test launcher close behavior
         shell: pwsh
         run: python windows/test_launcher.py
