@@ -207,6 +207,20 @@ class RestructuredRuntimeTests(unittest.TestCase):
         self.assertNotIn("source_picker.preview_rows", snapshot)
         self.assertIn("self.preview.rows()", snapshot)
 
+    def test_windows_helpers_do_not_bypass_repositories(self):
+        for filename in ("tableau_login.py", "theme_editor.py"):
+            text = (APP / "stats_core" / "windows" / filename).read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn("import database", text, filename)
+            self.assertNotIn("from database", text, filename)
+
+        platform = (APP / "stats_core" / "platform" / "windows.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("tableau_login.install(app, self.repos.settings)", platform)
+        self.assertIn("theme_editor.install(app, self.repos, public_endpoints)", platform)
+
     def test_frontend_runtime_ownership_is_explicit(self):
         display = (APP / "templates" / "display.html").read_text(encoding="utf-8")
         settings = (APP / "templates" / "settings.html").read_text(encoding="utf-8")

@@ -199,7 +199,7 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("collectDataSource=function", ui)
         self.assertIn("source:{...current,...values}", ui)
         self.assertIn("/api/windows/tableau-login/test", ui)
-        self.assertIn("tableau_login.install(app)", platform)
+        self.assertIn("tableau_login.install(app, self.repos.settings)", platform)
         self.assertIn("stats_core.bootstrap", server_entry)
         self.assertNotIn("tableau_login.install", server_entry)
         self.assertIn("ConfiguredTableauSource", endpoint)
@@ -256,7 +256,7 @@ class WindowsThemeEditorTests(unittest.TestCase):
         policy = (APP_DIR / "static" / "theme-editor-data-policy-v126.js").read_text(encoding="utf-8")
         stability = (APP_DIR / "static" / "windows-theme-stability-v126.js").read_text(encoding="utf-8")
 
-        self.assertIn("theme_editor.install(app, public_endpoints)", platform)
+        self.assertIn("theme_editor.install(app, self.repos, public_endpoints)", platform)
         self.assertIn("stats_core.bootstrap", server_entry)
         self.assertNotIn("theme_editor.install", server_entry)
         self.assertIn("theme-transform-runtime-v122.js", display)

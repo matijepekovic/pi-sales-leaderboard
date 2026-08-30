@@ -5,8 +5,6 @@ import threading
 
 from flask import jsonify, request
 
-from database import get_meta, get_settings, get_team_definitions, save_settings, set_meta
-
 STORE_KEY = "theme_visual_transforms"
 ASSET_KEYS = {
     "background",
@@ -51,12 +49,15 @@ def clean_transform(raw):
     }
 
 
-def _valid_team_ids():
-    return {int(team["team_id"]) for team in get_team_definitions()}
+def _valid_team_ids(organization_repo):
+    return {
+        int(team["team_id"])
+        for team in organization_repo.definitions()
+    }
 
 
-def _store(settings=None):
-    settings = settings or get_settings()
+def _store(settings_repo, settings=None):
+    settings = settings or settings_repo.get()
     raw = settings.get(STORE_KEY)
     teams = (
         raw.get("teams")
@@ -75,15 +76,13 @@ def _store(settings=None):
     return {"teams": cleaned}
 
 
-def _save(settings, store):
+def _save(repos, settings, store):
     settings[STORE_KEY] = store
-    save_settings(settings)
-    version = int(get_meta("settings_version", "0")) + 1
-    set_meta("settings_version", version)
-    return version
+    repos.settings.save(settings)
+    return repos.meta.bump("settings_version")
 
 
-def install(app, public_endpoints=None):
+def install(app, repos, public_endpoints=None):
     if "windows_theme_transforms" in app.view_functions:
         return
 
@@ -91,12 +90,12 @@ def install(app, public_endpoints=None):
         return jsonify({
             "ok": True,
             "defaults": dict(DEFAULT_TRANSFORM),
-            "teams": _store()["teams"],
+            "teams": _store(repos.settings)["teams"],
         })
 
     def save_transform(team_id):
         team_id = int(team_id)
-        if team_id not in _valid_team_ids():
+        if team_id not in _valid_team_ids(repos.organization):
             return jsonify({"ok": False, "error": "Team not found."}), 404
 
         body = request.get_json(silent=True) or {}
@@ -106,11 +105,11 @@ def install(app, public_endpoints=None):
 
         transform = clean_transform(body.get("transform"))
         with _LOCK:
-            settings = get_settings()
-            store = _store(settings)
+            settings = repos.settings.get()
+            store = _store(repos.settings, settings)
             team = store["teams"].setdefault(str(team_id), {})
             team[key] = transform
-            version = _save(settings, store)
+            version = _save(repos, settings, store)
 
         return jsonify({
             "ok": True,
@@ -127,13 +126,13 @@ def install(app, public_endpoints=None):
             return jsonify({"ok": False, "error": "Unknown theme asset."}), 400
 
         with _LOCK:
-            settings = get_settings()
-            store = _store(settings)
+            settings = repos.settings.get()
+            store = _store(repos.settings, settings)
             team = store["teams"].get(str(team_id), {})
             team.pop(key, None)
             if not team:
                 store["teams"].pop(str(team_id), None)
-            version = _save(settings, store)
+            version = _save(repos, settings, store)
 
         return jsonify({
             "ok": True,
