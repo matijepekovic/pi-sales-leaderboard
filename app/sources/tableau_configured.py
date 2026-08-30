@@ -10,7 +10,7 @@ Connection defaults only tell the Pi how to reach Tableau. The report itself is
 never compiled in: no workbook, sheet, filters or mapping exists until the
 user saves one from the Data Source card.
 """
-from . import tableau_v36_base as _base
+from . import tableau_base as _base
 from .tableau_mapped import parse_mapped
 
 DEFAULTS = {
