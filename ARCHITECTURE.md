@@ -24,6 +24,8 @@ The application has explicit runtime ownership while preserving the production S
 
 `TableauService` is the Tableau connection boundary. `RepPullPolicy` normalizes pulled rows and applies retention rules explicitly. `RepRefreshService` is the one rep refresh path used by both manual and scheduled refreshes. `PreviewService`, `TemporaryDateService` and `DataSnapshotService` explicitly choose preview, temporary or stored display data.
 
+Shared Tableau HTTP and parsing primitives live in `sources/tableau_base.py`. Configured rep sources, the rep-summary parser, Product Close, mapped CSV and Crosstab modules depend on that stable source boundary; version-numbered Tableau base modules are retired.
+
 Product Close Rates has separate source, repository, refresh service and screen ownership under `stats_core/product`, `stats_core/repositories`, `stats_core/services`, and `stats_core/screens`.
 
 ## Screens and controls
