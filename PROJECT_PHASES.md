@@ -177,13 +177,73 @@ Create the exact working reference version against which the refactor will be co
 
 # Phase 4 — Refactor the architecture without changing behavior
 
-**Status: ⬜ NOT STARTED**
+**Status: ⚠️ IMPLEMENTATION SHIPPED OUT OF ORDER — VERIFICATION FAILED / NOT CONFIRMED (2026-08-29)**
 
 ## Goal
 
 Separate the current application into clear modules so one area can be worked on without breaking unrelated areas.
 
 **No new features. No intentional UI changes. No database redesign unless absolutely unavoidable.**
+
+## Current implementation evidence
+
+- [x] The refactored runtime is on `production`; the tested refactored source was `bc05c0e7cfb4b22ed23f4a77a8419b2b250c1a9a`.
+- [x] The preserved pre-refactor comparison source is `backup/pre-refactor-production-20260829` at `004c03ede7325518ce11f3fe619a49b5ae078bf4`.
+- [x] `windows/test_restructured_runtime.py` passed its existing 9 architecture smoke tests on the tested tree.
+- [x] Runtime ownership is explicit for platform, leaderboard, organization, source, scheduler, entitlement, pull policy, rep refresh, product refresh, preview, snapshots, screens, themes, controls, and auth.
+- [x] Repositories are split into domain modules and every existing display screen is registered centrally.
+- [x] The active Windows server entry uses `stats_core.bootstrap` and no longer installs the old feature patch chain.
+- [x] The active runtime does not load the legacy patch modules covered by the existing smoke test.
+- [x] Plain `import stats_core` loaded no Windows-specific module in the stronger verification probe.
+- [ ] The stronger required legacy condition is not met: obsolete top-level legacy modules still physically exist and therefore the legacy test cannot yet be converted to “must not exist” and pass.
+
+## One-time verification gate — 2026-08-29
+
+The gate compared the preserved pre-refactor source `004c03ede7325518ce11f3fe619a49b5ae078bf4` against refactored production source `bc05c0e7cfb4b22ed23f4a77a8419b2b250c1a9a`. Evidence is in GitHub Actions run `33289895550` on isolated branch `verification/phase4-20260829`.
+
+1. [x] Schema identical — `sqlite_master` objects matched: 9 vs 9.
+2. [ ] Reads identical — the run reported a mismatch. This is **unproven rather than a confirmed product regression** because the verifier's baseline built-in-catalog lookup used `__file__` under `python -c`, which makes that specific comparison invalid. No second full gate was run; this remains unresolved.
+3. [ ] Writes identical — the fixed 15-step replay produced a table diff. The run did not isolate the differing rows, so write parity remains unresolved.
+4. [x] Boot and serve — `/`, `/settings`, `/api/leaderboard`, `/api/config`, and `/health` returned 200 on both trees.
+5. [ ] Restructured runtime stronger condition — the existing test passed 9/9 and the neutral `stats_core` import check passed, but the required “legacy modules must not exist” condition failed because obsolete top-level legacy files remain.
+6. [x] PIN compatibility — the refactored app unlocked successfully with a PBKDF2 PIN hash written in the pre-refactor format.
+7. [ ] Theme parity — the served applied asset SHA-256 matched, but the on-disk applied-asset hash maps did not match; full theme parity is therefore unresolved.
+8. [x] Execution-order trace — both trees emitted the same observed render stages (`getRefresh`, `load`, `render`) and the same ordered injected `<style>` ids. The fetch-assignment trace was empty on both trees.
+9. [x] Pixel diff — exact pixel equality at 3840×2160 for Whole Office, Per Team, Team vs Team, All Teams, and Product Close Rates across both Starter and Undisputed bases (10/10 cases).
+10. [ ] Controls — **not verified**. The server-round-trip portion timed out on the refactored `/api/config` path before the control result could be recorded. Macro-pad feel remains a manual TV test and is not claimed as verified.
+11. [x] `main` untouched — workflow recheck and repository recheck both found `main` still at `65826125d52d1c249a8072bb78d15108a4c8f9bc`.
+
+### Legacy files blocking the stronger runtime test
+
+These obsolete top-level files still exist on the tested production tree and must be removed or otherwise deliberately resolved before the revised “must not exist” test can pass:
+
+- `app/applied_theme_assets_v116.py`
+- `app/keyboard_controls_v112.py`
+- `app/product_controls_v115.py`
+- `app/product_source_v115.py`
+- `app/production_gates.py`
+- `app/production_versioning.py`
+- `app/pull_policy_v108.py`
+- `app/qr_controls_v110.py`
+- `app/starter_theme_assets_v119.py`
+- `app/starter_theme_v119.py`
+- `app/tableau_scheduler.py`
+- `app/temporary_date_v113.py`
+- `app/theme_asset_apply_v127.py`
+- `app/themes.py`
+- `app/windows_runtime.py`
+
+### Carried to the fix phase
+
+These were explicitly carried forward and were **not** mixed into this verification run:
+
+- DATA_DIR path and its migration.
+- `native_display_mode()` currently returns `(0,0)`, so TV geometry falls back to 1920×1080.
+- No lockout/rate limit exists on `POST /api/auth/unlock`; a 4-digit PIN is brute-forceable at HTTP speed.
+- `STATS_WINDOWS_BUILD` is set in `windows/server_entry.py` and is not read.
+- RepTotalsNEW3 empty pull.
+- Untested `Select Start Date` / `Select End Date` parameter names.
+- Stitched-worksheet reports.
 
 ## 4.1 Storage interfaces
 
@@ -294,13 +354,13 @@ Separate the current application into clear modules so one area can be worked on
 - [ ] Remove obsolete replacement/monkey-patching of scheduler functions.
 - [ ] Remove obsolete replacement/monkey-patching of theme internals.
 - [ ] Remove obsolete external mutation of control/screen lists.
-- [ ] Replace accidental composition through QR controls with an explicit app bootstrap/composition root.
+- [x] Replace accidental composition through QR controls with an explicit app bootstrap/composition root.
 
 ## Exit criteria
 
-- [ ] Major app functions have defined ownership and interfaces.
+- [x] Major app functions have defined ownership and interfaces.
 - [ ] Features no longer modify unrelated feature internals at runtime.
-- [ ] Core behavior matches the Phase 3 baseline.
+- [ ] Core behavior matches the pre-refactor baseline.
 - [ ] Phase 4 confirmed.
 
 ---
@@ -537,6 +597,8 @@ Reuse the modular Stats core/services/UI for a hosted web product.
 
 # Current position
 
-`Phase 0 ✅` → `Phase 1 ✅` → **Phase 2 is next.**
+`Phase 0 ✅` → `Phase 1 ✅` → `Phase 2 ⬜ not formally completed` → `Phase 3 ⬜ not formally completed` → **Phase 4 implementation is on production but is ⚠️ NOT CONFIRMED.**
 
-Do not begin Phase 3 until Phase 2 has been completed, tested, and explicitly confirmed in this file.
+The historical phase order was bypassed when Phase 4 implementation shipped before Phase 2 and Phase 3 were formally confirmed. Do not hide that by marking those phases complete retroactively.
+
+Next work is to resolve the Phase 4 verification failures/unproven checks and the explicitly carried fix-phase items. Do not begin Phase 5 until Phase 4 passes its exit criteria. `main` must remain untouched.
