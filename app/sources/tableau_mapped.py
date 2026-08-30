@@ -18,7 +18,7 @@ Two report shapes are handled, chosen automatically:
   wide  - one row per rep, one column per measure. This is what the
           Sales Totals & Retention and Net Ranked reports look like.
 """
-from . import tableau_v36_base as _base
+from . import tableau_base as _base
 
 # Board stat -> the camelCase key to_app_rows() expects. Same set the shipped
 # parser fills, so a mapped pull produces rows the rest of the app already

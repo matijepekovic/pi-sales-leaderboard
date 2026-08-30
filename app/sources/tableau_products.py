@@ -1,4 +1,4 @@
-"""v75 Close Rate by Product connector.
+"""Close Rate by Product connector.
 
 A second, independent Tableau pull that has nothing to do with the rep
 leaderboard. The published worksheet is:
@@ -14,7 +14,7 @@ One row per product, with the rate as a fraction (0.1744, not 17.44).
 
 Two things this module is careful about:
 
-  * It never reassigns the module-level constants in tableau_v36_base. Those
+  * It never reassigns the module-level constants in tableau_base. Those
     are read directly by the rep connector's own methods, and tableau.py
     already mutates one of them, so writing to them here would corrupt the
     rep pull. Every workbook-specific value is overridden per method instead.
@@ -23,7 +23,7 @@ Two things this module is careful about:
     *saved* filter state, not whatever a browser happens to have selected,
     so the Olympia scope is sent on every request rather than assumed.
 """
-from . import tableau_v36_base as _base
+from . import tableau_base as _base
 
 
 TABLEAU_WORKBOOK_CONTENT_URL = "RegionalSaleswFLOW"
