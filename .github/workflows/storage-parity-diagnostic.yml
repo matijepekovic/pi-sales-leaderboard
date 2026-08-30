@@ -1,0 +1,59 @@
+name: Storage parity diagnostic
+
+on:
+  push:
+    branches:
+      - verification/storage-parity-20260829
+    paths:
+      - ".github/workflows/storage-parity-diagnostic.yml"
+      - "verification/storage_parity_diagnostic.py"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout diagnostic/current tree
+        uses: actions/checkout@v4
+        with:
+          path: current
+
+      - name: Checkout preserved pre-refactor baseline
+        uses: actions/checkout@v4
+        with:
+          ref: 004c03ede7325518ce11f3fe619a49b5ae078bf4
+          path: baseline
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r current/requirements.txt
+
+      - name: Diagnose repository reads and 15-step writes
+        id: parity
+        continue-on-error: true
+        run: |
+          python current/verification/storage_parity_diagnostic.py \
+            --baseline baseline \
+            --current current \
+            --report storage-parity-report.json
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-parity-diagnostic
+          path: storage-parity-report.json
+          if-no-files-found: error
+
+      - name: Summarize diagnostic result
+        if: always()
+        run: |
+          echo "parity_step=${{ steps.parity.outcome }}"
+          cat storage-parity-report.json
