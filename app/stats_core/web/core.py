@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, render_template, request
 
-from stats_core.metrics import METRIC_DEFS
+from stats_core.config import METRIC_DEFS
 from stats_core.services.settings import NON_DISPLAY_METRICS
 from stats_core.web.common import error_response
 
