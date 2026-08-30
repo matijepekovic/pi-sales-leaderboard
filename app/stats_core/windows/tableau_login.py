@@ -4,7 +4,7 @@ from __future__ import annotations
 from flask import jsonify, request
 
 from sources.tableau_configured import ConfiguredTableauSource, config_of
-from sources.tableau_v36_base import TableauError
+from sources.tableau_base import TableauError
 
 
 def install(app, settings_repo):
