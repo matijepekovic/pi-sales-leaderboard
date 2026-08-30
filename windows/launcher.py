@@ -12,6 +12,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from stats_core.paths import prepare_data_dir
+
 URL = "http://127.0.0.1:8765/"
 HEALTH_URL = URL + "health"
 CREATE_NO_WINDOW = 0x08000000
@@ -23,9 +25,7 @@ _BROWSER = None
 
 
 def data_dir() -> Path:
-    path = Path.home() / ".local" / "share" / "pi-tableau-leaderboard"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return prepare_data_dir()
 
 
 def kiosk_browser_pid_file() -> Path:
