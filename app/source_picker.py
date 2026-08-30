@@ -9,7 +9,7 @@
   page, reusing the source's own sign-in and request helpers rather than
   adding any HTTP code.
 """
-from sources import tableau_v36_base as _base
+from sources import tableau_base as _base
 from sources.tableau import TableauSource
 from sources.tableau_configured import (ConfiguredTableauSource, DEFAULTS,
                                         config_of, has_columns)
@@ -423,5 +423,4 @@ def read_columns(settings, overrides=None):
         "end": end,
         "filter_fields": report_filter_catalog(payload, how),
     }
-
 
