@@ -46,7 +46,7 @@ Product Close Rates has separate source, repository, refresh service and screen 
 
 ## Platform
 
-Core services are platform-neutral. `stats_core/platform/windows.py` owns Windows launching/restart/update registration and Windows-specific integrations. The top-level `app/server.py` and `windows/server_entry.py` are thin entrypoints.
+Production is Windows-only. Core services remain platform-neutral, while `stats_core/platform/windows.py` owns Windows launching/restart/update registration and Windows-specific integrations. `windows/server_entry.py` is the single backend process entrypoint used by both local Windows runs and the packaged `StatsServer.exe` build.
 
 ## Frontend ownership
 
