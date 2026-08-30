@@ -20,12 +20,19 @@ def install(app):
         pat_secret = str(body.get("pat_secret") or "").strip()
 
         missing = [
-            label for label, value in (
-                ("Server", server), ("Site", site), ("PAT token name", pat_name)
-            ) if not value
+            label
+            for label, value in (
+                ("Server", server),
+                ("Site", site),
+                ("PAT token name", pat_name),
+            )
+            if not value
         ]
         if missing:
-            return jsonify({"ok": False, "error": f"Enter {', '.join(missing)}."}), 400
+            return jsonify({
+                "ok": False,
+                "error": f"Enter {', '.join(missing)}.",
+            }), 400
 
         settings = dict(get_settings() or {})
         source = dict(settings.get("source") or {})
@@ -49,7 +56,10 @@ def install(app):
         except TableauError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
         except Exception:
-            return jsonify({"ok": False, "error": "Could not test the Tableau connection."}), 500
+            return jsonify({
+                "ok": False,
+                "error": "Could not test the Tableau connection.",
+            }), 500
         finally:
             if base and token:
                 tableau.signout(base, token)

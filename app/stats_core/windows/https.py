@@ -1,11 +1,4 @@
-"""HTTPS trust for packaged Windows services.
-
-Owns construction of a verified TLS context for outbound Stats HTTPS calls.
-The context starts with certifi's bundled public CA set, then augments it with
-certificates from the Windows ROOT/CA stores so customer-installed enterprise
-roots continue to work. Keeping this separate from updater logic makes the
-platform boundary explicit for the later architecture refactor.
-"""
+"""HTTPS trust for packaged Windows services."""
 from __future__ import annotations
 
 import ssl
@@ -42,8 +35,6 @@ def _context_and_info():
                     context.load_verify_locations(cadata=pem)
                     windows_loaded += 1
                 except Exception:
-                    # A single malformed/unusable store entry must not prevent
-                    # the rest of the Windows trust store from being loaded.
                     continue
 
     context.check_hostname = True

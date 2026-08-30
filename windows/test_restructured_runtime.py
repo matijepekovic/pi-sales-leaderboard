@@ -14,7 +14,7 @@ sys.path.insert(0, str(APP))
 from stats_core.bootstrap import create_app  # noqa: E402
 
 
-LEGACY_PATCH_FILES = (
+ROOT_LEVEL_LEGACY_FILES = (
     "applied_theme_assets_v116.py",
     "keyboard_controls_v111.py",
     "keyboard_controls_v112.py",
@@ -24,6 +24,7 @@ LEGACY_PATCH_FILES = (
     "production_versioning.py",
     "pull_policy_v108.py",
     "qr_controls_v110.py",
+    "remote_qr.py",
     "remote_qr_v109.py",
     "starter_theme_assets_v119.py",
     "starter_theme_v119.py",
@@ -31,9 +32,16 @@ LEGACY_PATCH_FILES = (
     "temporary_date_v113.py",
     "theme_asset_apply_v127.py",
     "themes.py",
+    "update_signing_public_key.py",
+    "windows_https.py",
     "windows_runtime.py",
+    "windows_tableau_login.py",
     "windows_tableau_login_v124.py",
+    "windows_theme_editor.py",
     "windows_theme_editor_v122.py",
+    "windows_update.py",
+    "windows_update_diagnostics.py",
+    "windows_update_status.py",
     "windows_update_status_v128.py",
 )
 
@@ -65,34 +73,65 @@ class RestructuredRuntimeTests(unittest.TestCase):
             "auth": "AuthService",
         }
         for attr, class_name in expected.items():
-            self.assertEqual(type(getattr(self.runtime, attr)).__name__, class_name, attr)
+            self.assertEqual(
+                type(getattr(self.runtime, attr)).__name__,
+                class_name,
+                attr,
+            )
 
     def test_repositories_are_domain_package_not_single_facade(self):
         self.assertFalse((APP / "stats_core" / "repositories.py").exists())
         package = APP / "stats_core" / "repositories"
         for filename in (
-            "reps.py", "organization.py", "settings.py", "products.py",
-            "themes.py", "asset_library.py", "applied_assets.py", "meta.py",
+            "reps.py",
+            "organization.py",
+            "settings.py",
+            "products.py",
+            "themes.py",
+            "asset_library.py",
+            "applied_assets.py",
+            "meta.py",
         ):
             self.assertTrue((package / filename).is_file(), filename)
         self.assertEqual(type(self.runtime.repos.themes).__name__, "ThemeRepository")
-        self.assertEqual(type(self.runtime.repos.asset_library).__name__, "AssetLibraryRepository")
-        self.assertEqual(type(self.runtime.repos.applied_assets).__name__, "AppliedAssetRepository")
+        self.assertEqual(
+            type(self.runtime.repos.asset_library).__name__,
+            "AssetLibraryRepository",
+        )
+        self.assertEqual(
+            type(self.runtime.repos.applied_assets).__name__,
+            "AppliedAssetRepository",
+        )
 
     def test_every_existing_screen_is_registered(self):
-        expected = {"whole_office", "per_team", "team_vs_team", "all_teams", "product_close"}
-        actual = set(self.runtime.screens._screens)
-        self.assertEqual(actual, expected)
+        expected = {
+            "whole_office",
+            "per_team",
+            "team_vs_team",
+            "all_teams",
+            "product_close",
+        }
+        self.assertEqual(set(self.runtime.screens._screens), expected)
 
     def test_core_routes_are_owned_and_available(self):
         routes = {rule.rule for rule in self.app.url_map.iter_rules()}
         required = {
-            "/", "/settings", "/health", "/api/system/version",
-            "/api/config", "/api/leaderboard", "/api/team-builder/save",
-            "/api/source/refresh", "/api/product-close",
-            "/api/temporary-date-override", "/api/keyboard-controls",
-            "/api/tv/restart", "/api/themes", "/api/asset-library",
-            "/api/windows/update/check", "/api/windows/update/diagnostics",
+            "/",
+            "/settings",
+            "/health",
+            "/api/system/version",
+            "/api/config",
+            "/api/leaderboard",
+            "/api/team-builder/save",
+            "/api/source/refresh",
+            "/api/product-close",
+            "/api/temporary-date-override",
+            "/api/keyboard-controls",
+            "/api/tv/restart",
+            "/api/themes",
+            "/api/asset-library",
+            "/api/windows/update/check",
+            "/api/windows/update/diagnostics",
         }
         self.assertTrue(required.issubset(routes), required - routes)
 
@@ -119,13 +158,23 @@ class RestructuredRuntimeTests(unittest.TestCase):
         self.assertEqual(board.status_code, 200)
         payload = board.get_json()
         for key in (
-            "mode", "mode_label", "metrics", "rows", "office_summary",
-            "sort_metric", "metric_types", "metric_labels", "theme_state", "preview",
+            "mode",
+            "mode_label",
+            "metrics",
+            "rows",
+            "office_summary",
+            "sort_metric",
+            "metric_types",
+            "metric_labels",
+            "theme_state",
+            "preview",
         ):
             self.assertIn(key, payload)
 
-    def test_legacy_patch_files_do_not_exist(self):
-        remaining = [name for name in LEGACY_PATCH_FILES if (APP / name).exists()]
+    def test_root_level_legacy_files_do_not_exist(self):
+        remaining = [
+            name for name in ROOT_LEVEL_LEGACY_FILES if (APP / name).exists()
+        ]
         self.assertEqual(remaining, [])
 
     def test_stats_core_import_is_platform_neutral(self):
@@ -135,6 +184,8 @@ class RestructuredRuntimeTests(unittest.TestCase):
             "import stats_core\n"
             "forbidden = [name for name in sys.modules "
             "if name == 'stats_core.platform.windows' "
+            "or name == 'stats_core.windows' "
+            "or name.startswith('stats_core.windows.') "
             "or name.startswith('windows_') "
             "or name == 'remote_qr']\n"
             "assert not forbidden, forbidden\n"
@@ -142,9 +193,15 @@ class RestructuredRuntimeTests(unittest.TestCase):
         subprocess.run([sys.executable, "-c", code], check=True)
 
     def test_theme_and_preview_are_not_monkey_patched(self):
-        bootstrap = (APP / "stats_core" / "bootstrap.py").read_text(encoding="utf-8")
-        theme_service = (APP / "stats_core" / "theme" / "service.py").read_text(encoding="utf-8")
-        snapshot = (APP / "stats_core" / "services" / "snapshot.py").read_text(encoding="utf-8")
+        bootstrap = (APP / "stats_core" / "bootstrap.py").read_text(
+            encoding="utf-8"
+        )
+        theme_service = (APP / "stats_core" / "theme" / "service.py").read_text(
+            encoding="utf-8"
+        )
+        snapshot = (APP / "stats_core" / "services" / "snapshot.py").read_text(
+            encoding="utf-8"
+        )
         self.assertNotIn("tableau_scheduler.configure", bootstrap)
         self.assertNotIn("app.view_functions[", theme_service)
         self.assertNotIn("source_picker.preview_rows", snapshot)
@@ -153,8 +210,12 @@ class RestructuredRuntimeTests(unittest.TestCase):
     def test_frontend_runtime_ownership_is_explicit(self):
         display = (APP / "templates" / "display.html").read_text(encoding="utf-8")
         settings = (APP / "templates" / "settings.html").read_text(encoding="utf-8")
-        formatting = (APP / "static" / "runtime" / "formatting.js").read_text(encoding="utf-8")
-        team_builder = (APP / "static" / "settings" / "team-builder-workflow.js").read_text(encoding="utf-8")
+        formatting = (APP / "static" / "runtime" / "formatting.js").read_text(
+            encoding="utf-8"
+        )
+        team_builder = (
+            APP / "static" / "settings" / "team-builder-workflow.js"
+        ).read_text(encoding="utf-8")
         self.assertIn("Theme runtime", display)
         self.assertIn("Display + layout runtime", display)
         self.assertIn("Controls runtime", display)
@@ -173,9 +234,9 @@ class RestructuredRuntimeTests(unittest.TestCase):
             "qr_controls_v110",
             "starter_theme_v119",
             "windows_runtime.install",
-            "windows_tableau_login.install",
-            "windows_theme_editor.install",
-            "windows_update_status.install",
+            "tableau_login.install",
+            "theme_editor.install",
+            "update_status.install",
         ):
             self.assertNotIn(token, text)
 

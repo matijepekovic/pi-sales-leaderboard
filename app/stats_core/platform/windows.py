@@ -11,8 +11,9 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-import remote_qr
 from flask import jsonify
+
+from stats_core.windows import qr
 
 
 class WindowsPlatform:
@@ -58,18 +59,20 @@ class WindowsPlatform:
         )
 
     def register(self, app, public_endpoints):
-        import windows_tableau_login
-        import windows_theme_editor
-        import windows_update
-        import windows_update_diagnostics
-        import windows_update_status
+        from stats_core.windows import (
+            tableau_login,
+            theme_editor,
+            update,
+            update_diagnostics,
+            update_status,
+        )
 
         facade = self.updater_facade()
-        windows_update.install(app, facade)
-        windows_update_status.install(app, facade)
-        windows_update_diagnostics.install(app, facade)
-        windows_tableau_login.install(app)
-        windows_theme_editor.install(app, public_endpoints)
+        update.install(app, facade)
+        update_status.install(app, facade)
+        update_diagnostics.install(app, facade)
+        tableau_login.install(app)
+        theme_editor.install(app, public_endpoints)
 
         if "api_github_status" not in app.view_functions:
             app.add_url_rule(
@@ -125,7 +128,7 @@ class WindowsPlatform:
     def start_remote_qr_refresh(self):
         def refresh_once():
             try:
-                url = remote_qr.generate()
+                url = qr.generate()
                 self.repos.meta.set("remote_qr_url", url)
                 self.repos.meta.set("remote_qr_error", "")
             except Exception as exc:

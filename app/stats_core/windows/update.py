@@ -1,10 +1,4 @@
-"""Signed Windows installer update client.
-
-Customer machines read only public GitHub Release download URLs. The release
-manifest must verify with the embedded Ed25519 public key, and the downloaded
-installer must match the signed SHA-256 and size before the detached updater
-helper is started. No GitHub credential or private key is present on the PC.
-"""
+"""Signed Windows installer update client."""
 from __future__ import annotations
 
 import base64
@@ -21,12 +15,18 @@ from pathlib import Path
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from flask import jsonify
 
-from update_signing_public_key import UPDATE_SIGNING_PUBLIC_KEY_B64
-import windows_https
+from stats_core.windows import https
+from stats_core.windows.signing_key import UPDATE_SIGNING_PUBLIC_KEY_B64
 
 UPDATE_REPO = "matijepekovic/pi-sales-leaderboard-updates"
-LATEST_MANIFEST_URL = f"https://github.com/{UPDATE_REPO}/releases/latest/download/release-manifest.json"
-LATEST_SIGNATURE_URL = f"https://github.com/{UPDATE_REPO}/releases/latest/download/release-manifest.json.sig"
+LATEST_MANIFEST_URL = (
+    f"https://github.com/{UPDATE_REPO}/releases/latest/download/"
+    "release-manifest.json"
+)
+LATEST_SIGNATURE_URL = (
+    f"https://github.com/{UPDATE_REPO}/releases/latest/download/"
+    "release-manifest.json.sig"
+)
 SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 MAX_METADATA_BYTES = 512 * 1024
@@ -47,7 +47,11 @@ def _version_tuple(value: str) -> tuple[int, int, int]:
 def _trusted_release_asset_url(url: str) -> bool:
     parsed = urllib.parse.urlparse(str(url or ""))
     prefix = f"/{UPDATE_REPO}/releases/download/"
-    return parsed.scheme == "https" and parsed.netloc == "github.com" and parsed.path.startswith(prefix)
+    return (
+        parsed.scheme == "https"
+        and parsed.netloc == "github.com"
+        and parsed.path.startswith(prefix)
+    )
 
 
 def _read_url(url: str, *, max_bytes: int = MAX_METADATA_BYTES) -> bytes:
@@ -61,7 +65,7 @@ def _read_url(url: str, *, max_bytes: int = MAX_METADATA_BYTES) -> bytes:
     with urllib.request.urlopen(
         request,
         timeout=30,
-        context=windows_https.ssl_context(),
+        context=https.ssl_context(),
     ) as response:
         data = response.read(max_bytes + 1)
     if len(data) > max_bytes:
@@ -69,15 +73,22 @@ def _read_url(url: str, *, max_bytes: int = MAX_METADATA_BYTES) -> bytes:
     return data
 
 
-def verify_manifest(manifest_bytes: bytes, signature_bytes: bytes,
-                    public_key_b64: str = UPDATE_SIGNING_PUBLIC_KEY_B64) -> dict:
+def verify_manifest(
+    manifest_bytes: bytes,
+    signature_bytes: bytes,
+    public_key_b64: str = UPDATE_SIGNING_PUBLIC_KEY_B64,
+) -> dict:
     """Verify exact manifest bytes and return a validated schema-1 manifest."""
     try:
-        signature = base64.b64decode(signature_bytes.decode("ascii").strip(), validate=True)
+        signature = base64.b64decode(
+            signature_bytes.decode("ascii").strip(), validate=True
+        )
         public_raw = base64.b64decode(public_key_b64, validate=True)
         if len(public_raw) != 32:
             raise ValueError("Invalid update public key")
-        Ed25519PublicKey.from_public_bytes(public_raw).verify(signature, manifest_bytes)
+        Ed25519PublicKey.from_public_bytes(public_raw).verify(
+            signature, manifest_bytes
+        )
     except Exception as exc:
         raise ValueError("Update signature verification failed") from exc
 
@@ -180,7 +191,7 @@ def _download_installer(info: dict, destination: Path) -> None:
         with urllib.request.urlopen(
             request,
             timeout=60,
-            context=windows_https.ssl_context(),
+            context=https.ssl_context(),
         ) as response, temporary.open("wb") as handle:
             while True:
                 chunk = response.read(1024 * 1024)
@@ -188,13 +199,19 @@ def _download_installer(info: dict, destination: Path) -> None:
                     break
                 written += len(chunk)
                 if written > expected_size or written > MAX_INSTALLER_BYTES:
-                    raise ValueError("Downloaded installer is larger than the signed size")
+                    raise ValueError(
+                        "Downloaded installer is larger than the signed size"
+                    )
                 digest.update(chunk)
                 handle.write(chunk)
         if written != expected_size:
-            raise ValueError("Downloaded installer size does not match signed manifest")
+            raise ValueError(
+                "Downloaded installer size does not match signed manifest"
+            )
         if digest.hexdigest() != info["sha256"]:
-            raise ValueError("Downloaded installer SHA-256 does not match signed manifest")
+            raise ValueError(
+                "Downloaded installer SHA-256 does not match signed manifest"
+            )
         temporary.replace(destination)
     except Exception:
         temporary.unlink(missing_ok=True)
@@ -204,7 +221,6 @@ def _download_installer(info: dict, destination: Path) -> None:
 def _installed_root() -> Path:
     if not getattr(sys, "frozen", False):
         raise RuntimeError("Windows installer updates require the packaged Stats build")
-    # StatsServer.exe lives in {app}/server; launcher/updater live in {app}.
     return Path(sys.executable).resolve().parent.parent
 
 
@@ -221,16 +237,21 @@ def _start_detached_updater(installer: Path, version: str) -> None:
     subprocess.Popen(
         [
             str(helper),
-            "--installer", str(installer),
-            "--launcher", str(launcher),
-            "--version", version,
+            "--installer",
+            str(installer),
+            "--launcher",
+            str(launcher),
+            "--version",
+            version,
         ],
         cwd=str(update_dir),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         close_fds=True,
-        creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
+        creationflags=(
+            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+        ),
     )
 
 
@@ -264,14 +285,26 @@ def install(app, server_module) -> bool:
                     "latest": info["latest"],
                 })
 
-            update_root = Path(server_module.PERSISTENT_DATA_DIR) / "updates" / "windows" / info["latest"]
+            update_root = (
+                Path(server_module.PERSISTENT_DATA_DIR)
+                / "updates"
+                / "windows"
+                / info["latest"]
+            )
             installer = update_root / info["installer_name"]
-            if not installer.is_file() or installer.stat().st_size != info["size"] or _sha256(installer) != info["sha256"]:
+            valid_cached = (
+                installer.is_file()
+                and installer.stat().st_size == info["size"]
+                and _sha256(installer) == info["sha256"]
+            )
+            if not valid_cached:
                 installer.unlink(missing_ok=True)
                 _download_installer(info, installer)
 
-            # Re-check local bytes immediately before handing off to the helper.
-            if installer.stat().st_size != info["size"] or _sha256(installer) != info["sha256"]:
+            if (
+                installer.stat().st_size != info["size"]
+                or _sha256(installer) != info["sha256"]
+            ):
                 raise ValueError("Verified installer changed before launch")
 
             _start_detached_updater(installer, info["latest"])

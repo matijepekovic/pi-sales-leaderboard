@@ -1,10 +1,4 @@
-"""Windows updater diagnostics.
-
-This module owns read-only diagnostics for the signed Windows update path.
-It is intentionally separate from windows_update.py so diagnostics can later
-move behind a Windows platform/service interface without changing updater
-behavior.
-"""
+"""Read-only diagnostics for the signed Windows update path."""
 from __future__ import annotations
 
 import ssl
@@ -12,8 +6,7 @@ import sys
 
 from flask import jsonify
 
-import windows_https
-import windows_update
+from stats_core.windows import https, update
 
 _INSTALLED = False
 
@@ -38,29 +31,26 @@ def collect_diagnostics(server_module):
 
     checks.append(_check(
         "installed_version",
-        lambda: f"{windows_update._version_tuple(installed_version)} ({installed_version})",
+        lambda: f"{update._version_tuple(installed_version)} ({installed_version})",
     ))
-
     checks.append(_check(
         "https_trust",
         lambda: (
-            f"provider={windows_https.diagnostics()['provider']}; "
-            f"windows_certificates_loaded={windows_https.diagnostics()['windows_certificates_loaded']}"
+            f"provider={https.diagnostics()['provider']}; "
+            "windows_certificates_loaded="
+            f"{https.diagnostics()['windows_certificates_loaded']}"
         ),
     ))
 
     state = {}
 
     def read_manifest():
-        data = windows_update._read_url(windows_update.LATEST_MANIFEST_URL)
+        data = update._read_url(update.LATEST_MANIFEST_URL)
         state["manifest"] = data
         return f"Downloaded {len(data)} bytes"
 
     def read_signature():
-        data = windows_update._read_url(
-            windows_update.LATEST_SIGNATURE_URL,
-            max_bytes=16 * 1024,
-        )
+        data = update._read_url(update.LATEST_SIGNATURE_URL, max_bytes=16 * 1024)
         state["signature"] = data
         return f"Downloaded {len(data)} bytes"
 
@@ -69,18 +59,17 @@ def collect_diagnostics(server_module):
 
     def verify_signature():
         if "manifest" not in state or "signature" not in state:
-            raise RuntimeError("Skipped because update metadata could not be downloaded")
-        manifest = windows_update.verify_manifest(
-            state["manifest"],
-            state["signature"],
-        )
+            raise RuntimeError(
+                "Skipped because update metadata could not be downloaded"
+            )
+        manifest = update.verify_manifest(state["manifest"], state["signature"])
         state["verified_manifest"] = manifest
         return f"Verified signed manifest for {manifest['version']}"
 
     checks.append(_check("signature_verification", verify_signature))
 
     def resolve_latest():
-        info = windows_update.latest_release_info(installed_version)
+        info = update.latest_release_info(installed_version)
         return (
             f"Latest {info['latest']}; available={str(info['available']).lower()}; "
             f"installer={info['installer_name']}"
@@ -88,23 +77,20 @@ def collect_diagnostics(server_module):
 
     checks.append(_check("latest_release_resolution", resolve_latest))
 
-    trust = {}
     try:
-        trust = windows_https.diagnostics()
+        trust = https.diagnostics()
     except Exception as exc:
         trust = {"provider": "unavailable", "error": _error_text(exc)}
-
-    environment = {
-        "packaged": bool(getattr(sys, "frozen", False)),
-        "openssl": ssl.OPENSSL_VERSION,
-        "https_trust": trust,
-    }
 
     return {
         "ok": all(item["ok"] for item in checks),
         "installed_version": installed_version,
         "checks": checks,
-        "environment": environment,
+        "environment": {
+            "packaged": bool(getattr(sys, "frozen", False)),
+            "openssl": ssl.OPENSSL_VERSION,
+            "https_trust": trust,
+        },
     }
 
 

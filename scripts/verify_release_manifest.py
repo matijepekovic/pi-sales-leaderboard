@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Verify a signed production release manifest and its local assets."""
-
 from __future__ import annotations
 
 import argparse
 import base64
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-DEFAULT_PUBLIC_KEY_B64 = "5BKW4eUps39+GhTRnHHzqGz03VNembdmaYBoqagzqr4="
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "app"))
+from stats_core.windows.signing_key import UPDATE_SIGNING_PUBLIC_KEY_B64  # noqa: E402
 
 
 def _sha256(path: Path) -> str:
@@ -27,7 +29,10 @@ def main() -> int:
     parser.add_argument("--manifest", default="dist/release-manifest.json")
     parser.add_argument("--signature", default="dist/release-manifest.json.sig")
     parser.add_argument("--asset-dir", default="dist")
-    parser.add_argument("--public-key-b64", default=DEFAULT_PUBLIC_KEY_B64)
+    parser.add_argument(
+        "--public-key-b64",
+        default=UPDATE_SIGNING_PUBLIC_KEY_B64,
+    )
     args = parser.parse_args()
 
     manifest_path = Path(args.manifest)
@@ -35,8 +40,12 @@ def main() -> int:
     asset_dir = Path(args.asset_dir)
 
     manifest_bytes = manifest_path.read_bytes()
-    signature = base64.b64decode(signature_path.read_text(encoding="utf-8").strip(), validate=True)
-    public_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(args.public_key_b64, validate=True))
+    signature = base64.b64decode(
+        signature_path.read_text(encoding="utf-8").strip(),
+        validate=True,
+    )
+    public_raw = base64.b64decode(args.public_key_b64, validate=True)
+    public_key = Ed25519PublicKey.from_public_bytes(public_raw)
     public_key.verify(signature, manifest_bytes)
 
     manifest = json.loads(manifest_bytes.decode("utf-8"))

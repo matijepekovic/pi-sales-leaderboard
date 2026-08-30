@@ -9,8 +9,16 @@ from database import get_meta, get_settings, get_team_definitions, save_settings
 
 STORE_KEY = "theme_visual_transforms"
 ASSET_KEYS = {
-    "background", "hero", "row", "champion", "medallion",
-    "corner_tl", "corner_tr", "corner_bl", "corner_br", "totals_mark",
+    "background",
+    "hero",
+    "row",
+    "champion",
+    "medallion",
+    "corner_tl",
+    "corner_tr",
+    "corner_bl",
+    "corner_br",
+    "totals_mark",
 }
 DEFAULT_TRANSFORM = {
     "x": 0.0,
@@ -50,7 +58,11 @@ def _valid_team_ids():
 def _store(settings=None):
     settings = settings or get_settings()
     raw = settings.get(STORE_KEY)
-    teams = raw.get("teams") if isinstance(raw, dict) and isinstance(raw.get("teams"), dict) else {}
+    teams = (
+        raw.get("teams")
+        if isinstance(raw, dict) and isinstance(raw.get("teams"), dict)
+        else {}
+    )
     cleaned = {}
     for team_id, assets in teams.items():
         if not isinstance(assets, dict):
@@ -86,10 +98,12 @@ def install(app, public_endpoints=None):
         team_id = int(team_id)
         if team_id not in _valid_team_ids():
             return jsonify({"ok": False, "error": "Team not found."}), 404
+
         body = request.get_json(silent=True) or {}
         key = str(body.get("asset") or "").strip()
         if key not in ASSET_KEYS:
             return jsonify({"ok": False, "error": "Unknown theme asset."}), 400
+
         transform = clean_transform(body.get("transform"))
         with _LOCK:
             settings = get_settings()
@@ -97,6 +111,7 @@ def install(app, public_endpoints=None):
             team = store["teams"].setdefault(str(team_id), {})
             team[key] = transform
             version = _save(settings, store)
+
         return jsonify({
             "ok": True,
             "team_id": team_id,
@@ -110,6 +125,7 @@ def install(app, public_endpoints=None):
         key = str(asset_key or "").strip()
         if key not in ASSET_KEYS:
             return jsonify({"ok": False, "error": "Unknown theme asset."}), 400
+
         with _LOCK:
             settings = get_settings()
             store = _store(settings)
@@ -118,6 +134,7 @@ def install(app, public_endpoints=None):
             if not team:
                 store["teams"].pop(str(team_id), None)
             version = _save(settings, store)
+
         return jsonify({
             "ok": True,
             "team_id": team_id,

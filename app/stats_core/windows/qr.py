@@ -8,7 +8,7 @@ import subprocess
 import qrcode
 
 PORT = 8765
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+STATIC_DIR = Path(__file__).resolve().parents[2] / "static"
 OUTPUT = STATIC_DIR / "remote-qr-v109.svg"
 
 
@@ -26,9 +26,7 @@ def _lan_ipv4():
         sock.close()
 
     try:
-        output = subprocess.check_output(
-            ["hostname", "-I"], text=True, timeout=2
-        )
+        output = subprocess.check_output(["hostname", "-I"], text=True, timeout=2)
         for token in output.split():
             token = token.strip()
             if token.count(".") == 3 and not token.startswith("127."):
