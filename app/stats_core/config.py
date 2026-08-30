@@ -1,5 +1,18 @@
-"""Application settings defaults and metric definitions."""
+"""Application settings defaults, feature access, and metric definitions."""
 from __future__ import annotations
+
+FEATURE_ACCESS = {
+    "whole_office": True,
+    "per_team": True,
+    "team_vs_team": True,
+    "all_teams": True,
+    "product_close": True,
+    "temporary_date": True,
+    "themes": True,
+    "theme_editor": True,
+    "controls": True,
+    "settings": True,
+}
 
 DEFAULT_METRICS = {
     "whole_office": [
