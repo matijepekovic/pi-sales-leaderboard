@@ -19,10 +19,11 @@ class Repositories:
     def __init__(self, static_root=None, data_root=None):
         data_root = Path(data_root or persistent_data_dir())
         static_root = Path(static_root or Path(__file__).resolve().parents[2] / "static")
+
         self.meta = MetaRepository()
         self.settings = SettingsRepository()
-        self.reps = RepRepository()
-        self.organization = OrganizationRepository()
+        self.organization = OrganizationRepository(self.meta)
+        self.reps = RepRepository(self.meta, self.organization)
         self.products = ProductRepository()
         self.themes = ThemeRepository(self.settings, self.meta)
         self.applied_assets = AppliedAssetRepository(data_root, static_root)
