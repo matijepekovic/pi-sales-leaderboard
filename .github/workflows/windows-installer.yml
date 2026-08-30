@@ -88,6 +88,10 @@ jobs:
         shell: pwsh
         run: python windows/test_auth.py
 
+      - name: Test persistent data paths
+        shell: pwsh
+        run: python windows/test_paths.py
+
       - name: Test launcher close behavior
         shell: pwsh
         run: python windows/test_launcher.py
@@ -127,6 +131,7 @@ jobs:
             --onefile `
             --noconsole `
             --name StatsLauncher `
+            --paths app `
             windows/launcher.py
 
       - name: Build detached update helper
