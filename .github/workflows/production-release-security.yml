@@ -5,7 +5,7 @@ on:
     branches:
       - production
     paths:
-      - "app/update_signing_public_key.py"
+      - "app/stats_core/windows/signing_key.py"
       - "scripts/sign_release_manifest.py"
       - "scripts/verify_release_manifest.py"
       - "RELEASE_SECURITY.md"
@@ -30,10 +30,10 @@ jobs:
 
       - name: Validate production public key and version
         run: |
-          python - <<'PY'
+          PYTHONPATH=app python - <<'PY'
           import base64
           import re
-          from app.update_signing_public_key import UPDATE_SIGNING_PUBLIC_KEY_B64
+          from stats_core.windows.signing_key import UPDATE_SIGNING_PUBLIC_KEY_B64
 
           raw = base64.b64decode(UPDATE_SIGNING_PUBLIC_KEY_B64, validate=True)
           if len(raw) != 32:
