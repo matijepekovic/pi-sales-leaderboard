@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from stats_core.config import DEFAULT_METRICS, DEFAULT_SETTINGS
 from stats_core.storage import sqlite
 
 
@@ -12,22 +13,22 @@ class SettingsRepository:
                 "SELECT value FROM settings WHERE key='config'"
             ).fetchone()
 
-        base = json.loads(json.dumps(sqlite.DEFAULT_SETTINGS))
+        base = json.loads(json.dumps(DEFAULT_SETTINGS))
         if not row:
             return base
 
         incoming = json.loads(row["value"])
         base.update(incoming)
         base["visible_metrics"] = {
-            **sqlite.DEFAULT_METRICS,
+            **DEFAULT_METRICS,
             **incoming.get("visible_metrics", {}),
         }
         base["sort_metric"] = {
-            **sqlite.DEFAULT_SETTINGS["sort_metric"],
+            **DEFAULT_SETTINGS["sort_metric"],
             **incoming.get("sort_metric", {}),
         }
         base["number_font_scale"] = {
-            **sqlite.DEFAULT_SETTINGS["number_font_scale"],
+            **DEFAULT_SETTINGS["number_font_scale"],
             **incoming.get("number_font_scale", {}),
         }
         base["rank_direction"] = {
