@@ -1,0 +1,93 @@
+/* Team Builder settings runtime.
+   Members are chosen before the team lead, and the lead can only be one of
+   the reps selected for this team. */
+(function(){
+  const overlay=document.getElementById("teamBuilderOverlay");
+  if(!overlay) return;
+
+  const indicators=overlay.querySelectorAll("[data-step-indicator]");
+  if(indicators.length>=4){
+    indicators[2].textContent="3. Members";
+    indicators[3].textContent="4. Team Lead";
+  }
+
+  const leaderPage=overlay.querySelector('[data-builder-page="2"]');
+  const memberPage=overlay.querySelector('[data-builder-page="3"]');
+  if(leaderPage && memberPage){
+    leaderPage.dataset.builderPage="3";
+    memberPage.dataset.builderPage="2";
+    leaderPage.parentNode.insertBefore(memberPage,leaderPage);
+
+    const leaderSelect=document.getElementById("builderLeader");
+    if(leaderSelect && !document.getElementById("builderLeaderHelp")){
+      const help=document.createElement("div");
+      help.id="builderLeaderHelp";
+      help.className="small";
+      help.style.margin="0 0 8px";
+      help.textContent="Choose the team lead from the reps assigned in the previous step.";
+      leaderSelect.parentNode.insertBefore(help,leaderSelect);
+    }
+  }
+
+  function selectedMembers(){
+    return (reps||[])
+      .filter(r=>builderMembers.has(String(r.rep_key)))
+      .sort((a,b)=>String(a.rep_name||"").localeCompare(String(b.rep_name||"")));
+  }
+
+  function renderLeaderFromMembers(preferred){
+    const select=document.getElementById("builderLeader");
+    if(!select) return;
+    const members=selectedMembers();
+    const current=String(preferred!==undefined?preferred:(select.value||""));
+    const valid=members.some(r=>String(r.rep_name||"")===current);
+
+    if(!members.length){
+      select.innerHTML='<option value="">No members selected</option>';
+      select.value="";
+      return;
+    }
+
+    select.innerHTML='<option value="">No Leader</option>'+members.map(r=>
+      `<option value="${escapeAttr(r.rep_name)}">${escapeHtml(r.rep_name)}</option>`
+    ).join("");
+    select.value=valid?current:"";
+  }
+
+  const originalSetBuilderStep=setBuilderStep;
+  setBuilderStep=function(n){
+    originalSetBuilderStep(n);
+    if(builderStep===3) renderLeaderFromMembers(document.getElementById("builderLeader").value||"");
+  };
+
+  const originalOpenTeamBuilder=openTeamBuilder;
+  openTeamBuilder=function(id=null){
+    originalOpenTeamBuilder(id);
+    const t=id?teamById(id):null;
+    const lead=t?.leader||(t?.leads||[])[0];
+    renderLeaderFromMembers(lead?.lead_name||"");
+  };
+
+  const memberContainer=document.getElementById("builderMembers");
+  if(memberContainer){
+    memberContainer.addEventListener("change",e=>{
+      if(!e.target.classList.contains("builderMember")) return;
+      const select=document.getElementById("builderLeader");
+      renderLeaderFromMembers(select?select.value:"");
+    });
+  }
+
+  const saveButton=document.getElementById("builderSave");
+  if(saveButton){
+    saveButton.addEventListener("click",e=>{
+      const leader=String(document.getElementById("builderLeader")?.value||"").trim();
+      if(!leader) return;
+      const names=new Set(selectedMembers().map(r=>String(r.rep_name||"")));
+      if(names.has(leader)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setBuilderStep(3);
+      document.getElementById("builderStatus").textContent="Choose the team lead from the reps assigned to this team.";
+    },true);
+  }
+})();

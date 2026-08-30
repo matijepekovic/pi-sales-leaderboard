@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from stats_core.errors import ValidationError
-from stats_core.services.product import PRODUCT_MODE
 
 ACTIONS = ("previous", "next", "pair", "sort_prev", "sort_next")
 DEFAULT_KEYS = {
@@ -12,7 +11,6 @@ DEFAULT_KEYS = {
     "sort_prev": "MouseWheelUp",
     "sort_next": "MouseWheelDown",
 }
-FIXED_VIEWS = ("whole_office", "team_vs_team", "all_teams", PRODUCT_MODE)
 ALLOWED_INPUTS = (
     "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
     *tuple(chr(code) for code in range(ord("a"), ord("z") + 1)),
@@ -29,17 +27,12 @@ QR_DEFAULT_Y = 0.0
 
 
 class ControlsService:
-    def __init__(self, repos, organization):
+    def __init__(self, repos, screens):
         self.repos = repos
-        self.organization = organization
+        self.screens = screens
 
     def available_views(self):
-        views = list(FIXED_VIEWS)
-        for team in self.organization.definitions_for_api():
-            name = str(team.get("name") or "").strip()
-            if name:
-                views.append(f"per_team::{name}")
-        return views
+        return self.screens.cycle_views()
 
     @staticmethod
     def _normalize_input(value):

@@ -5,8 +5,8 @@ from datetime import date
 import threading
 import time
 
-from product_source_v115 import ProductCloseSourceV115, selected_market
 from stats_core.errors import BusyError, ValidationError
+from stats_core.product.source import ProductCloseSource, selected_market
 
 
 class TemporaryDateService:
@@ -63,7 +63,8 @@ class TemporaryDateService:
 
     def state(self):
         with self._lock:
-            now = time.time(); self._expire_locked(now)
+            now = time.time()
+            self._expire_locked(now)
             active = self._state["rows"] is not None
             return {
                 "active": active, "mode": self._state["mode"] if active else "",
@@ -83,11 +84,13 @@ class TemporaryDateService:
             raise ValidationError(f"Choose a valid {label} date.") from exc
 
     def _requested_range(self, body):
-        mode = str(body.get("mode") or "").strip().lower(); today = date.today()
+        mode = str(body.get("mode") or "").strip().lower()
+        today = date.today()
         if mode == "ytd":
             return mode, date(today.year, 1, 1).isoformat(), today.isoformat()
         if mode == "custom":
-            start = self._parse_date(body.get("start"), "start"); end = self._parse_date(body.get("end"), "end")
+            start = self._parse_date(body.get("start"), "start")
+            end = self._parse_date(body.get("end"), "end")
             if start > end:
                 raise ValidationError("Start date must be before or equal to end date.")
             return mode, start.isoformat(), end.isoformat()
@@ -103,10 +106,20 @@ class TemporaryDateService:
             raise ValidationError("Enter a duration from 1 to 60 minutes.")
         return minutes
 
+    def _fallback_markets(self):
+        return sorted({
+            str(row.get("home_branch") or "").strip()
+            for row in self.repos.reps.list()
+            if str(row.get("home_branch") or "").strip()
+        }, key=str.casefold)
+
     def activate(self, body):
-        mode, start, end = self._requested_range(body); minutes = self._requested_minutes(body)
+        mode, start, end = self._requested_range(body)
+        minutes = self._requested_minutes(body)
         trial = dict(self.repos.settings.get())
-        trial["data_date_mode"] = "custom"; trial["data_date_start"] = start; trial["data_date_end"] = end
+        trial["data_date_mode"] = "custom"
+        trial["data_date_start"] = start
+        trial["data_date_end"] = end
         source = dict(trial.get("source") or {})
         source["date_start_field"] = str(source.get("date_start_field") or "Start")
         source["date_end_field"] = str(source.get("date_end_field") or "End")
@@ -118,7 +131,10 @@ class TemporaryDateService:
             rows, _source = self.rep_refresh.pull(trial)
             if not rows:
                 raise ValidationError("Temporary pull returned no people. Regular numbers were kept.")
-            _start, _end, product_rows = ProductCloseSourceV115(trial).fetch_products(start=start, end=end, market=market)
+            product_source = ProductCloseSource(trial, fallback_markets=self._fallback_markets())
+            _start, _end, product_rows = product_source.fetch_products(
+                start=start, end=end, market=market
+            )
         finally:
             self._pull_lock.release()
         with self._lock:

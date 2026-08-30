@@ -1,8 +1,8 @@
 """Stats application composition root.
 
-This is the only place where feature modules are assembled. Services depend on
-explicit repositories/services; scheduler, QR, themes and Windows no longer
-install each other through import-time side effects.
+This is the only place where product domains, platform adapters and HTTP
+blueprints are assembled. Feature modules do not install or monkey-patch one
+another at runtime.
 """
 from __future__ import annotations
 
@@ -11,16 +11,19 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request, session
 
-import database
-import tableau_scheduler
 from stats_core.platform.windows import WindowsPlatform
 from stats_core.repositories import Repositories, persistent_data_dir
 from stats_core.runtime import Runtime
+from stats_core.screens.registry import ScreenRegistry
 from stats_core.services.auth import AuthService
 from stats_core.services.controls import ControlsService
+from stats_core.services.entitlement import EntitlementService
 from stats_core.services.leaderboard import LeaderboardService
 from stats_core.services.organization import OrganizationService
+from stats_core.services.preview import PreviewService
 from stats_core.services.product import ProductService
+from stats_core.services.product_refresh import ProductRefreshService
+from stats_core.services.pull_policy import RepPullPolicy
 from stats_core.services.rep_refresh import RepRefreshService
 from stats_core.services.scheduler import SchedulerService
 from stats_core.services.settings import SettingsService
@@ -28,9 +31,10 @@ from stats_core.services.snapshot import DataSnapshotService
 from stats_core.services.source import SourceService
 from stats_core.services.tableau import TableauService
 from stats_core.services.temporary_date import TemporaryDateService
-from stats_core.services.theme import ThemeService
 from stats_core.services.tv import TvService
 from stats_core.services.version import VersionService
+from stats_core.theme import ThemeService
+from stats_core.theme import web as theme_web
 from stats_core.web import auth as auth_web
 from stats_core.web import controls as controls_web
 from stats_core.web import core as core_web
@@ -67,7 +71,10 @@ def _install_auth_gate(app, runtime):
         if public:
             return None
         if path.startswith("/api/"):
-            return jsonify({"ok": False, "locked": True, "error": "Settings are locked. Enter your PIN."}), 401
+            return jsonify({
+                "ok": False, "locked": True,
+                "error": "Settings are locked. Enter your PIN.",
+            }), 401
         return render_template("settings.html")
 
 
@@ -76,12 +83,17 @@ def create_app(platform_name="windows", start_background=True):
         raise ValueError("Only the Windows reference platform is active during restructuring.")
 
     root = asset_root()
-    app = Flask("stats", template_folder=str(root / "templates"), static_folder=str(root / "static"))
+    app = Flask(
+        "stats",
+        template_folder=str(root / "templates"),
+        static_folder=str(root / "static"),
+    )
     app.config["JSON_SORT_KEYS"] = False
 
-    database.init_db()
-    repos = Repositories()
-    settings = SettingsService(repos.settings, repos.meta)
+    Repositories.initialize()
+    repos = Repositories(static_root=root / "static", data_root=persistent_data_dir())
+    entitlement = EntitlementService()
+    settings = SettingsService(repos.settings, repos.meta, entitlement)
     auth = AuthService(repos.settings, repos.meta)
     app.secret_key = auth.app_secret_key()
 
@@ -89,16 +101,22 @@ def create_app(platform_name="windows", start_background=True):
     platform = WindowsPlatform(repos, persistent_data_dir(), version)
     organization = OrganizationService(repos, persistent_data_dir() / "team-logos")
     tableau = TableauService()
-    rep_refresh = RepRefreshService(repos, tableau)
+    pull_policy = RepPullPolicy(repos, tableau)
+    rep_refresh = RepRefreshService(repos, tableau, pull_policy)
     rep_refresh.prepare()
+
     temporary_date = TemporaryDateService(repos, rep_refresh)
-    products = ProductService(repos, temporary_date)
-    snapshots = DataSnapshotService(repos, temporary_date)
-    leaderboard = LeaderboardService(repos, organization, snapshots, products)
-    source = SourceService(repos, rep_refresh, tableau)
-    controls = ControlsService(repos, organization)
+    product_refresh = ProductRefreshService(repos, temporary_date)
+    products = ProductService(repos, temporary_date, product_refresh)
+    preview = PreviewService()
+    snapshots = DataSnapshotService(repos, preview, temporary_date)
+    leaderboard = LeaderboardService(repos, organization, snapshots)
+    screens = ScreenRegistry(leaderboard, products, organization)
+    source = SourceService(repos, rep_refresh, preview, tableau)
+    controls = ControlsService(repos, screens)
     scheduler = SchedulerService(repos, rep_refresh, products)
-    theme = ThemeService()
+    theme = ThemeService(repos)
+    theme.prepare()
     tv = TvService(repos, platform)
 
     public_endpoints = {
@@ -109,11 +127,29 @@ def create_app(platform_name="windows", start_background=True):
         "tv.report_geometry", "themes.theme_asset",
     }
     runtime = Runtime(
-        repos=repos, settings=settings, auth=auth, organization=organization,
-        tableau=tableau, rep_refresh=rep_refresh, temporary_date=temporary_date,
-        products=products, snapshots=snapshots, leaderboard=leaderboard,
-        source=source, controls=controls, scheduler=scheduler, theme=theme,
-        version=version, tv=tv, platform=platform, public_endpoints=public_endpoints,
+        repos=repos,
+        settings=settings,
+        auth=auth,
+        entitlement=entitlement,
+        organization=organization,
+        tableau=tableau,
+        pull_policy=pull_policy,
+        rep_refresh=rep_refresh,
+        temporary_date=temporary_date,
+        product_refresh=product_refresh,
+        products=products,
+        preview=preview,
+        snapshots=snapshots,
+        leaderboard=leaderboard,
+        screens=screens,
+        source=source,
+        controls=controls,
+        scheduler=scheduler,
+        theme=theme,
+        version=version,
+        tv=tv,
+        platform=platform,
+        public_endpoints=public_endpoints,
     )
     app.extensions["stats_runtime"] = runtime
 
@@ -124,9 +160,8 @@ def create_app(platform_name="windows", start_background=True):
     app.register_blueprint(product_web.blueprint(products))
     app.register_blueprint(controls_web.blueprint(controls, temporary_date))
     app.register_blueprint(tv_web.blueprint(tv))
+    app.register_blueprint(theme_web.blueprint(theme))
 
-    theme.register(app)
-    tableau_scheduler.configure(scheduler, products, autostart=start_background)
     platform.register(app, public_endpoints)
     _install_auth_gate(app, runtime)
 
