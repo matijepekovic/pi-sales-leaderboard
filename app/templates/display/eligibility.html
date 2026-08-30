@@ -1,10 +1,10 @@
-{% include "display_v35_base.html" %}
+{% include "display/core.html" %}
 <script>
-/* v36 TV eligibility rule.
+/* TV eligibility rule.
    Keep the full Tableau pull stored and available in Settings, but only reps
-   with a local Pi team assignment are allowed onto any TV view. Team/office
-   totals are recalculated from those assigned reps so hidden rows never
-   contribute to displayed totals or rankings. */
+   with a local team assignment are allowed onto TV views. Team/office totals
+   are recalculated from assigned reps so hidden rows never contribute to
+   displayed totals or rankings. */
 (function(){
   if(typeof render!=="function") return;
   const baseRender=render;
