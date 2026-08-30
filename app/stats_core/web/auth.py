@@ -1,9 +1,52 @@
-"""HTTP routes for settings authentication."""
+"""HTTP routes and the lock gate for settings authentication.
+
+Both halves of authentication live here: the four `/api/auth/*` routes, and the
+before-request gate that decides which endpoints a locked install may still
+reach. The gate used to sit in the composition root, which meant the allowlist
+was declared in one file and enforced in another.
+"""
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify, render_template, request, session
 
 from stats_core.web.common import error_response
+
+# Reachable while the settings PIN is locked. The display has to keep drawing
+# on an unattended TV, and the phone needs enough to render its own PIN prompt.
+CORE_PUBLIC_ENDPOINTS = frozenset({
+    "core.display", "core.health", "core.api_system_version",
+    "core.api_config", "core.api_leaderboard",
+    "auth.api_auth_status", "auth.api_auth_unlock",
+    "organization.team_logo", "product.preview", "product.product_close",
+    "tv.report_geometry", "themes.theme_asset",
+})
+
+
+def install_gate(app, auth_service, public_endpoints):
+    """Refuse locked requests that are not on the allowlist."""
+
+    @app.before_request
+    def settings_lock():
+        if not auth_service.pin_is_set() or bool(session.get("settings_unlocked")):
+            return None
+        endpoint = request.endpoint or ""
+        method = request.method.upper()
+        path = request.path
+        public = (
+            endpoint in public_endpoints or endpoint == "static"
+            or (method == "GET" and path.startswith("/static/"))
+            or (method == "GET" and path.startswith("/api/theme-assets/"))
+        )
+        if public:
+            return None
+        if path.startswith("/api/"):
+            return jsonify({
+                "ok": False, "locked": True,
+                "error": "Settings are locked. Enter your PIN.",
+            }), 401
+        return render_template("settings.html")
+
+    return settings_lock
 
 
 def blueprint(auth_service):

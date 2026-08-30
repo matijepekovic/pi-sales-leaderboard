@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask
 
 from stats_core.paths import prepare_data_dir
 from stats_core.platform.windows import WindowsPlatform
@@ -55,29 +55,6 @@ def asset_root():
     return root if getattr(sys, "frozen", False) else root / "app"
 
 
-def _install_auth_gate(app, runtime):
-    @app.before_request
-    def settings_lock():
-        if not runtime.auth.pin_is_set() or bool(session.get("settings_unlocked")):
-            return None
-        endpoint = request.endpoint or ""
-        method = request.method.upper()
-        path = request.path
-        public = (
-            endpoint in runtime.public_endpoints or endpoint == "static"
-            or (method == "GET" and path.startswith("/static/"))
-            or (method == "GET" and path.startswith("/api/theme-assets/"))
-        )
-        if public:
-            return None
-        if path.startswith("/api/"):
-            return jsonify({
-                "ok": False, "locked": True,
-                "error": "Settings are locked. Enter your PIN.",
-            }), 401
-        return render_template("settings.html")
-
-
 def create_app(platform_name="windows", start_background=True):
     if platform_name != "windows":
         raise ValueError("Only the Windows reference platform is active during restructuring.")
@@ -93,8 +70,8 @@ def create_app(platform_name="windows", start_background=True):
 
     Repositories.initialize()
     repos = Repositories(static_root=root / "static", data_root=data_root)
-    settings = SettingsService(repos.settings, repos.meta)
     auth = AuthService(repos.settings, repos.meta)
+    settings = SettingsService(repos.settings, repos.meta, auth)
     app.secret_key = auth.app_secret_key()
 
     version = VersionService(application_root())
@@ -119,13 +96,7 @@ def create_app(platform_name="windows", start_background=True):
     theme.prepare()
     tv = TvService(repos, platform)
 
-    public_endpoints = {
-        "core.display", "core.health", "core.api_system_version",
-        "core.api_config", "core.api_leaderboard",
-        "auth.api_auth_status", "auth.api_auth_unlock",
-        "organization.team_logo", "product.preview", "product.product_close",
-        "tv.report_geometry", "themes.theme_asset",
-    }
+    public_endpoints = set(auth_web.CORE_PUBLIC_ENDPOINTS) | set(platform.public_endpoints)
     runtime = Runtime(
         repos=repos,
         settings=settings,
@@ -162,7 +133,7 @@ def create_app(platform_name="windows", start_background=True):
     app.register_blueprint(theme_web.blueprint(theme))
 
     platform.register(app, public_endpoints)
-    _install_auth_gate(app, runtime)
+    auth_web.install_gate(app, auth, public_endpoints)
 
     if start_background:
         scheduler.start()

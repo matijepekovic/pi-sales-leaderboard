@@ -19,6 +19,11 @@ from stats_core.windows import qr
 class WindowsPlatform:
     native_display_source = "windows"
 
+    # Endpoints this platform adds that stay reachable while settings are
+    # locked. Declared here so the allowlist is known before anything is
+    # registered, rather than discovered when an installer mutates a set.
+    public_endpoints = frozenset({"windows_theme_transforms"})
+
     def __init__(self, repos, data_dir: Path, version_service):
         self.repos = repos
         self.data_dir = Path(data_dir)

@@ -63,11 +63,14 @@ class AuthService:
         except Exception:
             return False
 
-    def pin_hash(self):
-        return str(self.settings_repo.get().get("settings_pin_hash") or "")
+    def pin_hash(self, settings=None):
+        # Callers that already hold a settings dict pass it in rather than
+        # re-reading, so a decision about that dict cannot disagree with it.
+        data = self.settings_repo.get() if settings is None else settings
+        return str(data.get("settings_pin_hash") or "")
 
-    def pin_is_set(self):
-        return bool(self.pin_hash().strip())
+    def pin_is_set(self, settings=None):
+        return bool(self.pin_hash(settings).strip())
 
     def attempt_unlock(self, pin, client_key="default", now=None):
         """Verify a PIN and throttle repeated failures from one client."""

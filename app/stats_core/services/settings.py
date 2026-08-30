@@ -71,9 +71,10 @@ def clean_source(raw):
 
 
 class SettingsService:
-    def __init__(self, settings_repo, meta_repo):
+    def __init__(self, settings_repo, meta_repo, auth):
         self.settings_repo = settings_repo
         self.meta_repo = meta_repo
+        self.auth = auth
 
     def get(self):
         return self.settings_repo.get()
@@ -81,7 +82,7 @@ class SettingsService:
     def public(self, settings=None):
         data = dict(settings if settings is not None else self.get())
         configured = bool(str(data.get("tableau_pat_secret") or "").strip())
-        has_pin = bool(str(data.get("settings_pin_hash") or "").strip())
+        has_pin = self.auth.pin_is_set(data)
         for key in SECRET_SETTING_KEYS:
             data.pop(key, None)
         data.pop("github_repo", None)
