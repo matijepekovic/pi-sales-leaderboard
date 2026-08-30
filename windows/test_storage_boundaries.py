@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Static and behavioral ownership tests for persistent storage."""
+"""Static and behavioral ownership/source contract tests."""
 from __future__ import annotations
 
 import unittest
 from pathlib import Path
 
 from test_repository_persistence import RepositoryPersistenceTests  # noqa: F401
+from test_tableau_source import TableauSourceContractTests  # noqa: F401
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "app"
