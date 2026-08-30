@@ -6,7 +6,9 @@ The application has explicit runtime ownership while preserving the production S
 
 `app/stats_core/bootstrap.py` is the only application composition root. It creates repositories, domain services, the screen registry, HTTP blueprints and the Windows platform adapter. Feature modules do not install or monkey-patch one another.
 
-## Storage
+## Configuration and storage
+
+`app/stats_core/config.py` owns application defaults, metric definitions and secret-setting keys. Repositories and services read those definitions directly; storage does not define UI or domain policy.
 
 `app/stats_core/repositories/` owns persistence adapters:
 
@@ -18,7 +20,7 @@ The application has explicit runtime ownership while preserving the production S
 - reusable asset library
 - protected applied-theme assets
 
-`app/stats_core/storage/sqlite.py` owns SQLite connection, schema initialization and migrations. Domain SQL belongs to repositories. Persistent data locations remain compatible with pre-refactor installs through the data-path migration.
+`app/stats_core/storage/sqlite.py` owns only SQLite connection, schema initialization and migrations. Domain SQL belongs to repositories. Persistent data locations remain compatible with pre-refactor installs through the data-path migration.
 
 ## Data and Tableau
 
