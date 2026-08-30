@@ -12,8 +12,9 @@
 <body>
 <!-- Full-bleed so what you approve here is exactly what the TV shows. -->
 <div id="productRoot"></div>
-<script src="/static/product-screen-v78.js?v=115"></script>
-<script src="/static/product-screen-market-v115.js?v=115"></script>
+<!-- The same runtime the TV uses. Its display stage is inert here: it bails
+     out when there is no window.render, which there is not on this page. -->
+<script src="/static/runtime/product.js"></script>
 <script>
 async function paint(){
   try{

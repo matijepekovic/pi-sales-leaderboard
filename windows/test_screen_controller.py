@@ -203,7 +203,7 @@ class ScreenControllerTests(unittest.TestCase):
         self.assertNotIn("product-rotation.js", settings_page)
 
     def test_the_display_script_no_longer_owns_rotation_state(self):
-        source = (APP / "static" / "display" / "keyboard-controls.js").read_text(encoding="utf-8")
+        source = (APP / "static" / "runtime" / "controls.js").read_text(encoding="utf-8")
         for gone in ("INACTIVITY_MS", "availableViews", "keyboardLeaderboardUrl", "sortableMetrics"):
             self.assertNotIn(gone, source, gone)
         self.assertIn("/api/controls/action", source)

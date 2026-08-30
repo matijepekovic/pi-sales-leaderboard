@@ -15,14 +15,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "app"
-DISPLAY_JS = APP / "static" / "display"
+RUNTIME_JS = APP / "static" / "runtime"
 TEMPLATES = APP / "templates" / "display"
 
 STAGE = re.compile(r"Display\.stage\(\s*(\d+)\s*,")
 
 
 def display_sources():
-    yield from sorted(DISPLAY_JS.glob("*.js"))
+    yield from sorted(RUNTIME_JS.glob("*.js"))
     yield from sorted(TEMPLATES.glob("*.html"))
 
 
@@ -78,7 +78,7 @@ class DisplayRuntimeTests(unittest.TestCase):
         # In product mode it draws a full-screen overlay and returns without
         # calling next(), so no theme or layout pass runs against a hidden
         # board. That only holds while it is the last stage.
-        product = (DISPLAY_JS / "product-tv.js").read_text(encoding="utf-8")
+        product = (RUNTIME_JS / "product.js").read_text(encoding="utf-8")
         product_orders = [int(o) for o in STAGE.findall(product)]
         self.assertEqual(len(product_orders), 1)
 
@@ -95,7 +95,7 @@ class DisplayRuntimeTests(unittest.TestCase):
         # every use of them into a ReferenceError at runtime only.
         display_page = (APP / "templates" / "display.html").read_text(encoding="utf-8")
         self.assertNotIn('type="module"', display_page)
-        for path in DISPLAY_JS.glob("*.js"):
+        for path in RUNTIME_JS.glob("*.js"):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("export ", text, path.name)
             self.assertFalse(
@@ -106,17 +106,31 @@ class DisplayRuntimeTests(unittest.TestCase):
         # Each of these runs its decorate step more than once on purpose, to
         # settle against images that have not decoded yet. A single pass looks
         # right on a warm cache and wrong on a cold one.
-        for name, delay in (
-            ("theme-corners.js", 80),
-            ("theme-extras.js", 80),
-            ("table-readability.js", 90),
+        theme = (RUNTIME_JS / "theme.js").read_text(encoding="utf-8")
+        formatting = (RUNTIME_JS / "formatting.js").read_text(encoding="utf-8")
+        for text, name, delay in (
+            (theme, "theme-corners", 80),
+            (theme, "theme-extras", 80),
+            (formatting, "table-readability", 90),
         ):
-            text = (DISPLAY_JS / name).read_text(encoding="utf-8")
             self.assertIn("requestAnimationFrame", text, name)
             self.assertRegex(text, rf"setTimeout\(.+,\s*{delay}\s*\)", name)
 
+    def test_every_script_a_template_asks_for_actually_exists(self):
+        # product_preview.html spent a while pointing at two files that had
+        # been renamed out from under it, so the page loaded two 404s and drew
+        # nothing. Nothing failed loudly; it just stopped working.
+        static = APP / "static"
+        missing = []
+        for template in (APP / "templates").rglob("*.html"):
+            text = template.read_text(encoding="utf-8")
+            for ref in re.findall(r"""(?:src|href)=["']?[^"'>]*?/static/([^"'?>]+)""", text):
+                if not (static / ref).exists():
+                    missing.append(f"{template.name} -> /static/{ref}")
+        self.assertEqual(missing, [])
+
     def test_number_scale_still_writes_nothing_at_one_hundred_percent(self):
-        text = (DISPLAY_JS / "number-scale.js").read_text(encoding="utf-8")
+        text = (RUNTIME_JS / "formatting.js").read_text(encoding="utf-8")
         self.assertIn("if(factor!==1) ensureStyles();", text)
         self.assertIn("if(factor!==1&&typeof fitLeaderboard", text)
 

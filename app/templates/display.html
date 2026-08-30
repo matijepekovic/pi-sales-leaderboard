@@ -1,48 +1,14 @@
 {% include "display/eligibility.html" %}
+
+{# The display is six runtimes. Each registers ordered stages, so this load
+   order is not what decides render order -- the stage numbers are.
+   It does still matter in one place: theme wraps window.fetch twice for the
+   Theme Builder preview and layout wraps it again on the outside, and that
+   chain decides whether a populated team previews with its real reps or with
+   sample rows. Theme before layout. #}
+<script src="/static/runtime/display.js"></script>
+<script src="/static/runtime/theme.js"></script>
+<script src="/static/runtime/layout.js"></script>
 <script src="/static/runtime/formatting.js"></script>
-
-{# Theme runtime #}
-<script src="/static/display/team-leads.js"></script>
-<script src="/static/display/theme-runtime.js"></script>
-<script src="/static/display/theme-team-cards.js"></script>
-<script src="/static/display/theme-team-layout.js"></script>
-<script src="/static/display/totals-font.js"></script>
-<script src="/static/display/champion-row-assets.js"></script>
-
-{# Display + layout runtime #}
-<script src="/static/display/whole-office-cleanup.js"></script>
-<script src="/static/display/comparison-team-cards.js"></script>
-<script src="/static/display/team-totals-footer.js"></script>
-<script src="/static/display/broadcast-views.js"></script>
-<script src="/static/display/whole-office-inline-team.js"></script>
-<script src="/static/display/whole-office-team-column.js"></script>
-
-{# Theme editor/runtime extensions #}
-<script src="/static/display/theme-corners.js"></script>
-<script src="/static/display/theme-extras.js"></script>
-<script src="/static/display/theme-colors.js"></script>
-<script src="/static/display/theme-transforms.js"></script>
-<script src="/static/display/theme-editor-preview.js"></script>
-<script src="/static/display/theme-editor-data-policy.js"></script>
-<script src="/static/display/theme-editor-force-theme.js"></script>
-<script src="/static/display/theme-editor-controls.js"></script>
-<script src="/static/display/tv-preview.js"></script>
-
-{# Controls runtime #}
-<script src="/static/display/keyboard-controls.js"></script>
-
-{# Formatting + table layout runtime #}
-<script src="/static/display/row-height-bounds.js"></script>
-<script src="/static/display/whole-office-table-priority.js"></script>
-<script src="/static/display/table-readability.js"></script>
-<script src="/static/display/tracked-stat-indicator.js"></script>
-<script src="/static/display/number-scale.js"></script>
-
-{# Product runtime #}
-<script src="/static/display/product-screen.js"></script>
-<script src="/static/display/product-market.js"></script>
-<script src="/static/display/product-tv.js"></script>
-
-{# Windows shell runtime #}
-<script src="/static/display/remote-qr-overlay.js"></script>
-<script src="/static/display/windows-desktop-menu.js"></script>
+<script src="/static/runtime/controls.js"></script>
+<script src="/static/runtime/product.js"></script>

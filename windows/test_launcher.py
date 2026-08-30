@@ -138,7 +138,7 @@ class RemoteQrTests(unittest.TestCase):
             remote_qr.OUTPUT = original_output
 
     def test_desktop_qr_double_click_opens_settings(self):
-        script = (APP_DIR / "static" / "display" / "remote-qr-overlay.js").read_text(encoding="utf-8")
+        script = (APP_DIR / "static" / "runtime" / "controls.js").read_text(encoding="utf-8")
         self.assertIn("pointer-events:auto", script)
         self.assertIn("addEventListener('dblclick'", script)
         self.assertIn("window.location.assign('/settings')", script)
@@ -248,22 +248,34 @@ class WindowsThemeEditorTests(unittest.TestCase):
         platform = (APP_DIR / "stats_core" / "platform" / "windows.py").read_text(encoding="utf-8")
         display = (APP_DIR / "templates" / "display.html").read_text(encoding="utf-8")
         settings = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
-        preview = (APP_DIR / "static" / "display" / "theme-editor-preview.js").read_text(encoding="utf-8")
-        runtime = (APP_DIR / "static" / "display" / "theme-transforms.js").read_text(encoding="utf-8")
+        preview = (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8")
+        runtime = (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8")
         host = (APP_DIR / "static" / "settings" / "theme-visual-editor.js").read_text(encoding="utf-8")
-        intuitive = (APP_DIR / "static" / "display" / "theme-editor-controls.js").read_text(encoding="utf-8")
+        intuitive = (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8")
         help_ui = (APP_DIR / "static" / "settings" / "theme-editor-help.js").read_text(encoding="utf-8")
-        policy = (APP_DIR / "static" / "display" / "theme-editor-data-policy.js").read_text(encoding="utf-8")
+        policy = (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8")
         stability = (APP_DIR / "static" / "settings" / "theme-stability.js").read_text(encoding="utf-8")
 
         self.assertIn("theme_editor.install(app, self.repos, public_endpoints)", platform)
         self.assertIn("stats_core.bootstrap", server_entry)
         self.assertNotIn("theme_editor.install", server_entry)
-        self.assertIn("/static/display/theme-transforms.js", display)
-        self.assertIn("/static/display/theme-editor-preview.js", display)
-        self.assertIn("/static/display/theme-editor-data-policy.js", display)
-        self.assertLess(display.index("theme-editor-preview.js"), display.index("theme-editor-data-policy.js"))
-        self.assertLess(display.index("theme-editor-data-policy.js"), display.index("tv-preview.js"))
+        # window.fetch is wrapped three times and the order decides whether a
+        # populated team previews with its real reps or with sample rows:
+        # preview (sample data) -> data-policy (real when the team has members)
+        # -> tv-preview (rewrites ?mode=). The first two sit in the theme
+        # runtime in that order; the third is in layout, which loads after.
+        theme_runtime = (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8")
+        layout_runtime = (APP_DIR / "static" / "runtime" / "layout.js").read_text(encoding="utf-8")
+        self.assertIn("theme-transforms.js", theme_runtime)
+        self.assertLess(
+            theme_runtime.index("theme-editor-preview.js"),
+            theme_runtime.index("theme-editor-data-policy.js"),
+        )
+        self.assertIn("tv-preview.js", layout_runtime)
+        self.assertLess(
+            display.index("/static/runtime/theme.js"),
+            display.index("/static/runtime/layout.js"),
+        )
         self.assertIn("/static/settings/theme-visual-editor.js", settings)
         self.assertIn("/static/settings/theme-stability.js", settings)
         self.assertIn('addEventListener("dblclick"', preview)
@@ -293,7 +305,7 @@ class WindowsThemeEditorTests(unittest.TestCase):
         self.assertIn("#teamDesignOverlay #tdNewSample{display:none!important}", stability)
         self.assertIn("Real team stats are used when members exist", stability)
 
-        self.assertIn("/static/display/theme-editor-controls.js", display)
+        self.assertIn("theme-editor-controls.js", (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8"))
         self.assertIn("/static/settings/theme-editor-help.js", settings)
         self.assertIn("Double-click to add", intuitive)
         self.assertIn("Replace Image", intuitive)
@@ -309,10 +321,10 @@ class WindowsThemeEditorTests(unittest.TestCase):
         settings = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
         display = (APP_DIR / "templates" / "display.html").read_text(encoding="utf-8")
         editor = (APP_DIR / "static" / "settings" / "theme-color-editor.js").read_text(encoding="utf-8")
-        runtime = (APP_DIR / "static" / "display" / "theme-colors.js").read_text(encoding="utf-8")
+        runtime = (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8")
 
         self.assertIn("/static/settings/theme-color-editor.js", settings)
-        self.assertIn("/static/display/theme-colors.js", display)
+        self.assertIn("theme-colors.js", (APP_DIR / "static" / "runtime" / "theme.js").read_text(encoding="utf-8"))
         self.assertIn("Frame & Borders", editor)
         self.assertIn("Main Accent", editor)
         self.assertIn("Shadow / Depth", editor)

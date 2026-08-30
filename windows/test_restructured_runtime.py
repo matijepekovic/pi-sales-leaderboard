@@ -226,8 +226,9 @@ class RestructuredRuntimeTests(unittest.TestCase):
         formatting = (APP / "static" / "runtime" / "formatting.js").read_text(encoding="utf-8")
         team_builder = (APP / "static" / "settings" / "team-builder-workflow.js").read_text(encoding="utf-8")
         for token in (
-            "Theme runtime", "Display + layout runtime", "Controls runtime", "Product runtime",
-            "/static/display/keyboard-controls.js", "/static/runtime/formatting.js",
+            "/static/runtime/display.js", "/static/runtime/theme.js",
+            "/static/runtime/layout.js", "/static/runtime/formatting.js",
+            "/static/runtime/controls.js", "/static/runtime/product.js",
         ):
             self.assertIn(token, display)
         self.assertIn("minimumFractionDigits: 2", formatting)

@@ -1,3 +1,18 @@
+/* Product runtime -- the Product Close Rates screen.
+
+   A full-screen overlay. Its stage is the outermost one and it
+   returns without calling next(), so in product mode none of the
+   screen, theme or layout passes run against a hidden board.
+
+   Consolidated from the versioned patch stack. Each section below was its own
+   file, wrapping the previous one by reassigning render(). They now register
+   ordered stages instead, so this grouping is presentation only -- the
+   execution order is the numbers, not the file boundaries. */
+
+
+/* ------------------------------------------------------------------
+   product-screen.js   (stage/style order 290)
+   ------------------------------------------------------------------ */
 /* v78 Product Close Rates screen.
 
    Standalone on purpose: one function draws the whole screen into a
@@ -172,4 +187,100 @@
   }
 
   window.renderProductScreen=renderProductScreen;
+})();
+
+
+/* ------------------------------------------------------------------
+   product-market.js   (stage/style order 300)
+   ------------------------------------------------------------------ */
+/* v115: annotate the existing Product Close Rates renderer with market context. */
+(function(){
+  if(typeof window.renderProductScreen!=="function") return;
+  const base=window.renderProductScreen;
+
+  function ensureStyle(doc){
+    if(doc.getElementById("v115-product-context-style")) return;
+    const style=doc.createElement("style");
+    style.id="v115-product-context-style";
+    style.textContent=`
+      .v115-product-context{position:absolute;top:3.2vh;right:3.2vw;
+        display:flex;align-items:center;gap:.8vh;max-width:38vw;
+        padding:.75vh 1.05vw;border:1px solid #263852;border-radius:999px;
+        background:rgba(9,18,32,.88);color:#d7e4f6;font-size:1.85vh;
+        font-weight:800;letter-spacing:.04em;white-space:nowrap;overflow:hidden;
+        text-overflow:ellipsis}
+      .v115-product-temp{color:#f4c95d}
+    `;
+    doc.head.appendChild(style);
+  }
+
+  window.renderProductScreen=function(container,data){
+    base(container,data);
+    if(!container) return;
+    const doc=container.ownerDocument||document;
+    ensureStyle(doc);
+    const screen=container.querySelector(".v78-screen");
+    if(!screen) return;
+    const market=String(data?.market||"").trim();
+    if(!market) return;
+    const badge=doc.createElement("div");
+    badge.className="v115-product-context";
+    const temp=data?.temporary?'<span class="v115-product-temp">TEMP</span> · ':"";
+    badge.innerHTML=`${temp}<span>${String(market).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}</span>`;
+    screen.appendChild(badge);
+  };
+})();
+
+
+/* ------------------------------------------------------------------
+   product-tv.js   (stage/style order 310)
+   ------------------------------------------------------------------ */
+/* v115: promote the existing Product Close Rates preview renderer to the TV.
+   It is a full-screen overlay so none of the rep/team layout rules can affect
+   the product cards. The QR overlay remains above it. */
+(function(){
+  if(typeof window.renderProductScreen!=="function"||typeof window.render!=="function") return;
+  let overlay=null;
+  let lastProductSignature="";
+
+  function ensureOverlay(){
+    if(overlay) return overlay;
+    overlay=document.createElement("div");
+    overlay.id="productTvV115";
+    overlay.style.cssText=[
+      "position:fixed","inset:0","z-index:2147482000","display:none",
+      "background:#0b1220","pointer-events:none","overflow:hidden"
+    ].join(";");
+    overlay.setAttribute("aria-hidden","true");
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  Display.stage(310, function(data, next){
+    if(data?.mode==="product_close"){
+      const root=ensureOverlay();
+      root.style.display="block";
+      const productData={
+        rows:data.rows||[],
+        start:data.product_start||"",
+        end:data.product_end||"",
+        market:data.product_market||"",
+        icons:data.product_icons||{},
+        temporary:!!data.product_temporary
+      };
+      const signature=JSON.stringify([
+        productData.rows.map(row=>[row.product,Number(row.close_rate||0)]),
+        productData.start,productData.end,productData.market,
+        productData.icons,productData.temporary
+      ]);
+      if(signature!==lastProductSignature){
+        window.renderProductScreen(root,productData);
+        lastProductSignature=signature;
+      }
+      return;
+    }
+    lastProductSignature="";
+    if(overlay) overlay.style.display="none";
+    return next(data);
+  });
 })();
