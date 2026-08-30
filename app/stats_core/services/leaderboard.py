@@ -1,7 +1,7 @@
 """Leaderboard calculations shared by registered screens."""
 from __future__ import annotations
 
-from stats_core.metrics import METRIC_DEFS
+from stats_core.config import METRIC_DEFS
 from stats_core.services.settings import CORE_MODES, NON_DISPLAY_METRICS
 
 SUM_FIELDS = {
