@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Static ownership tests for persistent storage."""
+"""Static and behavioral ownership tests for persistent storage."""
 from __future__ import annotations
 
 import unittest
 from pathlib import Path
+
+from test_repository_persistence import RepositoryPersistenceTests  # noqa: F401
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "app"
