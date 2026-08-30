@@ -7,15 +7,12 @@ process logging and serving the already-composed Flask application.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
-
-def _persistent_data_dir() -> Path:
-    return Path.home() / ".local" / "share" / "pi-tableau-leaderboard"
+from stats_core.paths import prepare_data_dir
 
 
 def _install_file_logging() -> None:
-    log_dir = _persistent_data_dir() / "logs"
+    log_dir = prepare_data_dir() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log = (log_dir / "windows-server.log").open(
         "a", encoding="utf-8", buffering=1

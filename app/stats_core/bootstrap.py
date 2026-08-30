@@ -11,8 +11,9 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request, session
 
+from stats_core.paths import prepare_data_dir
 from stats_core.platform.windows import WindowsPlatform
-from stats_core.repositories import Repositories, persistent_data_dir
+from stats_core.repositories import Repositories
 from stats_core.runtime import Runtime
 from stats_core.screens.registry import ScreenRegistry
 from stats_core.services.auth import AuthService
@@ -83,6 +84,7 @@ def create_app(platform_name="windows", start_background=True):
         raise ValueError("Only the Windows reference platform is active during restructuring.")
 
     root = asset_root()
+    data_root = prepare_data_dir()
     app = Flask(
         "stats",
         template_folder=str(root / "templates"),
@@ -91,15 +93,15 @@ def create_app(platform_name="windows", start_background=True):
     app.config["JSON_SORT_KEYS"] = False
 
     Repositories.initialize()
-    repos = Repositories(static_root=root / "static", data_root=persistent_data_dir())
+    repos = Repositories(static_root=root / "static", data_root=data_root)
     entitlement = EntitlementService()
     settings = SettingsService(repos.settings, repos.meta, entitlement)
     auth = AuthService(repos.settings, repos.meta)
     app.secret_key = auth.app_secret_key()
 
     version = VersionService(application_root())
-    platform = WindowsPlatform(repos, persistent_data_dir(), version)
-    organization = OrganizationService(repos, persistent_data_dir() / "team-logos")
+    platform = WindowsPlatform(repos, data_root, version)
+    organization = OrganizationService(repos, data_root / "team-logos")
     tableau = TableauService()
     pull_policy = RepPullPolicy(repos, tableau)
     rep_refresh = RepRefreshService(repos, tableau, pull_policy)

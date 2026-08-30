@@ -3,9 +3,10 @@ import sqlite3
 import threading
 import time
 from contextlib import contextmanager
-from pathlib import Path
 
-DATA_DIR = Path.home() / ".local" / "share" / "pi-tableau-leaderboard"
+from stats_core.paths import prepare_data_dir
+
+DATA_DIR = prepare_data_dir()
 DB_PATH = DATA_DIR / "leaderboard.db"
 _LOCK = threading.RLock()
 
