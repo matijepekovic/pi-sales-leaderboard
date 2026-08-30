@@ -13,8 +13,8 @@ APP_DIR = ROOT_DIR / "app"
 sys.path.insert(0, str(WINDOWS_DIR))
 sys.path.insert(0, str(APP_DIR))
 import launcher  # noqa: E402
-import remote_qr_v109  # noqa: E402
-import windows_theme_editor_v122  # noqa: E402
+import remote_qr  # noqa: E402
+import windows_theme_editor  # noqa: E402
 
 
 class FakeProcess:
@@ -112,30 +112,30 @@ class LauncherBehaviorTests(unittest.TestCase):
 
 class RemoteQrTests(unittest.TestCase):
     def test_generate_uses_current_lan_address(self):
-        original_lan = remote_qr_v109._lan_ipv4
-        original_static = remote_qr_v109.STATIC_DIR
-        original_output = remote_qr_v109.OUTPUT
+        original_lan = remote_qr._lan_ipv4
+        original_static = remote_qr.STATIC_DIR
+        original_output = remote_qr.OUTPUT
         try:
             with tempfile.TemporaryDirectory() as temp:
-                remote_qr_v109._lan_ipv4 = lambda: "192.168.50.25"
-                remote_qr_v109.STATIC_DIR = Path(temp)
-                remote_qr_v109.OUTPUT = Path(temp) / "remote-qr-v109.svg"
+                remote_qr._lan_ipv4 = lambda: "192.168.50.25"
+                remote_qr.STATIC_DIR = Path(temp)
+                remote_qr.OUTPUT = Path(temp) / "remote-qr-v109.svg"
 
                 self.assertEqual(
-                    remote_qr_v109.remote_url(),
+                    remote_qr.remote_url(),
                     "http://192.168.50.25:8765/settings",
                 )
                 self.assertEqual(
-                    remote_qr_v109.generate(),
+                    remote_qr.generate(),
                     "http://192.168.50.25:8765/settings",
                 )
-                svg = remote_qr_v109.OUTPUT.read_text(encoding="utf-8")
+                svg = remote_qr.OUTPUT.read_text(encoding="utf-8")
                 self.assertIn("<svg", svg)
                 self.assertIn("fill=\"#fff\"", svg)
         finally:
-            remote_qr_v109._lan_ipv4 = original_lan
-            remote_qr_v109.STATIC_DIR = original_static
-            remote_qr_v109.OUTPUT = original_output
+            remote_qr._lan_ipv4 = original_lan
+            remote_qr.STATIC_DIR = original_static
+            remote_qr.OUTPUT = original_output
 
     def test_desktop_qr_double_click_opens_settings(self):
         script = (APP_DIR / "static" / "remote-qr-overlay-v110.js").read_text(encoding="utf-8")
@@ -188,7 +188,7 @@ class RemoteQrTests(unittest.TestCase):
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
         server_entry = (WINDOWS_DIR / "server_entry.py").read_text(encoding="utf-8")
         platform = (APP_DIR / "stats_core" / "platform" / "windows.py").read_text(encoding="utf-8")
-        endpoint = (APP_DIR / "windows_tableau_login_v124.py").read_text(encoding="utf-8")
+        endpoint = (APP_DIR / "windows_tableau_login.py").read_text(encoding="utf-8")
 
         self.assertIn("windows-tableau-login-v124.js", template)
         self.assertIn('document.getElementById("v90Server")', ui)
@@ -199,9 +199,9 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("collectDataSource=function", ui)
         self.assertIn("source:{...current,...values}", ui)
         self.assertIn("/api/windows/tableau-login/test", ui)
-        self.assertIn("windows_tableau_login_v124.install(app)", platform)
+        self.assertIn("windows_tableau_login.install(app)", platform)
         self.assertIn("stats_core.bootstrap", server_entry)
-        self.assertNotIn("windows_tableau_login_v124.install", server_entry)
+        self.assertNotIn("windows_tableau_login.install", server_entry)
         self.assertIn("ConfiguredTableauSource", endpoint)
         self.assertIn("tableau.signin()", endpoint)
         self.assertNotIn("save_settings", endpoint)
@@ -228,7 +228,7 @@ class RemoteQrTests(unittest.TestCase):
 
 class WindowsThemeEditorTests(unittest.TestCase):
     def test_transform_values_are_bounded(self):
-        cleaned = windows_theme_editor_v122.clean_transform({
+        cleaned = windows_theme_editor.clean_transform({
             "x": 999,
             "y": -999,
             "scale_x": 1,
@@ -256,9 +256,9 @@ class WindowsThemeEditorTests(unittest.TestCase):
         policy = (APP_DIR / "static" / "theme-editor-data-policy-v126.js").read_text(encoding="utf-8")
         stability = (APP_DIR / "static" / "windows-theme-stability-v126.js").read_text(encoding="utf-8")
 
-        self.assertIn("windows_theme_editor_v122.install(app, public_endpoints)", platform)
+        self.assertIn("windows_theme_editor.install(app, public_endpoints)", platform)
         self.assertIn("stats_core.bootstrap", server_entry)
-        self.assertNotIn("windows_theme_editor_v122.install", server_entry)
+        self.assertNotIn("windows_theme_editor.install", server_entry)
         self.assertIn("theme-transform-runtime-v122.js", display)
         self.assertIn("theme-editor-preview-v122.js", display)
         self.assertIn("theme-editor-data-policy-v126.js", display)
