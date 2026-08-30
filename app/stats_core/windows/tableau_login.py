@@ -3,12 +3,11 @@ from __future__ import annotations
 
 from flask import jsonify, request
 
-from database import get_settings
 from sources.tableau_configured import ConfiguredTableauSource, config_of
 from sources.tableau_v36_base import TableauError
 
 
-def install(app):
+def install(app, settings_repo):
     if "windows_tableau_login_test" in app.view_functions:
         return
 
@@ -34,7 +33,7 @@ def install(app):
                 "error": f"Enter {', '.join(missing)}.",
             }), 400
 
-        settings = dict(get_settings() or {})
+        settings = dict(settings_repo.get() or {})
         source = dict(settings.get("source") or {})
         source.update({"server": server, "site": site, "pat_name": pat_name})
         settings["source"] = source
