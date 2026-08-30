@@ -72,6 +72,16 @@ def blueprint(runtime):
         sort_override = request.args.get("sort_metric")
         pair = request.args.getlist("team")
         settings = runtime.settings.get()
+
+        # An explicit mode always wins: the Theme Builder preview asks for one
+        # particular team and must not be dragged around by whoever is holding
+        # the macro pad. Only an unqualified request follows the controller.
+        control = runtime.screen_controller.state(settings)
+        if mode is None and control["active"]:
+            mode = control["view"]
+            sort_override = sort_override or control["sort_metric"]
+            pair = pair or (control["pair"] or [])
+
         payload = runtime.screens.render(
             mode,
             sort_metric_override=sort_override,

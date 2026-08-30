@@ -27,12 +27,40 @@ QR_DEFAULT_Y = 0.0
 
 
 class ControlsService:
-    def __init__(self, repos, screens):
+    def __init__(self, repos, screens, screen_controller):
         self.repos = repos
         self.screens = screens
+        self.screen_controller = screen_controller
 
     def available_views(self):
         return self.screens.cycle_views()
+
+    def vocabulary(self, settings=None):
+        """Everything a control surface needs, so nothing has to hardcode it.
+
+        The display and the settings page both used to carry their own copy of
+        the action list, the default key map and the normalization rules. They
+        ask for this instead.
+        """
+        settings = settings or self.repos.settings.get()
+        current = self.current(settings)
+        return {
+            "actions": list(ACTIONS),
+            "defaults": dict(DEFAULT_KEYS),
+            "allowed_inputs": list(ALLOWED_INPUTS),
+            "available_views": self.screens.cycle_view_options(),
+            "views": current["views"],
+            "keys": current["keys"],
+            "state": self.screen_controller.state(settings),
+        }
+
+    def dispatch(self, action):
+        if action not in ACTIONS:
+            raise ValidationError(f"Unknown control action: {action!r}")
+        return self.screen_controller.dispatch(action)
+
+    def release(self):
+        return self.screen_controller.release()
 
     @staticmethod
     def _normalize_input(value):

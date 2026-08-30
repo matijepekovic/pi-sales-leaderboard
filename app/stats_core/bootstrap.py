@@ -11,6 +11,7 @@ from pathlib import Path
 
 from flask import Flask
 
+from stats_core.config import METRIC_DEFS
 from stats_core.paths import prepare_data_dir
 from stats_core.platform import create_platform
 from stats_core.repositories import Repositories
@@ -26,6 +27,7 @@ from stats_core.services.product_refresh import ProductRefreshService
 from stats_core.services.pull_policy import RepPullPolicy
 from stats_core.services.rep_refresh import RepRefreshService
 from stats_core.services.scheduler import SchedulerService
+from stats_core.services.screen_controller import ScreenController
 from stats_core.services.settings import SettingsService
 from stats_core.services.snapshot import DataSnapshotService
 from stats_core.services.source import SourceService
@@ -42,6 +44,7 @@ from stats_core.web import organization as organization_web
 from stats_core.web import product as product_web
 from stats_core.web import source as source_web
 from stats_core.web import system as system_web
+from stats_core.web import temporary_date as temporary_date_web
 from stats_core.web import tv as tv_web
 
 
@@ -88,7 +91,8 @@ def create_app(platform_name="windows", start_background=True):
     leaderboard = LeaderboardService(repos, organization, snapshots)
     screens = ScreenRegistry(leaderboard, products, organization)
     source = SourceService(repos, rep_refresh, preview, tableau)
-    controls = ControlsService(repos, screens)
+    screen_controller = ScreenController(repos, screens, METRIC_DEFS)
+    controls = ControlsService(repos, screens, screen_controller)
     scheduler = SchedulerService(repos, rep_refresh, products)
     theme = ThemeService(repos)
     theme.prepare()
@@ -112,6 +116,7 @@ def create_app(platform_name="windows", start_background=True):
         screens=screens,
         source=source,
         controls=controls,
+        screen_controller=screen_controller,
         scheduler=scheduler,
         theme=theme,
         version=version,
@@ -126,7 +131,8 @@ def create_app(platform_name="windows", start_background=True):
     app.register_blueprint(organization_web.blueprint(organization))
     app.register_blueprint(source_web.blueprint(source))
     app.register_blueprint(product_web.blueprint(products))
-    app.register_blueprint(controls_web.blueprint(controls, temporary_date))
+    app.register_blueprint(controls_web.blueprint(controls))
+    app.register_blueprint(temporary_date_web.blueprint(temporary_date))
     app.register_blueprint(tv_web.blueprint(tv))
     app.register_blueprint(theme_web.blueprint(theme))
     app.register_blueprint(system_web.blueprint(platform))

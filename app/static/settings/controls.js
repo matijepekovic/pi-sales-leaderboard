@@ -4,6 +4,7 @@
 (function(){
   const $=id=>document.getElementById(id);
   let snapshot=null;
+  let vocabulary=null;
 
   const DEFAULT_KEYS={
     previous:"ArrowLeft",
@@ -98,16 +99,14 @@
     return true;
   }
 
-  function viewChoices(data){
-    const teams=(data?.team_definitions||[])
-      .map(team=>String(team?.name||"").trim())
-      .filter(Boolean);
-    return [
-      {value:"whole_office",label:"Whole Office"},
-      {value:"team_vs_team",label:"Team vs Team"},
-      {value:"all_teams",label:"All Teams"},
-      ...teams.map(name=>({value:`per_team::${name}`,label:`Team — ${name}`}))
-    ];
+  // The screen list comes from the server. This file used to write its own,
+  // which is why it silently missed Product Close Rates and needed a separate
+  // script to inject that one checkbox afterwards.
+  function viewChoices(){
+    return (vocabulary?.available_views||[]).map(item=>({
+      value:String(item?.value??""),
+      label:String(item?.label??item?.value??"")
+    })).filter(item=>item.value);
   }
 
   function installRotationSection(){
@@ -163,9 +162,13 @@
 
   async function loadConfig(){
     try{
-      const response=await fetch("/api/config",{cache:"no-store"});
-      if(!response.ok) throw new Error("Could not load controls.");
-      snapshot=await response.json();
+      const [config,controls]=await Promise.all([
+        fetch("/api/config",{cache:"no-store"}),
+        fetch("/api/keyboard-controls",{cache:"no-store"})
+      ]);
+      if(!config.ok||!controls.ok) throw new Error("Could not load controls.");
+      snapshot=await config.json();
+      vocabulary=(await controls.json())?.keyboard||null;
       paintRotation();
       paintKeys();
     }catch(e){
@@ -177,8 +180,8 @@
 
   function paintRotation(){
     const list=$("v112RotationList");
-    if(!list||!snapshot) return;
-    const choices=viewChoices(snapshot);
+    if(!list||!snapshot||!vocabulary) return;
+    const choices=viewChoices();
     const raw=snapshot.settings?.keyboard_cycle_views;
     const selected=Array.isArray(raw)&&raw.length?new Set(raw.map(String)):new Set(choices.map(item=>item.value));
     list.innerHTML=choices.map(item=>`

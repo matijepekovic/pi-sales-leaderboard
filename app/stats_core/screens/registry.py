@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from stats_core.services.product import PRODUCT_MODE
+from stats_core.services.product import PRODUCT_LABEL, PRODUCT_MODE
 from stats_core.services.settings import CORE_MODES, split_active_mode
 from .all_teams import AllTeamsScreen
 from .per_team import PerTeamScreen
@@ -40,12 +40,25 @@ class ScreenRegistry:
         return [{"key": key, "label": label} for key, label in CORE_MODES.items()]
 
     def cycle_views(self):
-        views = ["whole_office", "team_vs_team", "all_teams", PRODUCT_MODE]
+        return [option["value"] for option in self.cycle_view_options()]
+
+    def cycle_view_options(self):
+        """The rotation, with labels, so no control surface writes its own list.
+
+        The settings page used to hardcode three screens here and needed a
+        separate script to inject the fourth. Both ask this instead.
+        """
+        options = [
+            {"value": "whole_office", "label": CORE_MODES["whole_office"]},
+            {"value": "team_vs_team", "label": CORE_MODES["team_vs_team"]},
+            {"value": "all_teams", "label": CORE_MODES["all_teams"]},
+            {"value": PRODUCT_MODE, "label": PRODUCT_LABEL},
+        ]
         for team in self.organization.definitions_for_api():
             name = str(team.get("name") or "").strip()
             if name:
-                views.append(f"per_team::{name}")
-        return views
+                options.append({"value": f"per_team::{name}", "label": f"Team — {name}"})
+        return options
 
     def render(self, raw_mode=None, sort_metric_override=None, team_pair=None):
         settings = self.leaderboard.repos.settings.get()

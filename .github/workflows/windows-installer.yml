@@ -104,6 +104,10 @@ jobs:
         shell: pwsh
         run: python windows/test_windows_update.py
 
+      - name: Test screen controller
+        shell: pwsh
+        run: python windows/test_screen_controller.py
+
       - name: Test updater diagnostics
         shell: pwsh
         run: python windows/test_windows_update_diagnostics.py

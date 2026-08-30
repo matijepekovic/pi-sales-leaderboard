@@ -721,10 +721,9 @@ function render(data){
 
 async function load(){
   try{
-    const leaderboardUrl = typeof window.keyboardLeaderboardUrl === "function"
-      ? window.keyboardLeaderboardUrl("/api/leaderboard")
-      : "/api/leaderboard";
-    const res = await fetch(leaderboardUrl, {cache:"no-store"});
+    // No mode in the URL: the server draws whatever the controls are steering,
+    // or the configured view when they are not steering anything.
+    const res = await fetch("/api/leaderboard", {cache:"no-store"});
     if(!res.ok) throw new Error();
     const data = await res.json();
 

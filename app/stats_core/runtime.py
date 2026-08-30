@@ -19,6 +19,7 @@ class Runtime:
     screens: object
     source: object
     controls: object
+    screen_controller: object
     scheduler: object
     theme: object
     version: object
