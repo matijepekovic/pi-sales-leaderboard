@@ -11,6 +11,9 @@ from sources.tableau_mapped import describe_report, suggest_mapping, unmapped_co
 DATE_KEYS = ("data_date_mode", "data_date_start", "data_date_end")
 _FILTER_VALUE_LIMIT = 1000
 _FILTER_ROW_LIMIT = 5000
+_DISCOVERY_PAGE_SIZE = 100
+_DISCOVERY_MAX_RESULTS = 1000
+_DISCOVERY_TIMEOUT_SECONDS = 15
 
 
 def source_config(settings):
@@ -32,18 +35,61 @@ def _books(payload):
     return books if isinstance(books, list) else []
 
 
+def _pagination_total(payload):
+    if not isinstance(payload, dict):
+        return None
+    pagination = payload.get("pagination")
+    if not isinstance(pagination, dict):
+        return None
+    try:
+        return int(pagination.get("totalAvailable"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _paged_workbooks(source, url, token):
+    """Read workbook choices in bounded, lightweight Tableau pages."""
+    books = []
+    page_number = 1
+    while len(books) < _DISCOVERY_MAX_RESULTS:
+        separator = "&" if "?" in url else "?"
+        status, raw = source._request(
+            f"{url}{separator}pageSize={_DISCOVERY_PAGE_SIZE}"
+            f"&pageNumber={page_number}&fields=name,contentUrl",
+            token=token,
+            timeout=_DISCOVERY_TIMEOUT_SECONDS,
+        )
+        if status != 200:
+            return books
+
+        payload = _base.json.loads(raw)
+        batch = _books(payload)
+        books.extend(batch)
+        total = _pagination_total(payload)
+        if (
+            not batch
+            or len(batch) < _DISCOVERY_PAGE_SIZE
+            or (total is not None and len(books) >= total)
+        ):
+            break
+        page_number += 1
+
+    return books[:_DISCOVERY_MAX_RESULTS]
+
+
 def list_workbooks(settings):
     """Return workbooks visible to the configured Tableau token."""
     source, base, token, site_id = _signed_in(settings)
     try:
-        status, raw = source._request(
-            f"{base}/sites/{site_id}/workbooks?pageSize=1000", token=token
+        books = _paged_workbooks(
+            source, f"{base}/sites/{site_id}/workbooks", token
         )
-        books = _books(_base.json.loads(raw)) if status == 200 else []
 
         if not books:
             status, raw = source._request(
-                f"{base}/sites/{site_id}/users?pageSize=1000", token=token
+                f"{base}/sites/{site_id}/users?pageSize=1&fields=id",
+                token=token,
+                timeout=_DISCOVERY_TIMEOUT_SECONDS,
             )
             users = []
             if status == 200:
@@ -54,12 +100,11 @@ def list_workbooks(settings):
                 uid = str(user.get("id") or "").strip()
                 if not uid:
                     continue
-                status, raw = source._request(
-                    f"{base}/sites/{site_id}/users/{uid}/workbooks?pageSize=1000",
-                    token=token,
+                books = _paged_workbooks(
+                    source,
+                    f"{base}/sites/{site_id}/users/{uid}/workbooks",
+                    token,
                 )
-                if status == 200:
-                    books = _books(_base.json.loads(raw))
 
         rows = [
             {

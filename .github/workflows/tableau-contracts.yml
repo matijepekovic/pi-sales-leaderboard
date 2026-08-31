@@ -1,0 +1,50 @@
+name: Tableau source contracts
+
+on:
+  pull_request:
+    branches:
+      - production
+    paths:
+      - "app/sources/**"
+      - "app/stats_core/services/source.py"
+      - "app/stats_core/web/source.py"
+      - "app/static/settings/data-source.js"
+      - "windows/test_tableau_source.py"
+      - "windows/test_tableau_discovery.py"
+      - "requirements.txt"
+      - ".github/workflows/tableau-contracts.yml"
+  push:
+    branches:
+      - production
+    paths:
+      - "app/sources/**"
+      - "app/stats_core/services/source.py"
+      - "app/stats_core/web/source.py"
+      - "app/static/settings/data-source.js"
+      - "windows/test_tableau_source.py"
+      - "windows/test_tableau_discovery.py"
+      - "requirements.txt"
+      - ".github/workflows/tableau-contracts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  tableau-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Test Tableau export contracts
+        run: python windows/test_tableau_source.py
+
+      - name: Test Tableau discovery contracts
+        run: python windows/test_tableau_discovery.py
