@@ -271,7 +271,7 @@ jobs:
           }
 
       - name: Sign and verify public release manifest
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[publish]')) }}
         shell: pwsh
         env:
           UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
@@ -299,7 +299,7 @@ jobs:
           }
 
       - name: Publish signed public Windows release
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[publish]')) }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.UPDATE_PUBLISH_TOKEN }}
