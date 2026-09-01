@@ -115,7 +115,11 @@ class SourceService:
         adapter, app_settings = self._adapter_context(source)
         values = adapter.report_values(app_settings, source)
         return [
-            {"id": str(item.get("id") or ""), "label": str(item.get("label") or "")}
+            {
+                "id": str(item.get("id") or ""),
+                "label": str(item.get("label") or ""),
+                "group": str(item.get("group") or "Other").strip() or "Other",
+            }
             for item in (values or [])
             if isinstance(item, dict) and str(item.get("id") or "").strip()
         ]
