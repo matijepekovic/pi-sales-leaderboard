@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from test_filter_repository import FilterRepositoryTests  # noqa: F401
 from test_repository_persistence import RepositoryPersistenceTests  # noqa: F401
 from test_tableau_source import TableauSourceContractTests  # noqa: F401
 
@@ -34,6 +35,7 @@ class StorageBoundaryTests(unittest.TestCase):
             "settings.py",
             "meta.py",
             "products.py",
+            "filters.py",
         ):
             text = (repository_root / filename).read_text(encoding="utf-8")
             self.assertIn("stats_core.storage", text, filename)
