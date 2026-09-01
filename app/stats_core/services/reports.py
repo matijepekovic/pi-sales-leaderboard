@@ -1,35 +1,25 @@
-"""Normalized report workflows independent of source vendors."""
+"""Normalized Report workflows independent of source vendors."""
 from __future__ import annotations
 
 import time
 import uuid
 
-from stats_core.config import METRIC_DEFS
 from stats_core.errors import ValidationError
-from stats_core.repositories.data_catalog import PRODUCT_REPORT_ID, REP_REPORT_ID
-
-_PRODUCT_FIELDS = [
-    {"key": "product", "label": "Product", "type": "text"},
-    {"key": "close_rate", "label": "Close Rate", "type": "percent"},
-]
 
 
 class ReportService:
-    def __init__(self, repos, adapters, rep_refresh, product_refresh):
+    """Owns Report definitions and normalized pulled snapshots.
+
+    Source adapters return table-shaped data. Everything downstream reads only
+    the normalized Report contract stored by ``report_data``.
+    """
+
+    def __init__(self, repos, adapters):
         self.repos = repos
         self.adapters = dict(adapters or {})
-        self.rep_refresh = rep_refresh
-        self.product_refresh = product_refresh
 
     def prepare(self):
-        try:
-            report = self.get(REP_REPORT_ID)
-            source = self._source(report.get("source_id"))
-            adapter, app_settings = self._adapter_settings(source)
-            scope = adapter.rep_scope(app_settings, source, report)
-        except Exception:
-            scope = None
-        return self.rep_refresh.prepare(scope)
+        return None
 
     def _catalog(self):
         return self.repos.data_catalog.get()
@@ -41,7 +31,7 @@ class ReportService:
         return source
 
     def _adapter(self, source):
-        key = str(source.get("adapter") or "")
+        key = str(source.get("adapter") or "").strip()
         adapter = self.adapters.get(key)
         if not adapter:
             raise ValidationError(f"Source adapter '{key}' is not available.")
@@ -67,36 +57,19 @@ class ReportService:
             item["fields"] = self.fields(item["id"])
             item.update(self.status(item["id"]))
             rows.append(item)
-        return rows
+        return sorted(rows, key=lambda item: str(item.get("name") or "").casefold())
 
     def fields(self, report_id):
-        report = self.get(report_id)
-        kind = str(report.get("kind") or "table")
-        if kind == "rep_performance":
-            return [{"key": key, "label": label, "type": typ} for key, label, typ in METRIC_DEFS]
-        if kind == "product_close":
-            return list(_PRODUCT_FIELDS)
-        return list(self.repos.report_data.read(report_id).get("fields") or [])
+        self.get(report_id)
+        return [dict(field) for field in (self.repos.report_data.read(report_id).get("fields") or [])]
 
     def rows(self, report_id):
-        report = self.get(report_id)
-        kind = str(report.get("kind") or "table")
-        if kind == "rep_performance":
-            return self.repos.reps.list()
-        if kind == "product_close":
-            return self.repos.products.list()
-        return self.repos.report_data.read(report_id).get("rows") or []
+        self.get(report_id)
+        return [dict(row) for row in (self.repos.report_data.read(report_id).get("rows") or [])]
 
     def inspect(self, report_id, sample_limit=20, value_limit=500):
-        """Human-readable snapshot used while matching Display Filters.
-
-        The Screen Builder intentionally shows real pulled values rather than
-        asking a user to reason about a schema in the abstract. Distinct field
-        values are intentionally generous so human choices such as Rep are not
-        silently hidden behind a tiny sample.
-        """
-        fields = [dict(field) for field in self.fields(report_id)]
-        rows = [dict(row) for row in self.rows(report_id)]
+        fields = self.fields(report_id)
+        rows = self.rows(report_id)
         try:
             sample_limit = min(max(int(sample_limit), 1), 50)
         except Exception:
@@ -137,48 +110,33 @@ class ReportService:
         }
 
     def status(self, report_id):
-        report = self.get(report_id)
-        kind = str(report.get("kind") or "table")
-        if kind == "rep_performance":
-            return {
-                "status": self.repos.meta.get("source_status", ""),
-                "last_refresh": self.repos.meta.get("last_source_refresh", ""),
-            }
-        if kind == "product_close":
-            rows = self.repos.products.list()
-            return {
-                "status": self.repos.meta.get("product_close_status", ""),
-                "last_refresh": rows[0].get("updated_at", "") if rows else "",
-            }
+        self.get(report_id)
         meta = self.repos.report_data.read(report_id).get("meta") or {}
         return {
-            "status": str(meta.get("status") or ""),
+            "status": str(meta.get("status") or "Not pulled yet"),
             "last_refresh": str(meta.get("last_refresh") or ""),
         }
 
     def refresh(self, report_id):
         report = self.get(report_id)
         source = self._source(report.get("source_id"))
+        if not source.get("enabled", True):
+            raise ValidationError("Source is disabled.")
         adapter, app_settings = self._adapter_settings(source)
-        kind = str(report.get("kind") or "table")
-        if kind == "rep_performance":
-            return self.rep_refresh.refresh(adapter, app_settings, source, report)
-        if kind == "product_close":
-            ok = self.product_refresh.refresh(raise_errors=True)
-            return {"ok": bool(ok), "rows": len(self.repos.products.list())}
-
         table = adapter.table(app_settings, source, report)
+        fields = [dict(item) for item in (table.get("fields") or []) if isinstance(item, dict)]
+        rows = [dict(item) for item in (table.get("rows") or []) if isinstance(item, dict)]
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
         saved = self.repos.report_data.replace(
             report_id,
-            table.get("fields") or [],
-            table.get("rows") or [],
+            fields,
+            rows,
             {
-                "status": f"{len(table.get('rows') or [])} rows",
+                "status": f"{len(rows)} rows",
                 "last_refresh": stamp,
-                "start": table.get("start", ""),
-                "end": table.get("end", ""),
-                "export": table.get("export", ""),
+                "start": str(table.get("start") or ""),
+                "end": str(table.get("end") or ""),
+                "export": str(table.get("export") or ""),
                 "truncated": bool(table.get("truncated")),
             },
         )
@@ -191,11 +149,6 @@ class ReportService:
         self._source(source_id)
         report_id = str(incoming.get("id") or "").strip() or f"report-{uuid.uuid4().hex[:12]}"
         existing = self.repos.data_catalog.report(report_id) or {}
-        kind = str(incoming.get("kind") or existing.get("kind") or "table").strip()
-        if report_id in (REP_REPORT_ID, PRODUCT_REPORT_ID):
-            kind = "rep_performance" if report_id == REP_REPORT_ID else "product_close"
-        elif kind != "table":
-            kind = "table"
         name = str(incoming.get("name") or existing.get("name") or "Untitled Report").strip()[:120]
         if not name:
             raise ValidationError("Report name is required.")
@@ -205,7 +158,6 @@ class ReportService:
             "id": report_id,
             "source_id": source_id,
             "name": name,
-            "kind": kind,
             "source_config": dict(source_config or {}),
             "runtime": dict(runtime or {}),
         }
@@ -217,8 +169,6 @@ class ReportService:
 
     def delete(self, report_id):
         report_id = str(report_id or "").strip()
-        if report_id in (REP_REPORT_ID, PRODUCT_REPORT_ID):
-            raise ValidationError("Built-in reports cannot be deleted.")
         for screen in self.repos.screens.list():
             if report_id in [str(value) for value in (screen.get("reports") or [])]:
                 raise ValidationError("This Report is used by a Screen. Remove it from that Screen first.")
