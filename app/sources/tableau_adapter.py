@@ -104,14 +104,39 @@ class TableauAdapter:
             if base and token:
                 connector.signout(base, token)
 
-    def workbooks(self, app_settings, source):
-        return discovery.list_workbooks(self.source_settings(app_settings, source))
+    def report_values(self, app_settings, source):
+        """Expose Tableau views through the generic Stats report-value contract."""
+        rows = discovery.list_all_views(self.source_settings(app_settings, source))
+        return [
+            {
+                "id": str(row.get("content_url") or "").strip(),
+                "label": str(row.get("name") or row.get("content_url") or "").strip(),
+            }
+            for row in rows
+            if str(row.get("content_url") or "").strip()
+        ]
 
-    def all_views(self, app_settings, source):
-        return discovery.list_all_views(self.source_settings(app_settings, source))
+    @staticmethod
+    def report_value(report):
+        config = report.get("source_config") if isinstance(report, dict) else {}
+        config = config if isinstance(config, dict) else {}
+        workbook = str(config.get("workbook") or "").strip().strip("/")
+        sheet = str(config.get("sheet") or "").strip().strip("/")
+        return f"{workbook}/{sheet}" if workbook and sheet else ""
 
-    def views(self, app_settings, source, workbook):
-        return discovery.list_views(self.source_settings(app_settings, source), workbook)
+    @staticmethod
+    def configure_report_value(value, existing=None):
+        """Translate one opaque Stats source value into Tableau-only config."""
+        value = str(value or "").strip().strip("/")
+        parts = [part for part in value.split("/") if part]
+        if len(parts) < 2:
+            raise ValueError("Choose a valid Source report value.")
+        config = dict(existing or {})
+        config["workbook"] = parts[0]
+        config["sheet"] = parts[-1]
+        config.setdefault("export", "auto")
+        config.setdefault("filters", [])
+        return config
 
     def columns(self, app_settings, source, report, overrides=None):
         return discovery.read_columns(self.report_settings(app_settings, source, report), overrides or {})
