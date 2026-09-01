@@ -9,7 +9,6 @@ import uuid
 
 from stats_core.errors import ValidationError
 
-
 OPERATORS = ("equals", "not_equals", "contains", "not_contains")
 
 
@@ -64,15 +63,16 @@ class FilterService:
             "value": value,
         }
 
-    def _normalize(self, incoming, filter_id=None):
+    def _normalize(self, incoming, filter_id=None, validate_unique=True):
         incoming = incoming if isinstance(incoming, dict) else {}
         filter_id = str(filter_id or incoming.get("id") or "").strip() or f"filter-{uuid.uuid4().hex[:12]}"
         name = str(incoming.get("name") or "").strip()[:120]
         if not name:
             raise ValidationError("Filter name is required.")
-        for item in self.repos.filters.list():
-            if str(item.get("id")) != filter_id and str(item.get("name") or "").strip().casefold() == name.casefold():
-                raise ValidationError("A Filter with that name already exists.")
+        if validate_unique:
+            for item in self.repos.filters.list():
+                if str(item.get("id")) != filter_id and str(item.get("name") or "").strip().casefold() == name.casefold():
+                    raise ValidationError("A Filter with that name already exists.")
         rules = [self._clean_rule(rule) for rule in (incoming.get("rules") or []) if isinstance(rule, dict)]
         if not rules:
             raise ValidationError("Add at least one rule to this Filter.")
@@ -84,7 +84,11 @@ class FilterService:
         return saved
 
     def delete(self, filter_id):
-        if not self.repos.filters.delete(str(filter_id or "").strip()):
+        filter_id = str(filter_id or "").strip()
+        for screen in self.repos.screens.list():
+            if filter_id in [str(value) for value in (screen.get("filter_ids") or [])]:
+                raise ValidationError("Remove this Filter from its Screens before deleting it.")
+        if not self.repos.filters.delete(filter_id):
             raise ValidationError("Filter not found.")
         self.repos.meta.bump("settings_version")
         return True
@@ -104,12 +108,6 @@ class FilterService:
         return False
 
     def apply(self, report_id, rows, filter_ids):
-        """Apply selected Filters to one normalized Report.
-
-        A Filter only affects a Report when that Filter contains rules for that
-        Report. Multiple rules for the same Report are ANDed. Selected Filters
-        are also ANDed, matching the filtering behavior Stats already used.
-        """
         selected = []
         for filter_id in filter_ids or []:
             item = self.repos.filters.get(str(filter_id or "").strip())
@@ -133,7 +131,7 @@ class FilterService:
         return result
 
     def preview(self, incoming, row_limit=50):
-        definition = self._normalize(incoming, filter_id="filter-preview")
+        definition = self._normalize(incoming, filter_id="filter-preview", validate_unique=False)
         report_ids = []
         for rule in definition["rules"]:
             report_id = rule["report_id"]
