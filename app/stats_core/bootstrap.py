@@ -58,7 +58,7 @@ def asset_root():
 def _install_auth_gate(app, runtime):
     @app.before_request
     def settings_lock():
-        if not runtime.auth.pin_is_set() or bool(session.get("settings_unlocked")):
+        if not runtime.auth.pin_is_set() or auth_web.session_is_unlocked(runtime.auth):
             return None
         endpoint = request.endpoint or ""
         method = request.method.upper()

@@ -28,6 +28,7 @@ class AuthService:
         self.meta_repo = meta_repo
         self._unlock_failures = {}
         self._unlock_lock = threading.Lock()
+        self._session_marker = secrets.token_urlsafe(32)
 
     def app_secret_key(self):
         key = self.meta_repo.get("flask_secret_key", "")
@@ -68,6 +69,14 @@ class AuthService:
 
     def pin_is_set(self):
         return bool(self.pin_hash().strip())
+
+    def session_marker(self):
+        """Return the unlock marker for this running Stats server process."""
+        return self._session_marker
+
+    def session_is_unlocked(self, marker):
+        marker = str(marker or "")
+        return bool(marker) and hmac.compare_digest(marker, self._session_marker)
 
     def attempt_unlock(self, pin, client_key="default", now=None):
         """Verify a PIN and throttle repeated failures from one client."""

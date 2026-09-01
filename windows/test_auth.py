@@ -6,6 +6,8 @@ import sys
 import unittest
 from pathlib import Path
 
+from flask import Flask
+
 APP = Path(__file__).resolve().parent.parent / "app"
 sys.path.insert(0, str(APP))
 
@@ -13,6 +15,10 @@ from stats_core.services.auth import (  # noqa: E402
     AuthService,
     MAX_UNLOCK_FAILURES,
     UNLOCK_LOCK_SECONDS,
+)
+from stats_core.web.auth import (  # noqa: E402
+    UNLOCK_SESSION_KEY,
+    blueprint as auth_blueprint,
 )
 
 
@@ -110,6 +116,31 @@ class AuthServiceTests(unittest.TestCase):
             FakeMetaRepository(),
         )
         self.assertTrue(service.attempt_unlock("", now=10).unlocked)
+
+    def test_settings_unlock_expires_with_server_process(self):
+        service = self.service_with_pin()
+        marker = service.session_marker()
+        self.assertTrue(service.session_is_unlocked(marker))
+
+        restarted = AuthService(service.settings_repo, service.meta_repo)
+        self.assertFalse(restarted.session_is_unlocked(marker))
+        self.assertTrue(restarted.session_is_unlocked(restarted.session_marker()))
+
+    def test_unlock_uses_non_permanent_browser_session(self):
+        service = self.service_with_pin("2468")
+        app = Flask("stats-auth-test")
+        app.secret_key = "test-secret"
+        app.register_blueprint(auth_blueprint(service))
+        client = app.test_client()
+
+        response = client.post("/api/auth/unlock", json={"pin": "2468"})
+        self.assertEqual(response.status_code, 200)
+
+        with client.session_transaction() as browser_session:
+            self.assertFalse(browser_session.permanent)
+            marker = browser_session.get(UNLOCK_SESSION_KEY)
+            self.assertTrue(service.session_is_unlocked(marker))
+            self.assertNotIn("settings_unlocked", browser_session)
 
 
 if __name__ == "__main__":
