@@ -1,0 +1,106 @@
+<section class="settings-section" id="settingsTeams" data-settings-title="Teams" data-settings-description="Create teams, assign members, choose a team lead, and open team design.">
+  <div class="card">
+    <div class="settings-toolbar">
+      <div>
+        <h2>Teams</h2>
+        <p class="small">Teams are Stats organization data. Source data can suggest where a rep came from, but assigning a rep here only changes Stats.</p>
+      </div>
+      <button id="newTeamBuilder" class="btn primary" type="button">+ Create Team</button>
+    </div>
+    <div id="teamBuilderStatus" class="small settings-status"></div>
+    <div id="teamBuilderList" class="builder-list"></div>
+  </div>
+
+  <div id="teamBuilderOverlay" class="overlay" aria-hidden="true">
+    <div class="panel">
+      <div class="settings-toolbar">
+        <div>
+          <h2 id="builderTitle">Create Team</h2>
+          <div class="small">Build the team from normalized Stats organization data.</div>
+        </div>
+        <button id="closeBuilder" class="btn" type="button">Close</button>
+      </div>
+
+      <div class="builder-steps" aria-label="Team builder steps">
+        <div class="builder-step active" data-team-step-indicator="0">1. Name</div>
+        <div class="builder-step" data-team-step-indicator="1">2. Logo</div>
+        <div class="builder-step" data-team-step-indicator="2">3. Members</div>
+        <div class="builder-step" data-team-step-indicator="3">4. Team Lead</div>
+        <div class="builder-step" data-team-step-indicator="4">5. Review</div>
+      </div>
+
+      <section class="builder-page active" data-team-builder-page="0">
+        <label for="builderTeamName">Team Name</label>
+        <input id="builderTeamName" type="text" placeholder="Example: Undisputed">
+      </section>
+
+      <section class="builder-page" data-team-builder-page="1">
+        <label for="builderLogo">Team Logo</label>
+        <input id="builderLogo" type="file" accept="image/png,image/jpeg,image/webp">
+        <img id="builderLogoPreview" class="logo-preview" alt="Team logo preview" hidden>
+        <div class="small" style="margin-top:8px">PNG, JPG or WEBP. Maximum 5 MB.</div>
+        <button id="removeBuilderLogo" class="btn danger" type="button" style="margin-top:10px" hidden>Remove Logo</button>
+      </section>
+
+      <section class="builder-page" data-team-builder-page="2">
+        <div class="grid">
+          <div>
+            <label for="memberSearch">Members</label>
+            <input id="memberSearch" type="search" placeholder="Search reps">
+          </div>
+          <div>
+            <label>Selected</label>
+            <div id="selectedMemberCount" class="strong field-readout">0 members</div>
+          </div>
+        </div>
+        <div class="small" style="margin-top:8px">Reps already assigned to another Stats team are hidden. Source team is shown only as context.</div>
+        <div id="builderMembers" class="member-list"></div>
+      </section>
+
+      <section class="builder-page" data-team-builder-page="3">
+        <label for="builderLeader">Team Lead</label>
+        <select id="builderLeader"></select>
+        <div class="small" style="margin-top:7px">The team lead must be one of the members selected in the previous step.</div>
+        <label for="builderLeaderRole" style="margin-top:12px">Role</label>
+        <select id="builderLeaderRole">
+          <option>Sales Manager</option>
+          <option>SMIT</option>
+          <option>General Manager</option>
+          <option>Other</option>
+        </select>
+      </section>
+
+      <section class="builder-page" data-team-builder-page="4">
+        <h3>Review Team</h3>
+        <div id="builderReview"></div>
+      </section>
+
+      <div class="builder-nav">
+        <button id="builderBack" class="btn" type="button">Back</button>
+        <div class="row">
+          <button id="builderDesign" class="btn" type="button">Design</button>
+          <button id="builderNext" class="btn primary" type="button">Next</button>
+          <button id="builderSave" class="btn primary" type="button" hidden>Save Team</button>
+        </div>
+      </div>
+      <div id="builderStatus" class="small settings-status"></div>
+    </div>
+  </div>
+
+  <div id="deleteTeamOverlay" class="overlay" aria-hidden="true">
+    <div class="panel narrow">
+      <div class="settings-toolbar">
+        <div>
+          <h2 id="deleteTeamTitle">Delete Team</h2>
+          <div id="deleteTeamMessage" class="small"></div>
+        </div>
+        <button id="cancelDeleteTeam" class="btn" type="button">Cancel</button>
+      </div>
+      <div id="deleteTeamAssignments" class="builder-list" style="margin-top:18px"></div>
+      <div id="deleteTeamStatus" class="small settings-status"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:20px">
+        <button id="confirmDeleteTeam" class="btn danger" type="button">Reassign & Delete Team</button>
+      </div>
+    </div>
+  </div>
+</section>
