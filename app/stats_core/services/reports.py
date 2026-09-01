@@ -87,22 +87,24 @@ class ReportService:
             return self.repos.products.list()
         return self.repos.report_data.read(report_id).get("rows") or []
 
-    def inspect(self, report_id, sample_limit=12, value_limit=30):
+    def inspect(self, report_id, sample_limit=20, value_limit=500):
         """Human-readable snapshot used while matching Display Filters.
 
         The Screen Builder intentionally shows real pulled values rather than
-        asking a user to reason about a schema in the abstract.
+        asking a user to reason about a schema in the abstract. Distinct field
+        values are intentionally generous so human choices such as Rep are not
+        silently hidden behind a tiny sample.
         """
         fields = [dict(field) for field in self.fields(report_id)]
         rows = [dict(row) for row in self.rows(report_id)]
         try:
             sample_limit = min(max(int(sample_limit), 1), 50)
         except Exception:
-            sample_limit = 12
+            sample_limit = 20
         try:
-            value_limit = min(max(int(value_limit), 1), 100)
+            value_limit = min(max(int(value_limit), 1), 2000)
         except Exception:
-            value_limit = 30
+            value_limit = 500
 
         for field in fields:
             key = str(field.get("key") or "")
