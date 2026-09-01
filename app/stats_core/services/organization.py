@@ -1,4 +1,4 @@
-"""Team/leader/assignment ownership."""
+"""Team, leader and assignment ownership."""
 from __future__ import annotations
 
 import os
@@ -34,14 +34,14 @@ class OrganizationService:
     def leader_candidates(self):
         candidates = {}
         for rep in self.repos.reps.list():
-            tableau_lead = str(rep.get("team_lead") or "").strip()
-            if tableau_lead:
-                candidates.setdefault(tableau_lead.lower(), {"name": tableau_lead, "source": "Tableau Team Lead"})
+            source_lead = str(rep.get("team_lead") or "").strip()
+            if source_lead:
+                candidates.setdefault(source_lead.lower(), {"name": source_lead, "source": "Source Team Lead"})
             title = str(rep.get("title") or "").strip()
             if any(token in title.lower() for token in ("manager", "smit", "manager in training")):
                 name = str(rep.get("rep_name") or "").strip()
                 if name:
-                    candidates.setdefault(name.lower(), {"name": name, "source": title or "Tableau"})
+                    candidates.setdefault(name.lower(), {"name": name, "source": title or "Source"})
         for team in self.repos.organization.definitions():
             leader = team.get("leader")
             if leader and leader.get("lead_name"):
@@ -53,7 +53,7 @@ class OrganizationService:
         return [{
             "rep_key": rep.get("rep_key"),
             "rep_name": rep.get("rep_name"),
-            "tableau_team": rep.get("tableau_team") or "Unassigned",
+            "source_team": rep.get("source_team") or "Unassigned",
             "effective_team": rep.get("team") or "Unassigned",
             "effective_team_id": rep.get("team_id"),
             "assigned_team_id": rep.get("assigned_team_id"),
@@ -96,8 +96,10 @@ class OrganizationService:
             raise ValidationError("Logo must be under 5 MB.")
         self.team_logo_dir.mkdir(parents=True, exist_ok=True)
         for old in self.team_logo_dir.glob(f"team-{team_id}.*"):
-            try: old.unlink()
-            except Exception: pass
+            try:
+                old.unlink()
+            except Exception:
+                pass
         path = self.team_logo_dir / f"team-{team_id}{ext}"
         upload.save(path)
         self.repos.organization.set_logo(team_id, str(path))
@@ -106,8 +108,10 @@ class OrganizationService:
     def delete_logo(self, team_id):
         team = next((item for item in self.repos.organization.definitions(include_inactive=True) if int(item["team_id"]) == int(team_id)), None)
         if team and team.get("logo_path"):
-            try: Path(team["logo_path"]).unlink(missing_ok=True)
-            except Exception: pass
+            try:
+                Path(team["logo_path"]).unlink(missing_ok=True)
+            except Exception:
+                pass
         self.repos.organization.set_logo(team_id, None)
 
     def logo_path(self, team_id):
@@ -120,17 +124,26 @@ class OrganizationService:
     def delete_team(self, team_id, reassignments):
         result = self.repos.organization.delete(team_id, reassignments)
         if result.get("logo_path"):
-            try: Path(result["logo_path"]).unlink(missing_ok=True)
-            except Exception: pass
+            try:
+                Path(result["logo_path"]).unlink(missing_ok=True)
+            except Exception:
+                pass
         current = self.repos.settings.get()
         deleted_name = result["name"]
-        current["team_vs_team_selected"] = [name for name in (current.get("team_vs_team_selected") or []) if str(name).lower() != deleted_name.lower()][:2]
+        current["team_vs_team_selected"] = [
+            name for name in (current.get("team_vs_team_selected") or [])
+            if str(name).lower() != deleted_name.lower()
+        ][:2]
         remaining = self.repos.organization.definitions()
         by_id = {int(team["team_id"]): team["name"] for team in remaining}
-        destinations = [by_id[team_id] for team_id in result.get("destination_team_ids", []) if team_id in by_id]
+        destinations = [
+            by_id[team_id] for team_id in result.get("destination_team_ids", []) if team_id in by_id
+        ]
         for candidate in destinations + [team["name"] for team in remaining]:
-            if len(current["team_vs_team_selected"]) >= 2: break
-            if candidate not in current["team_vs_team_selected"]: current["team_vs_team_selected"].append(candidate)
+            if len(current["team_vs_team_selected"]) >= 2:
+                break
+            if candidate not in current["team_vs_team_selected"]:
+                current["team_vs_team_selected"].append(candidate)
         if str(current.get("per_team_selected") or "").lower() == deleted_name.lower():
             current["per_team_selected"] = destinations[0] if destinations else (remaining[0]["name"] if remaining else "")
         mode, team = split_active_mode(current.get("active_mode", ""))
