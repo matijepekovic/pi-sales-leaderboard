@@ -5,6 +5,15 @@ from stats_core.web.common import error_response
 def blueprint(service):
     bp = Blueprint("organization", __name__)
 
+    @bp.get("/api/organization")
+    def organization_snapshot():
+        """Normalized organization contract for Settings clients."""
+        return jsonify({
+            "ok": True,
+            "teams": service.definitions_for_api(),
+            "reps": service.rep_summaries(),
+        })
+
     @bp.post("/api/team-builder/save")
     def save_builder():
         try:
