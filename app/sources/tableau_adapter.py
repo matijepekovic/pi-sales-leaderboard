@@ -24,6 +24,12 @@ class TableauAdapter:
         value = source.get("connection") if isinstance(source, dict) else {}
         return dict(value) if isinstance(value, dict) else {}
 
+    @staticmethod
+    def with_secret(app_settings, secret):
+        settings = deepcopy(app_settings or {})
+        settings["tableau_pat_secret"] = str(secret or "")
+        return settings
+
     def source_settings(self, app_settings, source):
         settings = deepcopy(app_settings or {})
         connection = self._connection(source)
@@ -63,13 +69,11 @@ class TableauAdapter:
             settings["product_market"] = str(runtime.get("market") or "")
         return self.tableau.normalized_settings(settings)
 
-    def public_source(self, source, app_settings=None):
+    def public_source(self, source, secret_configured=False):
         source = deepcopy(source or {})
         connection = self._connection(source)
         connection.pop("secret", None)
-        connection["secret_configured"] = bool(
-            str((app_settings or {}).get("tableau_pat_secret") or "").strip()
-        )
+        connection["secret_configured"] = bool(secret_configured)
         source["connection"] = connection
         return source
 
