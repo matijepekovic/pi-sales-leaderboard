@@ -11,6 +11,11 @@ from sources import discovery
 from sources.tableau_table import read_table
 from stats_core.services.tableau import TableauService
 
+_REPORT_KEYS = (
+    "server", "site", "pat_name", "workbook", "sheet", "filters",
+    "date_start_field", "date_end_field", "mapping", "row_filter", "export",
+)
+
 
 class TableauAdapter:
     key = "tableau"
@@ -29,6 +34,15 @@ class TableauAdapter:
         settings = deepcopy(app_settings or {})
         settings["tableau_pat_secret"] = str(secret or "")
         return settings
+
+    @staticmethod
+    def candidate_overrides(body):
+        body = body if isinstance(body, dict) else {}
+        return {
+            key: body[key]
+            for key in _REPORT_KEYS + discovery.DATE_KEYS
+            if key in body
+        }
 
     def source_settings(self, app_settings, source):
         settings = deepcopy(app_settings or {})
