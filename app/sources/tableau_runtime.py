@@ -1,8 +1,4 @@
-"""Tableau runtime boundary.
-
-All active Tableau code receives a normalized settings snapshot from here.
-This replaces global/default mutation and constructor monkey-patching.
-"""
+"""Tableau runtime settings normalization owned by the Tableau adapter layer."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -10,7 +6,7 @@ from copy import deepcopy
 from sources.tableau_configured import ConfiguredTableauSource, config_of
 
 
-class TableauService:
+class TableauRuntime:
     def normalized_settings(self, settings):
         settings = deepcopy(settings or {})
         saved = settings.get("source") if isinstance(settings.get("source"), dict) else {}

@@ -80,6 +80,12 @@ jobs:
           }
           "STATS_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Test Data Screens Display frontend syntax
+        shell: pwsh
+        run: |
+          node --check app/static/settings/data-screen-display.js
+          node --check app/static/display/custom-screen.js
+
       - name: Test restructured runtime ownership
         shell: pwsh
         run: python windows/test_restructured_runtime.py
@@ -120,7 +126,6 @@ jobs:
             --hidden-import stats_core.windows.update `
             --hidden-import stats_core.windows.update_status `
             --hidden-import stats_core.windows.update_diagnostics `
-            --hidden-import stats_core.windows.tableau_login `
             --hidden-import stats_core.windows.theme_editor `
             --hidden-import stats_core.windows.https `
             --hidden-import cryptography.hazmat.primitives.asymmetric.ed25519 `
@@ -185,6 +190,11 @@ jobs:
             $display = Invoke-WebRequest -Uri "http://127.0.0.1:8765/" -UseBasicParsing -TimeoutSec 5
             if ($display.StatusCode -ne 200) {
               throw "Leaderboard display did not render"
+            }
+
+            $settings = Invoke-WebRequest -Uri "http://127.0.0.1:8765/settings" -UseBasicParsing -TimeoutSec 5
+            if ($settings.StatusCode -ne 200) {
+              throw "Settings did not render"
             }
 
             $update = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/windows/update/check" -Method Post -TimeoutSec 30

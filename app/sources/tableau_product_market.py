@@ -1,3 +1,4 @@
+"""Tableau adapter support for market-scoped Product Close Rates."""
 from __future__ import annotations
 
 from datetime import date
@@ -14,24 +15,17 @@ DEFAULT_MARKET = "Olympia"
 MARKET_COLUMN_ALIASES = ["leadmarketc", "leadmarket", "market"]
 
 
-def selected_market(settings=None):
-    settings = settings or {}
-    return str(settings.get("product_market") or DEFAULT_MARKET).strip() or DEFAULT_MARKET
+def selected_market(runtime=None):
+    runtime = runtime or {}
+    return str(runtime.get("product_market") or DEFAULT_MARKET).strip() or DEFAULT_MARKET
 
 
 class ProductCloseSource(_BaseProductCloseSource):
-    """Product Close Rates Tableau source with explicit market ownership."""
-
     def __init__(self, config=None, fallback_markets=None):
         super().__init__(config)
-        self.fallback_markets = [
-            str(value).strip() for value in (fallback_markets or []) if str(value).strip()
-        ]
+        self.fallback_markets = [str(value).strip() for value in (fallback_markets or []) if str(value).strip()]
 
-    def _query_market_csv(
-        self, base, token, site_id, view_id, start, end,
-        market=None, include_all_columns=False,
-    ):
+    def _query_market_csv(self, base, token, site_id, view_id, start, end, market=None, include_all_columns=False):
         params = {
             "maxAge": "1",
             f"vf_{_base.TABLEAU_START_FIELD}": start,
@@ -43,14 +37,11 @@ class ProductCloseSource(_BaseProductCloseSource):
         if include_all_columns:
             params["includeAllColumns"] = "true"
         query = _base.urllib.parse.urlencode(params, quote_via=_base.urllib.parse.quote)
-        status, raw = self._request(
-            f"{base}/sites/{site_id}/views/{view_id}/data?{query}", token=token
-        )
+        status, raw = self._request(f"{base}/sites/{site_id}/views/{view_id}/data?{query}", token=token)
         if status != 200:
             label = market or "all markets"
             raise _base.TableauError(
-                f"Tableau data request failed (HTTP {status}) for "
-                f"{TABLEAU_VIEW_PATH}, {label}, {start} to {end}."
+                f"Tableau data request failed (HTTP {status}) for {TABLEAU_VIEW_PATH}, {label}, {start} to {end}."
             )
         return raw.decode("utf-8-sig", errors="replace")
 
@@ -106,6 +97,3 @@ class ProductCloseSource(_BaseProductCloseSource):
             "The Product Close Rates report did not expose market choices. Columns received: "
             + (", ".join(headers) if headers else "none")
         )
-
-
-TableauError = _base.TableauError

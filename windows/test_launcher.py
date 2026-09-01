@@ -154,21 +154,21 @@ class RemoteQrTests(unittest.TestCase):
         self.assertNotIn("new MutationObserver(apply)", script)
         self.assertNotIn("observer.observe(document.documentElement", script)
 
-    def test_settings_back_button_and_connection_examples(self):
-        script = (APP_DIR / "static" / "settings" / "production.js").read_text(encoding="utf-8")
+    def test_settings_shell_and_data_workspace_are_wired(self):
+        shell = (APP_DIR / "static" / "settings" / "production.js").read_text(encoding="utf-8")
+        workspace = (APP_DIR / "static" / "settings" / "data-screen-display.js").read_text(encoding="utf-8")
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
         settings_service = (APP_DIR / "stats_core" / "services" / "settings.py").read_text(encoding="utf-8")
-        tableau_service = (APP_DIR / "stats_core" / "services" / "tableau.py").read_text(encoding="utf-8")
 
-        self.assertIn("← Back to Stats", script)
-        self.assertIn("window.location.assign('/')", script)
-        self.assertIn("Example: https://your-pod.online.tableau.com", script)
-        self.assertIn("Example: your-site", script)
-        self.assertIn("Example: stats-pat", script)
+        self.assertIn("← Back to Stats", shell)
+        self.assertIn("window.location.assign(\"/\")", shell)
+        self.assertNotIn("tableau.com", shell.lower())
         self.assertIn("/static/settings/production.js", template)
+        self.assertIn("/static/settings/data-screen-display.js", template)
+        self.assertIn("/api/data/sources", workspace)
+        self.assertIn("Display Data — Match Filters", workspace)
         self.assertIn("FEATURE_ACCESS", settings_service)
         self.assertIn('current["github_auto_update"] = False', settings_service)
-        self.assertIn("config[source_key] = explicit or top", tableau_service)
 
     def test_windows_settings_use_sidebar_workspace(self):
         script = (APP_DIR / "static" / "settings" / "windows-sidebar.js").read_text(encoding="utf-8")
@@ -183,47 +183,34 @@ class RemoteQrTests(unittest.TestCase):
         self.assertIn("max-width:1600px", script)
         self.assertIn("/static/settings/windows-sidebar.js", template)
 
-    def test_tableau_login_owns_connection_fields_on_windows(self):
-        ui = (APP_DIR / "static" / "settings" / "windows-tableau-login.js").read_text(encoding="utf-8")
+    def test_source_connection_ui_is_owned_by_data_workspace(self):
+        workspace = (APP_DIR / "static" / "settings" / "data-screen-display.js").read_text(encoding="utf-8")
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
         server_entry = (WINDOWS_DIR / "server_entry.py").read_text(encoding="utf-8")
         platform = (APP_DIR / "stats_core" / "platform" / "windows.py").read_text(encoding="utf-8")
-        endpoint = (APP_DIR / "stats_core" / "windows" / "tableau_login.py").read_text(encoding="utf-8")
 
-        self.assertIn("/static/settings/windows-tableau-login.js", template)
-        self.assertIn('document.getElementById("v90Server")', ui)
-        self.assertIn('document.getElementById("v90Site")', ui)
-        self.assertIn('document.getElementById("v90PatName")', ui)
-        self.assertIn("tableauLoginConnectionV124", ui)
-        self.assertIn("Test Connection", ui)
-        self.assertIn("collectDataSource=function", ui)
-        self.assertIn("source:{...current,...values}", ui)
-        self.assertIn("/api/windows/tableau-login/test", ui)
-        self.assertIn("tableau_login.install(app, self.repos.settings)", platform)
+        self.assertIn("/static/settings/data-screen-display.js", template)
+        self.assertNotIn("/static/settings/windows-tableau-login.js", template)
+        self.assertIn('data-source-edit="server"', workspace)
+        self.assertIn('data-source-edit="site"', workspace)
+        self.assertIn('data-source-edit="pat_name"', workspace)
+        self.assertIn("Test Connection", workspace)
+        self.assertIn("/api/data/sources", workspace)
+        self.assertNotIn("tableau_login.install", platform)
         self.assertIn("stats_core.bootstrap", server_entry)
-        self.assertNotIn("tableau_login.install", server_entry)
-        self.assertIn("ConfiguredTableauSource", endpoint)
-        self.assertIn("tableau.signin()", endpoint)
-        self.assertNotIn("save_settings", endpoint)
+        self.assertFalse((APP_DIR / "stats_core" / "windows" / "tableau_login.py").exists())
 
-    def test_team_builder_members_follow_tableau_pull_and_hide_claimed_reps(self):
-        script = (APP_DIR / "static" / "settings" / "tableau-team-members.js").read_text(encoding="utf-8")
+    def test_team_builder_uses_normalized_rep_contract(self):
+        workflow = (APP_DIR / "static" / "settings" / "team-builder-workflow.js").read_text(encoding="utf-8")
         template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
 
-        self.assertIn("/static/settings/tableau-team-members.js", template)
-        self.assertNotIn("team-builder-tableau-members-v125.js", template)
-        self.assertIn('originalRequest("/api/config"', script)
-        self.assertIn('cleanPath==="/api/source/preview"', script)
-        self.assertIn("previewPool=normalizeRows(result.d.rows)", script)
-        self.assertIn("mergeAssignments(previewPool,persistedPool)", script)
-        self.assertIn("assigned_team_id:assigned>0?assigned:null", script)
-        self.assertIn("return !assigned || (current>0 && assigned===current);", script)
-        self.assertIn("No unassigned Tableau reps available.", script)
-        self.assertIn("already assigned to another team", script)
-        self.assertIn("No Tableau reps loaded yet.", script)
-        self.assertIn("openTeamBuilder=function", script)
-        self.assertIn("setBuilderStep=function", script)
-        self.assertIn("renderBuilderMembers=function", script)
+        self.assertIn("/static/settings/team-builder-workflow.js", template)
+        self.assertNotIn("/static/settings/tableau-team-members.js", template)
+        self.assertFalse((APP_DIR / "static" / "settings" / "tableau-team-members.js").exists())
+        self.assertIn("selectedMembers", workflow)
+        self.assertIn("builderMembers", workflow)
+        self.assertIn("Choose the team lead from the reps assigned", workflow)
+        self.assertNotIn("Tableau", workflow)
 
 
 class WindowsThemeEditorTests(unittest.TestCase):

@@ -113,7 +113,7 @@ class OrganizationRepository:
         }
 
         for row in rows:
-            tableau_team = (
+            source_team = (
                 str(row.get("team") or "Unassigned").strip() or "Unassigned"
             )
             assigned_team_id = assignments.get(row.get("rep_key"))
@@ -126,11 +126,11 @@ class OrganizationRepository:
                 effective_team_id = assigned_team_id
                 local_override = True
             else:
-                effective_team = tableau_team
-                effective_team_id = team_ids_by_name.get(tableau_team.lower())
+                effective_team = source_team
+                effective_team_id = team_ids_by_name.get(source_team.lower())
                 local_override = False
 
-            row["tableau_team"] = tableau_team
+            row["source_team"] = source_team
             row["team"] = effective_team
             row["team_id"] = effective_team_id
             row["assigned_team_id"] = assigned_team_id

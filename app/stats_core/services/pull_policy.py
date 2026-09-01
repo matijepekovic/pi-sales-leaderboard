@@ -1,59 +1,46 @@
-"""Explicit normalization/retention policy for rep pulls."""
+"""Explicit normalization/retention policy for rep report pulls."""
 from __future__ import annotations
 
 import json
 
-from sources.tableau import resolve_dates
-
 
 class RepPullPolicy:
-    def __init__(self, repos, tableau):
+    def __init__(self, repos):
         self.repos = repos
-        self.tableau = tableau
 
     @staticmethod
     def normalize(row):
         clean = dict(row or {})
         clean.pop("id", None)
-        # Organization is local ownership. Tableau metrics never overwrite it.
+        # Organization is local ownership. External report metrics never overwrite it.
         clean["team"] = "Unassigned"
         clean["team_lead"] = None
         return clean
 
-    def scope(self, settings):
-        runtime = self.tableau.normalized_settings(settings)
-        start, end = resolve_dates(runtime)
-        config = runtime["source"]
-        signature = {
-            "start": start, "end": end,
-            "server": config.get("server", ""), "site": config.get("site", ""),
-            "pat_name": config.get("pat_name", ""), "workbook": config.get("workbook", ""),
-            "sheet": config.get("sheet", ""), "export": config.get("export", ""),
-            "filters": config.get("filters", []), "row_filter": config.get("row_filter", {}),
-            "mapping": config.get("mapping", {}),
-            "date_start_field": config.get("date_start_field", ""),
-            "date_end_field": config.get("date_end_field", ""),
-            "data_office": runtime.get("data_office", ""),
-            "data_include_people": runtime.get("data_include_people", []),
-            "data_exclude_people": runtime.get("data_exclude_people", []),
-        }
-        return json.dumps(signature, sort_keys=True, separators=(",", ":"), default=str), start, end
+    @staticmethod
+    def scope(context):
+        context = context if isinstance(context, dict) else {}
+        scope = str(context.get("id") or "").strip()
+        start = str(context.get("start") or "").strip()
+        end = str(context.get("end") or "").strip()
+        if not scope:
+            scope = json.dumps(context, sort_keys=True, separators=(",", ":"), default=str)
+        return scope, start, end
 
-    def prepare(self):
+    def prepare(self, current_scope=None):
         self.repos.reps.ensure_fallback_cache()
         return {
-            "seeded": self._seed_current_scope(),
+            "seeded": self._seed_current_scope(current_scope) if current_scope else 0,
             "scrubbed": self.repos.reps.scrub_source_organization(),
         }
 
-    def _seed_current_scope(self):
+    def _seed_current_scope(self, context):
         if str(self.repos.meta.get("v108_cache_seeded", "") or "") == "1":
             return 0
-        settings = self.repos.settings.get()
-        scope, start, end = self.scope(settings)
+        scope, start, end = self.scope(context)
         status = str(self.repos.meta.get("source_status", "") or "")
         rows = []
-        if status.lower().startswith("tableau") and f"{start} to {end}" in status:
+        if start and end and f"{start} to {end}" in status:
             rows = [self.normalize(row) for row in self.repos.reps.raw_list()]
             self.repos.reps.write_fallback_cache(scope, rows)
             self.repos.meta.set("v108_rep_scope", scope)
@@ -62,10 +49,10 @@ class RepPullPolicy:
             self.repos.meta.set("v108_cache_seeded", "1")
         return len(rows)
 
-    def apply(self, settings, fresh_rows):
+    def apply(self, context, fresh_rows):
         if not fresh_rows:
             return fresh_rows
-        scope, start, end = self.scope(settings)
+        scope, start, end = self.scope(context)
         fresh = [self.normalize(row) for row in fresh_rows]
         fresh_keys = {
             str(row.get("rep_key") or row.get("rep_name") or "").strip()
@@ -82,9 +69,6 @@ class RepPullPolicy:
         self.repos.meta.set("v108_rep_period", f"{start}|{end}")
         self.repos.meta.set(
             "v108_retained_reps",
-            json.dumps([
-                str(row.get("rep_name") or row.get("rep_key") or "")
-                for row in retained
-            ]),
+            json.dumps([str(row.get("rep_name") or row.get("rep_key") or "") for row in retained]),
         )
         return fresh + retained
