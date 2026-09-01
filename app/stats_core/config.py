@@ -67,30 +67,15 @@ DEFAULT_SETTINGS = {
     "title": "SALES LEADERBOARD",
     "subtitle": "",
     "currency_symbol": "$",
-    "theme_config": {"office": {}, "teams": {}},
+    "theme_config": {"office": {}, "teams": {}, "screens": {}},
     "github_repo": "",
     "github_auto_update": False,
-    "tableau_server": "",
-    "tableau_site": "",
-    "tableau_pat_name": "",
-    "tableau_pat_secret": "",
-    "tableau_view": "",
-    "data_office": "",
-    "data_date_mode": "current_month",
-    "data_date_start": "",
-    "data_date_end": "",
-    "data_date_param_start": "Start",
-    "data_date_param_end": "End",
-    "data_include_people": [],
-    "data_exclude_people": [],
-    "tableau_workbook": "",
-    "tableau_sheet": "",
-    "source_mapping": {},
-    "source": {},
     "product_icons": {},
     "settings_pin_hash": "",
 }
 
+# tableau_pat_secret is retained only as a protected migration key for installs
+# upgrading from the pre-catalog data model. It is not an application default.
 SECRET_SETTING_KEYS = ("tableau_pat_secret", "settings_pin_hash")
 
 METRIC_DEFS = [
