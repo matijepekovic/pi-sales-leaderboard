@@ -1,8 +1,8 @@
-/* v119: Starter is the default theme pack; Classic remains the plain option. */
+/* Starter is the default team theme pack; Plain remains the unstyled option. */
 (function(){
   function install(){
     const select=document.getElementById("tdPreset");
-    if(!select) return false;
+    if(!select)return false;
 
     if(!select.querySelector('option[value="starter"]')){
       const option=document.createElement("option");
@@ -12,30 +12,30 @@
     }
 
     const classic=select.querySelector('option[value="classic"]');
-    if(classic) classic.textContent="Plain";
+    if(classic)classic.textContent="Plain";
     const legacy=select.querySelector('option[value="undisputed"]');
-    if(legacy) legacy.textContent="UNDISPUTED (existing)";
+    if(legacy)legacy.textContent="UNDISPUTED (existing)";
 
     const reset=document.getElementById("tdReset");
-    if(reset&&!reset.dataset.v119Reset){
-      reset.dataset.v119Reset="1";
+    if(reset&&!reset.dataset.starterReset){
+      reset.dataset.starterReset="1";
       reset.textContent="Reset to Starter";
-      reset.addEventListener("click",async e=>{
-        e.preventDefault();
-        e.stopImmediatePropagation();
+      reset.addEventListener("click",async event=>{
+        event.preventDefault();
+        event.stopImmediatePropagation();
         const name=String(document.getElementById("tdWhoName")?.textContent||"").trim();
-        const team=(window.teamDefs||[]).find(t=>String(t.name||"").trim()===name);
-        if(!team) return;
-        if(!confirm("Reset this team's design to Starter? Custom artwork stops being used, but nothing is deleted.")) return;
+        const team=window.StatsTeams?.findByName?.(name);
+        if(!team)return;
+        if(!confirm("Reset this team's design to Starter? Custom artwork stops being used, but nothing is deleted."))return;
         const status=document.getElementById("tdStatus");
         try{
           const response=await fetch(`/api/themes/team-${Number(team.team_id)}`,{method:"DELETE",cache:"no-store"});
           const data=await response.json().catch(()=>({}));
-          if(!response.ok||data.ok===false) throw new Error(data.error||"Could not reset theme.");
-          if(typeof window.openTeamDesign==="function") await window.openTeamDesign(Number(team.team_id));
-          if(status) status.textContent="Reset to Starter.";
+          if(!response.ok||data.ok===false)throw new Error(data.error||"Could not reset theme.");
+          if(typeof window.openTeamDesign==="function")await window.openTeamDesign(Number(team.team_id));
+          if(status)status.textContent="Reset to Starter.";
         }catch(err){
-          if(status) status.textContent=err.message||"Could not reset theme.";
+          if(status)status.textContent=err.message||"Could not reset theme.";
         }
       },true);
     }
@@ -45,14 +45,11 @@
   function start(){
     let tries=0;
     (function attempt(){
-      if(install()) return;
-      if(++tries<160) setTimeout(attempt,50);
+      if(install())return;
+      if(++tries<160)setTimeout(attempt,50);
     })();
   }
 
-  if(document.readyState==="loading"){
-    document.addEventListener("DOMContentLoaded",()=>setTimeout(start,0),{once:true});
-  }else{
-    setTimeout(start,0);
-  }
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",()=>setTimeout(start,0),{once:true});
+  else setTimeout(start,0);
 })();
