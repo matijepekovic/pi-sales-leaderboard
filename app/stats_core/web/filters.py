@@ -1,4 +1,4 @@
-"""HTTP boundary for reusable display Filters."""
+"""HTTP boundary for user-manageable Display Filters."""
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
@@ -37,6 +37,13 @@ def blueprint(filters):
         try:
             filters.delete(filter_id)
             return jsonify({"ok": True})
+        except Exception as exc:
+            return error_response(exc)
+
+    @bp.post("/api/filters/preview")
+    def preview_filter():
+        try:
+            return jsonify({"ok": True, **filters.preview(request.get_json(silent=True) or {})})
         except Exception as exc:
             return error_response(exc)
 
