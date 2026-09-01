@@ -1,55 +1,59 @@
 # Stats architecture
 
-The application has explicit runtime ownership while preserving the production SQLite schema and external behavior.
+Stats is a configurable competitive-display product. Companies connect a Source, pull Reports, turn Report fields into user-facing Display Values, build Screens, apply Themes and choose what the Display plays.
 
 ## Composition root
 
-`app/stats_core/bootstrap.py` is the only application composition root. It creates repositories, domain services, the screen registry, HTTP blueprints and the Windows platform adapter. Feature modules do not install or monkey-patch one another.
+`app/stats_core/bootstrap.py` is the single application composition root. It creates repositories, Source adapters, services, HTTP blueprints, Theme and the Windows platform adapter. Feature modules do not construct or monkey-patch unrelated modules.
 
-## Configuration and storage
+## Core flow
 
-`app/stats_core/config.py` owns application defaults, feature-access flags, metric definitions and secret-setting keys. Repositories and services read those definitions directly; storage does not define UI or domain policy.
+`Source -> Report -> Display Value -> Screen -> Display`
 
-`app/stats_core/repositories/` owns persistence adapters:
+Data Filters are separate. They belong to Report/source configuration and affect what is pulled from the external Source.
 
-- reps and pull-retention cache
-- organization / teams
-- settings and metadata
-- Product Close rows
-- theme configuration
-- reusable asset library
-- protected applied-theme assets
+## Sources and Reports
 
-`app/stats_core/storage/sqlite.py` owns only SQLite connection, schema initialization and migrations. Domain SQL belongs to repositories. Persistent data locations remain compatible with pre-refactor installs through the data-path migration.
+External integrations are replaceable adapters under `app/sources/`. Tableau-specific credentials, discovery, transport and parsing stay inside the Tableau adapter boundary.
 
-## Data and Tableau
+`ReportService` owns normalized Report definitions and pulled snapshots. Downstream modules consume normalized fields and rows only.
 
-`TableauService` is the Tableau connection boundary. `RepPullPolicy` normalizes pulled rows and applies retention rules explicitly. `RepRefreshService` is the one rep refresh path used by both manual and scheduled refreshes. `PreviewService`, `TemporaryDateService` and `DataSnapshotService` explicitly choose preview, temporary or stored display data.
+## Display Values
 
-Shared Tableau HTTP and parsing primitives live in `sources/tableau_base.py`. Configured rep sources, the rep-summary parser, Product Close, mapped CSV and Crosstab modules depend on that stable source boundary; version-numbered Tableau base modules are retired.
+`DisplayValueService` owns the user-facing naming layer over Report fields. Every normalized field automatically produces one deterministic Display Value. The underlying Report/field binding never changes when a user renames the Display Value.
 
-`sources/discovery.py` owns workbook/view discovery, trial source pulls, mapping introspection and filter catalogs for the settings UI. `SourceService` owns the application workflow around those operations and delegates temporary TV preview state to `PreviewService`. There is no separate top-level source-picker runtime or second preview store.
+Only rename overrides are persisted by `DisplayValueRepository`; there is no second copy of Report fields.
 
-Product Close Rates has separate source, repository, refresh service and screen ownership under `stats_core/product`, `stats_core/repositories`, `stats_core/services`, and `stats_core/screens`.
+## Screens
 
-## Screens and controls
+`ScreenService` owns editable Screen definitions and Screen Templates. Screens choose Reports, Display Values, sorting, row limits, template grouping and theme policy. Template-specific grouping behavior remains in the Screen layer.
 
-`ScreenRegistry` owns the five display modes: Whole Office, Per Team, Team vs Team, All Teams and Product Close Rates. `LeaderboardService` owns shared calculations. Individual screen modules own mode-specific payload shape. `ControlsService` gets valid screen choices from the registry rather than mutating display implementations.
+Whole Office, Per Team, Team vs Team, All Teams and Product Close are templates, not hard-coded application modes.
+
+## Display
+
+`DisplayService` owns playback only: active Screen, rotation membership and timing. It renders normalized Screen payloads and has no Source-vendor knowledge.
 
 ## Themes and assets
 
-`stats_core/theme/` owns the Theme API. Theme configuration, reusable library assets and currently-applied assets are separate repositories. Applied artwork is stored outside the application directory and built-in materialization uses hash-verified copies. The old runtime monkey-patch chain and duplicate theme-service adapter are not part of application composition.
+`stats_core/theme/` owns Screen visual configuration and assets. Theme changes do not alter Report, Display Value or Screen data contracts.
 
-## Access and security
+## Storage
 
-Feature availability is a plain `FEATURE_ACCESS` mapping in `stats_core/config.py`; there is no entitlement/account/payment service in the runtime. `AuthService` owns settings PIN behavior and throttling.
+Repositories own domain persistence. `app/stats_core/storage/sqlite.py` owns only connection, schema initialization and migrations.
 
 ## Platform
 
-Production is Windows-only. Core services remain platform-neutral, while `stats_core/platform/windows.py` owns Windows launching/restart/update registration and Windows-specific integrations. `windows/server_entry.py` is the single backend process entrypoint used by both local Windows runs and the packaged `StatsServer.exe` build.
+Windows-specific launching, update and OS integration remain under the Windows platform boundary. Platform-neutral services do not import Windows modules.
 
 ## Frontend ownership
 
-`templates/display.html` and `templates/settings.html` are thin runtime manifests. Their base markup lives under `templates/display/` and `templates/settings/`, and scripts are grouped by responsibility under `static/display/`, `static/settings/` and `static/runtime/`.
+Settings frontend code is grouped by current responsibility: Data, Display Values, Screens, Display and shared Runtime. Display frontend code consumes normalized Screen render payloads. Source-vendor behavior must not leak into Screens, Display Values, Display or Themes.
 
-The numbered frontend patch stack is retired. Active frontend files have stable responsibility-based names, obsolete superseded files are deleted, and CI rejects versioned root JavaScript or old versioned base templates from returning.
+## Replaceability test
+
+Before merging a module change, ask:
+
+> Could this module be replaced without rewriting unrelated parts of Stats?
+
+If the answer is no, fix the boundary before merging.
