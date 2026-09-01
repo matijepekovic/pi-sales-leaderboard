@@ -68,6 +68,9 @@ class SourceService:
         adapter = self.adapters.get(adapter_key)
         if not adapter:
             raise ValidationError(f"Source adapter '{adapter_key}' is not available.")
+        catalog = self._catalog()
+        if not existing and any(str(row.get("adapter") or "").strip() == adapter_key for row in catalog["sources"]):
+            raise ValidationError(f"{adapter.label} is already configured. Additional Sources are coming soon.")
         name = str(incoming.get("name") or existing.get("name") or adapter.label).strip()[:120]
         if not name:
             raise ValidationError("Source name is required.")
@@ -78,7 +81,6 @@ class SourceService:
             "enabled": bool(incoming.get("enabled", existing.get("enabled", True))),
             "connection": adapter.clean_source(incoming, existing),
         }
-        catalog = self._catalog()
         catalog["sources"] = [row for row in catalog["sources"] if str(row.get("id")) != source_id] + [source]
         self.repos.data_catalog.save(catalog)
         if isinstance(incoming.get("secret"), str) and incoming.get("secret"):
