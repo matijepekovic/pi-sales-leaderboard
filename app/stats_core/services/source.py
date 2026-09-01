@@ -21,7 +21,7 @@ class SourceService:
         self._refresh_lock = threading.Lock()
 
     def prepare(self):
-        """Create normalized source/report records and migrate the old secret once."""
+        """Create normalized records and perform any adapter-owned one-time migration."""
         current = self.repos.data_catalog.get()
         if not current["sources"] and not current["reports"]:
             adapter = self.adapters.get("tableau") or next(iter(self.adapters.values()), None)
@@ -39,6 +39,9 @@ class SourceService:
                     secret = adapter.legacy_secret(settings)
                     if secret:
                         self.repos.source_credentials.set(PRIMARY_SOURCE_ID, secret)
+                cleaned = adapter.remove_legacy_settings(settings)
+                if cleaned != settings:
+                    self.repos.settings.save(cleaned)
             else:
                 current = self.repos.data_catalog.ensure()
         return current
@@ -135,11 +138,7 @@ class SourceService:
     def test(self, source_id):
         source = self._source(source_id)
         adapter, app_settings = self._adapter_context(source)
-        result = adapter.test_connection(app_settings, source)
-        return {
-            **result,
-            "message": f"Connected. {result.get('selected_rows', 0)} matching rows.",
-        }
+        return adapter.test_connection(app_settings, source)
 
     def workbooks_for(self, source_id):
         source = self._source(source_id)
