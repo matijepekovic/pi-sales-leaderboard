@@ -9,7 +9,7 @@ UNLOCK_SESSION_KEY = "settings_unlock_marker"
 LEGACY_UNLOCK_SESSION_KEY = "settings_unlocked"
 
 
-def _is_unlocked(auth_service):
+def session_is_unlocked(auth_service):
     return auth_service.session_is_unlocked(session.get(UNLOCK_SESSION_KEY))
 
 
@@ -33,7 +33,7 @@ def blueprint(auth_service):
         return jsonify({
             "ok": True,
             "pin_set": pin_set,
-            "unlocked": not pin_set or _is_unlocked(auth_service),
+            "unlocked": not pin_set or session_is_unlocked(auth_service),
         })
 
     @bp.post("/api/auth/unlock")
@@ -72,7 +72,7 @@ def blueprint(auth_service):
             pin_set = auth_service.change_pin(
                 body.get("current_pin"),
                 body.get("new_pin"),
-                already_unlocked=_is_unlocked(auth_service),
+                already_unlocked=session_is_unlocked(auth_service),
             )
         except Exception as exc:
             return error_response(exc)
