@@ -6,8 +6,12 @@ workbooks, views, mappings, filters or export settings are represented.
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
+import json
 
 from sources import discovery
+from sources import tableau_base as _base
+from sources.tableau_product_market import ProductCloseSource, selected_market
 from sources.tableau_table import read_table
 from stats_core.services.tableau import TableauService
 
@@ -58,12 +62,9 @@ class TableauAdapter:
         server = str(connection.get("server") or "").strip()
         site = str(connection.get("site") or "").strip()
         pat_name = str(connection.get("pat_name") or "").strip()
-        if server:
-            settings["tableau_server"] = server
-        if site:
-            settings["tableau_site"] = site
-        if pat_name:
-            settings["tableau_pat_name"] = pat_name
+        if server: settings["tableau_server"] = server
+        if site: settings["tableau_site"] = site
+        if pat_name: settings["tableau_pat_name"] = pat_name
         source_config = dict(settings.get("source") or {})
         source_config.update({
             "server": server or str(source_config.get("server") or ""),
@@ -81,14 +82,10 @@ class TableauAdapter:
         source_config.update(configured)
         settings["source"] = source_config
         runtime = report.get("runtime") if isinstance(report.get("runtime"), dict) else {}
-        if "date_mode" in runtime:
-            settings["data_date_mode"] = str(runtime.get("date_mode") or "current_month")
-        if "date_start" in runtime:
-            settings["data_date_start"] = str(runtime.get("date_start") or "")
-        if "date_end" in runtime:
-            settings["data_date_end"] = str(runtime.get("date_end") or "")
-        if "market" in runtime:
-            settings["product_market"] = str(runtime.get("market") or "")
+        if "date_mode" in runtime: settings["data_date_mode"] = str(runtime.get("date_mode") or "current_month")
+        if "date_start" in runtime: settings["data_date_start"] = str(runtime.get("date_start") or "")
+        if "date_end" in runtime: settings["data_date_end"] = str(runtime.get("date_end") or "")
+        if "market" in runtime: settings["product_market"] = str(runtime.get("market") or "")
         return self.tableau.normalized_settings(settings)
 
     def public_source(self, source, secret_configured=False):
@@ -99,6 +96,51 @@ class TableauAdapter:
         source["connection"] = connection
         return source
 
+    def _rep_scope(self, settings, source, report):
+        runtime = self.tableau.normalized_settings(settings)
+        start, end = _base.resolve_dates(runtime)
+        config = dict(runtime.get("source") or {})
+        fingerprint = hashlib.sha256(
+            json.dumps(config, sort_keys=True, separators=(",", ":"), default=str).encode()
+        ).hexdigest()[:24]
+        return {
+            "id": f"{source.get('id')}:{report.get('id')}:{start}:{end}:{fingerprint}",
+            "start": start,
+            "end": end,
+        }
+
+    def rep_scope(self, app_settings, source, report):
+        settings = self.report_settings(app_settings, source, report)
+        return self._rep_scope(settings, source, report)
+
+    def pull_reps(self, app_settings, source, report):
+        settings = self.report_settings(app_settings, source, report)
+        connector = self.tableau.source(settings)
+        rows = connector.fetch()
+        scope = self._rep_scope(settings, source, report)
+        runtime = self.tableau.normalized_settings(settings)
+        return {
+            "rows": rows,
+            "scope": scope,
+            "start": scope["start"],
+            "end": scope["end"],
+            "total_rows": int(getattr(connector, "last_total_rows", 0) or 0),
+            "offices": list(getattr(connector, "last_offices", []) or []),
+            "collapsed": list((getattr(connector, "last_notes", {}) or {}).get("collapsed") or []),
+            "office": str(runtime.get("data_office") or ""),
+        }
+
+    def pull_products(self, app_settings, source, report, start=None, end=None, market=None, fallback_markets=None):
+        settings = self.report_settings(app_settings, source, report)
+        market = str(market or selected_market(settings)).strip()
+        connector = ProductCloseSource(settings, fallback_markets=fallback_markets)
+        resolved_start, resolved_end, rows = connector.fetch_products(start=start, end=end, market=market)
+        return {"rows": rows, "start": resolved_start, "end": resolved_end, "market": market}
+
+    def product_markets(self, app_settings, source, report, fallback_markets=None):
+        settings = self.report_settings(app_settings, source, report)
+        return ProductCloseSource(settings, fallback_markets=fallback_markets).fetch_markets()
+
     def test_connection(self, app_settings, source):
         preview = self.tableau.source(self.source_settings(app_settings, source)).preview()
         return {
@@ -107,26 +149,13 @@ class TableauAdapter:
             "offices": preview["offices"], "names": preview["names"],
         }
 
-    def workbooks(self, app_settings, source):
-        return discovery.list_workbooks(self.source_settings(app_settings, source))
-
-    def all_views(self, app_settings, source):
-        return discovery.list_all_views(self.source_settings(app_settings, source))
-
-    def views(self, app_settings, source, workbook):
-        return discovery.list_views(self.source_settings(app_settings, source), workbook)
-
-    def columns(self, app_settings, source, report, overrides=None):
-        return discovery.read_columns(self.report_settings(app_settings, source, report), overrides or {})
-
-    def preview(self, app_settings, source, report, overrides=None):
-        return discovery.preview_pull(self.report_settings(app_settings, source, report), overrides or {})
-
-    def table(self, app_settings, source, report, overrides=None):
-        return read_table(self.report_settings(app_settings, source, report), overrides or {})
-
-    def test_view(self, app_settings, source, report, overrides=None):
-        return discovery.test_source(self.report_settings(app_settings, source, report), overrides or {})
+    def workbooks(self, app_settings, source): return discovery.list_workbooks(self.source_settings(app_settings, source))
+    def all_views(self, app_settings, source): return discovery.list_all_views(self.source_settings(app_settings, source))
+    def views(self, app_settings, source, workbook): return discovery.list_views(self.source_settings(app_settings, source), workbook)
+    def columns(self, app_settings, source, report, overrides=None): return discovery.read_columns(self.report_settings(app_settings, source, report), overrides or {})
+    def preview(self, app_settings, source, report, overrides=None): return discovery.preview_pull(self.report_settings(app_settings, source, report), overrides or {})
+    def table(self, app_settings, source, report, overrides=None): return read_table(self.report_settings(app_settings, source, report), overrides or {})
+    def test_view(self, app_settings, source, report, overrides=None): return discovery.test_source(self.report_settings(app_settings, source, report), overrides or {})
 
     def legacy_projection(self, app_settings, source, report=None):
         """Return the old settings shape while old pull code is still active."""
