@@ -38,10 +38,18 @@
   }
 
   function renderSourceMenu(){
-    const host=$("settingsPageActions"),section=$("settingsData"),source=selectedSource();
+    const host=$("settingsPageActions"),section=$("settingsData"),source=selectedSource(),hasTableau=state.sources.some(item=>item.adapter==="tableau");
     if(!host||!section?.classList.contains("active"))return;
     host.innerHTML=`<div class="row" style="justify-content:flex-end"><select id="dataSourcesMenu" aria-label="Sources" style="width:auto;min-width:210px">${state.sources.length?state.sources.map(item=>`<option value="${esc(item.id)}" ${item.id===state.activeSourceId?"selected":""}>${esc(item.name||"Source")}</option>`).join(""):'<option value="">No Sources</option>'}<option value="__new__">+ Add Source</option></select>${source?'<button id="dataEditSource" class="btn" type="button">Edit Source</button>':""}</div>`;
-    $("dataSourcesMenu")?.addEventListener("change",async event=>{const value=event.target.value;if(value==="__new__")openSource();else await selectSource(value);});
+    $("dataSourcesMenu")?.addEventListener("change",async event=>{
+      const value=event.target.value;
+      if(value==="__new__"){
+        event.target.value=state.activeSourceId||"";
+        if(hasTableau){alert("Additional Sources are coming soon.");return;}
+        openSource();return;
+      }
+      await selectSource(value);
+    });
     $("dataEditSource")?.addEventListener("click",()=>openSource(state.activeSourceId));
   }
 
