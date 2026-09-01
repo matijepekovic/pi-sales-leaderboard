@@ -2,7 +2,7 @@
 
 Stats is composed as:
 
-`Source -> Report -> Filter -> Screen -> Display`
+`Source -> Report -> Display Value -> Screen -> Display`
 
 The arrows describe application flow, not ownership leakage.
 
@@ -14,20 +14,24 @@ A Source is an external connection handled by a replaceable adapter. Vendor-spec
 
 A Report defines data pulled from a Source and exposes normalized Stats fields and rows. Data Filters belong to the Report/source configuration and affect what is pulled.
 
-## Filter
+## Display Value
 
-A Filter is a reusable human-facing concept such as Team, Office, Product or Rep. A Filter contains no Source, vendor, Report-field or Tableau knowledge.
+Every normalized Report field automatically becomes one Display Value. A Display Value keeps the permanent binding to its Report and field key while owning the human-facing name used by Screens.
+
+For example, the Report field `sr-rep name` can be renamed to `Name` without changing the underlying field or Source configuration.
+
+Display Values are generated from Report fields rather than manually created. Only rename overrides are persisted.
 
 ## Screen
 
-A Screen selects one or more Reports. Its Display Filter mappings explicitly match reusable Filters to concrete fields in each selected Report. The Screen may select a display value for each matched Filter. These mappings filter already-pulled data and never change the source pull.
+A Screen selects one or more Reports and chooses which Display Values appear, their ranking/sort order, row limit and theme policy. Screen Templates may group rows by a selected Display Value for competitive layouts such as Per Team, Team vs Team and All Teams.
 
-The Screen also owns its table composition and theme policy (`inherited` or `custom`).
+Screens depend only on normalized Reports and Display Values. They do not know Source-vendor field structures.
 
 ## Display
 
-Display owns playback only: active Screen, Screen rotation order and rotation timing. Temporary data/date override remains a data/runtime concern and is not a Display Filter.
+Display owns playback only: active Screen, Screen rotation order and rotation timing.
 
 ## Replaceability invariant
 
-Replacing Tableau or another external Source adapter must not require changes to Filters, Screens, Display, themes, controls, repositories unrelated to source persistence, or normalized downstream data contracts.
+Replacing Tableau or another external Source adapter must not require changes to Display Values, Screens, Display, themes or unrelated repositories. A different Source adapter only needs to produce the normalized Report field/row contract.
