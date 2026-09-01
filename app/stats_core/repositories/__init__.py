@@ -9,7 +9,7 @@ from .applied_assets import AppliedAssetRepository
 from .asset_library import AssetLibraryRepository
 from .data_catalog import DataCatalogRepository
 from .display import DisplayRepository
-from .filters import FilterRepository
+from .display_values import DisplayValueRepository
 from .meta import MetaRepository
 from .report_data import ReportDataRepository
 from .screens import ScreenRepository
@@ -30,7 +30,7 @@ class Repositories:
         self.data_catalog = DataCatalogRepository()
         self.source_credentials = SourceCredentialRepository()
         self.report_data = ReportDataRepository(data_root)
-        self.filters = FilterRepository()
+        self.display_values = DisplayValueRepository()
         self.screens = ScreenRepository()
         self.display = DisplayRepository()
         self.themes = ThemeRepository(self.settings, self.meta)
