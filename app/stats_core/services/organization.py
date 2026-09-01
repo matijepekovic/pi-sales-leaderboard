@@ -34,14 +34,20 @@ class OrganizationService:
     def leader_candidates(self):
         candidates = {}
         for rep in self.repos.reps.list():
-            tableau_lead = str(rep.get("team_lead") or "").strip()
-            if tableau_lead:
-                candidates.setdefault(tableau_lead.lower(), {"name": tableau_lead, "source": "Tableau Team Lead"})
+            source_lead = str(rep.get("team_lead") or "").strip()
+            if source_lead:
+                candidates.setdefault(
+                    source_lead.lower(),
+                    {"name": source_lead, "source": "Source Team Lead"},
+                )
             title = str(rep.get("title") or "").strip()
             if any(token in title.lower() for token in ("manager", "smit", "manager in training")):
                 name = str(rep.get("rep_name") or "").strip()
                 if name:
-                    candidates.setdefault(name.lower(), {"name": name, "source": title or "Tableau"})
+                    candidates.setdefault(
+                        name.lower(),
+                        {"name": name, "source": title or "Source"},
+                    )
         for team in self.repos.organization.definitions():
             leader = team.get("leader")
             if leader and leader.get("lead_name"):
@@ -50,15 +56,25 @@ class OrganizationService:
         return sorted(candidates.values(), key=lambda item: item["name"].lower())
 
     def rep_summaries(self):
-        return [{
-            "rep_key": rep.get("rep_key"),
-            "rep_name": rep.get("rep_name"),
-            "tableau_team": rep.get("tableau_team") or "Unassigned",
-            "effective_team": rep.get("team") or "Unassigned",
-            "effective_team_id": rep.get("team_id"),
-            "assigned_team_id": rep.get("assigned_team_id"),
-            "local_team_override": bool(rep.get("local_team_override")),
-        } for rep in sorted(self.repos.reps.list(), key=lambda item: str(item.get("rep_name") or "").lower())]
+        rows = []
+        for rep in sorted(
+            self.repos.reps.list(),
+            key=lambda item: str(item.get("rep_name") or "").lower(),
+        ):
+            source_team = rep.get("source_team") or "Unassigned"
+            rows.append({
+                "rep_key": rep.get("rep_key"),
+                "rep_name": rep.get("rep_name"),
+                "source_team": source_team,
+                # Kept only for older clients reading /api/config. New Settings
+                # code consumes source_team from /api/organization.
+                "tableau_team": source_team,
+                "effective_team": rep.get("team") or "Unassigned",
+                "effective_team_id": rep.get("team_id"),
+                "assigned_team_id": rep.get("assigned_team_id"),
+                "local_team_override": bool(rep.get("local_team_override")),
+            })
+        return rows
 
     def create(self, name):
         return self.repos.organization.create(name)
