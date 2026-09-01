@@ -1,3 +1,3 @@
-from .registry import ScreenRegistry
+from .templates import get_template, list_templates
 
-__all__ = ["ScreenRegistry"]
+__all__ = ["get_template", "list_templates"]
