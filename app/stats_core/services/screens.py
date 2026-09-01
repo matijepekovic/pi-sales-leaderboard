@@ -1,4 +1,4 @@
-"""Screen composition over normalized report and Filter contracts."""
+"""Screen composition over normalized Reports and reusable Display Filters."""
 from __future__ import annotations
 
 import uuid
@@ -63,34 +63,7 @@ class ScreenService:
                 continue
             self.filters.get(filter_id)
             result.append(filter_id)
-        return result[:30]
-
-    def _clean_display_mappings(self, raw, report_ids, filter_ids):
-        mappings, seen = [], set()
-        for item in raw if isinstance(raw, list) else []:
-            if not isinstance(item, dict):
-                continue
-            filter_id = str(item.get("filter_id") or "").strip()
-            report_id = str(item.get("report_id") or "").strip()
-            field = str(item.get("field") or "").strip()
-            if filter_id not in filter_ids or report_id not in report_ids or not field:
-                continue
-            valid = {str(value.get("key") or "") for value in self.reports.fields(report_id)}
-            if field not in valid:
-                continue
-            key = (filter_id, report_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            mappings.append({"filter_id": filter_id, "report_id": report_id, "field": field})
-        return mappings[:100]
-
-    def _clean_filter_values(self, raw, filter_ids):
-        raw = raw if isinstance(raw, dict) else {}
-        return {
-            filter_id: str(raw.get(filter_id) or "").strip()[:300]
-            for filter_id in filter_ids
-        }
+        return result[:50]
 
     def _clean_tables(self, raw, report_ids):
         tables, seen = [], set()
@@ -153,11 +126,6 @@ class ScreenService:
         if not report_ids:
             raise ValidationError("Choose at least one Report for this Screen.")
 
-        filter_ids = self._clean_filter_ids(incoming.get("filter_ids"))
-        mappings = self._clean_display_mappings(
-            incoming.get("display_filter_mappings"), set(report_ids), set(filter_ids)
-        )
-        filter_values = self._clean_filter_values(incoming.get("filter_values"), filter_ids)
         theme_mode = str(incoming.get("theme_mode") or "inherited").strip().lower()
         if theme_mode not in {"inherited", "custom"}:
             theme_mode = "inherited"
@@ -166,10 +134,8 @@ class ScreenService:
             "id": screen_id,
             "name": name,
             "kind": "custom",
-            "reports": report_ids[:10],
-            "filter_ids": filter_ids,
-            "display_filter_mappings": mappings,
-            "filter_values": filter_values,
+            "reports": report_ids[:20],
+            "filter_ids": self._clean_filter_ids(incoming.get("filter_ids")),
             "tables": self._clean_tables(incoming.get("tables"), set(report_ids)),
             "theme_mode": theme_mode,
         }
@@ -186,17 +152,8 @@ class ScreenService:
             raise ValidationError("Built-in screens cannot be deleted.")
         if not self.repos.screens.delete(screen_id):
             raise ValidationError("Screen not found.")
-        state = self.repos.display.get()
-        if state["active_screen_id"] == screen_id:
-            state["active_screen_id"] = "builtin:whole_office"
-        state["rotation_screen_ids"] = [item for item in state["rotation_screen_ids"] if item != screen_id]
-        self.repos.display.save(state)
         self.repos.meta.bump("settings_version")
         return True
-
-    @staticmethod
-    def _same(value, expected):
-        return str(value if value is not None else "").strip().casefold() == str(expected or "").strip().casefold()
 
     @staticmethod
     def _sort_value(value):
@@ -208,28 +165,13 @@ class ScreenService:
         except ValueError:
             return (1, text.casefold())
 
-    def _active_mappings(self, screen, report_id, effective_values):
-        result = []
-        for mapping in screen.get("display_filter_mappings") or []:
-            if str(mapping.get("report_id") or "") != report_id:
-                continue
-            filter_id = str(mapping.get("filter_id") or "")
-            value = str(effective_values.get(filter_id) or "").strip()
-            if value and value.casefold() != "all":
-                result.append((mapping, value))
-        return result
-
-    def _section(self, screen, table, effective_values):
+    def _section(self, screen, table):
         report_id = str(table.get("report_id") or "")
         report = self.reports.get(report_id)
         fields = self.reports.fields(report_id)
         by_key = {str(field.get("key")): dict(field) for field in fields}
         columns = [key for key in table.get("columns") or [] if key in by_key]
-        active_mappings = self._active_mappings(screen, report_id, effective_values)
-        rows = []
-        for raw in self.reports.rows(report_id):
-            if all(self._same(raw.get(mapping["field"]), value) for mapping, value in active_mappings):
-                rows.append(dict(raw))
+        rows = self.filters.apply(report_id, self.reports.rows(report_id), screen.get("filter_ids") or [])
         sort_field = str(table.get("sort_field") or "")
         if sort_field in by_key:
             rows.sort(
@@ -268,29 +210,18 @@ class ScreenService:
                     return {"team_id": int(match["team_id"]), "team_name": match["name"]}
         return None
 
-    def _filter_payload(self, screen, effective_values):
-        definitions = {item["id"]: item for item in self.filters.list()}
-        mappings = screen.get("display_filter_mappings") or []
-        return [
-            {
-                "id": filter_id,
-                "name": str(definitions.get(filter_id, {}).get("name") or filter_id),
-                "value": str(effective_values.get(filter_id) or ""),
-                "mappings": [dict(item) for item in mappings if str(item.get("filter_id")) == filter_id],
-            }
-            for filter_id in screen.get("filter_ids") or []
-        ]
+    def _filter_payload(self, screen):
+        result = []
+        for filter_id in screen.get("filter_ids") or []:
+            try:
+                item = self.filters.get(filter_id)
+            except ValidationError:
+                continue
+            result.append({"id": item["id"], "name": item["name"]})
+        return result
 
-    def render_definition(self, screen, filter_values=None):
-        effective_values = dict(screen.get("filter_values") or {})
-        if isinstance(filter_values, dict):
-            for filter_id in screen.get("filter_ids") or []:
-                if filter_id in filter_values:
-                    effective_values[filter_id] = str(filter_values[filter_id] or "").strip()[:300]
-        sections = [
-            self._section(screen, table, effective_values)
-            for table in screen.get("tables") or []
-        ]
+    def render_definition(self, screen):
+        sections = [self._section(screen, table) for table in screen.get("tables") or []]
         return {
             "mode": "custom_screen",
             "mode_label": screen["name"],
@@ -298,15 +229,15 @@ class ScreenService:
             "screen_name": screen["name"],
             "theme_mode": screen.get("theme_mode", "inherited"),
             "winning_team": self._winning_team(sections),
-            "display_filters": self._filter_payload(screen, effective_values),
+            "display_filters": self._filter_payload(screen),
             "sections": sections,
         }
 
     def preview(self, incoming):
         return self.render_definition(self._normalize(incoming, screen_id="screen-preview"))
 
-    def render(self, screen_id, filter_values=None, **kwargs):
+    def render(self, screen_id, **kwargs):
         screen = self.get(screen_id)
         if screen.get("kind") == "builtin":
             return self.builtin.render(screen.get("mode"), **kwargs)
-        return self.render_definition(screen, filter_values=filter_values)
+        return self.render_definition(screen)
