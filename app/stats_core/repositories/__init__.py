@@ -28,7 +28,7 @@ class Repositories:
         self.meta = MetaRepository()
         self.settings = SettingsRepository()
         self.data_catalog = DataCatalogRepository()
-        self.source_credentials = SourceCredentialRepository(self.settings)
+        self.source_credentials = SourceCredentialRepository()
         self.report_data = ReportDataRepository(data_root)
         self.screens = ScreenRepository()
         self.display = DisplayRepository()
