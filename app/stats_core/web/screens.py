@@ -1,4 +1,4 @@
-"""HTTP boundary for Screen templates, definitions and live previews."""
+"""HTTP boundary for screen definitions and live previews."""
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
@@ -8,11 +8,6 @@ from stats_core.web.common import error_response
 
 def blueprint(screens):
     bp = Blueprint("screens", __name__)
-
-    @bp.get("/api/screens/templates")
-    def list_templates():
-        try: return jsonify({"ok": True, "templates": screens.templates()})
-        except Exception as exc: return error_response(exc)
 
     @bp.get("/api/screens")
     def list_screens():

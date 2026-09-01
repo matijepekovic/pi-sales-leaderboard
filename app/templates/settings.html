@@ -33,7 +33,6 @@
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsFilters">Filters</button>
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsScreens">Screens</button>
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsDisplay">Display</button>
-          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsSoftware">Software Update</button>
         </nav>
         <div class="settings-sidebar-footer">Source → Data → Filters → Screens → Display</div>
       </aside>
@@ -51,21 +50,6 @@
             <section class="settings-section" id="settingsFilters" data-settings-title="Filters" data-settings-description="Create and test reusable Filters against pulled Report data."><div id="settingsFiltersHost"></div></section>
             <section class="settings-section" id="settingsScreens" data-settings-title="Screens" data-settings-description="Choose Reports and Filters, build the presentation, design it and test it live."><div id="settingsScreensHost"></div></section>
             <section class="settings-section" id="settingsDisplay" data-settings-title="Display" data-settings-description="Choose the active Screen and configure rotation."><div id="settingsDisplayHost"></div></section>
-            <section class="settings-section" id="settingsSoftware" data-settings-title="Software Update" data-settings-description="Check the signed Stats update feed and install a newer Windows release.">
-              <div class="card">
-                <div class="toolbar">
-                  <div>
-                    <h2>Software Update</h2>
-                    <div id="softwareVersionCurrent" class="small">Software version: loading…</div>
-                  </div>
-                </div>
-                <div class="row" style="margin-top:14px">
-                  <button id="softwareCheckUpdate" class="btn" type="button">Check for Updates</button>
-                  <button id="softwareInstallUpdate" class="btn primary" type="button" disabled>Install Update</button>
-                </div>
-                <div id="softwareUpdateStatus" class="status small" style="margin-top:12px"></div>
-              </div>
-            </section>
           </div>
         </div>
       </main>
@@ -79,6 +63,5 @@
   <script src="/static/settings/theme.js"></script>
   <script src="/static/settings/screens.js"></script>
   <script src="/static/settings/display.js"></script>
-  <script src="/static/settings/software.js"></script>
 </body>
 </html>
