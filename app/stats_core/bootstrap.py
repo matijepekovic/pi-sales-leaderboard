@@ -72,6 +72,7 @@ def _install_auth_gate(app, runtime):
             endpoint in runtime.public_endpoints or endpoint == "static"
             or (method == "GET" and path.startswith("/static/"))
             or (method == "GET" and path.startswith("/api/theme-assets/"))
+            or (method == "GET" and path.startswith("/api/screen-theme-assets/"))
         )
         if public:
             return None
@@ -126,7 +127,8 @@ def create_app(platform_name="windows", start_background=True):
     public_endpoints = {
         "core.display", "core.health", "core.api_system_version", "core.api_config", "core.api_leaderboard",
         "auth.api_auth_status", "auth.api_auth_unlock", "organization.team_logo",
-        "product.preview", "product.product_close", "tv.report_geometry", "themes.theme_asset",
+        "product.preview", "product.product_close", "tv.report_geometry",
+        "themes.theme_asset", "themes.screen_theme_asset",
     }
     runtime = Runtime(
         repos=repos, settings=settings, auth=auth, organization=organization,
