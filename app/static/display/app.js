@@ -21,15 +21,14 @@
   function sectionHtml(section,theme){
     const fields=section.fields||[],rows=section.rows||[],rowAsset=theme?.assets?.row||"",championAsset=theme?.assets?.champion||"";
     const body=rows.map((row,index)=>{const asset=index===0?championAsset:rowAsset,style=asset?` style="background-image:linear-gradient(rgba(0,0,0,.12),rgba(0,0,0,.12)),url('${esc(asset)}')"`:"";return `<tr${style}>${fields.map(field=>`<td title="${esc(row[field.key]??"")}">${esc(format(row[field.key],field.type))}</td>`).join("")}</tr>`;}).join("");
-    return `<section class="report-section"><div class="report-heading"><div class="report-name">${esc(section.report_name||section.report_id)}</div><div class="report-count">${Number(section.total_rows||rows.length)} rows</div></div><div class="table-viewport"><table class="stats-table"><thead><tr>${fields.map(field=>`<th>${esc(field.label||field.key)}</th>`).join("")}</tr></thead><tbody>${body||`<tr><td colspan="${Math.max(fields.length,1)}">No matching rows</td></tr>`}</tbody></table></div></section>`;
+    return `<section class="report-section"><div class="report-heading"><div class="report-name">${esc(section.report_name||section.report_id)}</div><div class="report-count">${Number(section.total_rows||rows.length)} rows</div></div><div class="table-viewport"><table class="stats-table"><thead><tr>${fields.map(field=>`<th>${esc(field.label||field.key)}</th>`).join("")}</tr></thead><tbody>${body||`<tr><td colspan="${Math.max(fields.length,1)}">No rows</td></tr>`}</tbody></table></div></section>`;
   }
 
   function render(payload){
     applyTheme(payload?.theme);
     if(!payload||payload.mode==="empty"||!payload.screen_id){root.innerHTML='<div class="display-shell"><div class="empty">No Screen configured.<br><span style="font-size:.55em">Open Settings → Screens to create one.</span></div></div>';return;}
-    const filters=(payload.display_filters||[]).map(filter=>`<span class="filter-pill">${esc(filter.name)}</span>`).join(""),hero=payload.theme?.assets?.hero||"";
-    const layout=String(payload.layout||"standard").replace(/[^a-z0-9_-]/gi,"");
-    root.innerHTML=`<div class="display-shell layout-${layout}"><header class="display-header" ${hero?`style="background-image:linear-gradient(rgba(0,0,0,.32),rgba(0,0,0,.32)),url('${esc(hero)}')"`:""}><div class="display-title">${esc(payload.screen_name||"Stats")}</div><div class="display-filters">${filters}</div></header><main class="sections layout-${layout}">${(payload.sections||[]).map(section=>sectionHtml(section,payload.theme)).join("")||'<div class="empty">This Screen has no data to display.</div>'}</main></div>`;
+    const hero=payload.theme?.assets?.hero||"",layout=String(payload.layout||"standard").replace(/[^a-z0-9_-]/gi,"");
+    root.innerHTML=`<div class="display-shell layout-${layout}"><header class="display-header" ${hero?`style="background-image:linear-gradient(rgba(0,0,0,.32),rgba(0,0,0,.32)),url('${esc(hero)}')"`:""}><div class="display-title">${esc(payload.screen_name||"Stats")}</div></header><main class="sections layout-${layout}">${(payload.sections||[]).map(section=>sectionHtml(section,payload.theme)).join("")||'<div class="empty">This Screen has no data to display.</div>'}</main></div>`;
   }
 
   async function refresh(){
