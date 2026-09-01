@@ -31,7 +31,17 @@ class ScreenService:
                 })
         return rows
 
-    def list(self): return self._builtin_definitions() + self.repos.screens.list()
+    def list(self):
+        return self._builtin_definitions() + self.repos.screens.list()
+
+    def modes(self):
+        return self.builtin.modes()
+
+    def cycle_views(self):
+        return self.builtin.cycle_views()
+
+    def render_mode(self, raw_mode=None, **kwargs):
+        return self.builtin.render(raw_mode, **kwargs)
 
     def get(self, screen_id):
         key = str(screen_id or "").strip()
