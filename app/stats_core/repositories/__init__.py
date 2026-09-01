@@ -11,10 +11,7 @@ from .data_catalog import DataCatalogRepository
 from .display import DisplayRepository
 from .filters import FilterRepository
 from .meta import MetaRepository
-from .organization import OrganizationRepository
-from .products import ProductRepository
 from .report_data import ReportDataRepository
-from .reps import RepRepository
 from .screens import ScreenRepository
 from .settings import SettingsRepository
 from .source_credentials import SourceCredentialRepository
@@ -22,6 +19,8 @@ from .themes import ThemeRepository
 
 
 class Repositories:
+    """Repository composition for current Stats product domains."""
+
     def __init__(self, static_root=None, data_root=None):
         data_root = Path(data_root or persistent_data_dir())
         static_root = Path(static_root or Path(__file__).resolve().parents[2] / "static")
@@ -34,9 +33,6 @@ class Repositories:
         self.filters = FilterRepository()
         self.screens = ScreenRepository()
         self.display = DisplayRepository()
-        self.organization = OrganizationRepository(self.meta)
-        self.reps = RepRepository(self.meta, self.organization)
-        self.products = ProductRepository()
         self.themes = ThemeRepository(self.settings, self.meta)
         self.applied_assets = AppliedAssetRepository(data_root, static_root)
         self.asset_library = AssetLibraryRepository(data_root, static_root)
