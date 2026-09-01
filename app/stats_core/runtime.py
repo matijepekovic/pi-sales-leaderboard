@@ -7,7 +7,6 @@ class Runtime:
     settings: object
     auth: object
     organization: object
-    tableau: object
     pull_policy: object
     rep_refresh: object
     temporary_date: object
@@ -16,7 +15,9 @@ class Runtime:
     preview: object
     snapshots: object
     leaderboard: object
+    reports: object
     screens: object
+    display: object
     source: object
     controls: object
     scheduler: object
