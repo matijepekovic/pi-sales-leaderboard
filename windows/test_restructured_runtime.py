@@ -56,7 +56,8 @@ class RestructuredRuntimeTests(unittest.TestCase):
         routes = {rule.rule for rule in self.app.url_map.iter_rules()}
         required = {
             "/", "/settings", "/health", "/api/system/version", "/api/state",
-            "/api/data/sources", "/api/data/reports", "/api/data/reports/<report_id>/inspect",
+            "/api/data/sources", "/api/data/sources/<source_id>/report-values",
+            "/api/data/reports", "/api/data/reports/<report_id>/inspect",
             "/api/filters", "/api/filters/preview", "/api/screens", "/api/screens/preview",
             "/api/display", "/api/display/render", "/api/screen-themes/<screen_id>",
             "/api/asset-library", "/api/windows/update/check",
@@ -169,13 +170,35 @@ class RestructuredRuntimeTests(unittest.TestCase):
         screens_ui = (APP / "static" / "settings" / "screens.js").read_text(encoding="utf-8")
         settings = (APP / "templates" / "settings.html").read_text(encoding="utf-8")
         self.assertIn("Data Filters", data_ui)
-        self.assertIn("only Filters in Stats", data_ui)
+        self.assertIn("Filter the data pulled", data_ui)
         self.assertIn("Display Values", display_values_ui)
         self.assertIn("/api/data/reports/", display_values_ui)
         self.assertNotIn("/api/filters", display_values_ui)
         self.assertNotIn("/api/filters", screens_ui)
         self.assertNotIn("settingsFilters", settings)
         self.assertFalse((APP / "static" / "settings" / "filters.js").exists())
+
+    def test_source_report_choices_are_vendor_neutral(self):
+        source_service = (APP / "stats_core" / "services" / "source.py").read_text(encoding="utf-8")
+        report_service = (APP / "stats_core" / "services" / "reports.py").read_text(encoding="utf-8")
+        data_web = (APP / "stats_core" / "web" / "data.py").read_text(encoding="utf-8")
+        data_ui = (APP / "static" / "settings" / "data.js").read_text(encoding="utf-8")
+        adapter = (APP / "sources" / "tableau_adapter.py").read_text(encoding="utf-8")
+
+        self.assertIn("report_values_for", source_service)
+        self.assertNotIn("workbooks_for", source_service)
+        self.assertNotIn("all_views_for", source_service)
+        self.assertNotIn("views_for", source_service)
+        self.assertNotIn("workbook", report_service.lower())
+        self.assertIn("/report-values", data_web)
+        self.assertNotIn("/workbooks", data_web)
+        self.assertIn("/report-values", data_ui)
+        self.assertNotIn("Reload Workbooks", data_ui)
+        self.assertNotIn('data-report="workbook"', data_ui)
+        self.assertNotIn('data-report="sheet"', data_ui)
+        self.assertNotIn('data-report="source_id"', data_ui)
+        self.assertIn("def report_values", adapter)
+        self.assertIn("def configure_report_value", adapter)
 
     def test_tableau_is_replaceable_adapter_only(self):
         bootstrap = (APP / "stats_core" / "bootstrap.py").read_text(encoding="utf-8")
