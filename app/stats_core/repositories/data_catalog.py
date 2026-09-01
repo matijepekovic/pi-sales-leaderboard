@@ -1,8 +1,4 @@
-"""Persistent source/report catalog backed by the existing settings KV table.
-
-The repository stores normalized Stats contracts only. Vendor adapters own
-migration from their legacy settings into those contracts.
-"""
+"""Persistent normalized Source and Report catalog."""
 from __future__ import annotations
 
 import json
@@ -10,17 +6,12 @@ import json
 from stats_core.storage import sqlite
 
 _CATALOG_KEY = "data_catalog"
-PRIMARY_SOURCE_ID = "source-primary"
-REP_REPORT_ID = "report-reps"
-PRODUCT_REPORT_ID = "report-products"
 
 
 class DataCatalogRepository:
     def _read(self):
         with sqlite.connect() as con:
-            row = con.execute(
-                "SELECT value FROM settings WHERE key=?", (_CATALOG_KEY,)
-            ).fetchone()
+            row = con.execute("SELECT value FROM settings WHERE key=?", (_CATALOG_KEY,)).fetchone()
         if not row:
             return None
         try:
@@ -37,27 +28,22 @@ class DataCatalogRepository:
                 (_CATALOG_KEY, json.dumps(value)),
             )
 
-    def ensure(self, default_catalog=None):
-        current = self._read()
-        if current is None:
-            default_catalog = default_catalog if isinstance(default_catalog, dict) else {}
-            current = {
-                "sources": list(default_catalog.get("sources") or []),
-                "reports": list(default_catalog.get("reports") or []),
-            }
-            self._write(current)
+    def ensure(self):
+        if self._read() is None:
+            self._write({"sources": [], "reports": []})
         return self.get()
 
     def get(self):
         value = self._read() or {"sources": [], "reports": []}
-        value.setdefault("sources", [])
-        value.setdefault("reports", [])
-        return value
+        return {
+            "sources": [dict(row) for row in (value.get("sources") or []) if isinstance(row, dict)],
+            "reports": [dict(row) for row in (value.get("reports") or []) if isinstance(row, dict)],
+        }
 
     def save(self, catalog):
         value = {
-            "sources": list((catalog or {}).get("sources") or []),
-            "reports": list((catalog or {}).get("reports") or []),
+            "sources": [dict(row) for row in ((catalog or {}).get("sources") or []) if isinstance(row, dict)],
+            "reports": [dict(row) for row in ((catalog or {}).get("reports") or []) if isinstance(row, dict)],
         }
         self._write(value)
         return value
