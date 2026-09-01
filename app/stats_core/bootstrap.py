@@ -18,7 +18,7 @@ from stats_core.repositories import Repositories
 from stats_core.runtime import Runtime
 from stats_core.services.auth import AuthService
 from stats_core.services.display import DisplayService
-from stats_core.services.filters import FilterService
+from stats_core.services.display_values import DisplayValueService
 from stats_core.services.reports import ReportService
 from stats_core.services.screens import ScreenService
 from stats_core.services.settings import SettingsService
@@ -30,7 +30,7 @@ from stats_core.web import auth as auth_web
 from stats_core.web import core as core_web
 from stats_core.web import data as data_web
 from stats_core.web import display as display_web
-from stats_core.web import filters as filters_web
+from stats_core.web import display_values as display_values_web
 from stats_core.web import screens as screens_web
 
 
@@ -90,8 +90,8 @@ def create_app(platform_name="windows", start_background=True):
     source.prepare()
     reports.prepare()
 
-    filters = FilterService(repos, reports)
-    screens = ScreenService(repos, reports, filters)
+    display_values = DisplayValueService(repos, reports)
+    screens = ScreenService(repos, reports, display_values)
     display = DisplayService(repos, screens)
     display.prepare()
 
@@ -114,7 +114,7 @@ def create_app(platform_name="windows", start_background=True):
         auth=auth,
         source=source,
         reports=reports,
-        filters=filters,
+        display_values=display_values,
         screens=screens,
         display=display,
         theme=theme,
@@ -127,7 +127,7 @@ def create_app(platform_name="windows", start_background=True):
     app.register_blueprint(auth_web.blueprint(auth))
     app.register_blueprint(core_web.blueprint(runtime))
     app.register_blueprint(data_web.blueprint(source, reports))
-    app.register_blueprint(filters_web.blueprint(filters))
+    app.register_blueprint(display_values_web.blueprint(display_values))
     app.register_blueprint(screens_web.blueprint(screens))
     app.register_blueprint(display_web.blueprint(display, theme))
     app.register_blueprint(theme_web.blueprint(theme))
