@@ -8,7 +8,7 @@ class Runtime:
     auth: object
     source: object
     reports: object
-    filters: object
+    display_values: object
     screens: object
     display: object
     theme: object
