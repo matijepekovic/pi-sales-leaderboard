@@ -38,14 +38,8 @@ def blueprint(screens):
 
     @bp.post("/api/screens/preview")
     def preview_unsaved():
-        try:
-            screen = screens.save({**(request.get_json(silent=True) or {}), "id": "screen-preview"})
-            payload = screens.render(screen["id"])
-            screens.repos.screens.delete("screen-preview")
-            return jsonify({"ok": True, "payload": payload})
-        except Exception as exc:
-            screens.repos.screens.delete("screen-preview")
-            return error_response(exc)
+        try: return jsonify({"ok": True, "payload": screens.preview(request.get_json(silent=True) or {})})
+        except Exception as exc: return error_response(exc)
 
     @bp.get("/api/screens/<screen_id>/preview")
     def preview_saved(screen_id):
