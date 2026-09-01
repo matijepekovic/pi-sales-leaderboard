@@ -4,52 +4,61 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Stats Settings</title>
-  <link rel="stylesheet" href="/static/settings/workspace.css">
+  <link rel="stylesheet" href="/static/settings/shell.css">
 </head>
 <body>
-  <div id="settingsLock" class="lock" hidden>
-    <form id="unlockForm" class="lock-card">
-      <div class="eyebrow">Stats</div>
-      <h1>Settings locked</h1>
-      <p>Enter the settings PIN.</p>
+  <div id="settingsLockOverlay" aria-hidden="true">
+    <div class="settings-lock-card">
+      <h2 style="margin-top:0">Settings Locked</h2>
+      <p class="small">Enter the Stats Settings PIN.</p>
       <label for="unlockPin">PIN</label>
-      <input id="unlockPin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" autofocus>
-      <button class="button primary" type="submit">Unlock</button>
-      <div id="unlockMessage" class="message"></div>
-    </form>
+      <input id="unlockPin" type="password" inputmode="numeric" autocomplete="off">
+      <button id="unlockBtn" class="btn primary" type="button" style="width:100%;margin-top:12px">Unlock Settings</button>
+      <div id="unlockStatus" class="small status"></div>
+    </div>
   </div>
 
-  <div id="settingsApp" class="shell" hidden>
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="brand-mark">S</div>
-        <div><strong>Stats</strong><span>Settings</span></div>
-      </div>
-      <nav id="settingsNav" class="nav" aria-label="Settings">
-        <button type="button" data-section="data" class="active">Data</button>
-        <button type="button" data-section="filters">Filters</button>
-        <button type="button" data-section="screens">Screens</button>
-        <button type="button" data-section="display">Display</button>
-      </nav>
-      <div class="sidebar-footer">
-        <a class="button subtle" href="/">Open Display</a>
-        <button id="lockSettings" class="button subtle" type="button">Lock Settings</button>
-        <div id="versionText" class="version">Stats</div>
-      </div>
-    </aside>
+  <div id="appWrap" style="display:none">
+    <div id="settingsShell">
+      <aside id="settingsSidebar" aria-label="Settings navigation">
+        <div class="settings-brand">
+          <div class="settings-brand-title">Stats</div>
+          <div class="settings-brand-subtitle">Build the display</div>
+        </div>
+        <button id="settingsBack" class="btn" type="button">← Back to Display</button>
+        <nav id="settingsNav" role="tablist" aria-orientation="vertical">
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsData">Data</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsFilters">Filters</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsScreens">Screens</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsDisplay">Display</button>
+        </nav>
+        <div class="settings-sidebar-footer">Source → Data → Filters → Screens → Display</div>
+      </aside>
 
-    <main class="content">
-      <header class="topbar">
-        <div><div class="eyebrow">Workspace</div><h1 id="sectionTitle">Data</h1></div>
-        <div id="globalMessage" class="message" role="status"></div>
-      </header>
-      <section class="workspace active" data-workspace="data" aria-label="Data"></section>
-      <section class="workspace" data-workspace="filters" aria-label="Filters"></section>
-      <section class="workspace" data-workspace="screens" aria-label="Screens"></section>
-      <section class="workspace" data-workspace="display" aria-label="Display"></section>
-    </main>
+      <main id="settingsMain">
+        <header id="settingsHeader">
+          <div>
+            <h1 id="settingsPageTitle">Settings</h1>
+            <div id="settingsPageDescription"></div>
+          </div>
+        </header>
+        <div id="settingsContent">
+          <div id="settingsContentInner">
+            <section class="settings-section" id="settingsData" data-settings-title="Data" data-settings-description="Connect Sources, configure Reports and inspect the data Stats actually pulled."><div id="settingsDataHost"></div></section>
+            <section class="settings-section" id="settingsFilters" data-settings-title="Filters" data-settings-description="Create and test reusable Filters against pulled Report data."><div id="settingsFiltersHost"></div></section>
+            <section class="settings-section" id="settingsScreens" data-settings-title="Screens" data-settings-description="Choose Reports and Filters, build the presentation and test it live."><div id="settingsScreensHost"></div></section>
+            <section class="settings-section" id="settingsDisplay" data-settings-title="Display" data-settings-description="Choose the active Screen and configure rotation."><div id="settingsDisplayHost"></div></section>
+          </div>
+        </div>
+      </main>
+    </div>
   </div>
 
-  <script type="module" src="/static/settings/workspace-app.js"></script>
+  <script src="/static/settings/runtime.js"></script>
+  <script src="/static/settings/shell.js"></script>
+  <script src="/static/settings/data.js"></script>
+  <script src="/static/settings/filters.js"></script>
+  <script src="/static/settings/screens.js"></script>
+  <script src="/static/settings/display.js"></script>
 </body>
 </html>
