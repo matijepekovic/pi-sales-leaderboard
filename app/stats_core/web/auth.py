@@ -5,6 +5,24 @@ from flask import Blueprint, jsonify, request, session
 
 from stats_core.web.common import error_response
 
+UNLOCK_SESSION_KEY = "settings_unlock_marker"
+LEGACY_UNLOCK_SESSION_KEY = "settings_unlocked"
+
+
+def _is_unlocked(auth_service):
+    return auth_service.session_is_unlocked(session.get(UNLOCK_SESSION_KEY))
+
+
+def _set_unlocked(auth_service):
+    session.pop(LEGACY_UNLOCK_SESSION_KEY, None)
+    session[UNLOCK_SESSION_KEY] = auth_service.session_marker()
+    session.permanent = False
+
+
+def _clear_unlocked():
+    session.pop(UNLOCK_SESSION_KEY, None)
+    session.pop(LEGACY_UNLOCK_SESSION_KEY, None)
+
 
 def blueprint(auth_service):
     bp = Blueprint("auth", __name__)
@@ -15,7 +33,7 @@ def blueprint(auth_service):
         return jsonify({
             "ok": True,
             "pin_set": pin_set,
-            "unlocked": not pin_set or bool(session.get("settings_unlocked")),
+            "unlocked": not pin_set or _is_unlocked(auth_service),
         })
 
     @bp.post("/api/auth/unlock")
@@ -39,13 +57,12 @@ def blueprint(auth_service):
         if not result.unlocked:
             return jsonify({"ok": False, "error": "Incorrect PIN."}), 401
 
-        session["settings_unlocked"] = True
-        session.permanent = True
+        _set_unlocked(auth_service)
         return jsonify({"ok": True, "unlocked": True})
 
     @bp.post("/api/auth/lock")
     def api_auth_lock():
-        session.pop("settings_unlocked", None)
+        _clear_unlocked()
         return jsonify({"ok": True, "unlocked": False})
 
     @bp.post("/api/auth/pin")
@@ -55,16 +72,15 @@ def blueprint(auth_service):
             pin_set = auth_service.change_pin(
                 body.get("current_pin"),
                 body.get("new_pin"),
-                already_unlocked=bool(session.get("settings_unlocked")),
+                already_unlocked=_is_unlocked(auth_service),
             )
         except Exception as exc:
             return error_response(exc)
 
         if pin_set:
-            session["settings_unlocked"] = True
-            session.permanent = True
+            _set_unlocked(auth_service)
         else:
-            session.pop("settings_unlocked", None)
+            _clear_unlocked()
         return jsonify({"ok": True, "pin_set": pin_set})
 
     return bp
