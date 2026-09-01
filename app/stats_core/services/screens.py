@@ -81,13 +81,11 @@ class ScreenService:
             if report_id not in report_ids or report_id in seen:
                 continue
             seen.add(report_id)
-            valid = {str(field.get("key")) for field in self.reports.fields(report_id)}
-            columns = [
-                str(value) for value in (item.get("columns") or [])
-                if str(value) in valid
-            ]
+            fields = self.reports.fields(report_id)
+            valid = {str(field.get("key")) for field in fields}
+            columns = [str(value) for value in (item.get("columns") or []) if str(value) in valid]
             if not columns:
-                columns = [str(field.get("key")) for field in self.reports.fields(report_id)[:8]]
+                columns = [str(field.get("key")) for field in fields[:8]]
             sort_field = str(item.get("sort_field") or "").strip()
             if sort_field not in valid:
                 sort_field = ""
@@ -159,8 +157,6 @@ class ScreenService:
         if state["active_screen_id"] == screen_id:
             state["active_screen_id"] = "builtin:whole_office"
         state["rotation_screen_ids"] = [item for item in state["rotation_screen_ids"] if item != screen_id]
-        if state["temporary_override_screen_id"] == screen_id:
-            state["temporary_override_screen_id"] = ""
         self.repos.display.save(state)
         self.repos.meta.bump("settings_version")
         return True
@@ -169,14 +165,10 @@ class ScreenService:
     def _match(value, operator, expected):
         left = str(value if value is not None else "")
         right = str(expected if expected is not None else "")
-        if operator == "equals":
-            return left.casefold() == right.casefold()
-        if operator == "not_equals":
-            return left.casefold() != right.casefold()
-        if operator == "contains":
-            return right.casefold() in left.casefold()
-        if operator == "not_contains":
-            return right.casefold() not in left.casefold()
+        if operator == "equals": return left.casefold() == right.casefold()
+        if operator == "not_equals": return left.casefold() != right.casefold()
+        if operator == "contains": return right.casefold() in left.casefold()
+        if operator == "not_contains": return right.casefold() not in left.casefold()
         return True
 
     def _filters_for(self, screen, report_id, field_keys):
