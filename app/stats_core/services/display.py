@@ -1,16 +1,9 @@
-"""Display playback over screen definitions."""
+"""Display playback over normalized screen definitions."""
 from __future__ import annotations
 
+import time
+
 from stats_core.errors import ValidationError
-
-
-def screen_id_for_mode(raw):
-    raw = str(raw or "whole_office").strip()
-    if raw.startswith("per_team::"):
-        return f"builtin:per_team:{raw.split('::', 1)[1]}"
-    if raw in {"whole_office", "team_vs_team", "all_teams", "product_close"}:
-        return f"builtin:{raw}"
-    return "builtin:whole_office"
 
 
 class DisplayService:
@@ -19,59 +12,38 @@ class DisplayService:
         self.screens = screens
         self.temporary_date = temporary_date
 
-    def prepare(self):
-        return self.repos.display.ensure(self.repos.settings.get())
+    def prepare(self): return self.repos.display.ensure(self.repos.settings.get())
 
     def state(self):
         state = self.repos.display.get()
-        return {
-            **state,
-            "screens": self.screens.list(),
-            "temporary_data": self.temporary_date.state(),
-        }
+        return {**state, "current_screen_id": self.current_screen_id(state), "screens": self.screens.list(), "temporary_data": self.temporary_date.state()}
+
+    def current_screen_id(self, state=None):
+        state = state or self.repos.display.get()
+        rotation = list(state.get("rotation_screen_ids") or [])
+        if state.get("rotation_enabled") and rotation:
+            seconds = max(5, int(state.get("rotation_seconds") or 15))
+            return rotation[int(time.time() // seconds) % len(rotation)]
+        return str(state.get("active_screen_id") or "builtin:whole_office")
 
     def save(self, incoming):
-        incoming = incoming if isinstance(incoming, dict) else {}
-        current = self.repos.display.get()
+        incoming = incoming if isinstance(incoming, dict) else {}; current = self.repos.display.get()
         if "active_screen_id" in incoming:
-            active = str(incoming.get("active_screen_id") or "").strip()
-            self.screens.get(active)
-            current["active_screen_id"] = active
+            active = str(incoming.get("active_screen_id") or "").strip(); self.screens.get(active); current["active_screen_id"] = active
         if isinstance(incoming.get("rotation_screen_ids"), list):
             rotation = []
             for value in incoming["rotation_screen_ids"]:
                 screen_id = str(value or "").strip()
-                if not screen_id or screen_id in rotation:
-                    continue
-                self.screens.get(screen_id)
-                rotation.append(screen_id)
+                if not screen_id or screen_id in rotation: continue
+                self.screens.get(screen_id); rotation.append(screen_id)
             current["rotation_screen_ids"] = rotation[:50]
-        saved = self.repos.display.save(current)
-        self._project_builtin_active(saved["active_screen_id"])
-        self.repos.meta.bump("settings_version")
-        return saved
-
-    def _project_builtin_active(self, screen_id):
-        screen = self.screens.get(screen_id)
-        if screen.get("kind") != "builtin":
-            return
-        settings = self.repos.settings.get()
-        mode = str(screen.get("mode") or "whole_office")
-        settings["active_mode"] = mode
-        if mode.startswith("per_team::"):
-            settings["per_team_selected"] = mode.split("::", 1)[1]
-        self.repos.settings.save(settings)
-
-    def sync_legacy_mode(self, raw_mode):
-        screen_id = screen_id_for_mode(raw_mode)
-        try:
-            self.screens.get(screen_id)
-        except ValidationError:
-            screen_id = "builtin:whole_office"
-        state = self.repos.display.get()
-        state["active_screen_id"] = screen_id
-        return self.repos.display.save(state)
+        if "rotation_enabled" in incoming: current["rotation_enabled"] = bool(incoming.get("rotation_enabled"))
+        if "rotation_seconds" in incoming:
+            try: current["rotation_seconds"] = min(max(int(incoming.get("rotation_seconds") or 15), 5), 3600)
+            except Exception: raise ValidationError("Rotation time must be between 5 and 3600 seconds.")
+        saved = self.repos.display.save(current); self.repos.meta.bump("settings_version")
+        return {**saved, "current_screen_id": self.current_screen_id(saved)}
 
     def render(self, screen_id=None, **kwargs):
-        selected = str(screen_id or self.repos.display.get()["active_screen_id"])
+        selected = str(screen_id or self.current_screen_id())
         return self.screens.render(selected, **kwargs)
