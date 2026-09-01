@@ -12,6 +12,7 @@ from .display import DisplayRepository
 from .meta import MetaRepository
 from .organization import OrganizationRepository
 from .products import ProductRepository
+from .report_data import ReportDataRepository
 from .reps import RepRepository
 from .screens import ScreenRepository
 from .settings import SettingsRepository
@@ -26,6 +27,7 @@ class Repositories:
         self.meta = MetaRepository()
         self.settings = SettingsRepository()
         self.data_catalog = DataCatalogRepository()
+        self.report_data = ReportDataRepository(data_root)
         self.screens = ScreenRepository()
         self.display = DisplayRepository()
         self.organization = OrganizationRepository(self.meta)
