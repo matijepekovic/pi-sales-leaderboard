@@ -5,46 +5,19 @@ import threading
 import uuid
 
 from stats_core.errors import BusyError, ValidationError
-from stats_core.repositories.data_catalog import (
-    PRIMARY_SOURCE_ID,
-    PRODUCT_REPORT_ID,
-    REP_REPORT_ID,
-)
 
 
 class SourceService:
-    def __init__(self, repos, reports, preview, adapters):
+    """Owns Source definitions and delegates vendor behavior to adapters."""
+
+    def __init__(self, repos, reports, adapters):
         self.repos = repos
         self.reports = reports
-        self.preview_store = preview
         self.adapters = dict(adapters or {})
         self._refresh_lock = threading.Lock()
 
     def prepare(self):
-        """Create normalized records and perform any adapter-owned one-time migration."""
-        current = self.repos.data_catalog.get()
-        if not current["sources"] and not current["reports"]:
-            adapter = self.adapters.get("tableau") or next(iter(self.adapters.values()), None)
-            if adapter:
-                settings = self.repos.settings.get()
-                current = self.repos.data_catalog.ensure(
-                    adapter.initial_catalog(
-                        settings,
-                        PRIMARY_SOURCE_ID,
-                        REP_REPORT_ID,
-                        PRODUCT_REPORT_ID,
-                    )
-                )
-                if not self.repos.source_credentials.get(PRIMARY_SOURCE_ID):
-                    secret = adapter.legacy_secret(settings)
-                    if secret:
-                        self.repos.source_credentials.set(PRIMARY_SOURCE_ID, secret)
-                cleaned = adapter.remove_legacy_settings(settings)
-                if cleaned != settings:
-                    self.repos.settings.save(cleaned)
-            else:
-                current = self.repos.data_catalog.ensure()
-        return current
+        return self.repos.data_catalog.ensure()
 
     def _catalog(self):
         return self.repos.data_catalog.get()
@@ -56,7 +29,7 @@ class SourceService:
         return source
 
     def _adapter(self, source):
-        key = str(source.get("adapter") or "")
+        key = str(source.get("adapter") or "").strip()
         adapter = self.adapters.get(key)
         if not adapter:
             raise ValidationError(f"Source adapter '{key}' is not available.")
@@ -76,7 +49,7 @@ class SourceService:
             public = adapter.public_source(source, secret_configured=bool(secret))
             public["reports"] = self.reports.list(source_id=source.get("id"))
             rows.append(public)
-        return rows
+        return sorted(rows, key=lambda item: str(item.get("name") or "").casefold())
 
     def get(self, source_id):
         source = self._source(source_id)
@@ -106,28 +79,22 @@ class SourceService:
             "connection": adapter.clean_source(incoming, existing),
         }
         catalog = self._catalog()
-        catalog["sources"] = [
-            row for row in catalog["sources"] if str(row.get("id")) != source_id
-        ] + [source]
+        catalog["sources"] = [row for row in catalog["sources"] if str(row.get("id")) != source_id] + [source]
         self.repos.data_catalog.save(catalog)
-        if isinstance(incoming.get("secret"), str):
+        if isinstance(incoming.get("secret"), str) and incoming.get("secret"):
             self.repos.source_credentials.set(source_id, incoming["secret"].strip())
         if incoming.get("clear_secret") is True:
-            self.repos.source_credentials.set(source_id, "")
+            self.repos.source_credentials.delete(source_id)
         self.repos.meta.bump("settings_version")
         return self.get(source_id)
 
     def delete(self, source_id):
         source_id = str(source_id or "").strip()
-        if source_id == PRIMARY_SOURCE_ID:
-            raise ValidationError("The built-in source cannot be deleted.")
         if self.reports.list(source_id=source_id):
-            raise ValidationError("Delete this source's reports before deleting the source.")
+            raise ValidationError("Delete this Source's Reports first.")
         catalog = self._catalog()
         before = len(catalog["sources"])
-        catalog["sources"] = [
-            row for row in catalog["sources"] if str(row.get("id")) != source_id
-        ]
+        catalog["sources"] = [row for row in catalog["sources"] if str(row.get("id")) != source_id]
         if len(catalog["sources"]) == before:
             raise ValidationError("Source not found.")
         self.repos.data_catalog.save(catalog)
@@ -159,54 +126,30 @@ class SourceService:
         report = self.reports.get(report_id)
         source = self._source(report.get("source_id"))
         adapter, app_settings = self._adapter_context(source)
-        return adapter.columns(
-            app_settings,
-            source,
-            report,
-            adapter.candidate_overrides(body),
-        )
+        return adapter.columns(app_settings, source, report, adapter.candidate_overrides(body))
 
     def test_report(self, report_id, body):
         report = self.reports.get(report_id)
         source = self._source(report.get("source_id"))
         adapter, app_settings = self._adapter_context(source)
-        return adapter.test_view(
-            app_settings,
-            source,
-            report,
-            adapter.candidate_overrides(body),
-        )
+        return adapter.test_view(app_settings, source, report, adapter.candidate_overrides(body))
 
     def preview_report(self, report_id, body):
         report = self.reports.get(report_id)
         source = self._source(report.get("source_id"))
         adapter, app_settings = self._adapter_context(source)
-        overrides = adapter.candidate_overrides(body)
-        kind = str(report.get("kind") or "table")
-        if kind == "rep_performance":
-            start, end, rows, notes = adapter.preview(
-                app_settings, source, report, overrides
-            )
-            if not rows:
-                raise ValidationError(
-                    "That pull came back with no people, so there is nothing to preview."
-                )
-            on_tv = bool((body or {}).get("on_tv"))
-            if on_tv:
-                self.preview_store.start(rows, str(report.get("name") or "Report"))
-            return {
-                "start": start,
-                "end": end,
-                "reps": len(rows),
-                "notes": notes,
-                "on_tv": on_tv,
-                "preview": self.preview_store.state(),
-                "rows": self.repos.reps.apply_organization(
-                    [dict(row) for row in rows]
-                ),
+        table = adapter.table(app_settings, source, report, adapter.candidate_overrides(body))
+        return {
+            "preview": {
+                "fields": [dict(item) for item in (table.get("fields") or []) if isinstance(item, dict)],
+                "rows": [dict(item) for item in (table.get("rows") or [])[:50] if isinstance(item, dict)],
+                "total_rows": len(table.get("rows") or []),
+                "start": str(table.get("start") or ""),
+                "end": str(table.get("end") or ""),
+                "export": str(table.get("export") or ""),
+                "truncated": bool(table.get("truncated")),
             }
-        table = adapter.table(app_settings, source, report, overrides)
-        return {"preview": table, "on_tv": False}
+        }
 
     def refresh_report(self, report_id):
         if not self._refresh_lock.acquire(blocking=False):
