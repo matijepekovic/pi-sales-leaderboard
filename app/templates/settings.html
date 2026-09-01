@@ -30,12 +30,12 @@
         <button id="settingsBack" class="btn" type="button">← Back to Display</button>
         <nav id="settingsNav" role="tablist" aria-orientation="vertical">
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsData">Data</button>
-          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsFilters">Filters</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsDisplayValues">Display Values</button>
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsScreens">Screens</button>
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsDisplay">Display</button>
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsSoftware">Software Update</button>
         </nav>
-        <div class="settings-sidebar-footer">Source → Data → Filters → Screens → Display</div>
+        <div class="settings-sidebar-footer">Source → Data → Display Values → Screens → Display</div>
       </aside>
 
       <main id="settingsMain">
@@ -48,8 +48,8 @@
         <div id="settingsContent">
           <div id="settingsContentInner">
             <section class="settings-section" id="settingsData" data-settings-title="Data" data-settings-description="Connect Sources, configure Reports and inspect the data Stats actually pulled."><div id="settingsDataHost"></div></section>
-            <section class="settings-section" id="settingsFilters" data-settings-title="Filters" data-settings-description="Create and test reusable Filters against pulled Report data."><div id="settingsFiltersHost"></div></section>
-            <section class="settings-section" id="settingsScreens" data-settings-title="Screens" data-settings-description="Choose Reports and Filters, build the presentation, design it and test it live."><div id="settingsScreensHost"></div></section>
+            <section class="settings-section" id="settingsDisplayValues" data-settings-title="Display Values" data-settings-description="Every Report field becomes a Display Value. Rename what people should see without changing the underlying data field."><div id="settingsDisplayValuesHost"></div></section>
+            <section class="settings-section" id="settingsScreens" data-settings-title="Screens" data-settings-description="Choose Reports and Display Values, build the presentation, design it and test it live."><div id="settingsScreensHost"></div></section>
             <section class="settings-section" id="settingsDisplay" data-settings-title="Display" data-settings-description="Choose the active Screen and configure rotation."><div id="settingsDisplayHost"></div></section>
             <section class="settings-section" id="settingsSoftware" data-settings-title="Software Update" data-settings-description="Check the signed Stats update feed and install a newer Windows release.">
               <div class="card">
@@ -75,7 +75,7 @@
   <script src="/static/settings/runtime.js"></script>
   <script src="/static/settings/shell.js"></script>
   <script src="/static/settings/data.js"></script>
-  <script src="/static/settings/filters.js"></script>
+  <script src="/static/settings/display-values.js"></script>
   <script src="/static/settings/theme.js"></script>
   <script src="/static/settings/screens.js"></script>
   <script src="/static/settings/display.js"></script>
