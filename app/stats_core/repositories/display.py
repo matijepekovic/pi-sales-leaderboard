@@ -1,4 +1,4 @@
-"""Persistence for Display playback state."""
+"""Persistence for display playback state."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ from stats_core.storage import sqlite
 
 _DISPLAY_KEY = "display_state"
 DEFAULT_DISPLAY_STATE = {
-    "active_screen_id": "builtin:whole_office",
+    "active_screen_id": "",
     "rotation_screen_ids": [],
     "rotation_enabled": False,
     "rotation_seconds": 15,
@@ -35,10 +35,10 @@ class DisplayRepository:
         incoming = self._read() or {}
         value = dict(DEFAULT_DISPLAY_STATE)
         value.update(incoming)
-        value["active_screen_id"] = str(value.get("active_screen_id") or DEFAULT_DISPLAY_STATE["active_screen_id"])
-        value["rotation_screen_ids"] = [
-            str(item) for item in (value.get("rotation_screen_ids") or []) if str(item).strip()
-        ]
+        value["active_screen_id"] = str(value.get("active_screen_id") or "").strip()
+        value["rotation_screen_ids"] = list(dict.fromkeys(
+            str(item).strip() for item in (value.get("rotation_screen_ids") or []) if str(item).strip()
+        ))
         value["rotation_enabled"] = bool(value.get("rotation_enabled"))
         try:
             value["rotation_seconds"] = min(max(int(value.get("rotation_seconds") or 15), 5), 3600)
@@ -49,9 +49,9 @@ class DisplayRepository:
     def save(self, state):
         value = dict(DEFAULT_DISPLAY_STATE)
         value.update(state or {})
-        value["active_screen_id"] = str(value.get("active_screen_id") or DEFAULT_DISPLAY_STATE["active_screen_id"])
+        value["active_screen_id"] = str(value.get("active_screen_id") or "").strip()
         value["rotation_screen_ids"] = list(dict.fromkeys(
-            str(item) for item in (value.get("rotation_screen_ids") or []) if str(item).strip()
+            str(item).strip() for item in (value.get("rotation_screen_ids") or []) if str(item).strip()
         ))
         value["rotation_enabled"] = bool(value.get("rotation_enabled"))
         try:
