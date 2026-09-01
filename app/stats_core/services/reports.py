@@ -23,6 +23,14 @@ class ReportService:
 
     def prepare(self):
         self.repos.data_catalog.ensure(self.repos.settings.get())
+        try:
+            report = self.get(REP_REPORT_ID)
+            source = self._source(report.get("source_id"))
+            adapter, app_settings = self._adapter_settings(source)
+            scope = adapter.rep_scope(app_settings, source, report)
+        except Exception:
+            scope = None
+        return self.rep_refresh.prepare(scope)
 
     def _catalog(self):
         return self.repos.data_catalog.get(self.repos.settings.get())
@@ -66,10 +74,7 @@ class ReportService:
         report = self.get(report_id)
         kind = str(report.get("kind") or "table")
         if kind == "rep_performance":
-            return [
-                {"key": key, "label": label, "type": typ}
-                for key, label, typ in METRIC_DEFS
-            ]
+            return [{"key": key, "label": label, "type": typ} for key, label, typ in METRIC_DEFS]
         if kind == "product_close":
             return list(_PRODUCT_FIELDS)
         return list(self.repos.report_data.read(report_id).get("fields") or [])
@@ -77,31 +82,20 @@ class ReportService:
     def rows(self, report_id):
         report = self.get(report_id)
         kind = str(report.get("kind") or "table")
-        if kind == "rep_performance":
-            return self.repos.reps.list()
-        if kind == "product_close":
-            return self.repos.products.list()
+        if kind == "rep_performance": return self.repos.reps.list()
+        if kind == "product_close": return self.repos.products.list()
         return self.repos.report_data.read(report_id).get("rows") or []
 
     def status(self, report_id):
         report = self.get(report_id)
         kind = str(report.get("kind") or "table")
         if kind == "rep_performance":
-            return {
-                "status": self.repos.meta.get("source_status", ""),
-                "last_refresh": self.repos.meta.get("last_source_refresh", ""),
-            }
+            return {"status": self.repos.meta.get("source_status", ""), "last_refresh": self.repos.meta.get("last_source_refresh", "")}
         if kind == "product_close":
             rows = self.repos.products.list()
-            return {
-                "status": self.repos.meta.get("product_close_status", ""),
-                "last_refresh": rows[0].get("updated_at", "") if rows else "",
-            }
+            return {"status": self.repos.meta.get("product_close_status", ""), "last_refresh": rows[0].get("updated_at", "") if rows else ""}
         meta = self.repos.report_data.read(report_id).get("meta") or {}
-        return {
-            "status": str(meta.get("status") or ""),
-            "last_refresh": str(meta.get("last_refresh") or ""),
-        }
+        return {"status": str(meta.get("status") or ""), "last_refresh": str(meta.get("last_refresh") or "")}
 
     def runtime_settings(self, report_id):
         report = self.get(report_id)
@@ -113,27 +107,22 @@ class ReportService:
         report = self.get(report_id)
         source = self._source(report.get("source_id"))
         adapter, app_settings = self._adapter_settings(source)
-        settings = adapter.report_settings(app_settings, source, report)
         kind = str(report.get("kind") or "table")
         if kind == "rep_performance":
-            return self.rep_refresh.refresh(settings)
+            return self.rep_refresh.refresh(adapter, app_settings, source, report)
         if kind == "product_close":
-            ok = self.product_refresh.refresh(settings)
+            ok = self.product_refresh.refresh(raise_errors=True)
             return {"ok": bool(ok), "rows": len(self.repos.products.list())}
 
         table = adapter.table(app_settings, source, report)
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
         saved = self.repos.report_data.replace(
-            report_id,
-            table.get("fields") or [],
-            table.get("rows") or [],
+            report_id, table.get("fields") or [], table.get("rows") or [],
             {
                 "status": f"{len(table.get('rows') or [])} rows",
                 "last_refresh": stamp,
-                "start": table.get("start", ""),
-                "end": table.get("end", ""),
-                "export": table.get("export", ""),
-                "truncated": bool(table.get("truncated")),
+                "start": table.get("start", ""), "end": table.get("end", ""),
+                "export": table.get("export", ""), "truncated": bool(table.get("truncated")),
             },
         )
         self.repos.meta.bump("data_version")
@@ -148,20 +137,15 @@ class ReportService:
         kind = str(incoming.get("kind") or existing.get("kind") or "table").strip()
         if report_id in (REP_REPORT_ID, PRODUCT_REPORT_ID):
             kind = "rep_performance" if report_id == REP_REPORT_ID else "product_close"
-        elif kind not in {"table"}:
+        elif kind != "table":
             kind = "table"
         name = str(incoming.get("name") or existing.get("name") or "Untitled Report").strip()[:120]
-        if not name:
-            raise ValidationError("Report name is required.")
+        if not name: raise ValidationError("Report name is required.")
         source_config = incoming.get("source_config") if isinstance(incoming.get("source_config"), dict) else existing.get("source_config", {})
         runtime = incoming.get("runtime") if isinstance(incoming.get("runtime"), dict) else existing.get("runtime", {})
         report = {
-            "id": report_id,
-            "source_id": source_id,
-            "name": name,
-            "kind": kind,
-            "source_config": dict(source_config or {}),
-            "runtime": dict(runtime or {}),
+            "id": report_id, "source_id": source_id, "name": name, "kind": kind,
+            "source_config": dict(source_config or {}), "runtime": dict(runtime or {}),
         }
         catalog = self._catalog()
         catalog["reports"] = [row for row in catalog["reports"] if str(row.get("id")) != report_id] + [report]
@@ -171,8 +155,7 @@ class ReportService:
         return report
 
     def _sync_legacy(self, report):
-        if str(report.get("id")) not in (REP_REPORT_ID, PRODUCT_REPORT_ID):
-            return
+        if str(report.get("id")) not in (REP_REPORT_ID, PRODUCT_REPORT_ID): return
         source = self._source(report.get("source_id"))
         adapter, app_settings = self._adapter_settings(source)
         settings = self.repos.settings.get()
@@ -181,13 +164,11 @@ class ReportService:
 
     def delete(self, report_id):
         report_id = str(report_id or "").strip()
-        if report_id in (REP_REPORT_ID, PRODUCT_REPORT_ID):
-            raise ValidationError("Built-in reports cannot be deleted.")
+        if report_id in (REP_REPORT_ID, PRODUCT_REPORT_ID): raise ValidationError("Built-in reports cannot be deleted.")
         catalog = self._catalog()
         before = len(catalog["reports"])
         catalog["reports"] = [row for row in catalog["reports"] if str(row.get("id")) != report_id]
-        if len(catalog["reports"]) == before:
-            raise ValidationError("Report not found.")
+        if len(catalog["reports"]) == before: raise ValidationError("Report not found.")
         self.repos.data_catalog.save(catalog)
         self.repos.report_data.delete(report_id)
         self.repos.meta.bump("settings_version")
