@@ -34,7 +34,7 @@ repos = Repositories(data_root={temp!r})
         self.assertIn("def init_db()", text)
         self.assertIn("SCHEMA =", text)
         for name in (
-            "save_filter", "save_screen", "save_source", "save_report",
+            "save_display_value", "save_screen", "save_source", "save_report",
             "save_display", "save_theme", "replace_report_data",
         ):
             self.assertNotIn(f"def {name}(", text)
@@ -42,7 +42,7 @@ repos = Repositories(data_root={temp!r})
     def test_current_sql_repositories_use_storage_boundary(self):
         repository_root = APP / "stats_core" / "repositories"
         for filename in (
-            "data_catalog.py", "display.py", "filters.py", "meta.py",
+            "data_catalog.py", "display.py", "display_values.py", "meta.py",
             "screens.py", "settings.py", "source_credentials.py",
         ):
             text = (repository_root / filename).read_text(encoding="utf-8")
@@ -53,11 +53,11 @@ repos = Repositories(data_root={temp!r})
         text = (APP / "stats_core" / "repositories" / "__init__.py").read_text(encoding="utf-8")
         for current in (
             "DataCatalogRepository", "SourceCredentialRepository", "ReportDataRepository",
-            "FilterRepository", "ScreenRepository", "DisplayRepository", "ThemeRepository",
+            "DisplayValueRepository", "ScreenRepository", "DisplayRepository", "ThemeRepository",
             "AppliedAssetRepository", "AssetLibraryRepository",
         ):
             self.assertIn(current, text)
-        for retired in ("OrganizationRepository", "RepRepository", "ProductRepository"):
+        for retired in ("OrganizationRepository", "RepRepository", "ProductRepository", "FilterRepository"):
             self.assertNotIn(retired, text)
 
     def test_current_repositories_persist_independently(self):
@@ -81,22 +81,19 @@ repos.report_data.replace(
 )
 assert repos.report_data.read("report-a")["rows"] == [{"Office":"Olympia"}]
 
-repos.filters.save({
-    "id":"filter-a",
-    "name":"Olympia",
-    "rules":[{"report_id":"report-a","field":"Office","operator":"equals","value":"Olympia"}],
-})
-assert repos.filters.get("filter-a")["name"] == "Olympia"
+repos.display_values.save_name("display-value-a", "Office Name")
+assert repos.display_values.list_names()["display-value-a"] == "Office Name"
 
 repos.screens.save({
     "id":"screen-a",
     "name":"Olympia Screen",
     "reports":["report-a"],
-    "filter_ids":["filter-a"],
-    "tables":[],
+    "group_by_display_value_id":"",
+    "group_values":[],
+    "tables":[{"report_id":"report-a","display_value_ids":["display-value-a"],"sort_display_value_id":"","sort_direction":"desc","limit":100}],
     "theme_mode":"inherited",
 })
-assert repos.screens.get("screen-a")["filter_ids"] == ["filter-a"]
+assert repos.screens.get("screen-a")["tables"][0]["display_value_ids"] == ["display-value-a"]
 
 repos.display.save({"active_screen_id":"screen-a","rotation_enabled":False,"rotation_screen_ids":[],"rotation_seconds":15})
 assert repos.display.get()["active_screen_id"] == "screen-a"
