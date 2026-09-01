@@ -9,6 +9,7 @@ from .applied_assets import AppliedAssetRepository
 from .asset_library import AssetLibraryRepository
 from .data_catalog import DataCatalogRepository
 from .display import DisplayRepository
+from .filters import FilterRepository
 from .meta import MetaRepository
 from .organization import OrganizationRepository
 from .products import ProductRepository
@@ -30,6 +31,7 @@ class Repositories:
         self.data_catalog = DataCatalogRepository()
         self.source_credentials = SourceCredentialRepository()
         self.report_data = ReportDataRepository(data_root)
+        self.filters = FilterRepository()
         self.screens = ScreenRepository()
         self.display = DisplayRepository()
         self.organization = OrganizationRepository(self.meta)
