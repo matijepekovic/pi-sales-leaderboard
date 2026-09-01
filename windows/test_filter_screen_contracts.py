@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Behavioral contract for reusable Filters matched by Screens."""
+"""Behavioral contract for reusable Display Filters selected by Screens."""
 from __future__ import annotations
 
 import os
@@ -14,7 +14,7 @@ APP = ROOT / "app"
 
 
 class FilterScreenContractTests(unittest.TestCase):
-    def test_same_filter_can_match_different_report_fields(self):
+    def test_same_filter_can_apply_to_different_report_fields(self):
         with tempfile.TemporaryDirectory() as temp:
             env = dict(os.environ)
             env["STATS_DATA_DIR"] = temp
@@ -27,7 +27,6 @@ from stats_core.services.screens import ScreenService
 
 Repositories.initialize()
 repos = Repositories(data_root={temp!r})
-repos.filters.save({{"id":"filter-team","name":"Team"}})
 repos.data_catalog.save({{
   "sources": [{{"id":"source-test","name":"Test","adapter":"fake","enabled":True,"connection":{{}}}}],
   "reports": [
@@ -42,23 +41,22 @@ class Reports:
   def get(self, report_id): return repos.data_catalog.report(report_id)
   def fields(self, report_id): return repos.report_data.read(report_id).get("fields") or []
   def rows(self, report_id): return repos.report_data.read(report_id).get("rows") or []
-class Builtin:
-  def modes(self): return []
-  def cycle_views(self): return []
-  def render(self,*args,**kwargs): return {{"mode":"builtin"}}
-class Org:
-  def definitions_for_api(self): return []
 
-service=ScreenService(repos, Reports(), FilterService(repos), Builtin(), Org())
+reports=Reports()
+filters=FilterService(repos, reports)
+saved_filter=filters.save({{
+  "id":"filter-red-team",
+  "name":"Red Team",
+  "rules":[
+    {{"report_id":"report-a","field":"team_name","operator":"equals","value":"Red"}},
+    {{"report_id":"report-b","field":"division","operator":"equals","value":"Red"}},
+  ],
+}})
+service=ScreenService(repos, reports, filters)
 screen=service.save({{
   "name":"Shared Team Filter",
   "reports":["report-a","report-b"],
-  "filter_ids":["filter-team"],
-  "display_filter_mappings":[
-    {{"filter_id":"filter-team","report_id":"report-a","field":"team_name"}},
-    {{"filter_id":"filter-team","report_id":"report-b","field":"division"}},
-  ],
-  "filter_values":{{"filter-team":"Red"}},
+  "filter_ids":[saved_filter["id"]],
   "tables":[
     {{"report_id":"report-a","columns":["team_name","sales"]}},
     {{"report_id":"report-b","columns":["division","close"]}},
@@ -68,8 +66,9 @@ screen=service.save({{
 payload=service.render(screen["id"])
 assert [row["team_name"] for row in payload["sections"][0]["rows"]] == ["Red"]
 assert [row["division"] for row in payload["sections"][1]["rows"]] == ["Red"]
-assert payload["display_filters"][0]["name"] == "Team"
-assert len(payload["display_filters"][0]["mappings"]) == 2
+assert payload["display_filters"] == [{{"id":"filter-red-team","name":"Red Team"}}]
+assert "display_filter_mappings" not in screen
+assert "filter_values" not in screen
 """
             subprocess.run([sys.executable, "-c", code], env=env, check=True)
 
