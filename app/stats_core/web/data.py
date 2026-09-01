@@ -54,24 +54,10 @@ def blueprint(sources, reports):
         except Exception as exc:
             return error_response(exc)
 
-    @bp.get("/api/data/sources/<source_id>/workbooks")
-    def source_workbooks(source_id):
+    @bp.get("/api/data/sources/<source_id>/report-values")
+    def source_report_values(source_id):
         try:
-            return jsonify({"ok": True, "workbooks": sources.workbooks_for(source_id)})
-        except Exception as exc:
-            return error_response(exc)
-
-    @bp.get("/api/data/sources/<source_id>/views")
-    def source_views(source_id):
-        try:
-            return jsonify({"ok": True, "views": sources.all_views_for(source_id)})
-        except Exception as exc:
-            return error_response(exc)
-
-    @bp.get("/api/data/sources/<source_id>/workbooks/<path:workbook>/views")
-    def source_workbook_views(source_id, workbook):
-        try:
-            return jsonify({"ok": True, "views": sources.views_for(source_id, workbook)})
+            return jsonify({"ok": True, "values": sources.report_values_for(source_id)})
         except Exception as exc:
             return error_response(exc)
 
