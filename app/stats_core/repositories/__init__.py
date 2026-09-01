@@ -16,6 +16,7 @@ from .report_data import ReportDataRepository
 from .reps import RepRepository
 from .screens import ScreenRepository
 from .settings import SettingsRepository
+from .source_credentials import SourceCredentialRepository
 from .themes import ThemeRepository
 
 
@@ -27,6 +28,7 @@ class Repositories:
         self.meta = MetaRepository()
         self.settings = SettingsRepository()
         self.data_catalog = DataCatalogRepository()
+        self.source_credentials = SourceCredentialRepository(self.settings)
         self.report_data = ReportDataRepository(data_root)
         self.screens = ScreenRepository()
         self.display = DisplayRepository()
