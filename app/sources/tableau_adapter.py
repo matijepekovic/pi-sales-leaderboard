@@ -12,8 +12,8 @@ import json
 from sources import discovery
 from sources import tableau_base as _base
 from sources.tableau_product_market import ProductCloseSource, selected_market
+from sources.tableau_runtime import TableauRuntime
 from sources.tableau_table import read_table
-from stats_core.services.tableau import TableauService
 
 _REPORT_KEYS = (
     "server", "site", "pat_name", "workbook", "sheet", "filters",
@@ -25,8 +25,8 @@ class TableauAdapter:
     key = "tableau"
     label = "Tableau"
 
-    def __init__(self, tableau=None):
-        self.tableau = tableau or TableauService()
+    def __init__(self, runtime=None):
+        self.tableau = runtime or TableauRuntime()
 
     @staticmethod
     def _connection(source):
@@ -110,8 +110,7 @@ class TableauAdapter:
         }
 
     def rep_scope(self, app_settings, source, report):
-        settings = self.report_settings(app_settings, source, report)
-        return self._rep_scope(settings, source, report)
+        return self._rep_scope(self.report_settings(app_settings, source, report), source, report)
 
     def pull_reps(self, app_settings, source, report):
         settings = self.report_settings(app_settings, source, report)
