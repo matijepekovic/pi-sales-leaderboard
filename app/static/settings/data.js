@@ -14,9 +14,11 @@
     runtime.emit("data-changed",{sources:state.sources,reports:state.reports});
   }
 
-  function sourceCard(source){
-    const c=source.connection||{};const reports=state.reports.filter(report=>report.source_id===source.id);
-    return `<div class="subcard"><div class="toolbar"><div><strong>${esc(source.name||"Source")}</strong><div class="small">${esc(source.adapter||"")} · ${esc(c.server||"Not configured")}</div></div><div class="row"><button class="btn" data-action="edit-source" data-id="${esc(source.id)}">Edit</button><button class="btn" data-action="test-source" data-id="${esc(source.id)}">Test</button>${reports.length?"":`<button class="btn danger" data-action="delete-source" data-id="${esc(source.id)}">Delete</button>`}</div></div><div class="small" style="margin-top:8px">${reports.length} Report${reports.length===1?"":"s"}${c.secret_configured?" · credentials saved":""}</div></div>`;
+  function renderSourceMenu(){
+    const host=$("settingsPageActions"),section=$("settingsData");
+    if(!host||!section?.classList.contains("active"))return;
+    host.innerHTML=`<select id="dataSourcesMenu" aria-label="Sources" style="width:auto;min-width:190px"><option value="">Sources</option>${state.sources.map(source=>`<option value="${esc(source.id)}">${esc(source.name||"Source")}</option>`).join("")}<option value="__new__">+ Add Source</option></select>`;
+    $("dataSourcesMenu")?.addEventListener("change",event=>{const value=event.target.value;event.target.value="";if(value==="__new__")openSource();else if(value)openSource(value);});
   }
 
   function reportCard(report){
@@ -24,8 +26,8 @@
   }
 
   function sourceEditor(){
-    if(state.editor?.type!=="source")return"";const source=state.editor.value||{},c=source.connection||{};
-    return `<div class="card"><div class="toolbar"><div><h2>${source.id?"Edit Source":"Add Source"}</h2><div class="small">Connection details stay inside the selected Source adapter.</div></div><button class="btn" data-action="close-editor">Close</button></div><div class="grid"><div><label>Name</label><input data-source="name" value="${esc(source.name||"Tableau")}"></div><div><label>Adapter</label><select data-source="adapter"><option value="tableau">Tableau</option></select></div><div><label>Server</label><input data-source="server" value="${esc(c.server||"")}" placeholder="https://tableau.example.com"></div><div><label>Site</label><input data-source="site" value="${esc(c.site||"")}"></div><div><label>PAT name</label><input data-source="pat_name" value="${esc(c.pat_name||"")}"></div><div><label>PAT secret</label><input type="password" data-source="secret" placeholder="${c.secret_configured?"Saved — leave blank to keep":"Enter secret"}"></div></div><div class="row" style="margin-top:14px"><button class="btn primary" data-action="save-source">Save Source</button>${source.id?'<button class="btn" data-action="test-editor-source">Test Connection</button>':""}</div></div>`;
+    if(state.editor?.type!=="source")return"";const source=state.editor.value||{},c=source.connection||{},reports=source.id?state.reports.filter(report=>report.source_id===source.id):[];
+    return `<div class="card"><div class="toolbar"><div><h2>${source.id?"Edit Source":"Add Source"}</h2><div class="small">Connection details stay inside the selected Source adapter.</div></div><button class="btn" data-action="close-editor">Close</button></div><div class="grid"><div><label>Name</label><input data-source="name" value="${esc(source.name||"Tableau")}"></div><div><label>Adapter</label><select data-source="adapter"><option value="tableau">Tableau</option></select></div><div><label>Server</label><input data-source="server" value="${esc(c.server||"")}" placeholder="https://tableau.example.com"></div><div><label>Site</label><input data-source="site" value="${esc(c.site||"")}"></div><div><label>PAT name</label><input data-source="pat_name" value="${esc(c.pat_name||"")}"></div><div><label>PAT secret</label><input type="password" data-source="secret" placeholder="${c.secret_configured?"Saved — leave blank to keep":"Enter secret"}"></div></div><div class="row" style="margin-top:14px"><button class="btn primary" data-action="save-source">Save Source</button>${source.id?'<button class="btn" data-action="test-editor-source">Test Connection</button>':""}${source.id&&!reports.length?`<button class="btn danger" data-action="delete-source" data-id="${esc(source.id)}">Delete Source</button>`:""}</div>${source.id&&reports.length?`<div class="small" style="margin-top:10px">This Source is used by ${reports.length} Report${reports.length===1?"":"s"} and cannot be deleted.</div>`:""}</div>`;
   }
 
   function filterFieldOptions(filters,index){
@@ -59,8 +61,8 @@
 
   function render(){
     const host=$("settingsDataHost");if(!host)return;
-    host.innerHTML=`<div class="card"><div class="toolbar"><div><h2>Sources</h2><div class="small">Where Stats gets data.</div></div><button class="btn primary" data-action="new-source">+ Source</button></div><div class="stack" style="margin-top:12px">${state.sources.map(sourceCard).join("")||'<div class="small">No Sources configured.</div>'}</div></div>${sourceEditor()}<div class="card"><div class="toolbar"><div><h2>Reports</h2><div class="small">Pulled datasets whose fields become Display Values for Screens.</div></div><button class="btn primary" data-action="new-report" ${state.sources.length?"":"disabled"}>+ Report</button></div><div class="stack" style="margin-top:12px">${state.reports.map(reportCard).join("")||'<div class="small">No Reports yet.</div>'}</div></div>${reportEditor()}${inspection()}<div class="status">${esc(state.message||"")}</div>`;
-    bind();
+    host.innerHTML=`${sourceEditor()}<div class="card"><div class="toolbar"><div><h2>Reports</h2><div class="small">Pulled datasets whose fields become Display Values for Screens.</div></div><button class="btn primary" data-action="new-report" ${state.sources.length?"":"disabled"}>+ Report</button></div><div class="stack" style="margin-top:12px">${state.reports.map(reportCard).join("")||'<div class="small">No Reports yet.</div>'}</div></div>${reportEditor()}${inspection()}<div class="status">${esc(state.message||"")}</div>`;
+    bind();renderSourceMenu();
   }
 
   function readSourceEditor(){
@@ -119,14 +121,14 @@
       if(a==="new-source")return openSource();if(a==="edit-source")return openSource(id);if(a==="new-report")return openReport();if(a==="edit-report")return openReport(id);if(a==="close-editor"){state.editor=null;state.columns=null;render();return;}if(a==="close-inspection"){state.inspection=null;render();return;}
       if(a==="save-source")return saveSource();if(a==="test-source")return testSource(id);if(a==="test-editor-source")return testSource(state.editor.value.id,readSourceEditor());if(a==="save-report")return saveReport();if(a==="inspect-report")return inspectReport(id);if(a==="refresh-report")return refreshReport(id);if(a==="read-report")return readColumns();if(a==="load-workbooks")return loadWorkbooks();if(a==="test-report")return testReport();
       if(a==="add-data-filter"){syncReport();(state.editor.value.source_config.filters||(state.editor.value.source_config.filters=[])).push({field:"",value:""});render();return;}if(a==="remove-data-filter"){syncReport();state.editor.value.source_config.filters.splice(index,1);render();return;}
-      if(a==="delete-source"){if(!confirm("Delete this Source?"))return;try{await runtime.api(`/api/data/sources/${encodeURIComponent(id)}`,{method:"DELETE"});state.message="Source deleted.";await load();}catch(error){state.message=error.message;render();}return;}
+      if(a==="delete-source"){if(!confirm("Delete this Source?"))return;try{await runtime.api(`/api/data/sources/${encodeURIComponent(id)}`,{method:"DELETE"});state.editor=null;state.message="Source deleted.";await load();}catch(error){state.message=error.message;render();}return;}
       if(a==="delete-report"){if(!confirm("Delete this Report?"))return;try{await runtime.api(`/api/data/reports/${encodeURIComponent(id)}`,{method:"DELETE"});state.message="Report deleted.";await load();}catch(error){state.message=error.message;render();}return;}
     }));
     host.querySelector('[data-report="source_id"]')?.addEventListener("change",async event=>{syncReport();state.editor.value.source_id=event.target.value;state.editor.value.source_config.workbook="";state.editor.value.source_config.sheet="";await loadWorkbooks();});
     host.querySelector('[data-report="workbook"]')?.addEventListener("change",async event=>{syncReport();state.editor.value.source_config.workbook=event.target.value;state.editor.value.source_config.sheet="";await loadViews();render();});
   }
 
-  runtime.on("section",id=>{if(id==="settingsData"&&!loaded)load().catch(error=>{state.message=error.message;render();});});
+  runtime.on("section",id=>{if(id!=="settingsData"){if($("settingsPageActions"))$("settingsPageActions").innerHTML="";return;}if(!loaded)load().catch(error=>{state.message=error.message;render();});else renderSourceMenu();});
   runtime.on("unlocked",()=>{loaded=false;});
   runtime.on("request-data-refresh",()=>load().catch(()=>{}));
 })();
