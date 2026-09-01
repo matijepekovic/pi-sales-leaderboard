@@ -8,6 +8,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from sources import discovery
+from sources.tableau_table import read_table
 from stats_core.services.tableau import TableauService
 
 
@@ -99,6 +100,10 @@ class TableauAdapter:
     def preview(self, app_settings, source, report, overrides=None):
         settings = self.report_settings(app_settings, source, report)
         return discovery.preview_pull(settings, overrides or {})
+
+    def table(self, app_settings, source, report, overrides=None):
+        settings = self.report_settings(app_settings, source, report)
+        return read_table(settings, overrides or {})
 
     def test_view(self, app_settings, source, report, overrides=None):
         settings = self.report_settings(app_settings, source, report)
