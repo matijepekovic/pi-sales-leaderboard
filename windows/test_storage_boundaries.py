@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 
 from test_filter_repository import FilterRepositoryTests  # noqa: F401
+from test_filter_screen_contracts import FilterScreenContractTests  # noqa: F401
+from test_filter_screen_ui_contract import FilterScreenUiContractTests  # noqa: F401
 from test_repository_persistence import RepositoryPersistenceTests  # noqa: F401
 from test_tableau_source import TableauSourceContractTests  # noqa: F401
 
