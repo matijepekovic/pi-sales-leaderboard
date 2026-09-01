@@ -7,10 +7,13 @@ from stats_core.storage import sqlite as database
 
 from .applied_assets import AppliedAssetRepository
 from .asset_library import AssetLibraryRepository
+from .data_catalog import DataCatalogRepository
+from .display import DisplayRepository
 from .meta import MetaRepository
 from .organization import OrganizationRepository
 from .products import ProductRepository
 from .reps import RepRepository
+from .screens import ScreenRepository
 from .settings import SettingsRepository
 from .themes import ThemeRepository
 
@@ -22,6 +25,9 @@ class Repositories:
 
         self.meta = MetaRepository()
         self.settings = SettingsRepository()
+        self.data_catalog = DataCatalogRepository()
+        self.screens = ScreenRepository()
+        self.display = DisplayRepository()
         self.organization = OrganizationRepository(self.meta)
         self.reps = RepRepository(self.meta, self.organization)
         self.products = ProductRepository()
