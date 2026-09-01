@@ -130,12 +130,19 @@ class CurrentUiOwnershipTests(unittest.TestCase):
         self.assertNotIn("settings/base.html", template)
         self.assertNotIn("data-screen-display.js", template)
         self.assertNotIn("windows-sidebar.js", template)
-        for section in ("settingsData", "settingsFilters", "settingsScreens", "settingsDisplay"):
+        for section in (
+            "settingsOverview", "settingsData", "settingsDisplayValues",
+            "settingsScreens", "settingsDisplay", "settingsSoftware",
+        ):
             self.assertIn(section, template)
-        for script in ("runtime.js", "shell.js", "data.js", "filters.js", "screens.js", "display.js"):
+        for script in (
+            "runtime.js", "shell.js", "overview.js", "data.js",
+            "display-values.js", "theme.js", "screens.js", "display.js", "software.js",
+        ):
             self.assertIn(f"/static/settings/{script}", template)
+        self.assertNotIn("/static/settings/filters.js", template)
 
-    def test_data_ui_owns_source_report_and_data_filter_workflow(self):
+    def test_data_ui_owns_source_report_and_only_data_filter_workflow(self):
         script = (APP_DIR / "static" / "settings" / "data.js").read_text(encoding="utf-8")
         self.assertIn("/api/data/sources", script)
         self.assertIn("/api/data/reports", script)
@@ -144,19 +151,20 @@ class CurrentUiOwnershipTests(unittest.TestCase):
         self.assertIn("Read Report Fields", script)
         self.assertIn("Test Pull", script)
 
-    def test_filter_ui_is_user_manageable_and_testable(self):
-        script = (APP_DIR / "static" / "settings" / "filters.js").read_text(encoding="utf-8")
-        self.assertIn("/api/filters", script)
-        self.assertIn("/api/filters/preview", script)
-        self.assertIn("actual pulled Report data", script)
-        self.assertIn("Save Filter", script)
-        self.assertIn("Test Filter", script)
+    def test_display_values_ui_exposes_report_fields_without_filter_api(self):
+        script = (APP_DIR / "static" / "settings" / "display-values.js").read_text(encoding="utf-8")
+        self.assertIn("Display Values", script)
+        self.assertIn("/api/data/reports", script)
+        self.assertIn("/inspect", script)
+        self.assertNotIn("/api/filters", script)
+        self.assertFalse((APP_DIR / "static" / "settings" / "filters.js").exists())
 
-    def test_screen_ui_assigns_filters_and_live_previews(self):
+    def test_screen_ui_uses_display_values_and_live_previews(self):
         script = (APP_DIR / "static" / "settings" / "screens.js").read_text(encoding="utf-8")
-        self.assertIn("filter_ids", script)
-        self.assertIn("+ Create Filter", script)
+        self.assertIn("Display Values", script)
         self.assertIn("/api/screens/preview", script)
+        self.assertNotIn("+ Create Filter", script)
+        self.assertNotIn("/api/filters", script)
         self.assertNotIn("display_filter_mappings", script)
         self.assertNotIn("filter_values", script)
 

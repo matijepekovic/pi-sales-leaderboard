@@ -85,10 +85,13 @@ jobs:
         run: |
           node --check app/static/settings/runtime.js
           node --check app/static/settings/shell.js
+          node --check app/static/settings/overview.js
           node --check app/static/settings/data.js
-          node --check app/static/settings/filters.js
+          node --check app/static/settings/display-values.js
+          node --check app/static/settings/theme.js
           node --check app/static/settings/screens.js
           node --check app/static/settings/display.js
+          node --check app/static/settings/software.js
           node --check app/static/display/app.js
 
       - name: Test restructured runtime ownership
