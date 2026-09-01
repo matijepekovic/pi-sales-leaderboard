@@ -54,6 +54,9 @@ class ReportService:
             if source_id and str(report.get("source_id")) != str(source_id):
                 continue
             item = dict(report)
+            source = self._source(item.get("source_id"))
+            adapter = self._adapter(source)
+            item["source_value"] = str(adapter.report_value(item) or "")
             item["fields"] = self.fields(item["id"])
             item.update(self.status(item["id"]))
             rows.append(item)
@@ -146,13 +149,24 @@ class ReportService:
     def save(self, incoming):
         incoming = incoming if isinstance(incoming, dict) else {}
         source_id = str(incoming.get("source_id") or "").strip()
-        self._source(source_id)
+        source = self._source(source_id)
+        adapter = self._adapter(source)
         report_id = str(incoming.get("id") or "").strip() or f"report-{uuid.uuid4().hex[:12]}"
         existing = self.repos.data_catalog.report(report_id) or {}
         name = str(incoming.get("name") or existing.get("name") or "Untitled Report").strip()[:120]
         if not name:
             raise ValidationError("Report name is required.")
-        source_config = incoming.get("source_config") if isinstance(incoming.get("source_config"), dict) else existing.get("source_config", {})
+
+        incoming_config = incoming.get("source_config") if isinstance(incoming.get("source_config"), dict) else existing.get("source_config", {})
+        source_value = str(incoming.get("source_value") or "").strip()
+        if source_value:
+            try:
+                source_config = adapter.configure_report_value(source_value, incoming_config)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(str(exc) or "Choose a valid Source report value.") from exc
+        else:
+            source_config = dict(incoming_config or {})
+
         runtime = incoming.get("runtime") if isinstance(incoming.get("runtime"), dict) else existing.get("runtime", {})
         report = {
             "id": report_id,
