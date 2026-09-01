@@ -16,6 +16,7 @@ class Runtime:
     snapshots: object
     leaderboard: object
     reports: object
+    filters: object
     screens: object
     display: object
     source: object
