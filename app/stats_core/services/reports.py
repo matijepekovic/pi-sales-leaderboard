@@ -56,7 +56,9 @@ class ReportService:
             item = dict(report)
             source = self._source(item.get("source_id"))
             adapter = self._adapter(source)
+            config = item.get("source_config") if isinstance(item.get("source_config"), dict) else {}
             item["source_value"] = str(adapter.report_value(item) or "")
+            item["filters"] = [dict(value) for value in (config.get("filters") or []) if isinstance(value, dict)]
             item["fields"] = self.fields(item["id"])
             item.update(self.status(item["id"]))
             rows.append(item)
@@ -158,6 +160,9 @@ class ReportService:
             raise ValidationError("Report name is required.")
 
         incoming_config = incoming.get("source_config") if isinstance(incoming.get("source_config"), dict) else existing.get("source_config", {})
+        incoming_config = dict(incoming_config or {})
+        if isinstance(incoming.get("filters"), list):
+            incoming_config["filters"] = [dict(value) for value in incoming["filters"] if isinstance(value, dict)]
         source_value = str(incoming.get("source_value") or "").strip()
         if source_value:
             try:
@@ -165,7 +170,7 @@ class ReportService:
             except (TypeError, ValueError) as exc:
                 raise ValidationError(str(exc) or "Choose a valid Source report value.") from exc
         else:
-            source_config = dict(incoming_config or {})
+            source_config = incoming_config
 
         runtime = incoming.get("runtime") if isinstance(incoming.get("runtime"), dict) else existing.get("runtime", {})
         report = {
