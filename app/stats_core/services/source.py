@@ -107,20 +107,16 @@ class SourceService:
         adapter, app_settings = self._adapter_context(source)
         return adapter.test_connection(app_settings, source)
 
-    def workbooks_for(self, source_id):
+    def report_values_for(self, source_id):
+        """Return vendor-neutral report choices exposed by one Source."""
         source = self._source(source_id)
         adapter, app_settings = self._adapter_context(source)
-        return adapter.workbooks(app_settings, source)
-
-    def all_views_for(self, source_id):
-        source = self._source(source_id)
-        adapter, app_settings = self._adapter_context(source)
-        return adapter.all_views(app_settings, source)
-
-    def views_for(self, source_id, workbook):
-        source = self._source(source_id)
-        adapter, app_settings = self._adapter_context(source)
-        return adapter.views(app_settings, source, workbook)
+        values = adapter.report_values(app_settings, source)
+        return [
+            {"id": str(item.get("id") or ""), "label": str(item.get("label") or "")}
+            for item in (values or [])
+            if isinstance(item, dict) and str(item.get("id") or "").strip()
+        ]
 
     def columns_for(self, report_id, body):
         report = self.reports.get(report_id)
