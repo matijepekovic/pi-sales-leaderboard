@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from stats_core.product.source import selected_market
-
 PRODUCT_MODE = "product_close"
 PRODUCT_LABEL = "Product Close Rates"
 
@@ -38,13 +36,19 @@ class ProductService:
         settings = settings or self.repos.settings.get()
         temporary = self.temporary_date.product_payload()
         if temporary is not None:
+            market = str(
+                temporary.get("market")
+                or settings.get("product_market")
+                or self.repos.meta.get("product_close_market", "")
+                or "Olympia"
+            ).strip()
             context = (
-                f"temporary|{temporary['market']}|{temporary['start']}|"
+                f"temporary|{market}|{temporary['start']}|"
                 f"{temporary['end']}|{temporary['seconds_left']}"
             )
             return {
                 "rows": [dict(row, _display_context=context) for row in temporary.get("rows") or []],
-                "market": temporary.get("market") or selected_market(settings),
+                "market": market,
                 "start": temporary.get("start") or "", "end": temporary.get("end") or "",
                 "temporary": True, "seconds_left": int(temporary.get("seconds_left") or 0),
                 "updated_at": "", "status": "Temporary date override active",
