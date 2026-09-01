@@ -64,24 +64,20 @@ class SourceService:
         incoming = incoming if isinstance(incoming, dict) else {}
         source_id = str(incoming.get("id") or "").strip() or f"source-{uuid.uuid4().hex[:12]}"
         existing = self.repos.data_catalog.source(source_id, self.repos.settings.get()) or {}
-        adapter_key = str(incoming.get("adapter") or existing.get("adapter") or "tableau").strip()
-        if adapter_key not in self.adapters:
+        default_adapter = next(iter(self.adapters), "")
+        adapter_key = str(incoming.get("adapter") or existing.get("adapter") or default_adapter).strip()
+        adapter = self.adapters.get(adapter_key)
+        if not adapter:
             raise ValidationError(f"Source adapter '{adapter_key}' is not available.")
-        name = str(incoming.get("name") or existing.get("name") or self.adapters[adapter_key].label).strip()[:120]
+        name = str(incoming.get("name") or existing.get("name") or adapter.label).strip()[:120]
         if not name:
             raise ValidationError("Source name is required.")
-        raw_connection = incoming.get("connection") if isinstance(incoming.get("connection"), dict) else existing.get("connection", {})
-        connection = {
-            key: str(raw_connection.get(key) or "").strip()[:300]
-            for key in ("server", "site", "pat_name")
-        }
-        connection["secret_ref"] = "source_credentials"
         source = {
             "id": source_id,
             "name": name,
             "adapter": adapter_key,
             "enabled": bool(incoming.get("enabled", existing.get("enabled", True))),
-            "connection": connection,
+            "connection": adapter.clean_source(incoming, existing),
         }
         catalog = self._catalog()
         catalog["sources"] = [row for row in catalog["sources"] if str(row.get("id")) != source_id] + [source]
@@ -102,13 +98,12 @@ class SourceService:
         adapter, app_settings = self._adapter_context(source)
         settings = self.repos.settings.get()
         settings.update(adapter.legacy_projection(app_settings, source, report))
-        settings["tableau_pat_secret"] = self.repos.source_credentials.get(source.get("id"))
         self.repos.settings.save(settings)
 
     def delete(self, source_id):
         source_id = str(source_id or "").strip()
         if source_id == PRIMARY_SOURCE_ID:
-            raise ValidationError("The built-in Tableau source cannot be deleted.")
+            raise ValidationError("The built-in source cannot be deleted.")
         if self.reports.list(source_id=source_id):
             raise ValidationError("Delete this source's reports before deleting the source.")
         catalog = self._catalog()
@@ -146,15 +141,13 @@ class SourceService:
         report = self.reports.get(report_id)
         source = self._source(report.get("source_id"))
         adapter, app_settings = self._adapter_context(source)
-        overrides = adapter.candidate_overrides(body)
-        return adapter.columns(app_settings, source, report, overrides)
+        return adapter.columns(app_settings, source, report, adapter.candidate_overrides(body))
 
     def test_report(self, report_id, body):
         report = self.reports.get(report_id)
         source = self._source(report.get("source_id"))
         adapter, app_settings = self._adapter_context(source)
-        overrides = adapter.candidate_overrides(body)
-        return adapter.test_view(app_settings, source, report, overrides)
+        return adapter.test_view(app_settings, source, report, adapter.candidate_overrides(body))
 
     def preview_report(self, report_id, body):
         report = self.reports.get(report_id)
@@ -168,8 +161,7 @@ class SourceService:
                 raise ValidationError("That pull came back with no people, so there is nothing to preview.")
             on_tv = bool((body or {}).get("on_tv"))
             if on_tv:
-                label = str(report.get("name") or "Report")
-                self.preview_store.start(rows, label)
+                self.preview_store.start(rows, str(report.get("name") or "Report"))
             return {
                 "start": start, "end": end, "reps": len(rows), "notes": notes,
                 "on_tv": on_tv, "preview": self.preview_store.state(),
@@ -186,9 +178,8 @@ class SourceService:
         finally:
             self._refresh_lock.release()
 
-    # Legacy endpoints remain active while the existing Settings frontend is
-    # replaced. They delegate to the normalized built-in source/report rather
-    # than owning a second Tableau implementation.
+    # Existing source endpoints delegate to the normalized built-in source/report
+    # until the old Settings markup is removed.
     def options(self):
         reps = self.repos.reps.list()
         status = self.reports.status(REP_REPORT_ID)
@@ -201,11 +192,8 @@ class SourceService:
             "scheduled_tableau_last_attempt": self.repos.meta.get("scheduled_tableau_last_attempt", ""),
         }
 
-    def test_connection(self):
-        return self.test(PRIMARY_SOURCE_ID)
-
-    def refresh(self):
-        return self.refresh_report(REP_REPORT_ID)
+    def test_connection(self): return self.test(PRIMARY_SOURCE_ID)
+    def refresh(self): return self.refresh_report(REP_REPORT_ID)
 
     def report(self):
         report = self.reports.get(REP_REPORT_ID)
@@ -213,10 +201,7 @@ class SourceService:
         source = self._source(report.get("source_id"))
         connection = dict(source.get("connection") or {})
         return {
-            "row_filter_columns": [
-                {"key": key, "label": label}
-                for key, label, typ in METRIC_DEFS if typ == "text"
-            ],
+            "row_filter_columns": [{"key": key, "label": label} for key, label, typ in METRIC_DEFS if typ == "text"],
             "workbook": str(config.get("workbook") or ""),
             "sheet": str(config.get("sheet") or "").rsplit("/", 1)[-1],
             "is_default": False, "default_workbook": "", "default_sheet": "",
