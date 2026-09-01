@@ -57,7 +57,6 @@ def _install_auth_gate(app, runtime):
             endpoint in runtime.public_endpoints
             or endpoint == "static"
             or (method == "GET" and path.startswith("/static/"))
-            or (method == "GET" and path.startswith("/api/theme-assets/"))
             or (method == "GET" and path.startswith("/api/screen-theme-assets/"))
         )
         if public:
@@ -107,7 +106,6 @@ def create_app(platform_name="windows", start_background=True):
         "auth.api_auth_status",
         "auth.api_auth_unlock",
         "display_state.render",
-        "themes.theme_asset",
         "themes.screen_theme_asset",
     }
     runtime = Runtime(
