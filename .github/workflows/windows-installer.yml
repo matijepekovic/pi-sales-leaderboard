@@ -80,11 +80,16 @@ jobs:
           }
           "STATS_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Test Data Screens Display frontend syntax
+      - name: Test Settings and Display frontend syntax
         shell: pwsh
         run: |
-          node --check app/static/settings/data-screen-display.js
-          node --check app/static/display/custom-screen.js
+          node --check app/static/settings/runtime.js
+          node --check app/static/settings/shell.js
+          node --check app/static/settings/data.js
+          node --check app/static/settings/filters.js
+          node --check app/static/settings/screens.js
+          node --check app/static/settings/display.js
+          node --check app/static/display/app.js
 
       - name: Test restructured runtime ownership
         shell: pwsh
@@ -189,7 +194,7 @@ jobs:
 
             $display = Invoke-WebRequest -Uri "http://127.0.0.1:8765/" -UseBasicParsing -TimeoutSec 5
             if ($display.StatusCode -ne 200) {
-              throw "Leaderboard display did not render"
+              throw "Stats Display did not render"
             }
 
             $settings = Invoke-WebRequest -Uri "http://127.0.0.1:8765/settings" -UseBasicParsing -TimeoutSec 5
