@@ -1,8 +1,8 @@
 """Built-in Screen templates.
 
 Templates are immutable starting points. A user creates a normal editable Screen
-from one of these templates, then chooses Reports, Filters, presentation and
-Theme like any other Screen.
+from one of these templates, then chooses Reports, Display Values, presentation
+and Theme like any other Screen.
 """
 from __future__ import annotations
 
@@ -13,35 +13,35 @@ _TEMPLATES = (
         "name": "Whole Office",
         "description": "Rank everyone together on one office-wide leaderboard.",
         "layout": "leaderboard",
-        "filter_hint": "Usually no team Filter is needed unless you want to narrow the office view.",
+        "group_hint": "No grouping is required for the office-wide view.",
     },
     {
         "key": "per_team",
         "name": "Per Team",
         "description": "A leaderboard focused on one team.",
         "layout": "leaderboard",
-        "filter_hint": "Assign the team Filter this Screen should show.",
+        "group_hint": "Choose the Display Value that identifies teams, then choose one team value.",
     },
     {
         "key": "team_vs_team",
         "name": "Team vs Team",
         "description": "Compare two teams side by side using the same Report.",
         "layout": "comparison",
-        "filter_hint": "Assign two team Filters. Each Filter is rendered as its own side of the comparison.",
+        "group_hint": "Choose the Display Value that identifies teams, then choose two team values.",
     },
     {
         "key": "all_teams",
         "name": "All Teams",
-        "description": "Show every selected team as its own competitive panel.",
+        "description": "Show teams as competitive panels from the same Report.",
         "layout": "comparison_grid",
-        "filter_hint": "Assign the team Filters you want included. Each Filter becomes one team panel.",
+        "group_hint": "Choose the Display Value that identifies teams. Leave team values empty to show every value.",
     },
     {
         "key": "product_close",
         "name": "Product Close",
         "description": "A compact product-performance leaderboard for close-rate competition.",
         "layout": "product",
-        "filter_hint": "Assign any Product, Office or Team Filters needed for this Screen.",
+        "group_hint": "Choose the Display Values you want this Screen to show.",
     },
 )
 
