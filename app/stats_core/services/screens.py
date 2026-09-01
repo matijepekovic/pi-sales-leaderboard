@@ -7,50 +7,22 @@ from stats_core.errors import ValidationError
 
 
 class ScreenService:
-    def __init__(self, repos, reports, filters, builtin_registry, organization):
+    """Owns user-created Screens.
+
+    Screens choose Reports, reusable Filter ids, table presentation and theme
+    policy. They never know how a Source retrieves data.
+    """
+
+    def __init__(self, repos, reports, filters):
         self.repos = repos
         self.reports = reports
         self.filters = filters
-        self.builtin = builtin_registry
-        self.organization = organization
-
-    def _builtin_definitions(self):
-        rows = [
-            {"id": "builtin:whole_office", "name": "Whole Office", "kind": "builtin", "mode": "whole_office", "theme_mode": "inherited"},
-            {"id": "builtin:team_vs_team", "name": "Team vs Team", "kind": "builtin", "mode": "team_vs_team", "theme_mode": "inherited"},
-            {"id": "builtin:all_teams", "name": "All Teams", "kind": "builtin", "mode": "all_teams", "theme_mode": "inherited"},
-            {"id": "builtin:product_close", "name": "Product Close", "kind": "builtin", "mode": "product_close", "theme_mode": "inherited"},
-        ]
-        for team in self.organization.definitions_for_api():
-            name = str(team.get("name") or "").strip()
-            if name:
-                rows.append({
-                    "id": f"builtin:per_team:{name}",
-                    "name": name,
-                    "kind": "builtin",
-                    "mode": f"per_team::{name}",
-                    "theme_mode": "inherited",
-                })
-        return rows
 
     def list(self):
-        return self._builtin_definitions() + self.repos.screens.list()
-
-    def modes(self):
-        return self.builtin.modes()
-
-    def cycle_views(self):
-        return self.builtin.cycle_views()
-
-    def render_mode(self, raw_mode=None, **kwargs):
-        return self.builtin.render(raw_mode, **kwargs)
+        return sorted(self.repos.screens.list(), key=lambda item: str(item.get("name") or "").casefold())
 
     def get(self, screen_id):
-        key = str(screen_id or "").strip()
-        builtin = next((row for row in self._builtin_definitions() if row["id"] == key), None)
-        if builtin:
-            return builtin
-        screen = self.repos.screens.get(key)
+        screen = self.repos.screens.get(str(screen_id or "").strip())
         if not screen:
             raise ValidationError("Screen not found.")
         return screen
@@ -63,7 +35,7 @@ class ScreenService:
                 continue
             self.filters.get(filter_id)
             result.append(filter_id)
-        return result[:50]
+        return result[:100]
 
     def _clean_tables(self, raw, report_ids):
         tables, seen = [], set()
@@ -75,10 +47,10 @@ class ScreenService:
                 continue
             seen.add(report_id)
             fields = self.reports.fields(report_id)
-            valid = {str(field.get("key")) for field in fields}
+            valid = {str(field.get("key") or "") for field in fields}
             columns = [str(value) for value in (item.get("columns") or []) if str(value) in valid]
             if not columns:
-                columns = [str(field.get("key")) for field in fields[:8]]
+                columns = [str(field.get("key") or "") for field in fields[:8] if str(field.get("key") or "")]
             sort_field = str(item.get("sort_field") or "").strip()
             if sort_field not in valid:
                 sort_field = ""
@@ -91,28 +63,27 @@ class ScreenService:
                 limit = 100
             tables.append({
                 "report_id": report_id,
-                "columns": list(dict.fromkeys(columns))[:30],
+                "columns": list(dict.fromkeys(columns))[:50],
                 "sort_field": sort_field,
                 "sort_direction": direction,
                 "limit": limit,
             })
         for report_id in report_ids:
-            if report_id not in seen:
-                fields = self.reports.fields(report_id)
-                tables.append({
-                    "report_id": report_id,
-                    "columns": [str(field.get("key")) for field in fields[:8]],
-                    "sort_field": "",
-                    "sort_direction": "desc",
-                    "limit": 100,
-                })
+            if report_id in seen:
+                continue
+            fields = self.reports.fields(report_id)
+            tables.append({
+                "report_id": report_id,
+                "columns": [str(field.get("key") or "") for field in fields[:8] if str(field.get("key") or "")],
+                "sort_field": "",
+                "sort_direction": "desc",
+                "limit": 100,
+            })
         return tables
 
     def _normalize(self, incoming, screen_id=None):
         incoming = incoming if isinstance(incoming, dict) else {}
         screen_id = str(screen_id or incoming.get("id") or "").strip() or f"screen-{uuid.uuid4().hex[:12]}"
-        if screen_id.startswith("builtin:"):
-            raise ValidationError("Built-in screens cannot be replaced.")
         name = str(incoming.get("name") or "Untitled Screen").strip()[:120]
         if not name:
             raise ValidationError("Screen name is required.")
@@ -133,7 +104,6 @@ class ScreenService:
         return {
             "id": screen_id,
             "name": name,
-            "kind": "custom",
             "reports": report_ids[:20],
             "filter_ids": self._clean_filter_ids(incoming.get("filter_ids")),
             "tables": self._clean_tables(incoming.get("tables"), set(report_ids)),
@@ -148,8 +118,6 @@ class ScreenService:
 
     def delete(self, screen_id):
         screen_id = str(screen_id or "").strip()
-        if screen_id.startswith("builtin:"):
-            raise ValidationError("Built-in screens cannot be deleted.")
         if not self.repos.screens.delete(screen_id):
             raise ValidationError("Screen not found.")
         self.repos.meta.bump("settings_version")
@@ -169,7 +137,7 @@ class ScreenService:
         report_id = str(table.get("report_id") or "")
         report = self.reports.get(report_id)
         fields = self.reports.fields(report_id)
-        by_key = {str(field.get("key")): dict(field) for field in fields}
+        by_key = {str(field.get("key") or ""): dict(field) for field in fields}
         columns = [key for key in table.get("columns") or [] if key in by_key]
         rows = self.filters.apply(report_id, self.reports.rows(report_id), screen.get("filter_ids") or [])
         sort_field = str(table.get("sort_field") or "")
@@ -189,27 +157,6 @@ class ScreenService:
             "sort_direction": str(table.get("sort_direction") or "desc"),
         }
 
-    def _winning_team(self, sections):
-        definitions = self.organization.definitions_for_api()
-        by_name = {str(item.get("name") or "").strip().casefold(): item for item in definitions}
-        for section in sections:
-            for row in section.get("rows") or []:
-                team_id = row.get("assigned_team_id") or row.get("team_id")
-                if team_id:
-                    try:
-                        tid = int(team_id)
-                    except Exception:
-                        tid = None
-                    if tid:
-                        match = next((item for item in definitions if int(item.get("team_id") or 0) == tid), None)
-                        if match:
-                            return {"team_id": tid, "team_name": match.get("name") or ""}
-                name = str(row.get("team") or "").strip()
-                match = by_name.get(name.casefold()) if name else None
-                if match:
-                    return {"team_id": int(match["team_id"]), "team_name": match["name"]}
-        return None
-
     def _filter_payload(self, screen):
         result = []
         for filter_id in screen.get("filter_ids") or []:
@@ -223,12 +170,10 @@ class ScreenService:
     def render_definition(self, screen):
         sections = [self._section(screen, table) for table in screen.get("tables") or []]
         return {
-            "mode": "custom_screen",
-            "mode_label": screen["name"],
+            "mode": "screen",
             "screen_id": screen["id"],
             "screen_name": screen["name"],
             "theme_mode": screen.get("theme_mode", "inherited"),
-            "winning_team": self._winning_team(sections),
             "display_filters": self._filter_payload(screen),
             "sections": sections,
         }
@@ -236,8 +181,5 @@ class ScreenService:
     def preview(self, incoming):
         return self.render_definition(self._normalize(incoming, screen_id="screen-preview"))
 
-    def render(self, screen_id, **kwargs):
-        screen = self.get(screen_id)
-        if screen.get("kind") == "builtin":
-            return self.builtin.render(screen.get("mode"), **kwargs)
-        return self.render_definition(screen)
+    def render(self, screen_id):
+        return self.render_definition(self.get(screen_id))
