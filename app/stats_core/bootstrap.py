@@ -20,6 +20,7 @@ from stats_core.screens.registry import ScreenRegistry
 from stats_core.services.auth import AuthService
 from stats_core.services.controls import ControlsService
 from stats_core.services.display import DisplayService
+from stats_core.services.filters import FilterService
 from stats_core.services.leaderboard import LeaderboardService
 from stats_core.services.organization import OrganizationService
 from stats_core.services.preview import PreviewService
@@ -43,6 +44,7 @@ from stats_core.web import controls as controls_web
 from stats_core.web import core as core_web
 from stats_core.web import data as data_web
 from stats_core.web import display as display_web
+from stats_core.web import filters as filters_web
 from stats_core.web import organization as organization_web
 from stats_core.web import product as product_web
 from stats_core.web import screens as screens_web
@@ -106,6 +108,7 @@ def create_app(platform_name="windows", start_background=True):
     temporary_date = TemporaryDateService(repos, rep_refresh, adapters)
     product_refresh = ProductRefreshService(repos, temporary_date, adapters)
     reports = ReportService(repos, adapters, rep_refresh, product_refresh)
+    filters = FilterService(repos)
     preview = PreviewService()
     source = SourceService(repos, reports, preview, adapters)
     source.prepare()
@@ -115,7 +118,7 @@ def create_app(platform_name="windows", start_background=True):
     snapshots = DataSnapshotService(repos, preview, temporary_date)
     leaderboard = LeaderboardService(repos, organization, snapshots)
     builtin_screens = ScreenRegistry(leaderboard, products, organization)
-    screens = ScreenService(repos, reports, builtin_screens, organization)
+    screens = ScreenService(repos, reports, filters, builtin_screens, organization)
     display = DisplayService(repos, screens, temporary_date)
     display.prepare()
     controls = ControlsService(repos, builtin_screens)
@@ -134,9 +137,10 @@ def create_app(platform_name="windows", start_background=True):
         repos=repos, settings=settings, auth=auth, organization=organization,
         pull_policy=pull_policy, rep_refresh=rep_refresh, temporary_date=temporary_date,
         product_refresh=product_refresh, products=products, preview=preview,
-        snapshots=snapshots, leaderboard=leaderboard, reports=reports, screens=screens,
-        display=display, source=source, controls=controls, scheduler=scheduler, theme=theme,
-        version=version, tv=tv, platform=platform, public_endpoints=public_endpoints,
+        snapshots=snapshots, leaderboard=leaderboard, reports=reports, filters=filters,
+        screens=screens, display=display, source=source, controls=controls,
+        scheduler=scheduler, theme=theme, version=version, tv=tv, platform=platform,
+        public_endpoints=public_endpoints,
     )
     app.extensions["stats_runtime"] = runtime
 
@@ -144,6 +148,7 @@ def create_app(platform_name="windows", start_background=True):
     app.register_blueprint(core_web.blueprint(runtime))
     app.register_blueprint(organization_web.blueprint(organization))
     app.register_blueprint(data_web.blueprint(source, reports))
+    app.register_blueprint(filters_web.blueprint(filters))
     app.register_blueprint(screens_web.blueprint(screens))
     app.register_blueprint(display_web.blueprint(display))
     app.register_blueprint(product_web.blueprint(products))
