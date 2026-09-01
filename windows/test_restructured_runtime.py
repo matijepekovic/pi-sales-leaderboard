@@ -57,7 +57,7 @@ class RestructuredRuntimeTests(unittest.TestCase):
         required = {
             "/", "/settings", "/health", "/api/system/version", "/api/state",
             "/api/data/sources", "/api/data/reports", "/api/data/reports/<report_id>/inspect",
-            "/api/filters", "/api/filters/preview", "/api/screens", "/api/screens/preview",
+            "/api/filters", "/api/filters/preview", "/api/screens", "/api/screens/templates", "/api/screens/preview",
             "/api/display", "/api/display/render", "/api/screen-themes/<screen_id>",
             "/api/asset-library", "/api/windows/update/check",
         }
@@ -200,6 +200,24 @@ class RestructuredRuntimeTests(unittest.TestCase):
         self.assertNotIn('custom-screen.js', display)
         self.assertFalse((APP / "static" / "settings" / "data-screen-display.js").exists())
         self.assertFalse((APP / "static" / "display" / "custom-screen.js").exists())
+
+    def test_screen_templates_replace_legacy_screen_registry(self):
+        response = self.client.get("/api/screens/templates")
+        self.assertEqual(response.status_code, 200)
+        templates = response.get_json()["templates"]
+        self.assertEqual(
+            [item["key"] for item in templates],
+            ["whole_office", "per_team", "team_vs_team", "all_teams", "product_close"],
+        )
+        screens_root = APP / "stats_core" / "screens"
+        self.assertTrue((screens_root / "templates.py").exists())
+        for retired in (
+            "registry.py", "whole_office.py", "per_team.py", "team_vs_team.py",
+            "all_teams.py", "product_close.py",
+        ):
+            self.assertFalse((screens_root / retired).exists(), retired)
+        catalog = (screens_root / "templates.py").read_text(encoding="utf-8").lower()
+        self.assertNotIn("tableau", catalog)
 
     def test_core_has_no_builtin_screen_contract(self):
         for path in (
