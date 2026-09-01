@@ -30,6 +30,18 @@ class TableauAdapter:
         return dict(value) if isinstance(value, dict) else {}
 
     @staticmethod
+    def clean_source(incoming, existing=None):
+        incoming = incoming if isinstance(incoming, dict) else {}
+        existing = existing if isinstance(existing, dict) else {}
+        raw = incoming.get("connection") if isinstance(incoming.get("connection"), dict) else existing.get("connection", {})
+        return {
+            "server": str(raw.get("server") or "").strip().rstrip("/")[:300],
+            "site": str(raw.get("site") or "").strip()[:200],
+            "pat_name": str(raw.get("pat_name") or "").strip()[:200],
+            "secret_ref": "source_credentials",
+        }
+
+    @staticmethod
     def with_secret(app_settings, secret):
         settings = deepcopy(app_settings or {})
         settings["tableau_pat_secret"] = str(secret or "")
@@ -38,11 +50,7 @@ class TableauAdapter:
     @staticmethod
     def candidate_overrides(body):
         body = body if isinstance(body, dict) else {}
-        return {
-            key: body[key]
-            for key in _REPORT_KEYS + discovery.DATE_KEYS
-            if key in body
-        }
+        return {key: body[key] for key in _REPORT_KEYS + discovery.DATE_KEYS if key in body}
 
     def source_settings(self, app_settings, source):
         settings = deepcopy(app_settings or {})
@@ -94,12 +102,9 @@ class TableauAdapter:
     def test_connection(self, app_settings, source):
         preview = self.tableau.source(self.source_settings(app_settings, source)).preview()
         return {
-            "start": preview["start"],
-            "end": preview["end"],
-            "total_rows": preview["total_rows"],
-            "selected_rows": preview["selected_rows"],
-            "offices": preview["offices"],
-            "names": preview["names"],
+            "start": preview["start"], "end": preview["end"],
+            "total_rows": preview["total_rows"], "selected_rows": preview["selected_rows"],
+            "offices": preview["offices"], "names": preview["names"],
         }
 
     def workbooks(self, app_settings, source):
@@ -112,20 +117,16 @@ class TableauAdapter:
         return discovery.list_views(self.source_settings(app_settings, source), workbook)
 
     def columns(self, app_settings, source, report, overrides=None):
-        settings = self.report_settings(app_settings, source, report)
-        return discovery.read_columns(settings, overrides or {})
+        return discovery.read_columns(self.report_settings(app_settings, source, report), overrides or {})
 
     def preview(self, app_settings, source, report, overrides=None):
-        settings = self.report_settings(app_settings, source, report)
-        return discovery.preview_pull(settings, overrides or {})
+        return discovery.preview_pull(self.report_settings(app_settings, source, report), overrides or {})
 
     def table(self, app_settings, source, report, overrides=None):
-        settings = self.report_settings(app_settings, source, report)
-        return read_table(settings, overrides or {})
+        return read_table(self.report_settings(app_settings, source, report), overrides or {})
 
     def test_view(self, app_settings, source, report, overrides=None):
-        settings = self.report_settings(app_settings, source, report)
-        return discovery.test_source(settings, overrides or {})
+        return discovery.test_source(self.report_settings(app_settings, source, report), overrides or {})
 
     def legacy_projection(self, app_settings, source, report=None):
         """Return the old settings shape while old pull code is still active."""
@@ -135,15 +136,12 @@ class TableauAdapter:
             "tableau_server": str(connection.get("server") or ""),
             "tableau_site": str(connection.get("site") or ""),
             "tableau_pat_name": str(connection.get("pat_name") or ""),
+            "tableau_pat_secret": str(settings.get("tableau_pat_secret") or ""),
             "source": dict(settings.get("source") or {}),
         }
         runtime = (report or {}).get("runtime") if isinstance((report or {}).get("runtime"), dict) else {}
-        if "date_mode" in runtime:
-            projected["data_date_mode"] = runtime.get("date_mode")
-        if "date_start" in runtime:
-            projected["data_date_start"] = runtime.get("date_start")
-        if "date_end" in runtime:
-            projected["data_date_end"] = runtime.get("date_end")
-        if "market" in runtime:
-            projected["product_market"] = runtime.get("market")
+        if "date_mode" in runtime: projected["data_date_mode"] = runtime.get("date_mode")
+        if "date_start" in runtime: projected["data_date_start"] = runtime.get("date_start")
+        if "date_end" in runtime: projected["data_date_end"] = runtime.get("date_end")
+        if "market" in runtime: projected["product_market"] = runtime.get("market")
         return projected
