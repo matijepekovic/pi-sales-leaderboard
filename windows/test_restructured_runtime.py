@@ -163,19 +163,19 @@ class RestructuredRuntimeTests(unittest.TestCase):
         self.assertEqual(rendered["display_filters"][0]["name"], "Olympia")
         self.assertIn("theme", rendered)
 
-    def test_filter_and_data_filter_boundaries_are_separate(self):
-        filters_service = (APP / "stats_core" / "services" / "filters.py").read_text(encoding="utf-8")
-        screens_service = (APP / "stats_core" / "services" / "screens.py").read_text(encoding="utf-8")
-        self.assertNotIn("source_config", filters_service)
-        self.assertNotIn("adapter", filters_service.lower())
-        self.assertIn('"filter_ids"', screens_service)
-        self.assertNotIn("display_filter_mappings", screens_service)
-        self.assertNotIn("filter_values", screens_service)
+    def test_settings_exposes_only_data_filters_and_display_values(self):
         data_ui = (APP / "static" / "settings" / "data.js").read_text(encoding="utf-8")
-        filter_ui = (APP / "static" / "settings" / "filters.js").read_text(encoding="utf-8")
+        display_values_ui = (APP / "static" / "settings" / "display-values.js").read_text(encoding="utf-8")
+        screens_ui = (APP / "static" / "settings" / "screens.js").read_text(encoding="utf-8")
+        settings = (APP / "templates" / "settings.html").read_text(encoding="utf-8")
         self.assertIn("Data Filters", data_ui)
-        self.assertIn("actual pulled Report data", filter_ui)
-        self.assertIn("/api/filters/preview", filter_ui)
+        self.assertIn("only Filters in Stats", data_ui)
+        self.assertIn("Display Values", display_values_ui)
+        self.assertIn("/api/data/reports/", display_values_ui)
+        self.assertNotIn("/api/filters", display_values_ui)
+        self.assertNotIn("/api/filters", screens_ui)
+        self.assertNotIn("settingsFilters", settings)
+        self.assertFalse((APP / "static" / "settings" / "filters.js").exists())
 
     def test_tableau_is_replaceable_adapter_only(self):
         bootstrap = (APP / "stats_core" / "bootstrap.py").read_text(encoding="utf-8")
@@ -194,8 +194,9 @@ class RestructuredRuntimeTests(unittest.TestCase):
         self.assertNotIn('settings/base.html', settings)
         self.assertNotIn('data-screen-display.js', settings)
         self.assertNotIn('windows-sidebar.js', settings)
-        for script in ("runtime.js", "shell.js", "data.js", "filters.js", "screens.js", "display.js"):
+        for script in ("runtime.js", "shell.js", "overview.js", "data.js", "display-values.js", "theme.js", "screens.js", "display.js", "software.js"):
             self.assertIn(f"/static/settings/{script}", settings)
+        self.assertNotIn('/static/settings/filters.js', settings)
         self.assertIn('/static/display/app.js', display)
         self.assertNotIn('custom-screen.js', display)
         self.assertFalse((APP / "static" / "settings" / "data-screen-display.js").exists())

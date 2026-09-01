@@ -25,16 +25,18 @@
       <aside id="settingsSidebar" aria-label="Settings navigation">
         <div class="settings-brand">
           <div class="settings-brand-title">Stats</div>
-          <div class="settings-brand-subtitle">Build the display</div>
+          <div class="settings-brand-subtitle">See and configure Stats</div>
         </div>
         <button id="settingsBack" class="btn" type="button">← Back to Display</button>
         <nav id="settingsNav" role="tablist" aria-orientation="vertical">
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsOverview">Overview</button>
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsData">Data</button>
-          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsFilters">Filters</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsDisplayValues">Display Values</button>
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsScreens">Screens</button>
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsDisplay">Display</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsSoftware">Software Update</button>
         </nav>
-        <div class="settings-sidebar-footer">Source → Data → Filters → Screens → Display</div>
+        <div class="settings-sidebar-footer">Source → Report → Display Values → Screen → Display</div>
       </aside>
 
       <main id="settingsMain">
@@ -46,10 +48,18 @@
         </header>
         <div id="settingsContent">
           <div id="settingsContentInner">
-            <section class="settings-section" id="settingsData" data-settings-title="Data" data-settings-description="Connect Sources, configure Reports and inspect the data Stats actually pulled."><div id="settingsDataHost"></div></section>
-            <section class="settings-section" id="settingsFilters" data-settings-title="Filters" data-settings-description="Create and test reusable Filters against pulled Report data."><div id="settingsFiltersHost"></div></section>
-            <section class="settings-section" id="settingsScreens" data-settings-title="Screens" data-settings-description="Choose Reports and Filters, build the presentation, design it and test it live."><div id="settingsScreensHost"></div></section>
+            <section class="settings-section" id="settingsOverview" data-settings-title="Overview" data-settings-description="See exactly what Stats currently has configured and what is playing."><div id="settingsOverviewHost"></div></section>
+            <section class="settings-section" id="settingsData" data-settings-title="Data" data-settings-description="Connect Sources, configure Reports, Data Filters and inspect pulled data."><div id="settingsDataHost"></div></section>
+            <section class="settings-section" id="settingsDisplayValues" data-settings-title="Display Values" data-settings-description="See the Report fields available for Screens to display, sort and rank."><div id="settingsDisplayValuesHost"></div></section>
+            <section class="settings-section" id="settingsScreens" data-settings-title="Screens" data-settings-description="Choose Reports and Display Values, build the presentation, design it and preview it."><div id="settingsScreensHost"></div></section>
             <section class="settings-section" id="settingsDisplay" data-settings-title="Display" data-settings-description="Choose the active Screen and configure rotation."><div id="settingsDisplayHost"></div></section>
+            <section class="settings-section" id="settingsSoftware" data-settings-title="Software Update" data-settings-description="See the installed version and install a signed Stats update.">
+              <div class="card">
+                <div class="toolbar"><div><h2>Software Update</h2><div id="softwareVersionCurrent" class="small">Software version: loading…</div></div></div>
+                <div class="row" style="margin-top:14px"><button id="softwareCheckUpdate" class="btn" type="button">Check for Updates</button><button id="softwareInstallUpdate" class="btn primary" type="button" disabled>Install Update</button></div>
+                <div id="softwareUpdateStatus" class="status small" style="margin-top:12px"></div>
+              </div>
+            </section>
           </div>
         </div>
       </main>
@@ -58,10 +68,12 @@
 
   <script src="/static/settings/runtime.js"></script>
   <script src="/static/settings/shell.js"></script>
+  <script src="/static/settings/overview.js"></script>
   <script src="/static/settings/data.js"></script>
-  <script src="/static/settings/filters.js"></script>
+  <script src="/static/settings/display-values.js"></script>
   <script src="/static/settings/theme.js"></script>
   <script src="/static/settings/screens.js"></script>
   <script src="/static/settings/display.js"></script>
+  <script src="/static/settings/software.js"></script>
 </body>
 </html>
