@@ -61,9 +61,7 @@ class TemporaryDateService:
 
     def state(self):
         with self._lock:
-            now = time.time()
-            self._expire_locked(now)
-            active = self._state["rows"] is not None
+            now = time.time(); self._expire_locked(now); active = self._state["rows"] is not None
             return {
                 "active": active, "mode": self._state["mode"] if active else "",
                 "start": self._state["start"] if active else "", "end": self._state["end"] if active else "",
@@ -80,12 +78,10 @@ class TemporaryDateService:
         except Exception as exc: raise ValidationError(f"Choose a valid {label} date.") from exc
 
     def _requested_range(self, body):
-        mode = str(body.get("mode") or "").strip().lower()
-        today = date.today()
+        mode = str(body.get("mode") or "").strip().lower(); today = date.today()
         if mode == "ytd": return mode, date(today.year, 1, 1).isoformat(), today.isoformat()
         if mode == "custom":
-            start = self._parse_date(body.get("start"), "start")
-            end = self._parse_date(body.get("end"), "end")
+            start = self._parse_date(body.get("start"), "start"); end = self._parse_date(body.get("end"), "end")
             if start > end: raise ValidationError("Start date must be before or equal to end date.")
             return mode, start.isoformat(), end.isoformat()
         raise ValidationError("Choose Year to Date or Custom Range.")
@@ -98,17 +94,12 @@ class TemporaryDateService:
         return minutes
 
     def _fallback_markets(self):
-        return sorted({
-            str(row.get("home_branch") or "").strip()
-            for row in self.repos.reps.list()
-            if str(row.get("home_branch") or "").strip()
-        }, key=str.casefold)
+        return sorted({str(row.get("home_branch") or "").strip() for row in self.repos.reps.list() if str(row.get("home_branch") or "").strip()}, key=str.casefold)
 
     def _context(self, report_id):
-        settings = self.repos.settings.get()
-        report = self.repos.data_catalog.report(report_id, settings)
+        settings = self.repos.settings.get(); report = self.repos.data_catalog.report(report_id)
         if not report: raise ValidationError("Required report is not configured.")
-        source = self.repos.data_catalog.source(report.get("source_id"), settings)
+        source = self.repos.data_catalog.source(report.get("source_id"))
         if not source: raise ValidationError("Required report source is not configured.")
         adapter = self.adapters.get(str(source.get("adapter") or ""))
         if not adapter: raise ValidationError("Required report source adapter is not available.")
@@ -122,24 +113,19 @@ class TemporaryDateService:
         return dict(report, runtime=runtime)
 
     def activate(self, body):
-        mode, start, end = self._requested_range(body)
-        minutes = self._requested_minutes(body)
-        if not self._pull_lock.acquire(blocking=False):
-            raise BusyError("A temporary pull is already running.")
+        mode, start, end = self._requested_range(body); minutes = self._requested_minutes(body)
+        if not self._pull_lock.acquire(blocking=False): raise BusyError("A temporary pull is already running.")
         try:
             rep_report, rep_source, rep_adapter, rep_settings = self._context(REP_REPORT_ID)
-            trial_rep = self._with_dates(rep_report, start, end)
-            rows, _result = self.rep_refresh.pull(rep_adapter, rep_settings, rep_source, trial_rep)
-            if not rows:
-                raise ValidationError("Temporary pull returned no people. Regular numbers were kept.")
+            rows, _result = self.rep_refresh.pull(rep_adapter, rep_settings, rep_source, self._with_dates(rep_report, start, end))
+            if not rows: raise ValidationError("Temporary pull returned no people. Regular numbers were kept.")
 
             product_report, product_source, product_adapter, product_settings = self._context(PRODUCT_REPORT_ID)
             runtime = dict(product_report.get("runtime") or {})
-            market = str(runtime.get("market") or product_settings.get("product_market") or "Olympia").strip() or "Olympia"
+            market = str(runtime.get("market") or "Olympia").strip() or "Olympia"
             product_result = product_adapter.pull_products(
                 product_settings, product_source, product_report,
-                start=start, end=end, market=market,
-                fallback_markets=self._fallback_markets(),
+                start=start, end=end, market=market, fallback_markets=self._fallback_markets(),
             )
             product_rows = product_result["rows"]
         finally:
@@ -153,6 +139,5 @@ class TemporaryDateService:
         return self.state()
 
     def cancel(self):
-        with self._lock:
-            self._clear_locked()
+        with self._lock: self._clear_locked()
         return self.state()
