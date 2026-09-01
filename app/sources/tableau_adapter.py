@@ -33,6 +33,61 @@ class TableauAdapter:
         value = source.get("connection") if isinstance(source, dict) else {}
         return dict(value) if isinstance(value, dict) else {}
 
+    def initial_catalog(self, app_settings, source_id, rep_report_id, product_report_id):
+        """Migrate the pre-catalog Tableau settings into normalized Stats records."""
+        settings = app_settings if isinstance(app_settings, dict) else {}
+        legacy = settings.get("source") if isinstance(settings.get("source"), dict) else {}
+        source = {
+            "id": source_id,
+            "name": self.label,
+            "adapter": self.key,
+            "enabled": True,
+            "connection": self.clean_source({
+                "connection": {
+                    "server": legacy.get("server") or settings.get("tableau_server"),
+                    "site": legacy.get("site") or settings.get("tableau_site"),
+                    "pat_name": legacy.get("pat_name") or settings.get("tableau_pat_name"),
+                }
+            }),
+        }
+        rep_config = {
+            key: legacy.get(key)
+            for key in (
+                "workbook", "sheet", "filters", "date_start_field", "date_end_field",
+                "mapping", "row_filter", "export",
+            )
+            if key in legacy
+        }
+        return {
+            "sources": [source],
+            "reports": [
+                {
+                    "id": rep_report_id,
+                    "source_id": source_id,
+                    "name": "Sales Rep Performance",
+                    "kind": "rep_performance",
+                    "source_config": rep_config,
+                    "runtime": {
+                        "date_mode": str(settings.get("data_date_mode") or "current_month"),
+                        "date_start": str(settings.get("data_date_start") or ""),
+                        "date_end": str(settings.get("data_date_end") or ""),
+                    },
+                },
+                {
+                    "id": product_report_id,
+                    "source_id": source_id,
+                    "name": "Close Rate by Product",
+                    "kind": "product_close",
+                    "source_config": {},
+                    "runtime": {"market": str(settings.get("product_market") or "Olympia")},
+                },
+            ],
+        }
+
+    @staticmethod
+    def legacy_secret(app_settings):
+        return str((app_settings or {}).get("tableau_pat_secret") or "")
+
     @staticmethod
     def clean_source(incoming, existing=None):
         incoming = incoming if isinstance(incoming, dict) else {}
@@ -96,6 +151,31 @@ class TableauAdapter:
         source["connection"] = connection
         return source
 
+    def legacy_report_payload(self, report, source):
+        config = dict((report or {}).get("source_config") or {})
+        connection = self._connection(source)
+        return {
+            "workbook": str(config.get("workbook") or ""),
+            "sheet": str(config.get("sheet") or "").rsplit("/", 1)[-1],
+            "is_default": False,
+            "default_workbook": "",
+            "default_sheet": "",
+            "server": str(connection.get("server") or ""),
+            "site": str(connection.get("site") or ""),
+            "pat_name": str(connection.get("pat_name") or ""),
+            "filters": config.get("filters") or [],
+            "date_start_field": str(config.get("date_start_field") or "Start"),
+            "date_end_field": str(config.get("date_end_field") or "End"),
+            "row_filter": config.get("row_filter") or {},
+            "mapping": config.get("mapping") or {},
+            "export": str(config.get("export") or "auto"),
+            "defaults": {
+                "server": "", "site": "", "pat_name": "", "workbook": "", "sheet": "",
+                "export": "auto", "filters": [], "date_start_field": "Start",
+                "date_end_field": "End", "mapping": {}, "row_filter": {},
+            },
+        }
+
     def _rep_scope(self, settings, source, report):
         runtime = self.tableau.normalized_settings(settings)
         start, end = _base.resolve_dates(runtime)
@@ -157,7 +237,7 @@ class TableauAdapter:
     def test_view(self, app_settings, source, report, overrides=None): return discovery.test_source(self.report_settings(app_settings, source, report), overrides or {})
 
     def legacy_projection(self, app_settings, source, report=None):
-        """Return the old settings shape while old pull code is still active."""
+        """Project normalized records into the pre-catalog settings keys."""
         settings = self.report_settings(app_settings, source, report or {})
         connection = self._connection(source)
         projected = {
