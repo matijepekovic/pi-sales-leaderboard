@@ -20,6 +20,13 @@ _REPORT_KEYS = (
     "server", "site", "pat_name", "workbook", "sheet", "filters",
     "date_start_field", "date_end_field", "mapping", "row_filter", "export",
 )
+_LEGACY_SETTING_KEYS = {
+    "tableau_server", "tableau_site", "tableau_pat_name", "tableau_pat_secret",
+    "tableau_view", "tableau_workbook", "tableau_sheet", "source", "source_mapping",
+    "data_office", "data_date_mode", "data_date_start", "data_date_end",
+    "data_date_param_start", "data_date_param_end", "data_include_people",
+    "data_exclude_people", "product_market",
+}
 
 
 class TableauAdapter:
@@ -91,6 +98,13 @@ class TableauAdapter:
         return str((app_settings or {}).get("tableau_pat_secret") or "")
 
     @staticmethod
+    def remove_legacy_settings(app_settings):
+        clean = dict(app_settings or {})
+        for key in _LEGACY_SETTING_KEYS:
+            clean.pop(key, None)
+        return clean
+
+    @staticmethod
     def clean_source(incoming, existing=None):
         incoming = incoming if isinstance(incoming, dict) else {}
         existing = existing if isinstance(existing, dict) else {}
@@ -116,18 +130,14 @@ class TableauAdapter:
     def source_settings(self, app_settings, source):
         settings = deepcopy(app_settings or {})
         connection = self._connection(source)
-        server = str(connection.get("server") or "").strip()
-        site = str(connection.get("site") or "").strip()
-        pat_name = str(connection.get("pat_name") or "").strip()
-        if server: settings["tableau_server"] = server
-        if site: settings["tableau_site"] = site
-        if pat_name: settings["tableau_pat_name"] = pat_name
-        source_config = dict(settings.get("source") or {})
-        source_config.update({
-            "server": server or str(source_config.get("server") or ""),
-            "site": site or str(source_config.get("site") or ""),
-            "pat_name": pat_name or str(source_config.get("pat_name") or ""),
-        })
+        source_config = {
+            "server": str(connection.get("server") or "").strip(),
+            "site": str(connection.get("site") or "").strip(),
+            "pat_name": str(connection.get("pat_name") or "").strip(),
+        }
+        settings["tableau_server"] = source_config["server"]
+        settings["tableau_site"] = source_config["site"]
+        settings["tableau_pat_name"] = source_config["pat_name"]
         settings["source"] = source_config
         return self.runtime.normalized_settings(settings)
 
@@ -198,12 +208,14 @@ class TableauAdapter:
         return ProductCloseSource(settings, fallback_markets=fallback_markets).fetch_markets()
 
     def test_connection(self, app_settings, source):
-        preview = self.runtime.source(self.source_settings(app_settings, source)).preview()
-        return {
-            "start": preview["start"], "end": preview["end"],
-            "total_rows": preview["total_rows"], "selected_rows": preview["selected_rows"],
-            "offices": preview["offices"], "names": preview["names"],
-        }
+        connector = self.runtime.source(self.source_settings(app_settings, source))
+        base = token = None
+        try:
+            base, token, _site_id = connector.signin()
+            return {"message": "Connected to Tableau."}
+        finally:
+            if base and token:
+                connector.signout(base, token)
 
     def workbooks(self, app_settings, source):
         return discovery.list_workbooks(self.source_settings(app_settings, source))
