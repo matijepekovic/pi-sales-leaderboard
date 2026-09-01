@@ -108,7 +108,7 @@ def create_app(platform_name="windows", start_background=True):
     temporary_date = TemporaryDateService(repos, rep_refresh, adapters)
     product_refresh = ProductRefreshService(repos, temporary_date, adapters)
     reports = ReportService(repos, adapters, rep_refresh, product_refresh)
-    filters = FilterService(repos)
+    filters = FilterService(repos, reports)
     preview = PreviewService()
     source = SourceService(repos, reports, preview, adapters)
     source.prepare()
