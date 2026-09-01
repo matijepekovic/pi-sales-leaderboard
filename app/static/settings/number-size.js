@@ -1,109 +1,79 @@
-/* v75 Number Size control (remote side).
-
-   Per-screen +/- for the size of the numbers on the TV. Writes
-   number_font_scale[<active mode>] through the ordinary /api/config save,
-   which bumps settings_version — already part of the display's render
-   signature — so the board picks it up on its next poll.
-
-   The display half of this lives in number-scale-v75.js. */
+/* Number size for built-in leaderboard Screens. */
 (function(){
-  const MIN=60,MAX=300,STEP=10;
-
-  const CARD=`
-    <div class="card" id="v75NumCard">
-      <h2>Number Size</h2>
-      <div class="small">Sizes the numbers on the TV only — names, headings
-        and the table layout are untouched. Saved per screen.</div>
-      <div class="row" style="align-items:center;gap:12px;margin-top:12px">
-        <button id="v75NumMinus" class="btn" type="button" aria-label="Smaller numbers">Font −</button>
-        <div id="v75NumValue" class="strong" style="min-width:150px;text-align:center">100%</div>
-        <button id="v75NumPlus" class="btn" type="button" aria-label="Bigger numbers">Font +</button>
-      </div>
-      <div id="v75NumScreen" class="small" style="margin-top:8px"></div>
-      <div id="v75NumStatus" class="small" style="margin-top:4px"></div>
-    </div>`;
-
   const $=id=>document.getElementById(id);
+  const MIN=60,MAX=300,STEP=10;
+  const SUPPORTED=new Set(["whole_office","team_vs_team","all_teams","per_team"]);
+  let snapshot=null,mode="",screenName="";
 
-  function configReady(){
-    return typeof config!=="undefined" && config && config.active_mode;
-  }
-
-  function activeMode(){
-    try{ return parseActive(config.active_mode).mode||"whole_office"; }
-    catch(_){ return "whole_office"; }
-  }
-
-  function currentScale(){
-    const map=(config&&config.number_font_scale)||{};
-    const value=Number(map[activeMode()]);
-    return Number.isFinite(value)?Math.min(Math.max(value,MIN),MAX):100;
-  }
-
-  function paintScale(){
-    const box=$("v75NumValue");
-    if(!box||!configReady()) return;
-    const value=currentScale();
-    box.textContent=`${value}%`;
-    $("v75NumMinus").disabled=value<=MIN;
-    $("v75NumPlus").disabled=value>=MAX;
-    // Name the screen being changed, so it is never ambiguous which one
-    // these buttons are moving. This is the *saved* active mode -- the
-    // screen actually on the TV -- not an unsaved dropdown selection.
-    $("v75NumScreen").textContent=
-      `Applies to: ${activeLabel(config.active_mode)}`;
-  }
-
-  /* The settings page fetches its config after load, so this can mount
-     before there is anything to show. Paint as soon as it lands. */
-  function paintWhenReady(){
-    let tries=0;
-    (function attempt(){
-      if(configReady()){ paintScale(); return; }
-      if(++tries>60) return;
-      setTimeout(attempt,150);
-    })();
-  }
-
-  async function nudge(delta){
-    const next=Math.min(Math.max(currentScale()+delta,MIN),MAX);
-    const mode=activeMode();
-    const status=$("v75NumStatus");
-    status.textContent="Saving…";
-    const payload={...config,
-      number_font_scale:{...(config.number_font_scale||{}),[mode]:next}};
-    try{
-      const {r,d}=await request("/api/config",{
-        method:"PUT",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify(payload)});
-      if(!r.ok){status.textContent=d.error||"Could not save.";return;}
-      config=d.settings;
-      paintScale();
-      status.textContent="Saved. The TV updates on its next refresh.";
-    }catch(e){
-      if(e.message!=="locked") status.textContent="Could not reach the Pi.";
-    }
+  function modeKey(raw){
+    const value=String(raw||"");
+    return value.startsWith("per_team::")?"per_team":value;
   }
 
   function mount(){
-    const app=document.getElementById("appWrap");
-    if(!app||document.getElementById("v75NumCard")) return;
-    app.insertAdjacentHTML("beforeend",CARD);
-    $("v75NumMinus").addEventListener("click",()=>nudge(-STEP));
-    $("v75NumPlus").addEventListener("click",()=>nudge(STEP));
-    paintWhenReady();
+    const host=$("settingsNumberSizeControls");if(!host||$("numberSizeCard"))return false;
+    host.innerHTML=`<div class="card" id="numberSizeCard">
+      <h2>Number Size</h2>
+      <p class="small">Adjust the number size for the active built-in leaderboard Screen. Custom Screens own their own presentation.</p>
+      <div class="row" style="align-items:center;margin-top:12px">
+        <button id="numberSizeMinus" class="btn" type="button" aria-label="Smaller numbers">Font −</button>
+        <div id="numberSizeValue" class="strong" style="min-width:110px;text-align:center">100%</div>
+        <button id="numberSizePlus" class="btn" type="button" aria-label="Bigger numbers">Font +</button>
+      </div>
+      <div id="numberSizeScreen" class="small" style="margin-top:8px"></div>
+      <div id="numberSizeStatus" class="small settings-status"></div>
+    </div>`;
+    $("numberSizeMinus").addEventListener("click",()=>nudge(-STEP));
+    $("numberSizePlus").addEventListener("click",()=>nudge(STEP));
+    load();return true;
   }
 
-  // Saving from the main Settings button can move the active screen, and the
-  // size is per screen, so re-read once that save has landed.
-  document.addEventListener("click",event=>{
-    if(event.target && event.target.id==="save") setTimeout(paintScale,900);
-  });
-
-  if(document.readyState==="loading"){
-    document.addEventListener("DOMContentLoaded",()=>setTimeout(mount,0));
-  }else{
-    setTimeout(mount,0);
+  function current(){
+    const value=Number(snapshot?.settings?.number_font_scale?.[mode]);
+    return Number.isFinite(value)?Math.min(MAX,Math.max(MIN,value)):100;
   }
+
+  function paint(){
+    const supported=SUPPORTED.has(mode);
+    $("numberSizeValue").textContent=supported?`${current()}%`:"—";
+    $("numberSizeMinus").disabled=!supported||current()<=MIN;
+    $("numberSizePlus").disabled=!supported||current()>=MAX;
+    $("numberSizeScreen").textContent=supported
+      ?`Applies to: ${screenName||mode}`
+      :`Number Size is not used by ${screenName||"the active Screen"}.`;
+  }
+
+  async function load(){
+    const status=$("numberSizeStatus");
+    try{
+      const response=await fetch("/api/config",{cache:"no-store"});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error(data.error||"Could not load Number Size.");
+      snapshot=data;
+      const activeId=data.display?.active_screen_id;
+      const screen=(data.screens||[]).find(item=>item.id===activeId)||null;
+      mode=screen?.kind==="builtin"?modeKey(screen.mode):"";
+      screenName=screen?.name||"Active Screen";
+      status.textContent="";paint();
+    }catch(err){status.textContent=err.message||"Could not load Number Size.";}
+  }
+
+  async function nudge(delta){
+    if(!SUPPORTED.has(mode)||!snapshot)return;
+    const status=$("numberSizeStatus"),next=Math.min(MAX,Math.max(MIN,current()+delta));
+    status.textContent="Saving…";
+    try{
+      const response=await fetch("/api/config",{
+        method:"PUT",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({number_font_scale:{[mode]:next}})
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok||data.ok===false)throw new Error(data.error||"Could not save Number Size.");
+      snapshot.settings=data.settings||snapshot.settings;
+      paint();status.textContent="Saved. The TV updates on its next refresh.";
+    }catch(err){status.textContent=err.message||"Could not save Number Size.";}
+  }
+
+  function start(){let tries=0;(function attempt(){if(mount())return;if(++tries<80)setTimeout(attempt,50);})();}
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",start,{once:true});else start();
 })();
