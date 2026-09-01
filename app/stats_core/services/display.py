@@ -97,7 +97,6 @@ class DisplayService:
                 "screen_id": "",
                 "screen_name": "No Screen configured",
                 "theme_mode": "inherited",
-                "display_filters": [],
                 "sections": [],
             }
         return self.screens.render(selected)
