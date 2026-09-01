@@ -148,7 +148,7 @@ class RestructuredRuntimeTests(unittest.TestCase):
             "rotation_seconds": 20,
         })
         self.assertEqual(display.status_code, 200)
-        self.assertEqual(display.get_json()["display"]["active_screen_id"], screen_id)
+        self.assertEqual(display.get_json()["active_screen_id"], screen_id)
 
         shown = self.client.get(f"/api/leaderboard?screen_id={screen_id}")
         self.assertEqual(shown.status_code, 200)
