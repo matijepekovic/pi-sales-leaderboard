@@ -1,127 +1,117 @@
 #!/usr/bin/env python3
-"""Static and behavioral ownership/source contract tests."""
+"""Storage ownership tests for current Stats repositories."""
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
-
-from test_filter_repository import FilterRepositoryTests  # noqa: F401
-from test_filter_screen_contracts import FilterScreenContractTests  # noqa: F401
-from test_filter_screen_ui_contract import FilterScreenUiContractTests  # noqa: F401
-from test_repository_persistence import RepositoryPersistenceTests  # noqa: F401
-from test_tableau_source import TableauSourceContractTests  # noqa: F401
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "app"
 
 
 class StorageBoundaryTests(unittest.TestCase):
-    def test_top_level_database_module_is_gone(self):
-        self.assertFalse((APP / "database.py").exists())
-        self.assertTrue((APP / "stats_core" / "storage" / "sqlite.py").is_file())
+    def run_isolated(self, temp, code):
+        env = dict(os.environ)
+        env["STATS_DATA_DIR"] = temp
+        source = f"""
+import sys
+sys.path.insert(0, {str(APP)!r})
+from stats_core.repositories import Repositories
+Repositories.initialize()
+repos = Repositories(data_root={temp!r})
+{code}
+"""
+        subprocess.run([sys.executable, "-c", source], env=env, check=True)
 
-    def test_python_code_does_not_import_retired_database_module(self):
-        violations = []
-        for path in APP.rglob("*.py"):
-            text = path.read_text(encoding="utf-8")
-            if "import database" in text or "from database" in text:
-                violations.append(str(path.relative_to(ROOT)))
-        self.assertEqual(violations, [])
-
-    def test_repositories_use_explicit_storage_boundary(self):
-        repository_root = APP / "stats_core" / "repositories"
-        for filename in (
-            "__init__.py",
-            "reps.py",
-            "organization.py",
-            "settings.py",
-            "meta.py",
-            "products.py",
-            "filters.py",
-        ):
-            text = (repository_root / filename).read_text(encoding="utf-8")
-            self.assertIn("stats_core.storage", text, filename)
-
-    def test_domains_own_their_sql(self):
-        repository_root = APP / "stats_core" / "repositories"
-        forbidden_delegates = {
-            "settings.py": ("sqlite.get_settings", "sqlite.save_settings"),
-            "meta.py": ("sqlite.get_meta", "sqlite.set_meta"),
-            "products.py": ("sqlite.get_product_close", "sqlite.replace_product_close"),
-            "reps.py": (
-                "database.list_reps",
-                "database.replace_reps",
-                "database.apply_team_overlay",
-                "database.bump_version",
-            ),
-            "organization.py": (
-                "database.list_teams",
-                "database.get_team_definitions",
-                "database.save_team_builder",
-                "database.create_team",
-                "database.rename_team",
-                "database.delete_team",
-                "database.set_team_lead",
-                "database.delete_team_lead",
-                "database.set_rep_team_assignments",
-                "database.set_team_logo",
-                "database.apply_team_overlay",
-            ),
-        }
-        for filename, tokens in forbidden_delegates.items():
-            text = (repository_root / filename).read_text(encoding="utf-8")
-            self.assertIn(".execute(", text, filename)
-            for token in tokens:
-                self.assertNotIn(token, text, filename)
-
-    def test_rep_organization_dependencies_are_explicit(self):
-        wiring = (APP / "stats_core" / "repositories" / "__init__.py").read_text(
-            encoding="utf-8"
-        )
-        reps = (APP / "stats_core" / "repositories" / "reps.py").read_text(
-            encoding="utf-8"
-        )
-        organization = (
-            APP / "stats_core" / "repositories" / "organization.py"
-        ).read_text(encoding="utf-8")
-        self.assertIn("OrganizationRepository(self.meta)", wiring)
-        self.assertIn("RepRepository(self.meta, self.organization)", wiring)
-        self.assertIn("self.organization.apply_overlay", reps)
-        self.assertIn("self.meta.bump(\"data_version\")", reps)
-        self.assertIn("self.meta.bump(\"organization_version\")", organization)
-
-    def test_sqlite_module_is_storage_kernel_not_domain_facade(self):
-        text = (APP / "stats_core" / "storage" / "sqlite.py").read_text(
-            encoding="utf-8"
-        )
+    def test_sqlite_is_storage_kernel_not_domain_facade(self):
+        path = APP / "stats_core" / "storage" / "sqlite.py"
+        text = path.read_text(encoding="utf-8")
         self.assertIn("def connect()", text)
         self.assertIn("def init_db()", text)
         self.assertIn("SCHEMA =", text)
-        for function_name in (
-            "get_settings",
-            "save_settings",
-            "get_meta",
-            "set_meta",
-            "bump_meta",
-            "bump_version",
-            "replace_reps",
-            "replace_product_close",
-            "get_product_close",
-            "create_team",
-            "rename_team",
-            "delete_team",
-            "set_team_lead",
-            "delete_team_lead",
-            "assign_rep_to_team",
-            "set_rep_team_assignments",
-            "set_team_logo",
-            "save_team_builder",
-            "get_team_definitions",
-            "apply_team_overlay",
-            "list_reps",
-            "list_teams",
+        for name in (
+            "save_filter", "save_screen", "save_source", "save_report",
+            "save_display", "save_theme", "replace_report_data",
         ):
-            self.assertNotIn(f"def {function_name}(", text, function_name)
+            self.assertNotIn(f"def {name}(", text)
+
+    def test_current_sql_repositories_use_storage_boundary(self):
+        repository_root = APP / "stats_core" / "repositories"
+        for filename in (
+            "data_catalog.py", "display.py", "filters.py", "meta.py",
+            "screens.py", "settings.py", "source_credentials.py",
+        ):
+            text = (repository_root / filename).read_text(encoding="utf-8")
+            self.assertIn("stats_core.storage", text, filename)
+            self.assertIn("sqlite.connect()", text, filename)
+
+    def test_runtime_repository_composition_has_no_retired_sales_domains(self):
+        text = (APP / "stats_core" / "repositories" / "__init__.py").read_text(encoding="utf-8")
+        for current in (
+            "DataCatalogRepository", "SourceCredentialRepository", "ReportDataRepository",
+            "FilterRepository", "ScreenRepository", "DisplayRepository", "ThemeRepository",
+            "AppliedAssetRepository", "AssetLibraryRepository",
+        ):
+            self.assertIn(current, text)
+        for retired in ("OrganizationRepository", "RepRepository", "ProductRepository"):
+            self.assertNotIn(retired, text)
+
+    def test_current_repositories_persist_independently(self):
+        with tempfile.TemporaryDirectory() as temp:
+            self.run_isolated(temp, """
+repos.data_catalog.save({
+    "sources": [{"id":"source-a","name":"A","adapter":"tableau","enabled":True,"connection":{}}],
+    "reports": [{"id":"report-a","source_id":"source-a","name":"Report A","source_config":{},"runtime":{}}],
+})
+assert repos.data_catalog.source("source-a")["name"] == "A"
+assert repos.data_catalog.report("report-a")["name"] == "Report A"
+
+repos.source_credentials.set("source-a", "secret")
+assert repos.source_credentials.get("source-a") == "secret"
+
+repos.report_data.replace(
+    "report-a",
+    [{"key":"Office","label":"Office","type":"text"}],
+    [{"Office":"Olympia"}],
+    {"status":"1 row"},
+)
+assert repos.report_data.read("report-a")["rows"] == [{"Office":"Olympia"}]
+
+repos.filters.save({
+    "id":"filter-a",
+    "name":"Olympia",
+    "rules":[{"report_id":"report-a","field":"Office","operator":"equals","value":"Olympia"}],
+})
+assert repos.filters.get("filter-a")["name"] == "Olympia"
+
+repos.screens.save({
+    "id":"screen-a",
+    "name":"Olympia Screen",
+    "reports":["report-a"],
+    "filter_ids":["filter-a"],
+    "tables":[],
+    "theme_mode":"inherited",
+})
+assert repos.screens.get("screen-a")["filter_ids"] == ["filter-a"]
+
+repos.display.save({"active_screen_id":"screen-a","rotation_enabled":False,"rotation_screen_ids":[],"rotation_seconds":15})
+assert repos.display.get()["active_screen_id"] == "screen-a"
+
+repos.themes.save("screen-a", {"base":"starter","colors":{"primary":"#ffffff"}})
+assert repos.themes.get("screen-a")["base"] == "starter"
+""")
+
+    def test_repositories_do_not_import_source_adapters(self):
+        violations = []
+        for path in (APP / "stats_core" / "repositories").rglob("*.py"):
+            text = path.read_text(encoding="utf-8").lower()
+            if "sources.tableau" in text or "from sources" in text:
+                violations.append(str(path.relative_to(ROOT)))
+        self.assertEqual(violations, [])
 
 
 if __name__ == "__main__":
