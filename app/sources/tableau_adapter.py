@@ -5,6 +5,7 @@ Downstream Stats code sees only Source definitions and normalized table data.
 """
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 
 from sources import discovery
@@ -106,15 +107,34 @@ class TableauAdapter:
 
     def report_values(self, app_settings, source):
         """Expose Tableau views through the generic Stats report-value contract."""
-        rows = discovery.list_all_views(self.source_settings(app_settings, source))
-        return [
-            {
-                "id": str(row.get("content_url") or "").strip(),
-                "label": str(row.get("name") or row.get("content_url") or "").strip(),
-            }
-            for row in rows
-            if str(row.get("content_url") or "").strip()
-        ]
+        connector = self.runtime.source(self.source_settings(app_settings, source))
+        base = token = None
+        try:
+            base, token, site_id = connector.signin()
+            status, raw = connector._request(
+                f"{base}/sites/{site_id}/views?pageSize=1000"
+                "&fields=name,contentUrl,project.name",
+                token=token,
+                timeout=15,
+            )
+            if status != 200:
+                raise ValueError(f"Could not list reports from Tableau (HTTP {status}).")
+            views = connector._view_list(json.loads(raw))
+            values = []
+            for view in views:
+                content_url = str(view.get("contentUrl") or "").strip()
+                if not content_url:
+                    continue
+                project = view.get("project") if isinstance(view.get("project"), dict) else {}
+                values.append({
+                    "id": content_url,
+                    "label": str(view.get("name") or content_url).strip(),
+                    "group": str(project.get("name") or "Other").strip() or "Other",
+                })
+            return sorted(values, key=lambda item: (item["group"].casefold(), item["label"].casefold()))
+        finally:
+            if base and token:
+                connector.signout(base, token)
 
     @staticmethod
     def report_value(report):
