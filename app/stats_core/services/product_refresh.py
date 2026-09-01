@@ -5,15 +5,17 @@ import threading
 import time
 
 from stats_core.errors import BusyError, ValidationError
-from stats_core.product.source import ProductCloseSource, selected_market
+from stats_core.repositories.data_catalog import PRODUCT_REPORT_ID
 
 _MARKET_CACHE_SECONDS = 6 * 60 * 60
+_DEFAULT_MARKET = "Olympia"
 
 
 class ProductRefreshService:
-    def __init__(self, repos, temporary_date):
+    def __init__(self, repos, temporary_date, adapters):
         self.repos = repos
         self.temporary_date = temporary_date
+        self.adapters = dict(adapters or {})
         self._lock = threading.Lock()
 
     def _fallback_markets(self):
@@ -23,8 +25,25 @@ class ProductRefreshService:
             if str(row.get("home_branch") or "").strip()
         }, key=str.casefold)
 
-    def _source(self, settings):
-        return ProductCloseSource(settings, fallback_markets=self._fallback_markets())
+    def _context(self, settings=None):
+        settings = dict(settings or self.repos.settings.get())
+        report = self.repos.data_catalog.report(PRODUCT_REPORT_ID, settings)
+        if not report:
+            raise ValidationError("Product report is not configured.")
+        source = self.repos.data_catalog.source(report.get("source_id"), settings)
+        if not source:
+            raise ValidationError("Product report source is not configured.")
+        adapter = self.adapters.get(str(source.get("adapter") or ""))
+        if not adapter:
+            raise ValidationError("Product report source adapter is not available.")
+        secret = self.repos.source_credentials.get(source.get("id"))
+        app_settings = adapter.with_secret(settings, secret)
+        return report, source, adapter, app_settings, secret
+
+    @staticmethod
+    def _selected_market(report, settings):
+        runtime = report.get("runtime") if isinstance(report.get("runtime"), dict) else {}
+        return str(runtime.get("market") or settings.get("product_market") or _DEFAULT_MARKET).strip() or _DEFAULT_MARKET
 
     def _store_regular(self, rows, start, end, market):
         self.repos.products.replace(rows)
@@ -39,19 +58,26 @@ class ProductRefreshService:
         self.repos.meta.bump("product_close_version")
         return now_text
 
-    def pull(self, settings):
-        market = selected_market(settings)
-        source = self._source(settings)
-        start, end, rows = source.fetch_products(market=market)
+    def pull(self, settings=None):
+        report, source, adapter, app_settings, _secret = self._context(settings)
+        market = self._selected_market(report, app_settings)
+        regular = adapter.pull_products(
+            app_settings, source, report, market=market,
+            fallback_markets=self._fallback_markets(),
+        )
         state = self.temporary_date.state()
         temporary_rows = None
         if state.get("active"):
-            _start, _end, temporary_rows = source.fetch_products(
-                start=state["start"], end=state["end"], market=market
+            temporary = adapter.pull_products(
+                app_settings, source, report,
+                start=state["start"], end=state["end"], market=market,
+                fallback_markets=self._fallback_markets(),
             )
+            temporary_rows = temporary["rows"]
         return {
-            "market": market, "start": start, "end": end, "rows": rows,
-            "temporary_state": state, "temporary_rows": temporary_rows,
+            "market": market, "start": regular["start"], "end": regular["end"],
+            "rows": regular["rows"], "temporary_state": state,
+            "temporary_rows": temporary_rows,
         }
 
     def commit(self, result):
@@ -64,18 +90,18 @@ class ProductRefreshService:
             )
 
     def refresh(self, settings=None, raise_errors=True):
-        settings = settings or self.repos.settings.get()
-        if not str(settings.get("tableau_pat_secret") or "").strip():
+        try:
+            _report, _source, _adapter, _app_settings, secret = self._context(settings)
+        except Exception:
+            if raise_errors: raise
+            return False
+        if not str(secret or "").strip():
             if raise_errors:
-                raise ValidationError("Enter the Tableau PAT secret first.")
-            self.repos.meta.set(
-                "product_close_status",
-                "Product close rate pull failed: Tableau PAT is not configured",
-            )
+                raise ValidationError("Enter the source credential first.")
+            self.repos.meta.set("product_close_status", "Product close rate pull failed: source credential is not configured")
             return False
         if not self._lock.acquire(blocking=False):
-            if raise_errors:
-                raise BusyError("A product refresh is already running.")
+            if raise_errors: raise BusyError("A product refresh is already running.")
             return False
         try:
             try:
@@ -83,8 +109,7 @@ class ProductRefreshService:
                 return True
             except Exception as exc:
                 self.repos.meta.set("product_close_status", f"Product close rate pull failed: {exc}")
-                if raise_errors:
-                    raise
+                if raise_errors: raise
                 return False
         finally:
             self._lock.release()
@@ -102,14 +127,16 @@ class ProductRefreshService:
         return list(dict.fromkeys(values)), cached_at
 
     def market_choices(self, settings=None, force=False):
-        settings = settings or self.repos.settings.get()
-        selected = selected_market(settings)
+        report, source, adapter, app_settings, _secret = self._context(settings)
+        selected = self._selected_market(report, app_settings)
         cached, cached_at = self._cached_markets()
         fresh = cached and time.time() - cached_at < _MARKET_CACHE_SECONDS
         warning = ""
         if force or not fresh:
             try:
-                cached = self._source(settings).fetch_markets()
+                cached = adapter.product_markets(
+                    app_settings, source, report, fallback_markets=self._fallback_markets()
+                )
                 cached_at = time.time()
                 self.repos.meta.set("product_markets_v115", json.dumps(cached))
                 self.repos.meta.set("product_markets_v115_at", cached_at)
@@ -118,28 +145,33 @@ class ProductRefreshService:
         values = list(cached)
         if selected and selected.casefold() not in {value.casefold() for value in values}:
             values.append(selected)
-        if not values:
-            values = [selected or "Olympia"]
+        if not values: values = [selected or _DEFAULT_MARKET]
         return sorted(list(dict.fromkeys(values)), key=str.casefold), warning
 
     def change_market(self, requested):
         requested = str(requested or "").strip()
-        if not requested:
-            raise ValidationError("Choose a market.")
+        if not requested: raise ValidationError("Choose a market.")
         settings = self.repos.settings.get()
         choices, warning = self.market_choices(settings)
         canonical = next((value for value in choices if value.casefold() == requested.casefold()), "")
-        if not canonical:
-            raise ValidationError("Choose a market from the dropdown.")
-        if not self._lock.acquire(blocking=False):
-            raise BusyError("A product refresh is already running.")
+        if not canonical: raise ValidationError("Choose a market from the dropdown.")
+        if not self._lock.acquire(blocking=False): raise BusyError("A product refresh is already running.")
         try:
+            report, _source, _adapter, _app_settings, _secret = self._context(settings)
+            catalog = self.repos.data_catalog.get(settings)
+            runtime = dict(report.get("runtime") or {})
+            runtime["market"] = canonical
+            report = dict(report, runtime=runtime)
+            catalog["reports"] = [
+                report if str(row.get("id")) == PRODUCT_REPORT_ID else row
+                for row in catalog["reports"]
+            ]
+            self.repos.data_catalog.save(catalog)
             candidate = dict(settings)
             candidate["product_market"] = canonical
-            result = self.pull(candidate)
             self.repos.settings.save(candidate)
             self.repos.meta.bump("settings_version")
-            self.commit(result)
+            self.commit(self.pull(candidate))
             return candidate, warning
         finally:
             self._lock.release()
