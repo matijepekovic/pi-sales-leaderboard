@@ -30,6 +30,7 @@ class RestructuredRuntimeTests(unittest.TestCase):
             "organization": "OrganizationService",
             "source": "SourceService",
             "reports": "ReportService",
+            "filters": "FilterService",
             "screens": "ScreenService",
             "display": "DisplayService",
             "scheduler": "SchedulerService",
@@ -50,12 +51,13 @@ class RestructuredRuntimeTests(unittest.TestCase):
         required = {
             "reps.py", "organization.py", "settings.py", "products.py", "themes.py",
             "asset_library.py", "applied_assets.py", "meta.py", "data_catalog.py",
-            "source_credentials.py", "report_data.py", "screens.py", "display.py",
+            "source_credentials.py", "report_data.py", "filters.py", "screens.py", "display.py",
         }
         self.assertTrue(required.issubset({p.name for p in package.iterdir()}))
         self.assertEqual(type(self.runtime.repos.data_catalog).__name__, "DataCatalogRepository")
         self.assertEqual(type(self.runtime.repos.source_credentials).__name__, "SourceCredentialRepository")
         self.assertEqual(type(self.runtime.repos.report_data).__name__, "ReportDataRepository")
+        self.assertEqual(type(self.runtime.repos.filters).__name__, "FilterRepository")
         self.assertEqual(type(self.runtime.repos.screens).__name__, "ScreenRepository")
         self.assertEqual(type(self.runtime.repos.display).__name__, "DisplayRepository")
 
@@ -64,6 +66,7 @@ class RestructuredRuntimeTests(unittest.TestCase):
         required = {
             "/", "/settings", "/health", "/api/system/version", "/api/config",
             "/api/leaderboard", "/api/data/sources", "/api/data/reports",
+            "/api/data/reports/<report_id>/inspect", "/api/filters",
             "/api/screens", "/api/screens/preview", "/api/display",
             "/api/product-close", "/api/temporary-date-override", "/api/themes",
             "/api/asset-library", "/api/windows/update/check",
@@ -83,7 +86,7 @@ class RestructuredRuntimeTests(unittest.TestCase):
         self.assertIn("mode", board)
         self.assertIn("theme_state", board)
 
-    def test_source_report_screen_display_crud_contract(self):
+    def test_source_report_filter_screen_display_crud_contract(self):
         sources = self.client.get("/api/data/sources").get_json()["sources"]
         self.assertTrue(sources)
         source_id = sources[0]["id"]
@@ -98,19 +101,45 @@ class RestructuredRuntimeTests(unittest.TestCase):
         self.assertEqual(created_report.status_code, 200)
         report_id = created_report.get_json()["report"]["id"]
 
+        inspect = self.client.get("/api/data/reports/report-reps/inspect")
+        self.assertEqual(inspect.status_code, 200)
+        inspection = inspect.get_json()
+        self.assertIn("sample_rows", inspection)
+        self.assertTrue(any(field["key"] == "team" for field in inspection["fields"]))
+
+        created_filter = self.client.post("/api/filters", json={"name": "Architecture Team"})
+        self.assertEqual(created_filter.status_code, 200)
+        filter_id = created_filter.get_json()["filter"]["id"]
+
         created_screen = self.client.post("/api/screens", json={
             "name": "Architecture Test Screen",
-            "reports": [report_id],
-            "filters": [],
-            "tables": [{"report_id": report_id, "columns": [], "limit": 25}],
+            "reports": ["report-reps", report_id],
+            "filter_ids": [filter_id],
+            "display_filter_mappings": [
+                {"filter_id": filter_id, "report_id": "report-reps", "field": "team"},
+            ],
+            "filter_values": {filter_id: "All"},
+            "tables": [
+                {"report_id": "report-reps", "columns": ["rep_name", "team"], "limit": 25},
+                {"report_id": report_id, "columns": [], "limit": 25},
+            ],
             "theme_mode": "custom",
         })
         self.assertEqual(created_screen.status_code, 200)
-        screen_id = created_screen.get_json()["screen"]["id"]
+        screen = created_screen.get_json()["screen"]
+        screen_id = screen["id"]
+        self.assertEqual(screen["filter_ids"], [filter_id])
+        self.assertEqual(screen["display_filter_mappings"][0]["field"], "team")
+        self.assertNotIn("filters", screen)
 
         preview = self.client.get(f"/api/screens/{screen_id}/preview")
         self.assertEqual(preview.status_code, 200)
-        self.assertEqual(preview.get_json()["payload"]["mode"], "custom_screen")
+        payload = preview.get_json()["payload"]
+        self.assertEqual(payload["mode"], "custom_screen")
+        self.assertEqual(payload["display_filters"][0]["name"], "Architecture Team")
+
+        blocked = self.client.delete(f"/api/filters/{filter_id}")
+        self.assertEqual(blocked.status_code, 400)
 
         display = self.client.put("/api/display", json={
             "active_screen_id": screen_id,
@@ -126,7 +155,22 @@ class RestructuredRuntimeTests(unittest.TestCase):
         self.assertEqual(shown.get_json()["screen_id"], screen_id)
 
         self.assertEqual(self.client.delete(f"/api/screens/{screen_id}").status_code, 200)
+        self.assertEqual(self.client.delete(f"/api/filters/{filter_id}").status_code, 200)
         self.assertEqual(self.client.delete(f"/api/data/reports/{report_id}").status_code, 200)
+
+    def test_display_filters_are_not_data_filters(self):
+        filters_service = (APP / "stats_core" / "services" / "filters.py").read_text(encoding="utf-8")
+        screens_service = (APP / "stats_core" / "services" / "screens.py").read_text(encoding="utf-8")
+        reports_service = (APP / "stats_core" / "services" / "reports.py").read_text(encoding="utf-8")
+        self.assertNotIn("source_config", filters_service)
+        self.assertNotIn("adapter", filters_service.lower())
+        self.assertIn("display_filter_mappings", screens_service)
+        self.assertNotIn("source_config", screens_service)
+        self.assertIn("inspect", reports_service)
+        workspace = (APP / "static" / "settings" / "data-screen-display.js").read_text(encoding="utf-8")
+        self.assertIn("Display Data — Match Filters", workspace)
+        self.assertIn("Data Filters", workspace)
+        self.assertIn("real pulled", workspace)
 
     def test_tableau_is_replaceable_adapter_only(self):
         bootstrap = (APP / "stats_core" / "bootstrap.py").read_text(encoding="utf-8")
@@ -164,7 +208,7 @@ class RestructuredRuntimeTests(unittest.TestCase):
             APP / "static" / "settings" / "accordion.js",
             APP / "sources" / "tableau.py",
         )
-        self.assertEqual([str(p.relative_to(ROOT)) for p in retired if p.exists()], [])
+        self.assertEqual([str(path.relative_to(ROOT)) for path in retired if path.exists()], [])
 
     def test_frontend_ownership_is_explicit(self):
         settings = (APP / "templates" / "settings.html").read_text(encoding="utf-8")
@@ -174,7 +218,7 @@ class RestructuredRuntimeTests(unittest.TestCase):
         self.assertNotIn("/static/settings/data-source.js", settings)
         self.assertIn("/static/display/custom-screen.js", display)
         workspace = (APP / "static" / "settings" / "data-screen-display.js").read_text(encoding="utf-8")
-        for label in ("Sources", "Reports", "Screens", "Display"):
+        for label in ("Sources", "Reports", "Filters", "Screens", "Display"):
             self.assertIn(label.lower(), workspace.lower())
 
     def test_stats_core_package_import_is_platform_neutral(self):
@@ -194,7 +238,7 @@ class RestructuredRuntimeTests(unittest.TestCase):
             if path.is_file() and re.search(r"(?:^|[-_])v\d+(?:[-_.]|$)", path.name, re.I):
                 versioned.append(str(path.relative_to(ROOT)))
         allowed_data_history = {"production-coming-eventually.js"}
-        versioned = [p for p in versioned if Path(p).name not in allowed_data_history]
+        versioned = [path for path in versioned if Path(path).name not in allowed_data_history]
         self.assertEqual(versioned, [])
 
 
