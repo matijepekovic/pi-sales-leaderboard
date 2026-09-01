@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Architecture smoke tests for the Windows runtime."""
+"""Architecture and runtime smoke tests for Stats production."""
 from __future__ import annotations
 
 import re
@@ -13,38 +13,6 @@ APP = ROOT / "app"
 sys.path.insert(0, str(APP))
 
 from stats_core.bootstrap import create_app  # noqa: E402
-
-
-ROOT_LEVEL_LEGACY_FILES = (
-    "applied_theme_assets_v116.py",
-    "keyboard_controls_v111.py",
-    "keyboard_controls_v112.py",
-    "product_controls_v115.py",
-    "product_source_v115.py",
-    "production_gates.py",
-    "production_versioning.py",
-    "pull_policy_v108.py",
-    "qr_controls_v110.py",
-    "remote_qr.py",
-    "remote_qr_v109.py",
-    "starter_theme_assets_v119.py",
-    "starter_theme_v119.py",
-    "tableau_scheduler.py",
-    "temporary_date_v113.py",
-    "theme_asset_apply_v127.py",
-    "themes.py",
-    "update_signing_public_key.py",
-    "windows_https.py",
-    "windows_runtime.py",
-    "windows_tableau_login.py",
-    "windows_tableau_login_v124.py",
-    "windows_theme_editor.py",
-    "windows_theme_editor_v122.py",
-    "windows_update.py",
-    "windows_update_diagnostics.py",
-    "windows_update_status.py",
-    "windows_update_status_v128.py",
-)
 
 
 class RestructuredRuntimeTests(unittest.TestCase):
@@ -61,200 +29,173 @@ class RestructuredRuntimeTests(unittest.TestCase):
             "leaderboard": "LeaderboardService",
             "organization": "OrganizationService",
             "source": "SourceService",
+            "reports": "ReportService",
+            "screens": "ScreenService",
+            "display": "DisplayService",
             "scheduler": "SchedulerService",
             "pull_policy": "RepPullPolicy",
             "rep_refresh": "RepRefreshService",
             "product_refresh": "ProductRefreshService",
             "preview": "PreviewService",
             "snapshots": "DataSnapshotService",
-            "screens": "ScreenRegistry",
             "theme": "ThemeService",
             "controls": "ControlsService",
             "auth": "AuthService",
         }
         for attr, class_name in expected.items():
             self.assertEqual(type(getattr(self.runtime, attr)).__name__, class_name, attr)
-        self.assertFalse(hasattr(self.runtime, "entitlement"))
 
-    def test_repositories_are_domain_package_not_single_facade(self):
-        self.assertFalse((APP / "stats_core" / "repositories.py").exists())
+    def test_repositories_own_persistence_boundaries(self):
         package = APP / "stats_core" / "repositories"
-        for filename in (
-            "reps.py", "organization.py", "settings.py", "products.py",
-            "themes.py", "asset_library.py", "applied_assets.py", "meta.py",
-        ):
-            self.assertTrue((package / filename).is_file(), filename)
-        self.assertEqual(type(self.runtime.repos.themes).__name__, "ThemeRepository")
-        self.assertEqual(type(self.runtime.repos.asset_library).__name__, "AssetLibraryRepository")
-        self.assertEqual(type(self.runtime.repos.applied_assets).__name__, "AppliedAssetRepository")
+        required = {
+            "reps.py", "organization.py", "settings.py", "products.py", "themes.py",
+            "asset_library.py", "applied_assets.py", "meta.py", "data_catalog.py",
+            "source_credentials.py", "report_data.py", "screens.py", "display.py",
+        }
+        self.assertTrue(required.issubset({p.name for p in package.iterdir()}))
+        self.assertEqual(type(self.runtime.repos.data_catalog).__name__, "DataCatalogRepository")
+        self.assertEqual(type(self.runtime.repos.source_credentials).__name__, "SourceCredentialRepository")
+        self.assertEqual(type(self.runtime.repos.report_data).__name__, "ReportDataRepository")
+        self.assertEqual(type(self.runtime.repos.screens).__name__, "ScreenRepository")
+        self.assertEqual(type(self.runtime.repos.display).__name__, "DisplayRepository")
 
-    def test_every_existing_screen_is_registered(self):
-        self.assertEqual(
-            set(self.runtime.screens._screens),
-            {"whole_office", "per_team", "team_vs_team", "all_teams", "product_close"},
-        )
-
-    def test_core_routes_are_owned_and_available(self):
+    def test_normalized_routes_replace_legacy_source_routes(self):
         routes = {rule.rule for rule in self.app.url_map.iter_rules()}
         required = {
             "/", "/settings", "/health", "/api/system/version", "/api/config",
-            "/api/leaderboard", "/api/team-builder/save", "/api/source/refresh",
-            "/api/product-close", "/api/temporary-date-override",
-            "/api/keyboard-controls", "/api/tv/restart", "/api/themes",
+            "/api/leaderboard", "/api/data/sources", "/api/data/reports",
+            "/api/screens", "/api/screens/preview", "/api/display",
+            "/api/product-close", "/api/temporary-date-override", "/api/themes",
             "/api/asset-library", "/api/windows/update/check",
-            "/api/windows/update/diagnostics",
         }
         self.assertTrue(required.issubset(routes), required - routes)
+        self.assertNotIn("/api/source/refresh", routes)
+        self.assertNotIn("/api/source/workbooks", routes)
 
-    def test_health_version_config_and_leaderboard_contracts(self):
-        health = self.client.get("/health")
-        self.assertEqual(health.status_code, 200)
-        self.assertTrue(health.get_json()["ok"])
+    def test_boot_and_public_contracts(self):
+        for path in ("/", "/settings", "/health", "/api/system/version", "/api/config", "/api/leaderboard"):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200, path)
+        config = self.client.get("/api/config").get_json()
+        self.assertIn("screens", config)
+        self.assertIn("display", config)
+        board = self.client.get("/api/leaderboard").get_json()
+        self.assertIn("mode", board)
+        self.assertIn("theme_state", board)
 
-        version = self.client.get("/api/system/version")
-        self.assertEqual(version.status_code, 200)
-        self.assertRegex(version.get_json()["version"], r"^\d+\.\d+\.\d+$")
+    def test_source_report_screen_display_crud_contract(self):
+        sources = self.client.get("/api/data/sources").get_json()["sources"]
+        self.assertTrue(sources)
+        source_id = sources[0]["id"]
 
-        config = self.client.get("/api/config")
-        self.assertEqual(config.status_code, 200)
-        config_json = config.get_json()
-        self.assertIn("feature_access", config_json["settings"])
-        self.assertEqual(
-            {row["key"] for row in config_json["modes"]},
-            {"whole_office", "per_team", "team_vs_team", "all_teams"},
-        )
+        created_report = self.client.post("/api/data/reports", json={
+            "source_id": source_id,
+            "name": "Architecture Test Report",
+            "kind": "table",
+            "source_config": {},
+            "runtime": {},
+        })
+        self.assertEqual(created_report.status_code, 200)
+        report_id = created_report.get_json()["report"]["id"]
 
-        board = self.client.get("/api/leaderboard?mode=whole_office")
-        self.assertEqual(board.status_code, 200)
-        payload = board.get_json()
-        for key in (
-            "mode", "mode_label", "metrics", "rows", "office_summary",
-            "sort_metric", "metric_types", "metric_labels", "theme_state", "preview",
+        created_screen = self.client.post("/api/screens", json={
+            "name": "Architecture Test Screen",
+            "reports": [report_id],
+            "filters": [],
+            "tables": [{"report_id": report_id, "columns": [], "limit": 25}],
+            "theme_mode": "custom",
+        })
+        self.assertEqual(created_screen.status_code, 200)
+        screen_id = created_screen.get_json()["screen"]["id"]
+
+        preview = self.client.get(f"/api/screens/{screen_id}/preview")
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.get_json()["payload"]["mode"], "custom_screen")
+
+        display = self.client.put("/api/display", json={
+            "active_screen_id": screen_id,
+            "rotation_screen_ids": [screen_id, "builtin:whole_office"],
+            "rotation_enabled": False,
+            "rotation_seconds": 20,
+        })
+        self.assertEqual(display.status_code, 200)
+        self.assertEqual(display.get_json()["display"]["active_screen_id"], screen_id)
+
+        shown = self.client.get(f"/api/leaderboard?screen_id={screen_id}")
+        self.assertEqual(shown.status_code, 200)
+        self.assertEqual(shown.get_json()["screen_id"], screen_id)
+
+        self.assertEqual(self.client.delete(f"/api/screens/{screen_id}").status_code, 200)
+        self.assertEqual(self.client.delete(f"/api/data/reports/{report_id}").status_code, 200)
+
+    def test_tableau_is_replaceable_adapter_only(self):
+        bootstrap = (APP / "stats_core" / "bootstrap.py").read_text(encoding="utf-8")
+        self.assertIn("from sources.tableau_adapter import TableauAdapter", bootstrap)
+        self.assertFalse((APP / "stats_core" / "services" / "tableau.py").exists())
+        self.assertFalse((APP / "stats_core" / "web" / "source.py").exists())
+        self.assertFalse((APP / "stats_core" / "product" / "source.py").exists())
+        self.assertFalse((APP / "stats_core" / "windows" / "tableau_login.py").exists())
+        for root in (
+            APP / "stats_core" / "services",
+            APP / "stats_core" / "repositories",
+            APP / "stats_core" / "screens",
+            APP / "stats_core" / "theme",
+            APP / "stats_core" / "web",
         ):
-            self.assertIn(key, payload)
+            violations = []
+            for path in root.rglob("*.py"):
+                text = path.read_text(encoding="utf-8").lower()
+                if "sources.tableau" in text or "from sources import tableau" in text:
+                    violations.append(str(path.relative_to(ROOT)))
+            self.assertEqual(violations, [], root)
+        organization = (APP / "stats_core" / "repositories" / "organization.py").read_text(encoding="utf-8")
+        self.assertNotIn("tableau_team", organization)
+        self.assertIn('row["source_team"]', organization)
 
-    def test_retired_runtime_files_do_not_exist(self):
-        remaining = [name for name in ROOT_LEVEL_LEGACY_FILES if (APP / name).exists()]
-        self.assertEqual(remaining, [])
-        self.assertFalse((APP / "stats_core" / "services" / "entitlement.py").exists())
+    def test_obsolete_source_ui_and_patch_paths_are_deleted(self):
+        retired = (
+            APP / "static" / "settings" / "data-source.js",
+            APP / "static" / "settings" / "tableau-team-members.js",
+            APP / "static" / "settings" / "windows-tableau-login.js",
+            APP / "static" / "settings" / "flow.js",
+            APP / "static" / "settings" / "date-filter.js",
+            APP / "static" / "settings" / "date-simple.js",
+            APP / "static" / "settings" / "preview-scroll.js",
+            APP / "static" / "settings" / "accordion.js",
+            APP / "sources" / "tableau.py",
+        )
+        self.assertEqual([str(p.relative_to(ROOT)) for p in retired if p.exists()], [])
 
-    def test_stats_core_import_is_platform_neutral(self):
+    def test_frontend_ownership_is_explicit(self):
+        settings = (APP / "templates" / "settings.html").read_text(encoding="utf-8")
+        display = (APP / "templates" / "display.html").read_text(encoding="utf-8")
+        self.assertIn("Data, Screens, Display", settings)
+        self.assertIn("/static/settings/data-screen-display.js", settings)
+        self.assertNotIn("/static/settings/data-source.js", settings)
+        self.assertIn("/static/display/custom-screen.js", display)
+        workspace = (APP / "static" / "settings" / "data-screen-display.js").read_text(encoding="utf-8")
+        for label in ("Sources", "Reports", "Screens", "Display"):
+            self.assertIn(label.lower(), workspace.lower())
+
+    def test_stats_core_package_import_is_platform_neutral(self):
         code = (
             "import sys\n"
             f"sys.path.insert(0, {str(APP)!r})\n"
             "import stats_core\n"
-            "forbidden = [name for name in sys.modules if "
-            "name == 'stats_core.platform.windows' or name == 'stats_core.windows' "
-            "or name.startswith('stats_core.windows.') or name.startswith('windows_') "
-            "or name == 'remote_qr']\n"
+            "forbidden=[name for name in sys.modules if name == 'stats_core.platform.windows' "
+            "or name == 'stats_core.windows' or name.startswith('stats_core.windows.')]\n"
             "assert not forbidden, forbidden\n"
         )
         subprocess.run([sys.executable, "-c", code], check=True)
 
-    def test_theme_preview_and_source_have_single_owners(self):
-        bootstrap = (APP / "stats_core" / "bootstrap.py").read_text(encoding="utf-8")
-        theme_service = (APP / "stats_core" / "theme" / "service.py").read_text(encoding="utf-8")
-        snapshot = (APP / "stats_core" / "services" / "snapshot.py").read_text(encoding="utf-8")
-        discovery = APP / "sources" / "discovery.py"
-
-        self.assertNotIn("tableau_scheduler.configure", bootstrap)
-        self.assertNotIn("app.view_functions[", theme_service)
-        self.assertNotIn("source_picker", snapshot)
-        self.assertIn("self.preview.rows()", snapshot)
-        self.assertFalse((APP / "source_picker.py").exists())
-        self.assertTrue(discovery.is_file())
-        self.assertFalse((APP / "stats_core" / "services" / "theme.py").exists())
-
-        discovery_text = discovery.read_text(encoding="utf-8")
-        for retired in ("_PREVIEW", "start_preview", "stop_preview", "preview_rows", "preview_state"):
-            self.assertNotIn(retired, discovery_text)
-
-        violations = []
-        for path in APP.rglob("*.py"):
-            if "source_picker" in path.read_text(encoding="utf-8"):
-                violations.append(str(path.relative_to(ROOT)))
-        self.assertEqual(violations, [])
-
-    def test_app_config_owns_defaults_metrics_and_feature_access(self):
-        config = APP / "stats_core" / "config.py"
-        sqlite = APP / "stats_core" / "storage" / "sqlite.py"
-        config_text = config.read_text(encoding="utf-8")
-        sqlite_text = sqlite.read_text(encoding="utf-8")
-
-        for name in (
-            "FEATURE_ACCESS", "DEFAULT_METRICS", "DEFAULT_SETTINGS",
-            "SECRET_SETTING_KEYS", "METRIC_DEFS",
-        ):
-            self.assertIn(f"{name} =", config_text)
-        self.assertFalse((APP / "stats_core" / "metrics.py").exists())
-        self.assertNotIn("FEATURE_ACCESS =", sqlite_text)
-        self.assertNotIn("METRIC_DEFS =", sqlite_text)
-        self.assertNotIn("SECRET_SETTING_KEYS =", sqlite_text)
-        self.assertNotIn("DEFAULT_SETTINGS =", sqlite_text)
-        self.assertNotIn("DEFAULT_METRICS =", sqlite_text)
-        self.assertIn("from stats_core.config import DEFAULT_METRICS, DEFAULT_SETTINGS", sqlite_text)
-
-    def test_windows_helpers_do_not_bypass_repositories(self):
-        for filename in ("tableau_login.py", "theme_editor.py"):
-            text = (APP / "stats_core" / "windows" / filename).read_text(encoding="utf-8")
-            self.assertNotIn("import database", text, filename)
-            self.assertNotIn("from database", text, filename)
-
-        platform = (APP / "stats_core" / "platform" / "windows.py").read_text(encoding="utf-8")
-        self.assertIn("tableau_login.install(app, self.repos.settings)", platform)
-        self.assertIn("theme_editor.install(app, self.repos, public_endpoints)", platform)
-
-    def test_frontend_runtime_ownership_is_explicit(self):
-        display = (APP / "templates" / "display.html").read_text(encoding="utf-8")
-        settings = (APP / "templates" / "settings.html").read_text(encoding="utf-8")
-        formatting = (APP / "static" / "runtime" / "formatting.js").read_text(encoding="utf-8")
-        team_builder = (APP / "static" / "settings" / "team-builder-workflow.js").read_text(encoding="utf-8")
-        for token in (
-            "Theme runtime", "Display + layout runtime", "Controls runtime", "Product runtime",
-            "/static/display/keyboard-controls.js", "/static/runtime/formatting.js",
-        ):
-            self.assertIn(token, display)
-        self.assertIn("minimumFractionDigits: 2", formatting)
-        for token in (
-            "Tableau/data settings", "Windows theme workspace",
-            "/static/settings/controls.js", "/static/settings/team-builder-workflow.js",
-        ):
-            self.assertIn(token, settings)
-        self.assertIn("renderLeaderFromMembers", team_builder)
-
-    def test_frontend_has_no_versioned_patch_files(self):
-        for retired in ("display_v35_base.html", "display_v36_base.html", "settings_v34_base.html"):
-            self.assertFalse((APP / "templates" / retired).exists(), retired)
-        versioned_static = sorted(
-            path.name for path in (APP / "static").glob("*.js")
-            if re.search(r"-v\d+\.js$", path.name)
-        )
-        self.assertEqual(versioned_static, [])
-        for template_name in ("display.html", "settings.html"):
-            text = (APP / "templates" / template_name).read_text(encoding="utf-8")
-            self.assertIsNone(re.search(r"/static/[^\"']*[-_]v\d+", text), template_name)
-            self.assertIsNone(re.search(r"(?:display|settings)_v\d+_base", text), template_name)
-
-    def test_tableau_sources_have_stable_names(self):
-        sources = APP / "sources"
-        self.assertTrue((sources / "tableau_base.py").is_file())
-        self.assertFalse((sources / "tableau_v36_base.py").exists())
-        self.assertFalse((sources / "tableau_v37_base.py").exists())
-        violations = []
-        for path in APP.rglob("*.py"):
-            text = path.read_text(encoding="utf-8")
-            if "tableau_v36_base" in text or "tableau_v37_base" in text:
-                violations.append(str(path.relative_to(ROOT)))
-        self.assertEqual(violations, [])
-
-    def test_server_entry_contains_no_feature_install_chain(self):
-        text = (ROOT / "windows" / "server_entry.py").read_text(encoding="utf-8")
-        self.assertIn("stats_core.bootstrap", text)
-        for token in (
-            "qr_controls_v110", "starter_theme_v119", "windows_runtime.install",
-            "tableau_login.install", "theme_editor.install", "update_status.install",
-        ):
-            self.assertNotIn(token, text)
+    def test_no_versioned_patch_files_return(self):
+        versioned = []
+        for path in APP.rglob("*"):
+            if path.is_file() and re.search(r"(?:^|[-_])v\d+(?:[-_.]|$)", path.name, re.I):
+                versioned.append(str(path.relative_to(ROOT)))
+        allowed_data_history = {"production-coming-eventually.js"}
+        versioned = [p for p in versioned if Path(p).name not in allowed_data_history]
+        self.assertEqual(versioned, [])
 
 
 if __name__ == "__main__":
