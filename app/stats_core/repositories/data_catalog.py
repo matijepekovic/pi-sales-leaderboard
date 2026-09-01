@@ -1,8 +1,7 @@
 """Persistent source/report catalog backed by the existing settings KV table.
 
-The SQLite schema intentionally stays unchanged. Source and report definitions
-are application configuration documents, while report data continues to live in
-the repositories that own that data.
+The repository stores normalized Stats contracts only. Vendor adapters own
+migration from their legacy settings into those contracts.
 """
 from __future__ import annotations
 
@@ -11,7 +10,7 @@ import json
 from stats_core.storage import sqlite
 
 _CATALOG_KEY = "data_catalog"
-PRIMARY_SOURCE_ID = "source-tableau"
+PRIMARY_SOURCE_ID = "source-primary"
 REP_REPORT_ID = "report-reps"
 PRODUCT_REPORT_ID = "report-products"
 
@@ -38,71 +37,19 @@ class DataCatalogRepository:
                 (_CATALOG_KEY, json.dumps(value)),
             )
 
-    @staticmethod
-    def defaults(settings):
-        settings = settings if isinstance(settings, dict) else {}
-        legacy = settings.get("source") if isinstance(settings.get("source"), dict) else {}
-        server = str(legacy.get("server") or settings.get("tableau_server") or "").strip()
-        site = str(legacy.get("site") or settings.get("tableau_site") or "").strip()
-        pat_name = str(legacy.get("pat_name") or settings.get("tableau_pat_name") or "").strip()
-        report_config = {
-            key: legacy.get(key)
-            for key in (
-                "workbook", "sheet", "filters", "date_start_field", "date_end_field",
-                "mapping", "row_filter", "export",
-            )
-            if key in legacy
-        }
-        return {
-            "sources": [
-                {
-                    "id": PRIMARY_SOURCE_ID,
-                    "name": "Tableau",
-                    "adapter": "tableau",
-                    "enabled": True,
-                    "connection": {
-                        "server": server,
-                        "site": site,
-                        "pat_name": pat_name,
-                        "secret_ref": "tableau_pat_secret",
-                    },
-                }
-            ],
-            "reports": [
-                {
-                    "id": REP_REPORT_ID,
-                    "source_id": PRIMARY_SOURCE_ID,
-                    "name": "Sales Rep Performance",
-                    "kind": "rep_performance",
-                    "source_config": report_config,
-                    "runtime": {
-                        "date_mode": str(settings.get("data_date_mode") or "current_month"),
-                        "date_start": str(settings.get("data_date_start") or ""),
-                        "date_end": str(settings.get("data_date_end") or ""),
-                    },
-                },
-                {
-                    "id": PRODUCT_REPORT_ID,
-                    "source_id": PRIMARY_SOURCE_ID,
-                    "name": "Close Rate by Product",
-                    "kind": "product_close",
-                    "source_config": {},
-                    "runtime": {"market": str(settings.get("product_market") or "Olympia")},
-                },
-            ],
-        }
-
-    def ensure(self, settings):
+    def ensure(self, default_catalog=None):
         current = self._read()
         if current is None:
-            current = self.defaults(settings)
+            default_catalog = default_catalog if isinstance(default_catalog, dict) else {}
+            current = {
+                "sources": list(default_catalog.get("sources") or []),
+                "reports": list(default_catalog.get("reports") or []),
+            }
             self._write(current)
-        return current
+        return self.get()
 
-    def get(self, settings=None):
-        value = self._read()
-        if value is None:
-            return self.defaults(settings or {})
+    def get(self):
+        value = self._read() or {"sources": [], "reports": []}
         value.setdefault("sources", [])
         value.setdefault("reports", [])
         return value
@@ -115,10 +62,10 @@ class DataCatalogRepository:
         self._write(value)
         return value
 
-    def source(self, source_id, settings=None):
+    def source(self, source_id):
         key = str(source_id or "")
-        return next((dict(row) for row in self.get(settings)["sources"] if str(row.get("id")) == key), None)
+        return next((dict(row) for row in self.get()["sources"] if str(row.get("id")) == key), None)
 
-    def report(self, report_id, settings=None):
+    def report(self, report_id):
         key = str(report_id or "")
-        return next((dict(row) for row in self.get(settings)["reports"] if str(row.get("id")) == key), None)
+        return next((dict(row) for row in self.get()["reports"] if str(row.get("id")) == key), None)
