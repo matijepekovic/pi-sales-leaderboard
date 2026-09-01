@@ -1,40 +1,88 @@
-{% include "settings/base.html" %}
-<script src="/static/settings/team-builder-workflow.js"></script>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Stats Settings</title>
+  <link rel="stylesheet" href="/static/settings/shell.css">
+</head>
+<body>
+  <div id="settingsLockOverlay" aria-hidden="true">
+    <div class="settings-lock-card">
+      <h2 style="margin-top:0">Settings Locked</h2>
+      <p class="small">Enter the Stats Settings PIN.</p>
+      <label for="unlockPin">PIN</label>
+      <input id="unlockPin" type="password" inputmode="numeric" autocomplete="off">
+      <button id="unlockBtn" class="btn primary" type="button" style="width:100%;margin-top:12px">Unlock Settings</button>
+      <div id="unlockStatus" class="small status"></div>
+    </div>
+  </div>
 
-{# Data, Screens, Display #}
-<script src="/static/settings/data-screen-display.js"></script>
+  <div id="appWrap" style="display:none">
+    <div id="settingsShell">
+      <aside id="settingsSidebar" aria-label="Settings navigation">
+        <div class="settings-brand">
+          <div class="settings-brand-title">Stats Settings</div>
+          <div class="settings-brand-subtitle">Configure what gets displayed</div>
+        </div>
+        <button id="settingsBack" class="btn" type="button">← Back to Stats</button>
+        <div class="settings-nav-label">Build</div>
+        <nav id="settingsNav" role="tablist" aria-orientation="vertical">
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsData">Data</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsFilters">Filters</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsScreens">Screens</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsDisplay">Display</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsTeams">Teams</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsControls">Controls</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsSoftware">Software</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsSecurity">Security</button>
+        </nav>
+        <div class="settings-sidebar-footer">Data, Filters, Screens and Display are separate Stats modules.</div>
+      </aside>
 
-{# Theme settings #}
-<script src="/static/settings/theme-studio.js"></script>
-<script src="/static/settings/starter-theme.js"></script>
-<script src="/static/settings/layout.js"></script>
+      <main id="settingsMain">
+        <header id="settingsHeader">
+          <div>
+            <h1 id="settingsPageTitle">Settings</h1>
+            <div id="settingsPageDescription"></div>
+          </div>
+        </header>
+        <div id="settingsContent">
+          <div id="settingsContentInner">
+            <section class="settings-section" id="settingsData" data-settings-title="Data" data-settings-description="Connect Sources, configure Reports and inspect the data Stats actually pulled."><div id="settingsDataHost"></div></section>
+            <section class="settings-section" id="settingsFilters" data-settings-title="Filters" data-settings-description="Create reusable Display Filters against real pulled Report data."><div id="settingsFiltersHost"></div></section>
+            <section class="settings-section" id="settingsScreens" data-settings-title="Screens" data-settings-description="Choose Reports and Filters, build tables, and test the result with a live preview."><div id="settingsScreensHost"></div></section>
+            <section class="settings-section" id="settingsDisplay" data-settings-title="Display" data-settings-description="Choose the active Screen and configure rotation."><div id="settingsDisplayHost"></div></section>
+            {% include "settings/teams.html" %}
+            {% include "settings/controls.html" %}
+            {% include "settings/software.html" %}
+            {% include "settings/security.html" %}
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
 
-{# Product settings #}
-<script src="/static/settings/product-settings.js"></script>
-<script src="/static/settings/product-market.js"></script>
-<script src="/static/settings/number-size.js"></script>
+  <script src="/static/settings/runtime.js"></script>
+  <script src="/static/settings/shell.js"></script>
+  <script src="/static/settings/data.js"></script>
+  <script src="/static/settings/filters.js"></script>
+  <script src="/static/settings/screens.js"></script>
+  <script src="/static/settings/display.js"></script>
+  <script src="/static/settings/teams.js"></script>
+  <script src="/static/settings/security.js"></script>
+  <script src="/static/settings/tv-controls.js"></script>
+  <script src="/static/settings/controls.js"></script>
+  <script src="/static/settings/temporary-date.js"></script>
+  <script src="/static/settings/software.js"></script>
 
-{# Software/update settings #}
-<script src="/static/settings/software-manual.js"></script>
-<script src="/static/settings/software-update-status.js"></script>
-<script src="/static/settings/software-version.js"></script>
-<script src="/static/settings/software-update-diagnostics.js"></script>
-
-{# Controls + temporary date #}
-<script src="/static/settings/qr.js"></script>
-<script src="/static/settings/controls.js"></script>
-<script src="/static/settings/product-rotation.js"></script>
-<script src="/static/settings/qr-style.js"></script>
-<script src="/static/settings/temporary-date.js"></script>
-
-{# Production shell/settings #}
-<script src="/static/production-coming-eventually.js"></script>
-<script src="/static/settings/production.js"></script>
-
-{# Windows theme workspace #}
-<script src="/static/settings/theme-workspace.js"></script>
-<script src="/static/settings/theme-visual-editor.js"></script>
-<script src="/static/settings/theme-editor-help.js"></script>
-<script src="/static/settings/theme-stability.js"></script>
-<script src="/static/settings/theme-color-editor.js"></script>
-<script src="/static/settings/windows-sidebar.js"></script>
+  {# Team design uses the existing Theme service; its UI is a separate workspace. #}
+  <script src="/static/settings/theme-studio.js"></script>
+  <script src="/static/settings/starter-theme.js"></script>
+  <script src="/static/settings/theme-workspace.js"></script>
+  <script src="/static/settings/theme-visual-editor.js"></script>
+  <script src="/static/settings/theme-editor-help.js"></script>
+  <script src="/static/settings/theme-stability.js"></script>
+  <script src="/static/settings/theme-color-editor.js"></script>
+</body>
+</html>
