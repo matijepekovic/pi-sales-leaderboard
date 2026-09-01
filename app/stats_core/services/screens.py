@@ -4,24 +4,19 @@ from __future__ import annotations
 import uuid
 
 from stats_core.errors import ValidationError
-from stats_core.screens.templates import get_template, list_templates
 
 
 class ScreenService:
-    """Owns user-created Screens and the built-in Screen template catalog.
+    """Owns user-created Screens.
 
-    Templates are starting layouts only. Saved Screens choose Reports, reusable
-    Filter ids, table presentation and theme policy. They never know how a
-    Source retrieves data.
+    Screens choose Reports, reusable Filter ids, table presentation and theme
+    policy. They never know how a Source retrieves data.
     """
 
     def __init__(self, repos, reports, filters):
         self.repos = repos
         self.reports = reports
         self.filters = filters
-
-    def templates(self):
-        return list_templates()
 
     def list(self):
         return sorted(self.repos.screens.list(), key=lambda item: str(item.get("name") or "").casefold())
@@ -93,10 +88,6 @@ class ScreenService:
         if not name:
             raise ValidationError("Screen name is required.")
 
-        template_key = str(incoming.get("template_key") or "").strip()
-        if template_key and not get_template(template_key):
-            raise ValidationError("Unknown Screen template.")
-
         report_ids = []
         for value in incoming.get("reports") if isinstance(incoming.get("reports"), list) else []:
             report_id = str(value or "").strip()
@@ -113,7 +104,6 @@ class ScreenService:
         return {
             "id": screen_id,
             "name": name,
-            "template_key": template_key,
             "reports": report_ids[:20],
             "filter_ids": self._clean_filter_ids(incoming.get("filter_ids")),
             "tables": self._clean_tables(incoming.get("tables"), set(report_ids)),
@@ -143,14 +133,13 @@ class ScreenService:
         except ValueError:
             return (1, text.casefold())
 
-    def _section(self, screen, table, filter_ids=None, name_override=None):
+    def _section(self, screen, table):
         report_id = str(table.get("report_id") or "")
         report = self.reports.get(report_id)
         fields = self.reports.fields(report_id)
         by_key = {str(field.get("key") or ""): dict(field) for field in fields}
         columns = [key for key in table.get("columns") or [] if key in by_key]
-        selected_filters = screen.get("filter_ids") or [] if filter_ids is None else filter_ids
-        rows = self.filters.apply(report_id, self.reports.rows(report_id), selected_filters)
+        rows = self.filters.apply(report_id, self.reports.rows(report_id), screen.get("filter_ids") or [])
         sort_field = str(table.get("sort_field") or "")
         if sort_field in by_key:
             rows.sort(
@@ -160,42 +149,13 @@ class ScreenService:
         limit = int(table.get("limit") or 100)
         return {
             "report_id": report_id,
-            "report_name": str(name_override or report.get("name") or report_id),
+            "report_name": str(report.get("name") or report_id),
             "fields": [by_key[key] for key in columns],
             "rows": rows[:limit],
             "total_rows": len(rows),
             "sort_field": sort_field,
             "sort_direction": str(table.get("sort_direction") or "desc"),
         }
-
-    def _filter_applies_to_report(self, filter_id, report_id):
-        try:
-            item = self.filters.get(filter_id)
-        except ValidationError:
-            return None
-        if not any(str(rule.get("report_id") or "") == str(report_id) for rule in item.get("rules") or []):
-            return None
-        return item
-
-    def _template_sections(self, screen):
-        key = str(screen.get("template_key") or "")
-        tables = screen.get("tables") or []
-        if key not in {"team_vs_team", "all_teams"} or not tables:
-            return [self._section(screen, table) for table in tables]
-
-        table = tables[0]
-        report_id = str(table.get("report_id") or "")
-        filter_ids = list(screen.get("filter_ids") or [])
-        if key == "team_vs_team":
-            filter_ids = filter_ids[:2]
-
-        sections = []
-        for filter_id in filter_ids:
-            item = self._filter_applies_to_report(filter_id, report_id)
-            if not item:
-                continue
-            sections.append(self._section(screen, table, [filter_id], item.get("name") or "Team"))
-        return sections or [self._section(screen, table) for table in tables]
 
     def _filter_payload(self, screen):
         result = []
@@ -208,16 +168,14 @@ class ScreenService:
         return result
 
     def render_definition(self, screen):
-        template = get_template(screen.get("template_key"))
+        sections = [self._section(screen, table) for table in screen.get("tables") or []]
         return {
             "mode": "screen",
             "screen_id": screen["id"],
             "screen_name": screen["name"],
-            "template_key": screen.get("template_key", ""),
-            "layout": (template or {}).get("layout", "standard"),
             "theme_mode": screen.get("theme_mode", "inherited"),
             "display_filters": self._filter_payload(screen),
-            "sections": self._template_sections(screen),
+            "sections": sections,
         }
 
     def preview(self, incoming):

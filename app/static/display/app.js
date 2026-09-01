@@ -28,8 +28,7 @@
     applyTheme(payload?.theme);
     if(!payload||payload.mode==="empty"||!payload.screen_id){root.innerHTML='<div class="display-shell"><div class="empty">No Screen configured.<br><span style="font-size:.55em">Open Settings → Screens to create one.</span></div></div>';return;}
     const filters=(payload.display_filters||[]).map(filter=>`<span class="filter-pill">${esc(filter.name)}</span>`).join(""),hero=payload.theme?.assets?.hero||"";
-    const layout=String(payload.layout||"standard").replace(/[^a-z0-9_-]/gi,"");
-    root.innerHTML=`<div class="display-shell layout-${layout}"><header class="display-header" ${hero?`style="background-image:linear-gradient(rgba(0,0,0,.32),rgba(0,0,0,.32)),url('${esc(hero)}')"`:""}><div class="display-title">${esc(payload.screen_name||"Stats")}</div><div class="display-filters">${filters}</div></header><main class="sections layout-${layout}">${(payload.sections||[]).map(section=>sectionHtml(section,payload.theme)).join("")||'<div class="empty">This Screen has no data to display.</div>'}</main></div>`;
+    root.innerHTML=`<div class="display-shell"><header class="display-header" ${hero?`style="background-image:linear-gradient(rgba(0,0,0,.32),rgba(0,0,0,.32)),url('${esc(hero)}')"`:""}><div class="display-title">${esc(payload.screen_name||"Stats")}</div><div class="display-filters">${filters}</div></header><main class="sections">${(payload.sections||[]).map(section=>sectionHtml(section,payload.theme)).join("")||'<div class="empty">This Screen has no data to display.</div>'}</main></div>`;
   }
 
   async function refresh(){
