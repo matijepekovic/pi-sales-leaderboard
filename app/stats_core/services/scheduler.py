@@ -23,11 +23,10 @@ class SchedulerService:
     def _slots(self, now): return [now.replace(hour=h, minute=0, second=0, microsecond=0) for h in self.SCHEDULE_HOURS]
 
     def _recent_due(self, now):
-        last_key = str(self.repos.meta.get("scheduled_tableau_last_slot", "") or "")
+        last_key = str(self.repos.meta.get("scheduled_report_last_slot", "") or "")
         for slot in reversed(self._slots(now)):
             seconds = (now - slot).total_seconds()
-            if 0 <= seconds <= self.STARTUP_GRACE_MINUTES * 60 and self._slot_key(slot) != last_key:
-                return slot
+            if 0 <= seconds <= self.STARTUP_GRACE_MINUTES * 60 and self._slot_key(slot) != last_key: return slot
         return None
 
     def _next(self, now):
@@ -38,39 +37,32 @@ class SchedulerService:
 
     def run_slot(self, slot):
         slot_key = self._slot_key(slot)
-        self.repos.meta.set("scheduled_tableau_last_attempt", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        self.repos.meta.set("scheduled_report_last_attempt", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         try:
             result = self.reports.refresh(REP_REPORT_ID)
             if not result.get("ok"):
-                self.repos.meta.set("scheduled_tableau_status", result.get("error") or "Scheduled report refresh failed")
-                self.repos.meta.set("scheduled_tableau_last_slot", slot_key)
+                self.repos.meta.set("scheduled_report_status", result.get("error") or "Scheduled report refresh failed")
+                self.repos.meta.set("scheduled_report_last_slot", slot_key)
                 return False
             now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self.repos.meta.set("scheduled_tableau_status", f"Scheduled report refresh completed at {now_text}")
-            self.repos.meta.set("scheduled_tableau_last_slot", slot_key)
-            try:
-                self.reports.refresh(PRODUCT_REPORT_ID)
-            except Exception as exc:
-                self.repos.meta.set("product_close_status", f"Product close rate pull failed: {exc}")
+            self.repos.meta.set("scheduled_report_status", f"Scheduled report refresh completed at {now_text}")
+            self.repos.meta.set("scheduled_report_last_slot", slot_key)
+            try: self.reports.refresh(PRODUCT_REPORT_ID)
+            except Exception as exc: self.repos.meta.set("product_close_status", f"Product close rate pull failed: {exc}")
             return True
         except Exception as exc:
-            self.repos.meta.set("scheduled_tableau_status", f"Scheduled report refresh failed: {exc}")
-            self.repos.meta.set("scheduled_tableau_last_slot", slot_key)
+            self.repos.meta.set("scheduled_report_status", f"Scheduled report refresh failed: {exc}")
+            self.repos.meta.set("scheduled_report_last_slot", slot_key)
             return False
 
     def _worker(self):
-        self.repos.meta.set("scheduled_tableau_status", "Scheduler active — daily at 06:00 and 14:00")
+        self.repos.meta.set("scheduled_report_status", "Scheduler active — daily at 06:00 and 14:00")
         while True:
-            now = datetime.now()
-            due = self._recent_due(now)
-            if due is not None:
-                self.run_slot(due); time.sleep(65); continue
-            target = self._next(now)
-            delay = max(1.0, (target - now).total_seconds())
-            time.sleep(min(delay, 60.0))
+            now = datetime.now(); due = self._recent_due(now)
+            if due is not None: self.run_slot(due); time.sleep(65); continue
+            target = self._next(now); delay = max(1.0, (target - now).total_seconds()); time.sleep(min(delay, 60.0))
             if datetime.now() >= target:
-                if str(self.repos.meta.get("scheduled_tableau_last_slot", "") or "") != self._slot_key(target):
-                    self.run_slot(target)
+                if str(self.repos.meta.get("scheduled_report_last_slot", "") or "") != self._slot_key(target): self.run_slot(target)
                 time.sleep(65)
 
     def start(self):
