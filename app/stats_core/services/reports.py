@@ -40,6 +40,11 @@ class ReportService:
             raise ValidationError(f"Source adapter '{key}' is not available.")
         return adapter
 
+    def _adapter_settings(self, source):
+        adapter = self._adapter(source)
+        secret = self.repos.source_credentials.get(source.get("id"))
+        return adapter, adapter.with_secret(self.repos.settings.get(), secret)
+
     def get(self, report_id):
         report = self.repos.data_catalog.report(report_id, self.repos.settings.get())
         if not report:
@@ -87,9 +92,10 @@ class ReportService:
                 "last_refresh": self.repos.meta.get("last_source_refresh", ""),
             }
         if kind == "product_close":
+            rows = self.repos.products.list()
             return {
                 "status": self.repos.meta.get("product_close_status", ""),
-                "last_refresh": self.repos.products.list()[0].get("updated_at", "") if self.repos.products.list() else "",
+                "last_refresh": rows[0].get("updated_at", "") if rows else "",
             }
         meta = self.repos.report_data.read(report_id).get("meta") or {}
         return {
@@ -100,13 +106,14 @@ class ReportService:
     def runtime_settings(self, report_id):
         report = self.get(report_id)
         source = self._source(report.get("source_id"))
-        return self._adapter(source).report_settings(self.repos.settings.get(), source, report)
+        adapter, app_settings = self._adapter_settings(source)
+        return adapter.report_settings(app_settings, source, report)
 
     def refresh(self, report_id):
         report = self.get(report_id)
         source = self._source(report.get("source_id"))
-        adapter = self._adapter(source)
-        settings = adapter.report_settings(self.repos.settings.get(), source, report)
+        adapter, app_settings = self._adapter_settings(source)
+        settings = adapter.report_settings(app_settings, source, report)
         kind = str(report.get("kind") or "table")
         if kind == "rep_performance":
             return self.rep_refresh.refresh(settings)
@@ -114,7 +121,7 @@ class ReportService:
             ok = self.product_refresh.refresh(settings)
             return {"ok": bool(ok), "rows": len(self.repos.products.list())}
 
-        table = adapter.table(self.repos.settings.get(), source, report)
+        table = adapter.table(app_settings, source, report)
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
         saved = self.repos.report_data.replace(
             report_id,
@@ -167,9 +174,9 @@ class ReportService:
         if str(report.get("id")) not in (REP_REPORT_ID, PRODUCT_REPORT_ID):
             return
         source = self._source(report.get("source_id"))
-        adapter = self._adapter(source)
+        adapter, app_settings = self._adapter_settings(source)
         settings = self.repos.settings.get()
-        settings.update(adapter.legacy_projection(settings, source, report))
+        settings.update(adapter.legacy_projection(app_settings, source, report))
         self.repos.settings.save(settings)
 
     def delete(self, report_id):
