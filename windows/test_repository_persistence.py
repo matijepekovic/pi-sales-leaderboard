@@ -80,7 +80,7 @@ repos.organization.assign_reps([
     {"rep_key": "r1", "team_id": manual_id},
 ])
 rows = {row["rep_key"]: row for row in repos.reps.list()}
-assert rows["r1"]["tableau_team"] == "Red", rows["r1"]
+assert rows["r1"]["source_team"] == "Red", rows["r1"]
 assert rows["r1"]["team"] == "Manual", rows["r1"]
 assert rows["r1"]["assigned_team_id"] == manual_id, rows["r1"]
 assert rows["r1"]["local_team_override"] is True, rows["r1"]
