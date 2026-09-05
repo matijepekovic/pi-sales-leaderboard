@@ -13,6 +13,22 @@
 (function(){
   const CARD=`
     <div class="card" id="v90SourceCard">
+      <style>
+        /* The page styles every select as width:100%, so a formula laid out
+           with flexbox gives the operator a full-row basis and starves the two
+           fields beside it. A grid sizes the tracks instead: the fields share
+           what is left after the operator has taken exactly what it needs. */
+        #v90SourceCard .v120Calc{display:grid;gap:6px;margin-top:7px;
+          grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center}
+        #v90SourceCard .v120Calc select{width:100%;min-width:0}
+        #v90SourceCard .v120Calc .v120CalcOp{width:auto;padding-left:14px;padding-right:14px}
+        /* On a phone two field names cannot share a line and stay readable, so
+           the first field takes its own. */
+        @media (max-width:640px){
+          #v90SourceCard .v120Calc{grid-template-columns:auto minmax(0,1fr)}
+          #v90SourceCard .v120Calc .v120CalcLeft{grid-column:1 / -1}
+        }
+      </style>
       <h2>Tableau Report</h2>
 
       <div style="padding:8px 0 12px;border-bottom:1px solid #2b2b2b">
@@ -309,12 +325,12 @@
       hint="One of these is no longer mapped, so this stays blank.";
     else hint=`${labels[key]||key} = ${labels[rule.left]||rule.left} ${sign} `+
               `${labels[rule.right]||rule.right}`;
-    return `<div class="row" style="gap:6px;margin-top:7px;flex-wrap:nowrap">
-        <select class="v120CalcLeft" data-key="${key}" style="flex:1 1 40%;min-width:0">${operandOptions(key,rule.left)}</select>
-        <select class="v120CalcOp" data-key="${key}" style="flex:0 0 auto">${
+    return `<div class="v120Calc">
+        <select class="v120CalcLeft" data-key="${key}" aria-label="First field">${operandOptions(key,rule.left)}</select>
+        <select class="v120CalcOp" data-key="${key}" aria-label="Operation">${
           OPS.map(([op,glyph])=>
             `<option value="${op}"${op===rule.op?" selected":""}>${glyph}</option>`).join("")}</select>
-        <select class="v120CalcRight" data-key="${key}" style="flex:1 1 40%;min-width:0">${operandOptions(key,rule.right)}</select>
+        <select class="v120CalcRight" data-key="${key}" aria-label="Second field">${operandOptions(key,rule.right)}</select>
       </div>
       <div class="small" style="opacity:.65;margin-top:3px">${esc(hint)}</div>`;
   }
