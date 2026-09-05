@@ -82,9 +82,14 @@ def list_workbooks(settings):
     """
     source, base, token, site_id = _signed_in(settings)
     try:
+        # Why the last listing came back empty, kept so a refusal can be
+        # reported rather than shown as a site with no workbooks in it.
+        refused = ""
         status, raw = source._request(
             f"{base}/sites/{site_id}/workbooks?pageSize=1000", token=token)
         books = _books(_base.json.loads(raw)) if status == 200 else []
+        if status != 200:
+            refused = _base.why_failed(status, raw)
 
         if not books:
             status, raw = source._request(
@@ -94,6 +99,8 @@ def list_workbooks(settings):
                 users = _base.json.loads(raw).get("users", {}).get("user", [])
                 if isinstance(users, dict):
                     users = [users]
+            else:
+                refused = _base.why_failed(status, raw)
             for user in users[:1]:
                 uid = str(user.get("id") or "").strip()
                 if not uid:
@@ -103,6 +110,9 @@ def list_workbooks(settings):
                     token=token)
                 if status == 200:
                     books = _books(_base.json.loads(raw))
+                    refused = ""
+                else:
+                    refused = _base.why_failed(status, raw)
 
         rows = [
             {"name": str(b.get("name") or "").strip(),
@@ -111,6 +121,11 @@ def list_workbooks(settings):
         ]
         rows = [r for r in rows if r["content_url"]]
         rows.sort(key=lambda r: r["name"].lower())
+        if not rows and refused:
+            raise _base.TableauError(
+                f"Signed in, but Tableau would not list workbooks "
+                f"({refused}). The token may not be allowed to browse this "
+                f"site's content.")
         return rows
     finally:
         source.signout(base, token)

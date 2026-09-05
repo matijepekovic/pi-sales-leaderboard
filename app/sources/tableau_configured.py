@@ -146,8 +146,9 @@ class ConfiguredTableauSource(_base.TableauSource):
         )
         if status != 200:
             raise _base.TableauError(
-                f"Tableau sign-in failed. Check the PAT secret for token "
-                f"'{self.pat_name}' on site '{self.site}'."
+                f"Tableau sign-in failed ({_base.why_failed(status, raw)}). "
+                f"Check the PAT secret for token '{self.pat_name}' on site "
+                f"'{self.site}'."
             )
         try:
             creds = _base.json.loads(raw)["credentials"]

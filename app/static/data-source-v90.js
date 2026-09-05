@@ -25,9 +25,15 @@
 
       <section style="margin-top:16px">
         <h3 style="margin:0 0 9px">1. Report</h3>
-        <div class="grid">
+        <div class="grid" id="v120ReportGrid">
           <div><label for="v79Workbook">Workbook</label><select id="v79Workbook"><option value="">Loading…</option></select></div>
           <div><label for="v79Sheet">Report</label><select id="v79Sheet"><option value="">Pick a workbook first</option></select></div>
+        </div>
+        <div id="v120ListNote" class="small" style="display:none;margin-top:7px"></div>
+        <div class="row" id="v120ListActions" style="display:none;gap:8px;margin-top:7px;flex-wrap:wrap">
+          <button id="v120Retry" class="btn" type="button">Retry Listing</button>
+          <button id="v120Manual" class="btn" type="button">Type Names Instead</button>
+          <button id="v120Back" class="btn" type="button">Back To The List</button>
         </div>
         <div style="margin-top:10px">
           <label for="v90Export">Export</label>
@@ -420,33 +426,91 @@
   }
 
   async function loadWorkbooks(){
+    listMode();
     const select=$("v79Workbook");
+    const current=select.value;
+    // A workbook is already showing when one is saved; leave it alone rather
+    // than blanking the card's only record of what the board reads today.
+    if(!current) select.innerHTML='<option value="">Loading…</option>';
+    listNote("",[]);
     try{
       const {r,d}=await request("/api/source/workbooks",{cache:"no-store"});
-      if(!r.ok||!d.workbooks||!d.workbooks.length){ typedFallback(d&&d.error); return; }
-      const current=$("v79Workbook").value;
+      if(!r.ok||!d.workbooks){ listFailed((d&&d.error)||"Could not list workbooks."); return; }
+      if(!d.workbooks.length){
+        listFailed("Tableau signed in but returned no workbooks. Check what "+
+                   "the token is allowed to see on this site.");
+        return;
+      }
       select.innerHTML='<option value="">Choose a workbook…</option>'+
         d.workbooks.map(w=>
           `<option value="${esc(w.content_url)}"${w.content_url===current?" selected":""}>${esc(w.name||w.content_url)}</option>`).join("");
       if(current) loadViews();
     }catch(e){
-      if(e.message!=="locked") typedFallback("Could not reach the Pi.");
+      if(e.message!=="locked") listFailed("Could not reach the Pi.");
     }
   }
 
-  function typedFallback(why){
-    const wrap=$("v79Workbook").parentElement.parentElement;
-    const workbook=$("v79Workbook").value, sheet=$("v79Sheet").value;
-    wrap.innerHTML=`
+  // Listing failed: say why and offer a way forward. The dropdowns stay --
+  // replacing them permanently hid the reason, and left no way back to the
+  // list once the connection was fixed.
+  function listFailed(why){
+    const select=$("v79Workbook");
+    if(select.tagName==="SELECT"&&!select.value)
+      select.innerHTML='<option value="">Could not list workbooks</option>';
+    listNote(why,["v120Retry","v120Manual"]);
+  }
+
+  function listNote(text,buttons){
+    $("v120ListNote").textContent=text||"";
+    $("v120ListNote").style.display=text?"":"none";
+    ["v120Retry","v120Manual","v120Back"].forEach(id=>{
+      $(id).style.display=buttons.includes(id)?"":"none";
+    });
+    $("v120ListActions").style.display=buttons.length?"":"none";
+  }
+
+  // The two report controls in either shape. Only the grid is rebuilt; the
+  // note and its buttons sit outside it, so they are bound once at mount.
+  function listMode(){
+    if($("v79Workbook").tagName==="SELECT") return;
+    const workbook=$("v79Workbook").value.trim(), sheet=$("v79Sheet").value.trim();
+    $("v120ReportGrid").innerHTML=`
+      <div><label for="v79Workbook">Workbook</label><select id="v79Workbook">
+        <option value="${esc(workbook)}" selected>${esc(workbook||"Loading…")}</option></select></div>
+      <div><label for="v79Sheet">Report</label><select id="v79Sheet">
+        <option value="${esc(sheet)}" selected>${esc(sheet||"Pick a workbook first")}</option></select></div>`;
+    bindReport();
+  }
+
+  function typedMode(){
+    if($("v79Workbook").tagName!=="SELECT") return;
+    const workbook=$("v79Workbook").value.trim(), sheet=$("v79Sheet").value.trim();
+    $("v120ReportGrid").innerHTML=`
       <div><label for="v79Workbook">Workbook</label>
         <input id="v79Workbook" type="text" value="${esc(workbook)}" placeholder="Workbook content URL"></div>
       <div><label for="v79Sheet">Sheet</label>
         <input id="v79Sheet" type="text" value="${esc(sheet)}" placeholder="Sheet content URL"></div>`;
-    $("v79Status").textContent=
-      (why?why+" ":"")+"Type workbook and report names.";
-    ["v79Workbook","v79Sheet"].forEach(id=>{
-      $(id).addEventListener("input",touched);
-      $(id).addEventListener("change",()=>{if($("v79Sheet").value.trim()) loadColumns();});
+    bindReport();
+  }
+
+  function sheetChosen(){
+    mapping=null; headers=[]; choices=[]; samples={}; filterFields=[]; filters=[]; paintMapping(); paintFilters(); touched();
+    $("v79Status").textContent=$("v79Sheet").value
+      ? "Selected. Tap Read Report." : "";
+  }
+
+  function bindReport(){
+    const workbook=$("v79Workbook"), sheet=$("v79Sheet");
+    if(workbook.tagName==="SELECT"){
+      workbook.addEventListener("change",()=>{
+        filterFields=[]; filters=[]; paintFilters(); touched(); loadViews();
+      });
+      sheet.addEventListener("change",sheetChosen);
+      return;
+    }
+    [workbook,sheet].forEach(el=>{
+      el.addEventListener("input",touched);
+      el.addEventListener("change",()=>{if($("v79Sheet").value.trim()) loadColumns();});
     });
   }
 
@@ -522,13 +586,13 @@
       const next=filterFields.find(item=>!used.has(item.field))||filterFields[0];
       filters.push({field:next?.field||"",value:""}); paintFilters(); touched();
     });
-    $("v79Workbook").addEventListener("change",()=>{
-      filterFields=[]; filters=[]; paintFilters(); touched(); loadViews();
-    });
-    $("v79Sheet").addEventListener("change",()=>{
-      mapping=null; headers=[]; choices=[]; samples={}; filterFields=[]; filters=[]; paintMapping(); paintFilters(); touched();
-      $("v79Status").textContent=$("v79Sheet").value
-        ? "Selected. Tap Read Report." : "";
+    bindReport();
+    $("v120Retry").addEventListener("click",loadWorkbooks);
+    $("v120Back").addEventListener("click",loadWorkbooks);
+    $("v120Manual").addEventListener("click",()=>{
+      typedMode();
+      listNote("Typing names by hand. Workbook is the name in the Tableau address "+
+           "bar; Sheet is the part after /sheets/.",["v120Back"]);
     });
     $("v79Load").addEventListener("click",loadColumns);
     $("v79Check").addEventListener("click",()=>runPreview(false));

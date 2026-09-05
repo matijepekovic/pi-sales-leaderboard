@@ -332,6 +332,30 @@ class TableauError(RuntimeError):
     pass
 
 
+def why_failed(status, raw):
+    """Tableau's own reason for a refused call, short enough for a phone.
+
+    A failed sign-in and a token that cannot browse content are both a bare
+    401 or 403 otherwise, which is no help at all when the settings page has
+    to tell someone what to fix. Tableau answers with a code/summary/detail
+    block; this reduces it to one line and falls back to the status when the
+    body is not that shape. Only Tableau's own words come back, never
+    anything the caller sent, so a PAT secret cannot ride out in an error.
+    """
+    detail = ""
+    try:
+        error = json.loads(raw).get("error", {})
+        code = str(error.get("code") or "").strip()
+        words = " ".join(part for part in (str(error.get("summary") or "").strip(),
+                                           str(error.get("detail") or "").strip())
+                         if part)
+        detail = f"{code} {words}".strip()
+    except Exception:
+        detail = ""
+    detail = " ".join(detail.split())[:200]
+    return f"HTTP {status}" + (f" - {detail}" if detail else "")
+
+
 class TableauSource(LeaderboardSource):
     SERVER = TABLEAU_SERVER
     SITE = TABLEAU_SITE
@@ -397,7 +421,8 @@ class TableauSource(LeaderboardSource):
         )
         if status != 200:
             raise TableauError(
-                "Tableau sign-in failed. Check the PAT secret for token 'leaderboard'."
+                f"Tableau sign-in failed ({why_failed(status, raw)}). "
+                f"Check the PAT secret for token 'leaderboard'."
             )
         try:
             creds = json.loads(raw)["credentials"]
