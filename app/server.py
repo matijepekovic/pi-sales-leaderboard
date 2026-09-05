@@ -46,7 +46,7 @@ from database import (
     set_rep_team_assignments,
 )
 import source_picker
-from sources import tableau_configured
+from sources import tableau_configured, tableau_mapped
 from sources.tableau import TableauSource, TableauError, resolve_dates
 from tableau_scheduler import refresh_product_close, start_tableau_scheduler
 from themes import themes_blueprint, display_theme_state
@@ -219,6 +219,7 @@ def clean_source(raw):
     if isinstance(raw.get("mapping"), dict):
         mapping = raw["mapping"]
         metrics = mapping.get("metrics") if isinstance(mapping.get("metrics"), dict) else {}
+        derived = mapping.get("derived") if isinstance(mapping.get("derived"), dict) else {}
         valid = {key for key, _, _ in METRIC_DEFS}
         clean["mapping"] = {
             "rep_name": str(mapping.get("rep_name") or "")[:200],
@@ -226,6 +227,17 @@ def clean_source(raw):
             "team": str(mapping.get("team") or "")[:200],
             "metrics": {str(k): str(v)[:200] for k, v in metrics.items()
                         if k in valid and str(v or "").strip()},
+            # A formula names stats, never free text: both operands have to be
+            # stats the board knows and the operator one the parser can do, so
+            # nothing unrunnable is ever stored.
+            "derived": {
+                str(k): {"left": str(r.get("left")), "op": str(r.get("op")),
+                         "right": str(r.get("right"))}
+                for k, r in derived.items()
+                if k in valid and isinstance(r, dict)
+                and str(r.get("op")) in tableau_mapped.DERIVED_OPS
+                and str(r.get("left")) in valid and str(r.get("right")) in valid
+            },
         }
     return clean
 

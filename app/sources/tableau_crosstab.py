@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 
 from . import tableau_v36_base as _base
 from .tableau_mapped import (STAT_TO_CAMEL, PERCENT_STATS, _scale_percent,
+                             apply_derived,
                              suggest_mapping, unmapped_columns)
 
 _NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -360,7 +361,8 @@ def map_crosstab(xlsx_bytes, mapping):
             scaled.append(stat)
 
     return reps, {"shape": "crosstab", "source": "crosstab_excel",
-                  "scaled": sorted(scaled)}
+                  "scaled": sorted(scaled),
+                  "derived": apply_derived(reps, mapping)}
 
 
 def _branch_profile(xlsx_bytes):

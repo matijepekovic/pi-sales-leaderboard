@@ -245,10 +245,10 @@
       el.addEventListener("click",()=>{filters.splice(Number(el.dataset.i),1);paintFilters();touched();}));
   }
 
-  function options(list,selected){
+  function options(list,selected,extra){
     const known=list.slice();
     if(selected&&!known.includes(selected)) known.unshift(selected);
-    return '<option value="">— not mapped —</option>'+
+    return '<option value="">— not mapped —</option>'+(extra||"")+
       known.map(c=>`<option value="${esc(c)}"${c===selected?" selected":""}>${esc(c)}</option>`).join("");
   }
 
@@ -267,6 +267,71 @@
     </div>`;
   }
 
+  // ------------------------------------------------------ calculated stats
+  // A report that carries Sold and Pitched but no Close Rate has the figure,
+  // just not the column. Rather than leave the stat dead, a stat with no
+  // column of its own can be worked out from the stats that do have one.
+  const CALC="__calculated__";
+  const OPS=[["divide","÷"],["multiply","×"],["add","+"],["subtract","−"]];
+
+  const rules=()=>(mapping.derived=mapping.derived||{});
+  const statLabels=()=>Object.fromEntries(statList());
+
+  function statOptions(selected,calculated){
+    return options(choices,selected,
+      `<option value="${CALC}"${calculated?" selected":""}>— calculated —</option>`);
+  }
+
+  // What a formula may name: every stat the report feeds, plus the other
+  // calculated ones, so short chains work. An operand that has since lost its
+  // column stays on the list, marked, rather than vanishing and silently
+  // rewriting the formula.
+  function operandOptions(key,selected){
+    const labels=statLabels();
+    const available=new Set([...Object.keys(mapping.metrics||{}),
+                             ...Object.keys(rules())].filter(k=>k!==key));
+    const list=statList().filter(([k])=>available.has(k)).map(([k,label])=>[k,label]);
+    if(selected&&!available.has(selected))
+      list.unshift([selected,(labels[selected]||selected)+" — not mapped"]);
+    return '<option value="">Choose…</option>'+list.map(([k,label])=>
+      `<option value="${esc(k)}"${k===selected?" selected":""}>${esc(label)}</option>`).join("");
+  }
+
+  function calcRow(key){
+    const rule=rules()[key];
+    if(!rule) return "";
+    const labels=statLabels();
+    const sign=(OPS.find(([op])=>op===rule.op)||OPS[0])[1];
+    const known=k=>(mapping.metrics||{})[k]||rules()[k];
+    let hint;
+    if(!rule.left||!rule.right) hint="Choose both fields.";
+    else if(!known(rule.left)||!known(rule.right))
+      hint="One of these is no longer mapped, so this stays blank.";
+    else hint=`${labels[key]||key} = ${labels[rule.left]||rule.left} ${sign} `+
+              `${labels[rule.right]||rule.right}`;
+    return `<div class="row" style="gap:6px;margin-top:7px;flex-wrap:nowrap">
+        <select class="v120CalcLeft" data-key="${key}" style="flex:1 1 40%;min-width:0">${operandOptions(key,rule.left)}</select>
+        <select class="v120CalcOp" data-key="${key}" style="flex:0 0 auto">${
+          OPS.map(([op,glyph])=>
+            `<option value="${op}"${op===rule.op?" selected":""}>${glyph}</option>`).join("")}</select>
+        <select class="v120CalcRight" data-key="${key}" style="flex:1 1 40%;min-width:0">${operandOptions(key,rule.right)}</select>
+      </div>
+      <div class="small" style="opacity:.65;margin-top:3px">${esc(hint)}</div>`;
+  }
+
+  function statRow(key,label){
+    const calculated=!!rules()[key];
+    const selected=(mapping.metrics||{})[key]||"";
+    return `<div style="padding:8px 0;border-top:1px solid #262626">
+      <div class="row" style="justify-content:space-between;align-items:center;gap:10px">
+        <span style="min-width:120px">${esc(label)}</span>
+        <select class="v79Stat" data-key="${key}" style="flex:1 1 auto">${statOptions(selected,calculated)}</select>
+      </div>
+      <div data-sample-for="${key}">${calculated?"":sampleLine(selected)}</div>
+      ${calcRow(key)}
+    </div>`;
+  }
+
   function paintMapping(){
     if(!mapping){$("v79MapWrap").style.display="none";return;}
     $("v79MapWrap").style.display="";
@@ -275,8 +340,7 @@
     // stats are the measure names on a pivoted report.
     DIMENSIONS.forEach(([key,label])=>
       rows.push(row("v79Dim",key,label,headers,mapping[key])));
-    statList().forEach(([key,label])=>
-      rows.push(row("v79Stat",key,label,choices,(mapping.metrics||{})[key])));
+    statList().forEach(([key,label])=>rows.push(statRow(key,label)));
     $("v79MapRows").innerHTML=rows.join("");
 
     const after=sel=>{
@@ -288,10 +352,29 @@
       sel.addEventListener("change",()=>{mapping[sel.dataset.key]=sel.value;after(sel);}));
     $("v79MapRows").querySelectorAll(".v79Stat").forEach(sel=>
       sel.addEventListener("change",()=>{
+        const key=sel.dataset.key;
         mapping.metrics=mapping.metrics||{};
-        if(sel.value) mapping.metrics[sel.dataset.key]=sel.value;
-        else delete mapping.metrics[sel.dataset.key];
+        if(sel.value===CALC){
+          delete mapping.metrics[key];
+          rules()[key]=rules()[key]||{left:"",op:"divide",right:""};
+        }else{
+          delete rules()[key];
+          if(sel.value) mapping.metrics[key]=sel.value;
+          else delete mapping.metrics[key];
+        }
+        // What a stat is fed by decides what the formulas may name, so the
+        // whole map is repainted rather than just this row.
+        if(Object.keys(rules()).length){ touched(); paintMapping(); return; }
         after(sel);
+      }));
+    $("v79MapRows").querySelectorAll(".v120CalcLeft,.v120CalcOp,.v120CalcRight")
+      .forEach(sel=>sel.addEventListener("change",()=>{
+        const rule=rules()[sel.dataset.key];
+        if(!rule) return;
+        if(sel.classList.contains("v120CalcOp")) rule.op=sel.value;
+        else if(sel.classList.contains("v120CalcLeft")) rule.left=sel.value;
+        else rule.right=sel.value;
+        touched(); paintMapping();
       }));
     paintUnmapped();
   }
@@ -305,6 +388,10 @@
   }
 
   async function loadColumns(){
+    // Re-reading a report re-guesses the mapping, and a guess can find a
+    // column again. It can never find a formula again, so the formulas are
+    // carried across rather than thrown away with the rest.
+    const carried={...((mapping||{}).derived||{})};
     mapping=null; headers=[]; choices=[]; samples={}; filterFields=[]; paintMapping(); paintFilters();
     touched();
     $("v79PreviewRows").innerHTML=""; $("v79PreviewStatus").textContent="";
@@ -317,6 +404,10 @@
       headers=d.headers||[]; choices=d.choices||[]; samples=d.samples||{}; shape=d.shape;
       filterFields=d.filter_fields||[];
       mapping=d.suggested||{}; mapping.metrics=mapping.metrics||{};
+      // A stat the report now feeds directly keeps its column; the formula
+      // for it is dropped rather than left to lose to it silently.
+      mapping.derived=Object.fromEntries(Object.entries(carried)
+        .filter(([stat])=>!mapping.metrics[stat]));
       paintMapping(); paintFilters();
       const matched=Object.keys(mapping.metrics).length;
       $("v79Status").textContent=`${d.export||""} · ${choices.length} columns`+(matched?` · ${matched} matched`:"");
@@ -366,7 +457,8 @@
       const notes=d.notes||{};
       const cost=notes.seconds!==undefined?` · ${notes.seconds}s`:"";
       const scaled=(notes.scaled||[]).length?" · % formatted":"";
-      status.textContent=`${d.reps} reps · ${d.start} → ${d.end} · ${notes.export||""}${cost}${scaled}`+(d.on_tv?" · TV preview active":"");
+      const worked=(notes.derived||[]).length?` · ${notes.derived.length} calculated`:"";
+      status.textContent=`${d.reps} reps · ${d.start} → ${d.end} · ${notes.export||""}${cost}${scaled}${worked}`+(d.on_tv?" · TV preview active":"");
       paintPreviewRows(d.rows);
     }catch(e){
       if(e.message!=="locked") status.textContent="Could not reach the Pi.";

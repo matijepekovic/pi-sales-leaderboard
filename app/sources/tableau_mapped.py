@@ -171,6 +171,110 @@ def suggest_mapping(headers, choices=None):
     return guess
 
 
+# ------------------------------------------------------- calculated stats
+#
+# A report that carries Sold and Pitched but no Close Rate is not missing the
+# figure, only the column. Two operands and an operator is the whole language:
+# every stat the board shows that a report tends to leave out -- a rate, an
+# average, a net of a gross -- is one of these away from columns that are
+# there. Operands are board stats rather than report columns, so a formula
+# means the same thing whichever shape the export arrives in.
+DERIVED_OPS = {
+    "divide":   lambda a, b: None if b == 0 else a / b,
+    "multiply": lambda a, b: a * b,
+    "add":      lambda a, b: a + b,
+    "subtract": lambda a, b: a - b,
+}
+
+
+def clean_derived(mapping):
+    """The formulas worth trying: known stat, known operator, two operands.
+
+    A stat fed by a real column keeps it -- the report always outranks
+    arithmetic over it -- so a leftover formula underneath a mapped column is
+    ignored rather than fought over.
+    """
+    rules = (mapping or {}).get("derived")
+    if not isinstance(rules, dict):
+        return {}
+    mapped = {k for k, v in ((mapping or {}).get("metrics") or {}).items()
+              if str(v or "").strip()}
+    clean = {}
+    for stat, rule in rules.items():
+        if not isinstance(rule, dict) or stat in mapped or stat not in STAT_TO_CAMEL:
+            continue
+        left = str(rule.get("left") or "").strip()
+        right = str(rule.get("right") or "").strip()
+        op = str(rule.get("op") or "").strip()
+        if not left or not right or op not in DERIVED_OPS:
+            continue
+        if stat in (left, right):
+            continue                    # nothing may be derived from itself
+        clean[stat] = {"left": left, "op": op, "right": right}
+    return clean
+
+
+def apply_derived(reps, mapping):
+    """Fill calculated stats in, in whatever order their operands allow.
+
+    A formula may name another calculated stat, so this keeps passing over the
+    rules until a pass can settle nothing further: chains resolve, and a rule
+    that never can -- a cycle, or an operand nothing feeds -- is left out
+    rather than raising, because one unfinishable formula should not cost the
+    board every other number in the pull.
+
+    A rep whose operands are missing, or whose divisor is zero, keeps the stat
+    blank. A blank cell is honest; a zero would rank as a real last place.
+    """
+    rules = clean_derived(mapping)
+    if not reps or not rules:
+        return []
+
+    done = []
+    pending = dict(rules)
+    while pending:
+        ready = {stat: rule for stat, rule in pending.items()
+                 if rule["left"] not in pending and rule["right"] not in pending}
+        if not ready:
+            break
+        for stat, rule in ready.items():
+            del pending[stat]
+            camel = STAT_TO_CAMEL.get(stat)
+            left = STAT_TO_CAMEL.get(rule["left"])
+            right = STAT_TO_CAMEL.get(rule["right"])
+            if not (camel and left and right):
+                continue
+            work = DERIVED_OPS[rule["op"]]
+            filled = False
+            for rep in reps:
+                a, b = rep.get(left), rep.get(right)
+                if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
+                    continue
+                value = work(float(a), float(b))
+                if value is None:
+                    continue
+                rep[camel] = value
+                filled = True
+            if filled:
+                done.append(stat)
+
+    # Rates come out of a division as fractions. Scale them the same way a
+    # rate read straight from a column is scaled, and only once everything is
+    # computed, so a formula reading another rate sees one consistent figure.
+    for stat in done:
+        if stat not in PERCENT_STATS:
+            continue
+        camel = STAT_TO_CAMEL[stat]
+        values = [rep[camel] for rep in reps
+                  if isinstance(rep.get(camel), (int, float))]
+        if values and _scale_percent(values):
+            for rep in reps:
+                if isinstance(rep.get(camel), (int, float)):
+                    rep[camel] = rep[camel] * 100.0
+
+    return sorted(done)
+
+
 def unmapped_columns(choices, mapping):
     """Whatever the mapping leaves unused, so the UI can say so out loud."""
     used = {mapping.get("rep_name"), mapping.get("home_branch"), mapping.get("team")}
@@ -293,4 +397,5 @@ def parse_mapped(csv_text, mapping, shape=""):
 
     return reps, {"shape": shape,
                   "scaled": sorted(s for s in scale if scale[s] != 1.0),
-                  "collapsed": sorted(set(collapsed))}
+                  "collapsed": sorted(set(collapsed)),
+                  "derived": apply_derived(reps, mapping)}
