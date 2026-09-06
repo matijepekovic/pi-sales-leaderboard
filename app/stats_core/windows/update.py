@@ -34,7 +34,7 @@ MAX_INSTALLER_BYTES = 512 * 1024 * 1024
 CREATE_NO_WINDOW = 0x08000000
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
-_INSTALLED = False
+_INSTALL_KEY = "stats_windows_update_routes"
 
 
 def _version_tuple(value: str) -> tuple[int, int, int]:
@@ -256,8 +256,7 @@ def _start_detached_updater(installer: Path, version: str) -> None:
 
 
 def install(app, server_module) -> bool:
-    global _INSTALLED
-    if _INSTALLED:
+    if app.extensions.get(_INSTALL_KEY):
         return False
 
     @app.post("/api/windows/update/check")
@@ -317,5 +316,5 @@ def install(app, server_module) -> bool:
         except Exception as exc:
             return jsonify({"ok": False, "error": str(exc)}), 502
 
-    _INSTALLED = True
+    app.extensions[_INSTALL_KEY] = True
     return True

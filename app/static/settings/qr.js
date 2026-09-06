@@ -45,7 +45,7 @@
       <div class="v98-section-body">
         <div class="small" style="margin-bottom:10px">Drag the QR anywhere on the TV preview, then set its size.</div>
         <div id="v110QrStage" aria-label="QR position preview">
-          <div id="v110QrPreview" role="img" aria-label="QR code position"><img src="/static/remote-qr-v109.svg?v=109" alt=""></div>
+          <div id="v110QrPreview" role="img" aria-label="QR code position"><img src="/static/remote-qr.svg" alt=""></div>
         </div>
         <div style="margin-top:14px">
           <div class="row" style="justify-content:space-between"><label for="v110QrSize" style="margin:0">Size</label><strong id="v110QrSizeValue">68 px</strong></div>

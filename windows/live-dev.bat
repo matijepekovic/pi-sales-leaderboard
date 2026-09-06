@@ -41,7 +41,7 @@ echo.
 echo Live development is starting.
 echo Keep this window open while testing Stats.
 echo Changes pushed to live-dev are pulled automatically about every 10 seconds.
-echo Python, templates, CSS, and JavaScript reload automatically on disk changes.
+echo Python, templates, CSS, and JavaScript changes refresh the browser automatically.
 echo.
 ".venv\Scripts\python.exe" windows\dev_server.py
 exit /b %errorlevel%

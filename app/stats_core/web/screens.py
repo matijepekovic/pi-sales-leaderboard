@@ -26,10 +26,14 @@ def blueprint(screens):
 
     @bp.put("/api/screens/<screen_id>")
     def update_screen(screen_id):
-        body = dict(request.get_json(silent=True) or {})
-        body["id"] = screen_id
-        try: return jsonify({"ok": True, "screen": screens.save(body)})
-        except Exception as exc: return error_response(exc)
+        try:
+            screens.get(screen_id)
+            body = request.get_json(silent=True) or {}
+            if not isinstance(body, dict):
+                raise ValueError("Screen must be an object.")
+            return jsonify({"ok": True, "screen": screens.save({**body, "id": screen_id})})
+        except Exception as exc:
+            return error_response(exc)
 
     @bp.delete("/api/screens/<screen_id>")
     def delete_screen(screen_id):
@@ -38,12 +42,17 @@ def blueprint(screens):
 
     @bp.post("/api/screens/preview")
     def preview_unsaved():
-        try: return jsonify({"ok": True, "payload": screens.preview(request.get_json(silent=True) or {})})
+        try:
+            body = request.get_json(silent=True) or {}
+            payload = screens.preview(body)
+            return jsonify({"ok": True, "payload": payload})
         except Exception as exc: return error_response(exc)
 
     @bp.get("/api/screens/<screen_id>/preview")
     def preview_saved(screen_id):
-        try: return jsonify({"ok": True, "payload": screens.render(screen_id)})
+        try:
+            payload = screens.render(screen_id)
+            return jsonify({"ok": True, "payload": payload})
         except Exception as exc: return error_response(exc)
 
     return bp

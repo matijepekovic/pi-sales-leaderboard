@@ -130,6 +130,15 @@ class SourceService:
         adapter, app_settings = self._adapter_context(source)
         return adapter.columns(app_settings, source, report, adapter.candidate_overrides(body))
 
+    def candidate_columns_for(self, source_id, body):
+        """Inspect an unsaved Report candidate without creating catalog state."""
+        incoming = dict(body or {})
+        incoming["source_id"] = source_id
+        report = self.reports.candidate(incoming)
+        source = self._source(source_id)
+        adapter, app_settings = self._adapter_context(source)
+        return adapter.columns(app_settings, source, report, adapter.candidate_overrides(incoming))
+
     def test_report(self, report_id, body):
         report = self.reports.get(report_id)
         source = self._source(report.get("source_id"))

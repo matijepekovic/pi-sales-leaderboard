@@ -29,8 +29,8 @@ The first launch creates a local `.venv` and installs the Python dependencies fr
 2. Ask for a Stats change.
 3. The change is committed to `live-dev` on GitHub.
 4. In GitHub Desktop, click **Fetch origin** and then **Pull origin** when a change is available.
-5. Python changes restart the local server automatically.
-6. Refresh the browser to see template, CSS, or JavaScript changes.
+5. Python, template, CSS, and JavaScript changes restart the local server automatically.
+6. Open Stats browser pages refresh automatically when that restart completes.
 7. Test the change immediately and continue iterating.
 
 No installer, release, or production version bump is required during this loop.

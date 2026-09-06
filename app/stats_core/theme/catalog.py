@@ -14,6 +14,16 @@ ASSETS = {
     "totals_mark": {"label": "Totals Mark"},
 }
 
+PLANNABLE_ASSET_KEYS = tuple(
+    key for key in ASSETS if key not in {"background", "row", "champion"}
+)
+
+DEFAULT_LAYOUT = {
+    "auto_fit": True,
+    "content": {"x": 5.0, "y": 5.0, "width": 90.0, "height": 90.0},
+    "asset_slots": [],
+}
+
 CORNER_ASSET_KEYS = ("corner_tl", "corner_tr", "corner_bl", "corner_br")
 LIBRARY_KEYS = set(ASSETS)
 ALLOWED_BASES = {"starter", "classic"}

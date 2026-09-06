@@ -27,6 +27,8 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 LIVE_BRANCH = "live-dev"
 SYNC_INTERVAL_SECONDS = 10
+BROWSER_RELOAD_INTERVAL_MS = 750
+LIVE_RELOAD_SUFFIXES = {".css", ".html", ".js", ".mjs"}
 
 
 def _port() -> int:
@@ -100,13 +102,53 @@ def _start_auto_sync() -> None:
 
 
 def _watched_files() -> list[str]:
+    """Return authored frontend files only, never runtime/generated assets."""
     watched: list[str] = []
     for relative in ("app/templates", "app/static"):
         root = REPO_ROOT / relative
         if not root.exists():
             continue
-        watched.extend(str(path) for path in root.rglob("*") if path.is_file())
+        watched.extend(
+            str(path)
+            for path in root.rglob("*")
+            if path.is_file() and path.suffix.lower() in LIVE_RELOAD_SUFFIXES
+        )
     return watched
+
+
+def _install_browser_reload(app) -> None:
+    """Reload open HTML pages after the development server restarts."""
+    revision = str(time.time_ns())
+    script = f"""<script id="stats-live-reload">
+(() => {{
+  const loadedRevision = {revision!r};
+  window.setInterval(() => {{
+    fetch("/__stats_live_revision", {{cache: "no-store"}})
+      .then(response => response.ok ? response.text() : "")
+      .then(currentRevision => {{
+        if (currentRevision && currentRevision !== loadedRevision) window.location.reload();
+      }})
+      .catch(() => {{}});
+  }}, {BROWSER_RELOAD_INTERVAL_MS});
+}})();
+</script>"""
+
+    @app.get("/__stats_live_revision")
+    def stats_live_revision():
+        return revision, 200, {"Cache-Control": "no-store"}
+
+    @app.after_request
+    def inject_stats_live_reload(response):
+        content_type = str(response.content_type or "").lower()
+        if response.status_code != 200 or response.direct_passthrough or "text/html" not in content_type:
+            return response
+        body = response.get_data(as_text=True)
+        marker = body.lower().rfind("</body>")
+        if marker < 0 or 'id="stats-live-reload"' in body:
+            return response
+        response.set_data(body[:marker] + script + body[marker:])
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
 
 def create_dev_app():
@@ -115,6 +157,7 @@ def create_dev_app():
         TEMPLATES_AUTO_RELOAD=True,
         SEND_FILE_MAX_AGE_DEFAULT=0,
     )
+    _install_browser_reload(app)
     return app
 
 
@@ -132,11 +175,12 @@ def main() -> int:
 
     if reloader_child:
         app.extensions["stats_runtime"].platform.start_remote_qr_refresh()
+        app.extensions["stats_runtime"].report_updates.start()
 
     print("Stats live development server")
     print(f"Open http://{HOST}:{port}")
     print(f"GitHub {LIVE_BRANCH} auto-sync: every {SYNC_INTERVAL_SECONDS} seconds")
-    print("Python, template, CSS, and JavaScript changes are watched locally.")
+    print("Python, template, CSS, and JavaScript changes refresh the browser automatically.")
     print("Press Ctrl+C to stop.")
 
     app.run(

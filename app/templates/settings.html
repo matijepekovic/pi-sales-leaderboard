@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Stats Settings</title>
   <link rel="stylesheet" href="/static/settings/shell.css">
+  <link rel="stylesheet" href="/static/runtime/widget-renderer.css">
+  <link rel="stylesheet" href="/static/settings/widgets.css">
 </head>
 <body>
   <div id="settingsLockOverlay" aria-hidden="true">
@@ -31,12 +33,14 @@
         <nav id="settingsNav" role="tablist" aria-orientation="vertical">
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsOverview">Overview</button>
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsData">Data</button>
-          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsDisplayValues">Display Values</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsFields">Fields</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsWidgets">Widgets</button>
+          <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsGroups">Groups</button>
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsScreens">Screens</button>
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsDisplay">Display</button>
           <button class="settings-nav-button" type="button" role="tab" data-settings-target="settingsSoftware">Software Update</button>
         </nav>
-        <div class="settings-sidebar-footer">Source → Report → Display Values → Screen → Display</div>
+        <div class="settings-sidebar-footer">Fields · Widgets · Groups · Screens</div>
       </aside>
 
       <main id="settingsMain">
@@ -50,9 +54,11 @@
         <div id="settingsContent">
           <div id="settingsContentInner">
             <section class="settings-section" id="settingsOverview" data-settings-title="Overview" data-settings-description="See exactly what Stats currently has configured and what is playing."><div id="settingsOverviewHost"></div></section>
-            <section class="settings-section" id="settingsData" data-settings-title="Data" data-settings-description="Configure Reports, Data Filters and inspect pulled data."><div id="settingsDataHost"></div></section>
-            <section class="settings-section" id="settingsDisplayValues" data-settings-title="Display Values" data-settings-description="See the Report fields available for Screens to display, sort and rank."><div id="settingsDisplayValuesHost"></div></section>
-            <section class="settings-section" id="settingsScreens" data-settings-title="Screens" data-settings-description="Choose Reports and Display Values, build the presentation, design it and preview it."><div id="settingsScreensHost"></div></section>
+            <section class="settings-section" id="settingsData" data-settings-title="Data" data-settings-description="Configure Reports and Data Filters, inspect pulled data and edit its fields."><div id="settingsDataHost"></div></section>
+            <section class="settings-section" id="settingsFields" data-settings-title="Fields" data-settings-description="Manage every Report, Calculated, Group, and Table Field in one place."><div id="settingsFieldsHost"></div></section>
+            <section class="settings-section" id="settingsWidgets" data-settings-title="Widgets" data-settings-description="Build reusable tables and charts from Fields, with a real-data preview."><div id="settingsWidgetsHost"></div></section>
+            <section class="settings-section" id="settingsGroups" data-settings-title="Groups" data-settings-description="Define types such as Teams or Products, assign members from a Report to named Groups, and give each Group a Theme."><div id="settingsGroupsHost"></div></section>
+            <section class="settings-section" id="settingsScreens" data-settings-title="Screens" data-settings-description="Place Widgets, choose Group context, and fit the presentation to your Display."><div id="settingsScreensHost"></div></section>
             <section class="settings-section" id="settingsDisplay" data-settings-title="Display" data-settings-description="Choose the active Screen and configure rotation."><div id="settingsDisplayHost"></div></section>
             <section class="settings-section" id="settingsSoftware" data-settings-title="Software Update" data-settings-description="See the installed version and install a signed Stats update.">
               <div class="card">
@@ -68,11 +74,18 @@
   </div>
 
   <script src="/static/settings/runtime.js"></script>
+  <script src="/static/runtime/field-values.js"></script>
+  <script src="/static/runtime/widget-charts.js"></script>
+  <script src="/static/runtime/widget-renderer.js"></script>
   <script src="/static/settings/shell.js"></script>
   <script src="/static/settings/overview.js"></script>
+  <script src="/static/settings/fields.js"></script>
+  <script src="/static/settings/field-formulas.js"></script>
   <script src="/static/settings/data.js"></script>
-  <script src="/static/settings/display-values.js"></script>
   <script src="/static/settings/theme.js"></script>
+  <script src="/static/settings/groups.js"></script>
+  <script src="/static/settings/widgets.js"></script>
+  <script src="/static/settings/screen-assets.js"></script>
   <script src="/static/settings/screens.js"></script>
   <script src="/static/settings/display.js"></script>
   <script src="/static/settings/software.js"></script>

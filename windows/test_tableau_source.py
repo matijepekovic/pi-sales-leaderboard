@@ -12,6 +12,7 @@ APP = ROOT / "app"
 sys.path.insert(0, str(APP))
 
 from sources.tableau_configured import ConfiguredTableauSource  # noqa: E402
+from sources.tableau_base import TableauError  # noqa: E402
 from sources.tableau_mapped import parse_mapped  # noqa: E402
 
 
@@ -46,6 +47,30 @@ class CapturingSource(ConfiguredTableauSource):
 
 
 class TableauSourceContractTests(unittest.TestCase):
+    def test_workbook_unauthorized_is_reported_as_access_failure(self):
+        class UnauthorizedWorkbookSource(CapturingSource):
+            def _request(self, *args, **kwargs):
+                return 401, b""
+
+        source = UnauthorizedWorkbookSource(workbook="SalesReportingSiding")
+        with self.assertRaisesRegex(
+            TableauError,
+            r"^Tableau rejected access to workbook 'SalesReportingSiding'\.",
+        ):
+            source._workbook_id("base", "token", "site")
+
+    def test_missing_workbook_is_reported_without_an_authentication_claim(self):
+        class MissingWorkbookSource(CapturingSource):
+            def _request(self, *args, **kwargs):
+                return 404, b""
+
+        source = MissingWorkbookSource(workbook="SalesReportingSiding")
+        with self.assertRaisesRegex(
+            TableauError,
+            r"^Could not find Tableau workbook 'SalesReportingSiding'\.$",
+        ):
+            source._workbook_id("base", "token", "site")
+
     def test_parameter_names_use_tableau_parameters_namespace(self):
         source = CapturingSource(
             date_start_field="Parameters.Select Start Date",
@@ -104,6 +129,22 @@ class TableauSourceContractTests(unittest.TestCase):
         self.assertEqual(csv_error, "")
         self.assertEqual(len(source.requests), 1)
         self.assertIn("/crosstab/excel?", source.requests[0])
+
+    def test_empty_current_month_dashboard_reports_no_data_instead_of_crosstab_error(self):
+        class EmptyDashboardSource(CapturingSource):
+            def _view_id(self, base, token, site_id):
+                return "dashboard-id"
+
+            def fetch_csv(self, base, token, site_id, start, end):
+                return ""
+
+            def _query_crosstab(self, *args, **kwargs):
+                raise TableauError("Tableau Crosstab download failed (HTTP 400)")
+
+        source = EmptyDashboardSource(export="auto")
+        source.config["data_date_mode"] = "current_month"
+        with self.assertRaisesRegex(TableauError, r"^No data returned for Current month\.$"):
+            source.read_export("base", "token", "site", "2026-09-01", "2026-09-30")
 
     def test_explicit_crosstab_never_reads_stitched_csv(self):
         class CrosstabOnlySource(CapturingSource):

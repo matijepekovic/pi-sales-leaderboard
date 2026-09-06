@@ -7,34 +7,28 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SETTINGS = ROOT / "app" / "templates" / "settings.html"
-FILTERS = ROOT / "app" / "static" / "settings" / "filters.js"
 SCREENS = ROOT / "app" / "static" / "settings" / "screens.js"
 DATA = ROOT / "app" / "static" / "settings" / "data.js"
 
 
 class FilterScreenUiContractTests(unittest.TestCase):
-    def test_filters_are_managed_against_real_pulled_data(self):
+    def test_data_filters_are_owned_by_the_report_editor(self):
         template = SETTINGS.read_text(encoding="utf-8")
-        filters = FILTERS.read_text(encoding="utf-8")
         data = DATA.read_text(encoding="utf-8")
 
-        self.assertIn("settingsFiltersHost", template)
-        self.assertIn("/static/settings/filters.js", template)
-        self.assertIn("/api/data/reports/", filters)
-        self.assertIn("/inspect", filters)
-        self.assertIn("sample_values", filters)
-        self.assertIn("Pulled Report Data", filters)
-        self.assertIn("Test Filter", filters)
+        self.assertNotIn("settingsFiltersHost", template)
+        self.assertNotIn("/static/settings/filters.js", template)
         self.assertIn("Data Filters", data)
-        self.assertNotIn("Filter Set", filters)
-        self.assertNotIn("filter set", filters.lower())
+        self.assertIn("Filter the data pulled for this Report", data)
+        self.assertIn("data-data-filter-field", data)
+        self.assertIn("data-data-filter-value", data)
 
-    def test_screens_select_filters_without_owning_filter_rules(self):
+    def test_screens_do_not_duplicate_data_filter_configuration(self):
         screens = SCREENS.read_text(encoding="utf-8")
-        self.assertIn("Assign Filters", screens)
-        self.assertIn("+ Create Filter", screens)
-        self.assertIn("filter_ids", screens)
         self.assertIn("Live Preview", screens)
+        self.assertNotIn("Assign Filters", screens)
+        self.assertNotIn("+ Create Filter", screens)
+        self.assertNotIn("/api/filters", screens)
         self.assertNotIn("display_filter_mappings", screens)
         self.assertNotIn("filter_values", screens)
 

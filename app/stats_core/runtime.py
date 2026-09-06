@@ -8,7 +8,12 @@ class Runtime:
     auth: object
     source: object
     reports: object
+    report_updates: object
     filters: object
+    groups: object
+    fields: object
+    table_presets: object
+    widgets: object
     screens: object
     display: object
     theme: object

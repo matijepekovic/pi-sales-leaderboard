@@ -131,13 +131,14 @@ class CurrentUiOwnershipTests(unittest.TestCase):
         self.assertNotIn("data-screen-display.js", template)
         self.assertNotIn("windows-sidebar.js", template)
         for section in (
-            "settingsOverview", "settingsData", "settingsDisplayValues",
-            "settingsScreens", "settingsDisplay", "settingsSoftware",
+            "settingsOverview", "settingsData",
+            "settingsFields", "settingsWidgets", "settingsGroups", "settingsScreens", "settingsDisplay", "settingsSoftware",
         ):
             self.assertIn(section, template)
+        self.assertNotIn("settingsDisplayValues", template)
         for script in (
             "runtime.js", "shell.js", "overview.js", "data.js",
-            "display-values.js", "theme.js", "screens.js", "display.js", "software.js",
+            "fields.js", "theme.js", "groups.js", "widgets.js", "screens.js", "display.js", "software.js",
         ):
             self.assertIn(f"/static/settings/{script}", template)
         self.assertNotIn("/static/settings/filters.js", template)
@@ -148,25 +149,50 @@ class CurrentUiOwnershipTests(unittest.TestCase):
         self.assertIn("/api/data/reports", script)
         self.assertIn("Data Filters", script)
         self.assertIn("View Data", script)
-        self.assertIn("Read Report Fields", script)
-        self.assertIn("Test Pull", script)
+        self.assertIn("/report-columns", script)
 
-    def test_display_values_ui_exposes_report_fields_without_filter_api(self):
-        script = (APP_DIR / "static" / "settings" / "display-values.js").read_text(encoding="utf-8")
-        self.assertIn("Display Values", script)
-        self.assertIn("/api/data/reports", script)
-        self.assertIn("/inspect", script)
+    def test_field_editor_is_shared_from_the_central_fields_tab(self):
+        script = (APP_DIR / "static" / "settings" / "fields.js").read_text(encoding="utf-8")
+        template = (APP_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
+        data = (APP_DIR / "static" / "settings" / "data.js").read_text(encoding="utf-8")
+        screens = (APP_DIR / "static" / "settings" / "screens.js").read_text(encoding="utf-8")
+        self.assertIn("StatsFieldEditor", script)
+        self.assertIn("/api/fields", script)
+        self.assertIn("+ Calculated Field", script)
+        self.assertIn("+ Group Field", script)
+        self.assertIn("StatsFieldEditor", data)
+        self.assertIn("StatsFieldEditor", screens)
+        self.assertIn("settingsFields", template)
+        self.assertIn("settingsFieldsHost", template)
         self.assertNotIn("/api/filters", script)
+        self.assertIn("previewFields=fields()", script)
+        self.assertNotIn("fields().slice(0,12)", script)
         self.assertFalse((APP_DIR / "static" / "settings" / "filters.js").exists())
 
-    def test_screen_ui_uses_display_values_and_live_previews(self):
+    def test_screen_ui_uses_fields_and_live_previews(self):
         script = (APP_DIR / "static" / "settings" / "screens.js").read_text(encoding="utf-8")
-        self.assertIn("Display Values", script)
+        theme = (APP_DIR / "static" / "settings" / "theme.js").read_text(encoding="utf-8")
+        widgets = (APP_DIR / "static" / "settings" / "widgets.js").read_text(encoding="utf-8")
+        renderer = (APP_DIR / "static" / "runtime" / "widget-renderer.js").read_text(encoding="utf-8")
+        self.assertIn("StatsFieldEditor", script)
         self.assertIn("/api/screens/preview", script)
+        self.assertIn("data-widget-field-editor", script)
+        self.assertIn("data-widget-drag", widgets)
+        self.assertIn("data-widget-drop", widgets)
+        self.assertIn("StatsFieldValues.format", renderer)
+        self.assertIn("editableFields", renderer)
+        self.assertIn("StatsFieldEditor.openById", widgets)
+        self.assertNotIn("FieldEditor.list", script)
         self.assertNotIn("+ Create Filter", script)
         self.assertNotIn("/api/filters", script)
         self.assertNotIn("display_filter_mappings", script)
         self.assertNotIn("filter_values", script)
+        self.assertIn('addEventListener("pointerdown"', script)
+        self.assertIn("data-instance-move", script)
+        self.assertIn("data-instance-resize", script)
+        self.assertIn("StatsWidgetRenderer", theme)
+        self.assertNotIn("StatsThemeLayoutEditor", script)
+        self.assertNotIn("data-layout-content=", script)
 
     def test_display_is_generic_screen_renderer(self):
         template = (APP_DIR / "templates" / "display.html").read_text(encoding="utf-8")

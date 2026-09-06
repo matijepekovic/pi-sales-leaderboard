@@ -1,0 +1,96 @@
+/* Execute the shared renderer contract without a browser or external packages. */
+const assert=require("node:assert/strict");
+const fs=require("node:fs");
+const path=require("node:path");
+const vm=require("node:vm");
+const root=path.resolve(__dirname,".."),context=vm.createContext({window:{},console});
+for(const file of ["field-values.js","widget-charts.js","widget-renderer.js"]){vm.runInContext(fs.readFileSync(path.join(root,"app/static/runtime",file),"utf8"),context);}
+const values=context.window.StatsFieldValues,renderer=context.window.StatsWidgetRenderer;
+assert.equal(values.format("25%","number",2),"0.25");
+assert.equal(values.format(.25,"percent",1),"25.0%");
+assert.equal(values.format(0,"percent",0),"0%");
+assert.equal(values.format(null,"number",2),"0.00");
+assert.equal(values.format("  ","percent",1),"0.0%");
+assert.equal(values.format(null,"text",2),"");
+const rows=[{person:"First",logo:"/assets/first.svg"},{person:"Second",logo:"/assets/second.svg"},{person:"Third",logo:"/assets/third.svg"}];
+const table={widget_id:"people",name:"People <script>",kind:"table",fields:[{key:"person",label:"Name",type:"text"},{key:"logo",label:"Logo",type:"asset"}],rows};
+let html=renderer.render(table,{fit:{rows:2},theme:{assets:{logo_small:"/assets/winner.svg"}}});
+assert.match(html,/First/);assert.match(html,/Second/);assert.doesNotMatch(html,/Third/);
+assert.match(html,/\/assets\/first.svg/);assert.match(html,/\/assets\/second.svg/);assert.doesNotMatch(html,/winner.svg/);
+assert.match(html,/People &lt;script&gt;/);assert.doesNotMatch(html,/<script>/);
+assert.doesNotMatch(html,/data-widget-field-editor/);
+assert.match(renderer.render(table,{editableFields:true}),/data-widget-field-editor="person"/);
+html=renderer.render({...table,rows:[{person:"Ranked",__field_assets:{logo:"/assets/own.svg"}}]});
+assert.match(html,/\/assets\/own.svg/);
+assert.equal(renderer.safeUrl("javascript:alert(1)"),"");
+assert.equal(renderer.themeStyle({colors:{primary:"red;display:none",text:"#ffffff"}}),"--widget-text:#ffffff");
+for(const kind of ["pie","bar","line"]){
+  html=renderer.render({name:"Net versus Cancelled",kind,chart:{categories:["Net","Cancelled"],series:[{label:"Total",values:[700,60]}]}});
+  assert.match(html,/<svg/);assert.match(html,/Cancelled/);assert.doesNotMatch(html,/NaN|Infinity/);
+}
+html=renderer.render({kind:"pie",chart:{categories:["A"],series:[{values:[0]}]}});
+assert.match(html,/No positive values/);
+html=renderer.render({kind:"bar",fields:[{id:"rate",type:"percent",decimals:1}],chart:{categories:["A","B"],series:[{field_id:"rate",label:"Close Rate",values:[.25,null]}]}});
+assert.match(html,/Close Rate: 25.0%/);assert.equal((html.match(/<rect /g)||[]).length,1);
+html=renderer.render({kind:"line",fields:[{id:"net",type:"number",decimals:2}],chart:{categories:["A","B","C"],series:[{field_id:"net",label:"Net",values:[10,null,20]}]}});
+assert.equal((html.match(/<polyline /g)||[]).length,2);
+html=renderer.render({kind:"pie",fields:[{id:"rate",type:"percent",decimals:1},{id:"net",type:"number",decimals:0}],chart:{categories:["Rate","Net"],value_field_ids:["rate","net"],series:[{values:[.25,1000]}]}});
+assert.match(html,/Rate: 25.0%/);assert.match(html,/Net: 1,000/);
+html=renderer.render({kind:"bar",fields:[{id:"rate",type:"percent",decimals:1}],chart:{aggregation:"count",categories:["A"],series:[{field_id:"rate",label:"Count",values:[2]}]}});
+assert.match(html,/Count: 2/);assert.doesNotMatch(html,/%/);
+// Percentage geometry uses an explicit 100% whole, not the sum of the one value.
+const rateChart=fraction=>({name:"Close Rate",kind:"pie",fields:[{id:"rate",type:"percent",decimals:1}],chart:{pie_mode:"percentage",percentage_scale:"fraction",fraction,aggregation:"average",categories:["Close Rate"],value_field_ids:["rate"],series:[{values:[fraction],sample_counts:[fraction===null?0:1]}]}});
+html=renderer.render(rateChart(.143));
+assert.match(html,/14\.3%/);assert.match(html,/85\.7%/);assert.match(html,/out of 100%/);
+const arc=html.match(/stroke-dasharray="([\d.]+) ([\d.]+)"/);
+assert.ok(arc);assert.ok(Math.abs(Number(arc[1])-14.3)<1e-10);assert.ok(Math.abs(Number(arc[2])-85.7)<1e-10);
+assert.doesNotMatch(html,/<circle[^>]+fill="var\(--widget-primary\)"/);
+html=renderer.render(rateChart(0));assert.match(html,/0\.0%/);assert.doesNotMatch(html,/class="widget-percentage-value"/);
+html=renderer.render(rateChart(1));assert.match(html,/stroke-dasharray="100 0"/);
+html=renderer.render(rateChart(null));assert.match(html,/No percentage data/);assert.doesNotMatch(html,/<circle/);
+html=renderer.render(rateChart(1.1));assert.match(html,/requires a value/);assert.doesNotMatch(html,/<circle/);
+const percentBar={kind:"bar",fields:[{id:"rate",type:"percent",decimals:1}],chart:{percentage_scale:"fraction",aggregation:"average",categories:["Person"],series:[{field_id:"rate",label:"Rate",values:[.143]}]}};
+html=renderer.render(percentBar);assert.match(html,/100\.0%/);assert.match(html,/14\.3%/);
+const barHeight=Number(html.match(/<rect[^>]*height="([\d.]+)"/)[1]);assert.ok(Math.abs(barHeight-294*.143)<1e-10);
+html=renderer.render({...percentBar,chart:{...percentBar.chart,series:[{field_id:"rate",label:"Rate",values:[1.2]}]}});assert.match(html,/120\.0%/);assert.doesNotMatch(html,/>1\.2%/);
+html=renderer.render({...percentBar,chart:{...percentBar.chart,series:[{field_id:"rate",label:"Rate",values:[0]}]}});assert.match(html,/<rect[^>]*height="0"/);
+html=renderer.render({...percentBar,chart:{...percentBar.chart,series:[{field_id:"rate",label:"Rate",values:[null]}]}});assert.match(html,/No chart data/);assert.doesNotMatch(html,/<svg/);
+html=renderer.render({kind:"pie",chart:{pie_mode:"composition",categories:["Net","Cancelled"],series:[{values:[80,20]}]}});assert.match(html,/80\.0% of total/);assert.match(html,/20\.0% of total/);
+const ratioChart={name:"Conversion",kind:"pie",fields:[{id:"sold",label:"Sold",type:"number",decimals:0},{id:"issued",label:"Issued",type:"number",decimals:0}],chart:{pie_mode:"percentage",percentage_scale:"fraction",value_type:"percent",aggregation:"ratio",aggregation_label:"Ratio of totals",source_row_count:3,fraction:10/92,categories:["Sold / Issued"],value_field_ids:["sold"],numerator_field_id:"sold",denominator_field_id:"issued",series:[{values:[10/92],numerators:[10],denominators:[92],sample_counts:[2]}]}};
+html=renderer.render(ratioChart);assert.match(html,/10\.9%/);assert.match(html,/10 \/ 92/);assert.match(html,/Ratio of totals/);assert.match(html,/3 matching rows/);assert.match(html,/2 contributing rows/);
+html=renderer.render({...rateChart(.143),chart:{...rateChart(.143).chart,aggregation_label:"Average of available row values (unweighted)",source_row_count:2}});assert.match(html,/unweighted/);assert.match(html,/2 matching rows/);assert.match(html,/1 contributing row/);
+html=renderer.render({...table,fit:{rows:1}},{theme:{widget_styles:{people:{font_size:20,padding:4}}},fit:{font_size:30}});
+assert.match(html,/&quot;font_size&quot;:30/);assert.match(html,/&quot;padding&quot;:4/);
+// Fixed reference pixels scale identically in the Screen preview and 4K Display.
+const styles={},tableNode={tBodies:[{rows:[{},{}]}],tHead:{rows:[{cells:[{},{}]}]}};
+const viewport={clientHeight:600,clientWidth:1200,querySelector:()=>tableNode};
+const node={dataset:{widgetFit:JSON.stringify({rows:2,font_size:24,padding:6})},querySelector:()=>viewport,closest:()=>({clientWidth:3840,dataset:{canvasWidth:"1920"}}),style:{setProperty:(key,value)=>styles[key]=value}};
+renderer.fit({querySelectorAll:()=>[node]});
+assert.equal(styles["--widget-font-size"],"48px");assert.equal(styles["--widget-padding"],"12px");
+context.window.StatsSettings={esc:value=>String(value??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;")};
+vm.runInContext(fs.readFileSync(path.join(root,"app/static/settings/screen-assets.js"),"utf8"),context);
+const assets=context.window.StatsScreenAssets,theme={assets:{hero:"/assets/hero.svg",background:"/assets/bg.svg",row:"/assets/row.svg"},layout:{asset_slots:[{key:"hero",x:5,y:5,width:20,height:20}]}};
+const inherited={};assets.initialize(inherited,theme);assert.equal(inherited.assets.length,1);assert.equal(inherited.assets[0].key,"hero");
+const removed={assets:[]};assets.initialize(removed,theme);assert.equal(removed.assets.length,0);
+html=assets.controls(inherited,theme);assert.match(html,/value="hero"/);assert.doesNotMatch(html,/value="background"|value="row"/);
+html=assets.render(inherited,theme);assert.match(html,/\/assets\/hero.svg/);assert.match(html,/data-screen-asset-resize/);
+console.log("Shared Widget renderer: formatting, row scope, assets, charts and fit passed.");
+// Evaluated formats, not the numerator's source type, define axes and results.
+const numberRatio={kind:"bar",fields:ratioChart.fields,chart:{aggregation:"ratio",value_type:"number",categories:["Average sale"],value_field_ids:["sold"],measure_settings:{sold:{aggregation:"ratio",result_type:"number",denominator_field_id:"issued"}},series:[{label:"Average sale",values:[21100],value_format:{type:"number",decimals:2},numerators:[10550],denominators:[.5],sample_counts:[1]}]}};
+html=renderer.render(numberRatio);assert.match(html,/21,100\.00/);assert.doesNotMatch(html,/%/);
+const averageRatio={...numberRatio,chart:{...numberRatio.chart,percentage_scale:"fraction",measure_settings:{sold:{aggregation:"ratio",result_type:"percent",ratio_mode:"row_average",denominator_field_id:"issued"}},series:[{label:"Average rate",values:[(.25+1/6)/2],value_format:{type:"percent",decimals:1},numerators:[1],denominators:[5],sample_counts:[2]}]}};
+html=renderer.render(averageRatio);assert.match(html,/20\.8%/);assert.match(html,/average of 2 individual row ratios/);assert.doesNotMatch(html,/\(1 \/ 5\)/);
+html=renderer.render({kind:"pie",fields:rateChart(.143).fields,chart:{panels:[{label:"A",chart:rateChart(.143).chart},{label:"B",chart:rateChart(.25).chart}]}});
+assert.match(html,/widget-chart-panels/);assert.equal((html.match(/widget-percentage-value/g)||[]).length,2);assert.match(html,/14\.3%/);assert.match(html,/25\.0%/);
+html=renderer.render({kind:"table",fields:[{id:"value",key:"value",label:"Current",type:"number"},{id:"placement-old",key:"placement-old",label:"Last year",type:"number",instance_only:true}],rows:[{value:0,"placement-old":null,__invalid_fields:["placement-old"]}]},{editableFields:true});
+assert.match(html,/Unavailable/);assert.doesNotMatch(html,/data-widget-field-editor="placement-old"/);assert.match(html,/data-widget-field-editor="value"/);
+html=renderer.render({kind:"pie",chart:{pie_mode:"composition",categories:["Known","Invalid"],series:[{values:[10,null]}]}});assert.match(html,/partial pie would misrepresent/);assert.doesNotMatch(html,/<svg/);
+html=renderer.render({...numberRatio,chart:{...numberRatio.chart,series:[{values:[null],reasons:["Cannot divide by zero."]}]}});assert.match(html,/Cannot divide by zero/);assert.doesNotMatch(html,/<rect/);
+console.log("Per-value formats, honest panels, invalid math and instance-only aliases passed.");
+// Point inspection follows panel/series contracts, including historical rows.
+const chartApi=context.window.StatsWidgetCharts,boundary={matches:()=>true},panel={dataset:{chartPanelIndex:"1"},matches:()=>false,parentElement:boundary};
+const mark={dataset:{chartPoint:"1",chartSeries:"0"},parentElement:panel,closest:()=>mark};
+const inspection=chartApi.inspect({fields:[{key:"net"}],rows:[{net:999}],chart:{panels:[{chart:{}},{chart:{categories:["Jan","Feb"],aggregation_label:"Individual values",series:[{row_indices:[[0],[1]]}],point_details:[{label:"Jan",rows:[{net:1}]},{label:"February 2024",fields:[{key:"name"},{key:"net"}],rows:[{name:"A",net:10},{name:"B",net:20}]}]}}]}},mark);
+assert.equal(inspection.name,"February 2024 · Individual values");assert.equal(inspection.rows.length,1);assert.equal(inspection.rows[0].name,"B");assert.equal(inspection.rows[0].net,20);assert.equal(inspection.fields.length,2);
+const inspectable=renderer.render(rateChart(.143),{editableFields:true});assert.match(inspectable,/data-chart-point="0"/);assert.match(inspectable,/tabindex="0"/);assert.doesNotMatch(renderer.render(rateChart(.143)),/data-chart-point/);
+console.log("Read-only contributing-row inspection and editor-only controls passed.");

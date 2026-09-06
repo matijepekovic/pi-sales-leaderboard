@@ -6,7 +6,7 @@ from pathlib import Path
 
 from flask import jsonify
 
-_INSTALLED = False
+_INSTALL_KEY = "stats_windows_update_status_route"
 _ENDPOINT = "api_windows_update_status"
 
 
@@ -34,8 +34,7 @@ def _latest_status(data_root: Path):
 
 
 def install(app, server_module) -> bool:
-    global _INSTALLED
-    if _INSTALLED:
+    if app.extensions.get(_INSTALL_KEY):
         return False
 
     def status():
@@ -50,5 +49,5 @@ def install(app, server_module) -> bool:
         view_func=status,
         methods=["GET"],
     )
-    _INSTALLED = True
+    app.extensions[_INSTALL_KEY] = True
     return True

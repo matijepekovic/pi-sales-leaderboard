@@ -8,7 +8,7 @@
     preview.style.boxShadow='0 0 0 1px rgba(255,255,255,.10)';
     const image=preview.querySelector('img');
     if(image){
-      image.src='/static/remote-qr-v109.svg?v=113';
+      image.src='/static/remote-qr.svg';
       image.style.borderRadius='4px';
     }
     return true;

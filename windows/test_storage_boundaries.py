@@ -42,8 +42,8 @@ repos = Repositories(data_root={temp!r})
     def test_current_sql_repositories_use_storage_boundary(self):
         repository_root = APP / "stats_core" / "repositories"
         for filename in (
-            "data_catalog.py", "display.py", "filters.py", "meta.py",
-            "screens.py", "settings.py", "source_credentials.py",
+            "data_catalog.py", "display.py", "filters.py", "fields.py", "meta.py",
+            "screens.py", "settings.py", "source_credentials.py", "table_presets.py",
         ):
             text = (repository_root / filename).read_text(encoding="utf-8")
             self.assertIn("stats_core.storage", text, filename)
@@ -53,7 +53,7 @@ repos = Repositories(data_root={temp!r})
         text = (APP / "stats_core" / "repositories" / "__init__.py").read_text(encoding="utf-8")
         for current in (
             "DataCatalogRepository", "SourceCredentialRepository", "ReportDataRepository",
-            "FilterRepository", "ScreenRepository", "DisplayRepository", "ThemeRepository",
+            "FilterRepository", "FieldRepository", "GroupRepository", "ScreenRepository", "TablePresetRepository", "DisplayRepository", "ThemeRepository",
             "AppliedAssetRepository", "AssetLibraryRepository",
         ):
             self.assertIn(current, text)
@@ -88,6 +88,14 @@ repos.filters.save({
 })
 assert repos.filters.get("filter-a")["name"] == "Olympia"
 
+repos.fields.save("report-a", {"key":"calculated-a","kind":"calculated","label":"Average","type":"number"})
+assert repos.fields.get("report-a", "calculated-a")["label"] == "Average"
+
+repos.groups.save({"id":"group-a","name":"Offices"})
+assert repos.groups.get("group-a")["name"] == "Offices"
+repos.groups.save_type({"id":"type-a","name":"Teams","report_id":"report-a","member_key_field":"Office"})
+assert repos.groups.get_type("type-a")["name"] == "Teams"
+
 repos.screens.save({
     "id":"screen-a",
     "name":"Olympia Screen",
@@ -97,6 +105,16 @@ repos.screens.save({
     "theme_mode":"inherited",
 })
 assert repos.screens.get("screen-a")["filter_ids"] == ["filter-a"]
+
+repos.table_presets.save({
+    "id":"preset-a",
+    "report_id":"report-a",
+    "name":"Leaderboard",
+    "columns":["Office"],
+    "sort_field":"Office",
+    "sort_direction":"asc",
+})
+assert repos.table_presets.get("preset-a")["columns"] == ["Office"]
 
 repos.display.save({"active_screen_id":"screen-a","rotation_enabled":False,"rotation_screen_ids":[],"rotation_seconds":15})
 assert repos.display.get()["active_screen_id"] == "screen-a"

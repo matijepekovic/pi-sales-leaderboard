@@ -9,6 +9,17 @@ _SCREENS_KEY = "screen_definitions"
 
 
 class ScreenRepository:
+    def backup_legacy(self, screen):
+        """Keep the original pre-Widget definition once, including retry failures."""
+        key = "screen_legacy_backup:" + str(screen["id"])
+        with sqlite.connect() as con:
+            con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, json.dumps(screen)))
+
+    def read_legacy_backup(self, screen_id):
+        with sqlite.connect() as con:
+            row = con.execute("SELECT value FROM settings WHERE key=?", ("screen_legacy_backup:" + str(screen_id),)).fetchone()
+        return json.loads(row["value"]) if row else None
+
     def list(self):
         with sqlite.connect() as con:
             row = con.execute(

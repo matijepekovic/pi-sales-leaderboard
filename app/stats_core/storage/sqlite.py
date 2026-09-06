@@ -2,13 +2,24 @@ import json
 import sqlite3
 import threading
 from contextlib import contextmanager
+from pathlib import Path
 
 from stats_core.config import DEFAULT_METRICS, DEFAULT_SETTINGS
 from stats_core.paths import prepare_data_dir
 
+_LOCK = threading.RLock()
 DATA_DIR = prepare_data_dir()
 DB_PATH = DATA_DIR / "leaderboard.db"
-_LOCK = threading.RLock()
+
+
+def configure(data_dir=None):
+    """Select the database owned by the application composition root."""
+    global DATA_DIR, DB_PATH
+    selected = Path(data_dir) if data_dir is not None else prepare_data_dir()
+    with _LOCK:
+        DATA_DIR = selected
+        DB_PATH = selected / "leaderboard.db"
+    return DB_PATH
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS reps (

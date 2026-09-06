@@ -61,6 +61,16 @@ def blueprint(sources, reports):
         except Exception as exc:
             return error_response(exc)
 
+    @bp.post("/api/data/sources/<source_id>/report-columns")
+    def source_report_columns(source_id):
+        try:
+            return jsonify({
+                "ok": True,
+                **sources.candidate_columns_for(source_id, request.get_json(silent=True) or {}),
+            })
+        except Exception as exc:
+            return error_response(exc)
+
     @bp.get("/api/data/reports")
     def list_reports():
         try:
@@ -118,6 +128,38 @@ def blueprint(sources, reports):
     def inspect_report(report_id):
         try:
             return jsonify({"ok": True, **reports.inspect(report_id)})
+        except Exception as exc:
+            return error_response(exc)
+
+    @bp.get("/api/data/reports/<report_id>/duplicates")
+    def report_duplicates(report_id):
+        try:
+            return jsonify({"ok": True, **reports.duplicates(report_id, request.args.get("field"))})
+        except Exception as exc:
+            return error_response(exc)
+
+    @bp.put("/api/data/reports/<report_id>/deduplication")
+    def set_report_deduplication(report_id):
+        try:
+            return jsonify({"ok": True, **reports.set_deduplication(report_id, request.get_json(silent=True) or {})})
+        except Exception as exc:
+            return error_response(exc)
+
+    @bp.delete("/api/data/reports/<report_id>/deduplication")
+    def clear_report_deduplication(report_id):
+        try:
+            reports.clear_deduplication(report_id)
+            return jsonify({"ok": True})
+        except Exception as exc:
+            return error_response(exc)
+
+    @bp.delete("/api/data/reports/<report_id>/retained-rows")
+    def remove_retained_report_row(report_id):
+        try:
+            return jsonify({
+                "ok": True,
+                **reports.remove_retained_row(report_id, request.get_json(silent=True) or {}),
+            })
         except Exception as exc:
             return error_response(exc)
 

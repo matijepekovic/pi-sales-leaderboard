@@ -1,0 +1,51 @@
+/* Selection must preserve the working DOM and batch real preview requests. */
+const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),vm=require("node:vm");
+const timers=new Map(),requests=[],writes={},inputs=[],details=[],root=path.resolve(__dirname,"..");let sequence=0,renderCount=0;
+const makeNode=name=>({name,scrollTop:0,scrollLeft:0,hidden:false,disabled:false,classList:{toggle:()=>{}},setAttribute:()=>{},querySelector:()=>null,querySelectorAll:()=>[],set innerHTML(value){writes[name]=(writes[name]||0)+1;this.html=value;},set outerHTML(value){writes[name]=(writes[name]||0)+1;this.html=value;}});
+const preview=makeNode("preview"),viewport=makeNode("viewport");preview.querySelector=()=>viewport;
+const nodes={"[data-widget-preview]":preview,"[data-widget-context]":makeNode("context"),"[data-widget-issue]":makeNode("issue"),".widget-field-shelf":makeNode("shelf"),"[data-widget-toolbar]":makeNode("toolbar"),"[data-widget-panel]":makeNode("panel"),"[data-widget-message]":makeNode("message")};
+const host={querySelector:selector=>nodes[selector]||null,querySelectorAll:selector=>selector==="[data-widget-catalog]"?details:selector==="[data-widget-field]"?inputs:[],set innerHTML(value){throw new Error("Field selection replaced the whole editor");}};
+const context=vm.createContext({window:{StatsSettings:{esc:String,on:()=>{},emit:()=>{},json:(method,body)=>({method,body}),api:(url,options)=>new Promise((resolve,reject)=>requests.push({url,options,resolve,reject}))},StatsWidgetRenderer:{render:payload=>{renderCount++;return JSON.stringify(payload);},fit:()=>{}}},document:{getElementById:()=>host},requestAnimationFrame:()=>{},setTimeout:(callback,delay)=>{timers.set(++sequence,{callback,delay});return sequence;},clearTimeout:id=>timers.delete(id),AbortController,console});
+const source=fs.readFileSync(path.join(root,"app/static/settings/widgets.js"),"utf8");
+vm.runInContext(source.replace(/\}\)\(\);\s*$/,'window.selectionTest={S,blank,bindCatalog,setFields,action,editor,saveError,refreshCatalog};})();'),context);
+const B=context.window.selectionTest,clone=value=>JSON.parse(JSON.stringify(value));
+B.S.reports=[{id:"data",name:"Current data",fields:["a","b","c","d"].map(id=>({id,label:`Field ${id}`,type:"number"}))},{id:"other",name:"Other data",fields:[{id:"z",label:"Other Field",type:"number"}]}];
+B.S.draft=B.blank();B.S.draft.field_ids=["a"];B.S.verified=clone(B.S.draft);B.S.payload={kind:"table",name:"Verified table",fields:[],rows:[{a:1}],total_rows:1};
+const count=makeNode("count"),all=makeNode("all"),clear=makeNode("clear"),catalog=makeNode("catalog");
+catalog.scrollTop=225;catalog.open=true;catalog.dataset={widgetCatalog:"data"};catalog.addEventListener=()=>{};
+catalog.querySelector=selector=>selector==="[data-widget-selection-count]"?count:selector.includes("select-fields")?all:clear;
+catalog.querySelectorAll=()=>inputs;details.push(catalog);
+for(const id of ["a","b","c","d"]){const checkbox={dataset:{widgetField:id},checked:id==="a",addEventListener:(name,callback)=>{checkbox[name]=callback;}};inputs.push(checkbox);}
+B.bindCatalog(host);context.document.activeElement=inputs[1];viewport.scrollTop=110;viewport.scrollLeft=70;
+nodes[".widget-field-shelf"].scrollLeft=90;
+const toggle=(id,checked)=>{const input=inputs.find(item=>item.dataset.widgetField===id);input.checked=checked;input.change();};
+const flush=()=>{const tasks=[...timers.values()];timers.clear();return Promise.all(tasks.map(task=>task.callback()));};
+const response=name=>({payload:{kind:"table",name,fields:[],rows:[{a:1}],total_rows:1}});
+(async()=>{
+  toggle("b",true);toggle("c",true);toggle("d",true);
+  assert.deepEqual(clone(B.S.draft.chart.measure_field_ids),["b","c","d"],"Newly selected numeric fields start with individual chart values");
+  assert.deepEqual(clone(B.S.draft.field_ids),["a","b","c","d"]);assert.equal(timers.size,1);assert.equal([...timers.values()][0].delay,400);assert.equal(requests.length,0);
+  assert.equal(renderCount,0,"Pending selections must not rerender the existing large preview");assert.equal(writes.preview||0,0);assert.equal(writes.catalog||0,0);
+  assert.equal(context.document.activeElement,inputs[1]);assert.equal(catalog.scrollTop,225);assert.equal(catalog.open,true);assert.equal(viewport.scrollTop,110);assert.equal(viewport.scrollLeft,70);assert.equal(count.textContent,"4 / 4");assert.equal(all.disabled,true);assert.match(B.saveError(),/Wait/);
+  assert.equal(nodes[".widget-field-shelf"].scrollLeft,90,"The selected-field shelf must not reset horizontally");
+  const pending=flush();assert.equal(requests.length,1);assert.deepEqual(clone(requests[0].options.body.widget.field_ids),["a","b","c","d"]);
+  toggle("d",false);assert.equal(requests[0].options.signal.aborted,true,"An obsolete preview no longer uses the browser request queue");
+  requests[0].resolve(response("Obsolete"));await pending;assert.equal(B.S.payload.name,"Verified table");assert.equal(writes.preview||0,0);
+  const current=flush();assert.equal(requests.length,2);requests[1].resolve(response("Three fields"));await current;
+  assert.equal(B.S.payload.name,"Three fields");assert.equal(renderCount,1);assert.equal(writes.preview,1);assert.equal(viewport.scrollTop,110);assert.equal(viewport.scrollLeft,70);assert.equal(B.saveError(),"");
+  // Search-scoped bulk selection is one state change and never includes another source.
+  B.setFields(["z"],true);const history=B.S.history.length;B.S.search="Field d";
+  await B.action({dataset:{widgetAction:"select-fields",id:"data"}});
+  assert.deepEqual(clone(B.S.draft.field_ids),["a","b","c","z","d"]);assert.equal(B.S.history.length,history+1);assert.equal(timers.size,1);
+  await B.action({dataset:{widgetAction:"clear-fields",id:"data"}});assert.deepEqual(clone(B.S.draft.field_ids),["a","b","c","z"]);
+  B.S.search="";await B.action({dataset:{widgetAction:"clear-fields",id:"data"}});assert.deepEqual(clone(B.S.draft.field_ids),["z"]);
+  await B.action({dataset:{widgetAction:"select-fields",id:"data"}});assert.deepEqual(clone(B.S.draft.field_ids),["z","a","b","c","d"]);
+  const markup=B.editor();assert.ok(markup.indexOf('class="widget-working-canvas"')<markup.indexOf('class="widget-field-shelf"'),"Selected chips must not move the Field browser down");
+  assert.match(markup,/Select all/);assert.match(markup,/Clear/);B.S.search="Field d";assert.match(B.editor(),/Select matches/);assert.match(B.editor(),/Clear matches/);
+  const browser=makeNode("browser"),list=makeNode("catalog-list");browser.scrollTop=260;
+  nodes[".widget-browser"]=browser;nodes["[data-widget-catalog-list]"]=list;
+  B.S.reports=[{id:"data",name:"Current data",fields:[{id:"d",label:"Field d renamed",type:"number"}]}];
+  B.refreshCatalog();assert.match(list.html,/Field d renamed/);assert.equal(browser.scrollTop,260);
+  assert.equal(context.document.activeElement,inputs[1],"Updating the catalog must not replace the search control");
+  console.log("Fast Field selection: stable picker/preview, focus/scroll retention, batching, cancellation and scoped bulk controls passed.");
+})().catch(error=>{console.error(error);process.exitCode=1;});

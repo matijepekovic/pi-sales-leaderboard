@@ -9,7 +9,7 @@
   const clamp=(value,min,max)=>Math.min(max,Math.max(min,Number(value)||0));
 
   function qrSrc(){
-    return `/static/remote-qr-v109.svg?v=115&t=${Date.now()}`;
+    return `/static/remote-qr.svg?t=${Date.now()}`;
   }
 
   function reloadQr(){

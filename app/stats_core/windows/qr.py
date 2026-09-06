@@ -9,7 +9,7 @@ import qrcode
 
 PORT = 8765
 STATIC_DIR = Path(__file__).resolve().parents[2] / "static"
-OUTPUT = STATIC_DIR / "remote-qr-v109.svg"
+OUTPUT = STATIC_DIR / "remote-qr.svg"
 
 
 def _lan_ipv4():

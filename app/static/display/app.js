@@ -1,44 +1,36 @@
+/* Display consumes resolved Screens and shares Widget rendering with editor previews. */
 (function(){
-  const root=document.getElementById("statsDisplay");
+  const root=document.getElementById("statsDisplay"),Renderer=window.StatsWidgetRenderer;
   const previewScreen=new URLSearchParams(window.location.search).get("screen_id")||"";
-  let lastSignature="";
+  let lastSignature="",canvasSize={width:1920,height:1080};
   const esc=value=>String(value??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
-
-  function format(value,type){
-    if(value===null||value===undefined||value==="")return"";
-    if(type==="number"){const n=Number(String(value).replace(/,/g,""));return Number.isFinite(n)?n.toLocaleString(undefined,{maximumFractionDigits:2}):String(value);}
-    if(type==="currency"){const n=Number(String(value).replace(/[$,]/g,""));return Number.isFinite(n)?n.toLocaleString(undefined,{style:"currency",currency:"USD",maximumFractionDigits:0}):String(value);}
-    if(type==="percent"){const raw=String(value);if(raw.includes("%"))return raw;const n=Number(raw.replace(/,/g,""));return Number.isFinite(n)?`${n.toLocaleString(undefined,{maximumFractionDigits:1})}%`:raw;}
-    return String(value);
+  const numeric=(value,fallback)=>Number.isFinite(Number(value))?Number(value):fallback;
+  function assets(theme,layout){
+    return (layout?.asset_slots||[]).map(slot=>{const url=Renderer.safeUrl(theme?.assets?.[slot.key]);return url?'<img class="display-planned-asset" src="'+esc(url)+'" alt="" style="left:'+numeric(slot.x,0)+'%;top:'+numeric(slot.y,0)+'%;width:'+numeric(slot.width,15)+'%;height:'+numeric(slot.height,15)+'%;object-fit:'+(slot.fit==="cover"?"cover":"contain")+'">':"";}).join("");
   }
-
-  function applyTheme(theme){
-    const colors=theme?.colors||{},vars={background:"--background",panel:"--panel",text:"--text",muted:"--muted",primary:"--primary",primary_bright:"--primary-bright",primary_dark:"--primary-dark",secondary:"--secondary",champion_text:"--champion-text"};
-    for(const [key,name] of Object.entries(vars)){if(colors[key])document.documentElement.style.setProperty(name,colors[key]);}
-    document.body.style.backgroundImage=theme?.assets?.background?`url("${theme.assets.background}")`:"none";
+  function fitCanvas(){
+    const canvas=root.querySelector("[data-display-canvas]");if(!canvas)return;
+    const scale=Math.min(root.clientWidth/canvasSize.width,root.clientHeight/canvasSize.height);
+    canvas.style.width=canvasSize.width*scale+"px";canvas.style.height=canvasSize.height*scale+"px";
+    Renderer.fit(canvas);
   }
-
-  function sectionHtml(section,theme){
-    const fields=section.fields||[],rows=section.rows||[],rowAsset=theme?.assets?.row||"",championAsset=theme?.assets?.champion||"";
-    const body=rows.map((row,index)=>{const asset=index===0?championAsset:rowAsset,style=asset?` style="background-image:linear-gradient(rgba(0,0,0,.12),rgba(0,0,0,.12)),url('${esc(asset)}')"`:"";return `<tr${style}>${fields.map(field=>`<td title="${esc(row[field.key]??"")}">${esc(format(row[field.key],field.type))}</td>`).join("")}</tr>`;}).join("");
-    return `<section class="report-section"><div class="report-heading"><div class="report-name">${esc(section.report_name||section.report_id)}</div><div class="report-count">${Number(section.total_rows||rows.length)} rows</div></div><div class="table-viewport"><table class="stats-table"><thead><tr>${fields.map(field=>`<th>${esc(field.label||field.key)}</th>`).join("")}</tr></thead><tbody>${body||`<tr><td colspan="${Math.max(fields.length,1)}">No matching rows</td></tr>`}</tbody></table></div></section>`;
-  }
-
   function render(payload){
-    applyTheme(payload?.theme);
-    if(!payload||payload.mode==="empty"||!payload.screen_id){root.innerHTML='<div class="display-shell"><div class="empty">No Screen configured.<br><span style="font-size:.55em">Open Settings → Screens to create one.</span></div></div>';return;}
-    const filters=(payload.display_filters||[]).map(filter=>`<span class="filter-pill">${esc(filter.name)}</span>`).join(""),hero=payload.theme?.assets?.hero||"";
-    root.innerHTML=`<div class="display-shell"><header class="display-header" ${hero?`style="background-image:linear-gradient(rgba(0,0,0,.32),rgba(0,0,0,.32)),url('${esc(hero)}')"`:""}><div class="display-title">${esc(payload.screen_name||"Stats")}</div><div class="display-filters">${filters}</div></header><main class="sections">${(payload.sections||[]).map(section=>sectionHtml(section,payload.theme)).join("")||'<div class="empty">This Screen has no data to display.</div>'}</main></div>`;
+    if(!payload||payload.mode==="empty"||!payload.screen_id){root.innerHTML='<div class="display-empty">No Screen configured.<br><span>Open Settings → Screens to create one.</span></div>';return;}
+    canvasSize={width:numeric(payload.canvas?.width,1920),height:numeric(payload.canvas?.height,1080)};
+    const theme=payload.theme||{},background=Renderer.safeUrl(theme.assets?.background),sections=payload.sections||[],themeLayout=theme.layout||{},assetLayout={asset_slots:Array.isArray(payload.assets)?payload.assets:themeLayout.asset_slots};
+    const content=themeLayout.content||{x:5,y:12,width:90,height:83};
+    const instances=sections.map((section,index)=>{
+      const layout=section.layout||{x:numeric(content.x,5),y:numeric(content.y,12)+index*numeric(content.height,83)/sections.length,width:numeric(content.width,90),height:numeric(content.height,83)/sections.length};
+      return '<div class="display-widget-instance" style="left:'+numeric(layout.x,0)+'%;top:'+numeric(layout.y,0)+'%;width:'+numeric(layout.width,100)+'%;height:'+numeric(layout.height,100)+'%">'+Renderer.render(section,{theme:section.theme||theme,fit:section.fit||{}})+'</div>';
+    }).join("");
+    const isLegacy=sections.some(section=>!section.instance_id);
+    root.innerHTML='<main class="display-canvas" data-display-canvas data-canvas-width="'+canvasSize.width+'" style="'+Renderer.themeStyle(theme)+'">'+(background?'<img class="display-background" src="'+esc(background)+'" alt="">':"")+assets(theme,assetLayout)+(isLegacy?'<header class="display-legacy-title">'+esc(payload.screen_name||"Stats")+'</header>':"")+(instances||'<div class="display-empty">This Screen has no Widgets.</div>')+'</main>';
+    requestAnimationFrame(fitCanvas);
   }
-
+  if("ResizeObserver" in window)new ResizeObserver(fitCanvas).observe(root);else window.addEventListener("resize",fitCanvas);
   async function refresh(){
-    try{
-      const url=previewScreen?`/api/display/render?screen_id=${encodeURIComponent(previewScreen)}`:"/api/display/render";
-      const response=await fetch(url,{cache:"no-store"}),data=await response.json();
-      if(!response.ok||data.ok===false)throw new Error(data.error||"Could not load Display.");
-      const payload=data.payload||{},signature=JSON.stringify(payload);if(signature!==lastSignature){lastSignature=signature;render(payload);}
-    }catch(error){root.innerHTML=`<div class="display-shell"><div class="empty error">${esc(error.message||"Display unavailable")}</div></div>`;}
+    try{const url=previewScreen?"/api/display/render?screen_id="+encodeURIComponent(previewScreen):"/api/display/render",response=await fetch(url,{cache:"no-store"}),data=await response.json();if(!response.ok||data.ok===false)throw new Error(data.error||"Could not load Display.");const payload=data.payload||{},signature=JSON.stringify(payload);if(signature!==lastSignature){lastSignature=signature;render(payload);}}
+    catch(error){if(!lastSignature)root.innerHTML='<div class="display-empty display-error">'+esc(error.message||"Display unavailable")+'</div>';}
   }
-
   refresh();setInterval(refresh,3000);
 })();

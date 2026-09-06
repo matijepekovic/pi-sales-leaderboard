@@ -167,8 +167,16 @@ class ConfiguredTableauSource(_base.TableauSource):
         status, raw = self._request(
             f"{base}/sites/{site_id}/workbooks/{key}?key=contentUrl", token=token)
         if status != 200:
+            if status in (401, 403):
+                raise _base.TableauError(
+                    f"Tableau rejected access to workbook '{self.workbook}'. "
+                    "Reconnect the Source or verify that its PAT can access this workbook."
+                )
+            if status == 404:
+                raise _base.TableauError(
+                    f"Could not find Tableau workbook '{self.workbook}'.")
             raise _base.TableauError(
-                f"Could not find Tableau workbook '{self.workbook}' (HTTP {status}).")
+                f"Could not load Tableau workbook '{self.workbook}' (HTTP {status}).")
         try:
             workbook_id = str(
                 _base.json.loads(raw).get("workbook", {}).get("id") or "").strip()
@@ -317,8 +325,15 @@ class ConfiguredTableauSource(_base.TableauSource):
                 "for this sheet, or check the filters being sent.")
 
         view_id = self._view_id(base, token, site_id)
-        book = self._query_crosstab(base, token, site_id, view_id, start, end,
-                                    self.filters)
+        try:
+            book = self._query_crosstab(base, token, site_id, view_id, start, end,
+                                        self.filters)
+        except _base.TableauError as exc:
+            if not csv_error:
+                mode = str(self.config.get("data_date_mode") or "current_month")
+                window = "Current month" if mode != "custom" else f"{start} to {end}"
+                raise _base.TableauError(f"No data returned for {window}.") from exc
+            raise
         return book, "crosstab", csv_error
 
     # -------------------------------------------------------------- the rows

@@ -8,7 +8,7 @@ from flask import jsonify
 
 from stats_core.windows import https, update
 
-_INSTALLED = False
+_INSTALL_KEY = "stats_windows_update_diagnostics_route"
 
 
 def _error_text(exc):
@@ -95,13 +95,12 @@ def collect_diagnostics(server_module):
 
 
 def install(app, server_module):
-    global _INSTALLED
-    if _INSTALLED:
+    if app.extensions.get(_INSTALL_KEY):
         return False
 
     @app.get("/api/windows/update/diagnostics")
     def windows_update_diagnostics():
         return jsonify(collect_diagnostics(server_module))
 
-    _INSTALLED = True
+    app.extensions[_INSTALL_KEY] = True
     return True
