@@ -46,7 +46,8 @@ jobs:
           sudo -u scoreboard -H sed -i 's/PRINTER_QUEUE=konicaa/PRINTER_QUEUE=printer_app_ci/' /home/scoreboard/.config/printer-app/env
           sudo -u scoreboard -H "$PYTHON" /home/scoreboard/source/printer_app/deploy.py install
           curl --fail http://127.0.0.1:5055/health
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/)" = 302
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/login)" = 404
           sudo systemctl stop printer-app-web.service
           sudo systemctl is-active --quiet printer-app-worker.service
           sudo systemctl start printer-app-web.service

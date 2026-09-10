@@ -123,7 +123,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['install', 'update', 'rollback'])
     parser.add_argument('--unattended', action='store_true')
-    parser.add_argument('--initial-login-file', type=Path)
+    # Accepted only so the already-installed v134 delivery runner can update to
+    # v135. Printer authentication no longer exists; the file is removed.
+    parser.add_argument('--initial-login-file', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--result-file', type=Path)
     args = parser.parse_args()
     if sys.version_info < (3, 10):
@@ -131,6 +133,8 @@ def main():
     if getpass.getuser() != 'scoreboard' or os.geteuid() == 0:
         raise SystemExit('Run as scoreboard, not root. sudo is used only for system setup/service management.')
     os.umask(0o077)
+    if args.initial_login_file:
+        args.initial_login_file.expanduser().unlink(missing_ok=True)
     base = Path.home() / '.local/lib/printer-app'
     releases = base / 'releases'
     releases.mkdir(parents=True, exist_ok=True)
@@ -141,7 +145,6 @@ def main():
             if not previous.is_symlink() or not (previous.resolve() / '.ready').exists():
                 raise SystemExit('No previous printer release is available')
             release = previous.resolve()
-            # Refuse incompatible schemas; NEVER restore an older deduplication DB.
             run([str(release / '.venv/bin/python'), '-m', 'printer_app.bootstrap', 'migrate'], cwd=release)
             activate(base, release, unattended=args.unattended)
             return
@@ -171,12 +174,7 @@ def main():
             run([python, '-m', 'compileall', '-q', str(release / 'printer_app')])
             (release / '.ready').write_text(release.name + '\n')
         python = str(release / '.venv/bin/python')
-        init = [python, '-m', 'printer_app.bootstrap', 'init']
-        if args.initial_login_file:
-            init.extend(['--initial-login-file', str(args.initial_login_file)])
-        elif args.unattended:
-            raise SystemExit('Unattended setup requires a private --initial-login-file')
-        run(init, cwd=release)
+        run([python, '-m', 'printer_app.bootstrap', 'init'], cwd=release)
         run([python, '-m', 'printer_app.bootstrap', 'migrate'], cwd=release)
         activate(base, release, unattended=args.unattended)
         save_result(args.result_file, release, changed=True)
