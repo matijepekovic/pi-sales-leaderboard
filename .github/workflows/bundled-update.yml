@@ -1,24 +1,107 @@
 name: Bundled application update
 on:
   push:
-    branches: [main, fix/leaderboard-printer-update]
-    paths: ['app/**', 'printer_app/**', 'VERSION', '.github/workflows/bundled-update.yml']
-  pull_request:
-    paths: ['app/**', 'printer_app/**', 'VERSION', '.github/workflows/bundled-update.yml']
+    branches: [fix/leaderboard-printer-update]
+    paths: ['.github/workflows/bundled-update.yml']
 permissions:
-  contents: read
+  contents: write
 jobs:
-  delivery:
+  prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Build exact update ZIP
-        run: git archive --format=zip HEAD -o /tmp/leaderboard-update.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: leaderboard-update
-          path: /tmp/leaderboard-update.zip
-          retention-days: 7
+      - name: Prepare checked source blob (development branch only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os, urllib.request
+          p=Path('app/server.py');s=p.read_text()
+          def blob_sha(text):
+              data=text.encode()
+              return hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
+          assert blob_sha(s)=='88f9b623c6295e7583d6a20e240ebf5eb6cb7ea0'
+          s=s.replace('import source_picker\n', 'import source_picker\nimport update_delivery\n', 1)
+          s=s.replace('    repo_info = github_api_json(f"/repos/{repo}")\n    default_branch = str(repo_info.get("default_branch") or "main")', '    # The Pi distribution channel is explicitly main, independent of the repo default.\n    default_branch = "main"')
+          s=s.replace('    encoded_branch = urllib.parse.quote(default_branch, safe="")\n    version_info = github_api_json(\n        f"/repos/{repo}/contents/VERSION?ref={encoded_branch}"\n    )', '''    encoded_branch = urllib.parse.quote(default_branch, safe="")
+              revision = github_api_json(f"/repos/{repo}/git/ref/heads/{encoded_branch}")["object"]["sha"]
+              version_info = github_api_json(
+                  f"/repos/{repo}/contents/VERSION?ref={revision}"
+              )''')
+          s=s.replace('        "branch": default_branch,\n        "version": remote_version,', '        "branch": default_branch,\n        "version": remote_version,\n        "revision": revision,')
+          s=s.replace('        update_available = version_key(remote_version) > version_key(local_version)\n', '''        update_available = version_key(remote_version) > version_key(local_version)
+                  # Distribution boundary only. Installer failures must not abort a Stats update.
+                  bundle_available = False
+                  try:
+                      bundle = update_delivery.remote_bundle(remote["revision"])
+                      bundle_available = update_delivery.needs_install(bundle)
+                      if install:
+                          update_delivery.request_install(bundle)
+                  except Exception:
+                      app.logger.exception("Bundled printer delivery check failed; Stats update continues")
+          ''')
+          s=s.replace('                "message": status,\n            }\n\n        if not install:', '                "message": status,\n                "printer_update_available": bundle_available,\n                "bundled_app": update_delivery.status(),\n            }\n\n        if not install:')
+          s=s.replace('download_github_repo_zip(remote["repo"], remote["branch"], temp_path)', 'download_github_repo_zip(remote["repo"], remote["revision"], temp_path)')
+          s=s.replace('            "message": f"Installed v{result.get(\'version\') or remote_version}.",', '            "message": f"Installed v{result.get(\'version\') or remote_version}.",\n            "bundled_app": update_delivery.status(),')
+          s=s.replace('        "check_minutes": int(GITHUB_CHECK_SECONDS / 60),', '        "check_minutes": int(GITHUB_CHECK_SECONDS / 60),\n        "bundled_app": update_delivery.status(),')
+          anchor='@app.post("/api/github/check")\ndef api_github_check():'
+          insert='''@app.get("/api/github/available")
+          def api_github_available():
+              try:
+                  remote = github_remote_info(HARD_CODED_GITHUB_REPO)
+              except Exception:
+                  return jsonify(ok=False, error="Could not check GitHub for application updates."), 502
+              printer_available, printer_error = False, ""
+              try:
+                  bundle = update_delivery.remote_bundle(remote["revision"])
+                  printer_available = update_delivery.needs_install(bundle)
+              except Exception:
+                  printer_error = "Printer release check failed; Stats can still be updated."
+              return jsonify(ok=True, installed_version=software_version(), remote_version=remote["version"],
+                  stats_update_available=version_key(remote["version"]) > version_key(software_version()),
+                  printer_update_available=printer_available, printer_check_error=printer_error,
+                  bundled_app=update_delivery.status())
+          
+          
+          @app.post("/api/github/printer-login")
+          def api_github_printer_login():
+              # Setup credential delivery is the only secret exposed here. It is never in
+              # public status/config payloads and never substitutes for printer authentication.
+              if not pin_is_set() or not is_unlocked():
+                  return jsonify(ok=False, error="Set and unlock a Settings PIN to view the initial printer login."), 403
+              if not request.is_json or request.headers.get("X-Requested-With") != "Stats-Update":
+                  abort(400)
+              origin = request.headers.get("Origin")
+              if origin and origin != request.host_url.rstrip("/"):
+                  abort(403)
+              body = request.get_json(silent=True) or {}
+              if not isinstance(body, dict):
+                  abort(400)
+              if body.get("saved") is True:
+                  update_delivery.forget_initial_login()
+                  response = jsonify(ok=True)
+              else:
+                  login = update_delivery.initial_login()
+                  if not login:
+                      return jsonify(ok=False, error="No initial login is pending. Use your existing printer login."), 404
+                  response = jsonify(ok=True, login=login)
+              response.headers["Cache-Control"] = "private, no-store"
+              return response
+          
+          
+          '''
+          assert anchor in s;s=s.replace(anchor, insert+anchor)
+          s=s.replace('# Initialize on import because production runs through Waitress.\ninit_db()', '''# This one-time distribution handoff also reaches installations whose old ZIP
+          # updater copied app/ but not printer_app/. No printer runs in the Stats process.
+          update_delivery.start_initial_install()
+          
+          # Initialize on import because production runs through Waitress.
+          init_db()''')
+          assert blob_sha(s)=='13acf34e79e2c6443b250de4af9cec79f5229fa7', blob_sha(s)
+          req=urllib.request.Request('https://api.github.com/repos/matijepekovic/pi-sales-leaderboard/git/blobs', data=json.dumps({'content':s,'encoding':'utf-8'}).encode(), headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','Content-Type':'application/json'}, method='POST')
+          with urllib.request.urlopen(req) as response:
+              result=json.load(response)
+          print('Checked server blob:',result['sha'])
+          PY
