@@ -49,6 +49,9 @@ class Config:
     host: str = '0.0.0.0'
     port: int = 5055
     secret_key: str = ''
+    # Existing installs may still carry the old hash. It is ignored by the UI
+    # and retained only so the worker can redact it if it ever appears in logs.
+    password_hash: str = ''
     secure_cookie: bool = False
     timezone: str = 'America/Los_Angeles'
     attachment_limit: int = 20 * 1024 * 1024
@@ -77,6 +80,7 @@ class Config:
             host=e.get('PRINTER_HOST', '0.0.0.0'),
             port=int(e.get('PRINTER_PORT', '5055')),
             secret_key=e.get('PRINTER_SECRET_KEY', ''),
+            password_hash=e.get('PRINTER_UI_PASSWORD_HASH', ''),
             secure_cookie=e.get('PRINTER_SECURE_COOKIE', '0') == '1',
             timezone=e.get('PRINTER_TIMEZONE', 'America/Los_Angeles'),
             attachment_limit=int(e.get('MAX_ATTACHMENT_MB', '20')) * 1024 * 1024,
