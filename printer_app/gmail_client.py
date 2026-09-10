@@ -1,0 +1,258 @@
+"""Read-only Gmail IMAP. Fetch bounded attachments individually, not entire messages."""
+from __future__ import annotations
+
+import base64
+import hashlib
+import imaplib
+import logging
+import quopri
+import re
+import ssl
+import time
+from datetime import datetime, timedelta, timezone
+from email import policy
+from email.header import decode_header, make_header
+from email.message import Message
+from email.parser import BytesParser
+from pathlib import Path
+
+from .config import Config, clean_text, safe_name
+from .db import Database
+
+log = logging.getLogger(__name__)
+
+
+def header(value) -> str:
+    try:
+        return clean_text(str(make_header(decode_header(str(value or '')))), 2000)
+    except (LookupError, UnicodeError):
+        return clean_text(value or '', 2000)
+
+
+def sexpr(data: bytes):
+    """Parse IMAP BODYSTRUCTURE, including quoted strings and RFC literals."""
+    if len(data) > 1024 * 1024:
+        raise ValueError('MIME STRUCTURE EXCEEDS SIZE LIMIT')
+    index, nodes = 0, 0
+
+    def read(depth=0):
+        nonlocal index, nodes
+        nodes += 1
+        if depth > 40 or nodes > 20000:
+            raise ValueError('MIME STRUCTURE TOO COMPLEX')
+        while index < len(data) and data[index:index+1].isspace():
+            index += 1
+        if index >= len(data):
+            raise ValueError('INCOMPLETE MIME STRUCTURE')
+        c = data[index:index+1]
+        if c == b'(':
+            index += 1
+            result = []
+            while True:
+                while index < len(data) and data[index:index+1].isspace():
+                    index += 1
+                if data[index:index+1] == b')':
+                    index += 1
+                    return result
+                result.append(read(depth + 1))
+        if c == b'"':
+            index += 1
+            result = bytearray()
+            while index < len(data):
+                c = data[index:index+1]
+                index += 1
+                if c == b'"':
+                    return result.decode('utf-8', 'replace')
+                if c == b'\\' and index < len(data):
+                    c = data[index:index+1]
+                    index += 1
+                result.extend(c)
+            raise ValueError('UNTERMINATED MIME STRING')
+        if c == b'{':
+            match = re.match(rb'\{(\d+)\}\r?\n', data[index:])
+            if not match:
+                raise ValueError('INVALID MIME LITERAL')
+            index += match.end()
+            size = int(match.group(1))
+            if size > len(data) - index:
+                raise ValueError('INCOMPLETE MIME LITERAL')
+            value = data[index:index+size]
+            index += size
+            return value.decode('utf-8', 'replace')
+        start = index
+        while index < len(data) and not data[index:index+1].isspace() and data[index:index+1] not in (b'(', b')'):
+            index += 1
+        if index == start:
+            raise ValueError('INVALID MIME ATOM')
+        value = data[start:index].decode('ascii', 'replace')
+        return None if value.upper() == 'NIL' else value
+    return read()
+
+
+def pairs(value) -> dict:
+    if not isinstance(value, list):
+        return {}
+    return {str(value[i]).lower(): str(value[i+1] or '') for i in range(0, len(value)-1, 2)}
+
+
+def attachment_parts(tree, prefix=''):
+    if not isinstance(tree, list) or not tree:
+        raise ValueError('INVALID MIME STRUCTURE')
+    if isinstance(tree[0], list):
+        for number, child in enumerate(tree, 1):
+            if not isinstance(child, list):
+                break
+            yield from attachment_parts(child, f'{prefix}.{number}' if prefix else str(number))
+        return
+    if len(tree) < 7:
+        raise ValueError('INCOMPLETE MIME BODY')
+    major, minor = str(tree[0]).upper(), str(tree[1]).upper()
+    disposition_index = 9 if major == 'TEXT' else 11 if (major, minor) == ('MESSAGE', 'RFC822') else 8
+    disposition = tree[disposition_index] if len(tree) > disposition_index else None
+    m = Message(policy=policy.default)
+    m['Content-Type'] = f'{major}/{minor}'
+    for k, v in pairs(tree[2]).items():
+        m.set_param(k, v)
+    if isinstance(disposition, list) and disposition:
+        m['Content-Disposition'] = str(disposition[0])
+        for k, v in pairs(disposition[1] if len(disposition) > 1 else None).items():
+            m.set_param(k, v, header='Content-Disposition')
+    filename = m.get_filename()
+    if filename or m.get_content_disposition() == 'attachment' or major == 'MESSAGE':
+        section = prefix or '1'
+        yield {'part': section, 'filename': safe_name(header(filename) or f'attachment-{section}'),
+               'encoding': str(tree[5] or '').upper(), 'size': int(tree[6] or 0)}
+
+
+class GmailClient:
+    def __init__(self, cfg: Config, db: Database, stop=None):
+        self.cfg, self.db, self.stop = cfg, db, stop
+
+    def _fetch(self, client, uid: str, query: str):
+        status, result = client.uid('fetch', uid, query)
+        if status != 'OK' or not result or result == [None]:
+            raise OSError('IMAP FETCH FAILED')
+        return result
+
+    @staticmethod
+    def _literal(result) -> bytes:
+        return b''.join(item[1] for item in result if isinstance(item, tuple) and isinstance(item[1], bytes))
+
+    def _store(self, message: int, part: str, filename: str, payload: bytes = b'', error: str = '') -> None:
+        row = self.db.one('SELECT * FROM attachments WHERE message_id=? AND part=?', (message, part))
+        if row and row['state'] != 'DOWNLOADING':
+            return
+        if not row:
+            self.db.execute('''INSERT OR IGNORE INTO attachments(message_id,part,filename,state,created)
+              VALUES (?,?,?,'DOWNLOADING',?)''', (message, part, filename, time.time()))
+            row = self.db.one('SELECT * FROM attachments WHERE message_id=? AND part=?', (message, part))
+        directory = self.cfg.data_dir / 'attachments' / str(row['id'])
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        target = directory / safe_name(filename)
+        if not error:
+            temporary = target.with_name(target.name + '.partial')
+            with temporary.open('wb') as stream:
+                stream.write(payload)
+                stream.flush()
+                import os
+                os.fsync(stream.fileno())
+            temporary.replace(target)
+        self.db.execute('''UPDATE attachments SET path=?,sha256=?,error=?,state='PENDING' WHERE id=?''',
+            (str(target) if not error else '', hashlib.sha256(payload).hexdigest() if not error else '', error, row['id']))
+        log.info('Attachment stored: id=%s filename=%r bytes=%s error=%r', row['id'], filename, len(payload), error)
+
+    def poll(self) -> int:
+        cfg = self.cfg
+        if not cfg.email_user or not cfg.email_password:
+            self.db.set('gmail_state', 'NOT CONFIGURED')
+            return 0
+        count = 0
+        # One connection per bounded poll; socket timeout keeps network outages recoverable.
+        with imaplib.IMAP4_SSL('imap.gmail.com', 993, ssl_context=ssl.create_default_context(), timeout=30) as client:
+            client.login(cfg.email_user, cfg.email_password)
+            if client.select('"' + cfg.mailbox.replace('\\', '\\\\').replace('"', '\\"') + '"', readonly=True)[0] != 'OK':
+                raise OSError('IMAP MAILBOX SELECTION FAILED')
+            uidvalidity = (client.response('UIDVALIDITY')[1] or [b''])[0]
+            validity = uidvalidity.decode() if isinstance(uidvalidity, bytes) else str(uidvalidity)
+            if not validity or not validity.isdigit():
+                raise OSError('IMAP UIDVALIDITY MISSING')
+            since = datetime.now(timezone.utc) - timedelta(days=cfg.lookback_days)
+            months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+            date = f'{since.day:02d}-{months[since.month-1]}-{since.year}'
+            status, result = client.uid('search', None, 'SINCE', date)
+            if status != 'OK':
+                raise OSError('IMAP SEARCH FAILED')
+            pending = self.db.rows('''SELECT uid FROM processed_messages WHERE account=? AND mailbox=?
+                AND uidvalidity=? AND state='FETCHING' ''', (cfg.email_user, cfg.mailbox, validity))
+            uids = {item.decode() for item in (result[0] or b'').split()} | {r['uid'] for r in pending}
+            examined = 0
+            for uid in sorted(uids, key=int):
+                if self.stop is not None and self.stop.is_set():
+                    return count
+                known = self.db.one('''SELECT state FROM processed_messages WHERE account=? AND mailbox=?
+                  AND uidvalidity=? AND uid=?''', (cfg.email_user, cfg.mailbox, validity, uid))
+                if known and known['state'] == 'COMPLETE':
+                    continue
+                # Bound new-message work, not already-completed messages.
+                if examined >= 100:
+                    break
+                raw_header = self._literal(self._fetch(client, uid, '(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM MESSAGE-ID)])'))
+                if len(raw_header) > 65536:
+                    raise ValueError('EMAIL HEADER EXCEEDS SIZE LIMIT')
+                msg = BytesParser(policy=policy.default).parsebytes(raw_header)
+                subject, sender, message_id = header(msg['Subject']), header(msg['From']), header(msg['Message-ID'])
+                identity_source = message_id or f'{cfg.mailbox}:{validity}:{uid}'
+                identity = hashlib.sha256((cfg.email_user.casefold() + '\0' + identity_source).encode()).hexdigest()
+                qualifies = cfg.subject_contains.casefold() in subject.casefold() and cfg.from_contains.casefold() in sender.casefold()
+                self.db.execute('''INSERT OR IGNORE INTO processed_messages
+                    (identity,account,mailbox,uidvalidity,uid,message_id,subject,sender,state,created)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                    (identity, cfg.email_user, cfg.mailbox, validity, uid, message_id, subject, sender,
+                     'FETCHING' if qualifies else 'COMPLETE', time.time()))
+                record = self.db.one('SELECT * FROM processed_messages WHERE identity=?', (identity,))
+                if record['state'] == 'COMPLETE':
+                    continue
+                examined += 1
+                log.info('Email detected: uid=%s subject=%r', uid, subject)
+                try:
+                    result = self._fetch(client, uid, '(BODYSTRUCTURE)')
+                    raw = b' '.join(b''.join(item) if isinstance(item, tuple) else item for item in result if item)
+                    match = re.search(rb'BODYSTRUCTURE\s+', raw, re.I)
+                    if not match:
+                        raise ValueError('EMAIL MIME STRUCTURE MISSING')
+                    parts = list(attachment_parts(sexpr(raw[match.end():])))
+                except ValueError as exc:
+                    self._store(record['id'], 'mime-error', 'email-structure', error=clean_text(exc))
+                    parts = []
+                for part in parts:
+                    if self.stop is not None and self.stop.is_set():
+                        return count
+                    saved = self.db.one('SELECT state FROM attachments WHERE message_id=? AND part=?', (record['id'], part['part']))
+                    if saved and saved['state'] != 'DOWNLOADING':
+                        continue
+                    maximum = cfg.attachment_limit * 3 + 8192  # quoted-printable/base64 expansion is checked again below
+                    if part['size'] > maximum:
+                        self._store(record['id'], part['part'], part['filename'], error='ATTACHMENT EXCEEDS SIZE LIMIT')
+                        continue
+                    result = self._fetch(client, uid, f'(BODY.PEEK[{part["part"]}]<0.{maximum+1}>)')
+                    encoded = self._literal(result)
+                    try:
+                        if len(encoded) > maximum:
+                            raise ValueError('ATTACHMENT EXCEEDS SIZE LIMIT')
+                        if part['encoding'] == 'BASE64':
+                            payload = base64.b64decode(re.sub(rb'\s+', b'', encoded), validate=True)
+                        elif part['encoding'] == 'QUOTED-PRINTABLE':
+                            payload = quopri.decodestring(encoded)
+                        elif part['encoding'] in ('7BIT', '8BIT', 'BINARY', ''):
+                            payload = encoded
+                        else:
+                            raise ValueError('UNSUPPORTED ATTACHMENT ENCODING')
+                        if len(payload) > cfg.attachment_limit:
+                            raise ValueError('ATTACHMENT EXCEEDS SIZE LIMIT')
+                        self._store(record['id'], part['part'], part['filename'], payload)
+                    except ValueError as exc:
+                        self._store(record['id'], part['part'], part['filename'], error=clean_text(exc))
+                self.db.execute("UPDATE processed_messages SET state='COMPLETE' WHERE id=?", (record['id'],))
+                count += 1
+            self.db.set('gmail_state', 'CONNECTED')
+        return count

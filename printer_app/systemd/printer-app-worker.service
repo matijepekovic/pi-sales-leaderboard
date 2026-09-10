@@ -1,0 +1,40 @@
+[Unit]
+Description=Independent Gmail and CUPS printer worker
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=scoreboard
+Group=scoreboard
+WorkingDirectory=@BASE@/current
+EnvironmentFile=@ENV@
+Environment=PRINTER_ENV_FILE=@ENV@
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/bin/bash @BASE@/current/printer_app/launch.sh worker
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=180
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@DATA@
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=512M
+CPUQuota=75%
+Nice=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=printer-app-worker
+
+[Install]
+WantedBy=multi-user.target

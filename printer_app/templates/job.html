@@ -1,0 +1,9 @@
+{% extends 'base.html' %}{% block title %}Job {{ job.id }} — Print Control{% endblock %}{% block content %}
+<p><a href="{{ url_for('control') }}">← Print Control</a></p><h1>Job {{ job.id }}</h1>
+<section><h2>{{ job.status }}</h2><dl><dt>Attachment</dt><dd>{{ job.filename or 'Test print' }}</dd><dt>Email</dt><dd>{{ job.subject or 'Local test' }}</dd><dt>Sender</dt><dd>{{ job.sender or 'Local' }}</dd><dt>Sub Status</dt><dd>{{ job.substatus or '—' }}</dd><dt>Rendered page count</dt><dd>{{ job.page_count if job.page_count is not none else '—' }}</dd><dt>Created</dt><dd>{{ job.created|localtime }}</dd><dt>Updated</dt><dd>{{ job.updated|localtime }}</dd><dt>Completed</dt><dd>{{ job.completed|localtime }}</dd></dl>{% if job.error %}<p class="error">{{ job.error }}</p>{% endif %}</section>
+<section><h2>Files &amp; preview</h2>{% if job.source_path %}<p><a href="{{ url_for('attachment_file', attachment_id=job.attachment_id) }}">Download source attachment</a></p>{% endif %}
+{% for output in outputs %}<p><a href="{{ url_for('output_file', output_id=output.id) }}">{{ output.role }}</a> · <a href="{{ url_for('output_file', output_id=output.id, download=1) }}">Download</a></p>{% endfor %}
+{% if preview %}<iframe class="pdf" src="{{ url_for('output_file', output_id=preview.id) }}" title="PDF preview"></iframe>{% else %}<p>No preview available yet.</p>{% endif %}</section>
+<section><h2>Processing steps</h2>{% for step in steps %}<p><span class="muted">{{ step.at|localtime }}</span><br>{{ step.message }}</p>{% endfor %}</section>
+<section><h2>Print command results</h2>{% for attempt in attempts %}<h3>{{ attempt.request_id or 'Receipt pending' }} · {{ attempt.state }}</h3><p>{{ attempt.created|localtime }} → {{ attempt.updated|localtime }}</p><pre>{{ attempt.command }}
+{{ attempt.result }}</pre>{% else %}<p>No submission yet.</p>{% endfor %}</section>{% endblock %}
