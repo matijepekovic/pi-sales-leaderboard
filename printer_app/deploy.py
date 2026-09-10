@@ -63,7 +63,7 @@ def install_units(release: Path, base: Path, paths: dict, *, unattended=False):
     with tempfile.TemporaryDirectory() as temp:
         for unit in UNITS:
             text = (release / 'printer_app/systemd' / unit).read_text()
-            for key, value in {'BASE': str(base), 'ENV': paths['env'], 'DATA': paths['data']}.items():
+            for key, value in {'BASE': str(base), 'ENV': paths['env'], 'CONFIG': str(Path(paths['env']).parent), 'DATA': paths['data']}.items():
                 if any(c.isspace() for c in value) or any(c in value for c in ('%', '\n', '"', '\\')):
                     raise ValueError('Installation paths must not contain whitespace, percent signs or quotes')
                 text = text.replace('@' + key + '@', value)

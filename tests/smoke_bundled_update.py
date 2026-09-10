@@ -7,6 +7,9 @@ validation; the production source selector is otherwise exercised unchanged.
 import ast
 import importlib.util
 import json
+import http.cookiejar
+import re
+import urllib.parse
 import os
 from pathlib import Path
 import shutil
@@ -101,6 +104,39 @@ def main():
     assert pid('pi-tableau-leaderboard.service') == '0'
     assert (Path.home()/'.config/printer-app/env').is_file()
     assert not (hidden/'printer_app').exists()
+    # The real sandboxed web service must save its own env, and the independent
+    # worker must reload it while Stats remains stopped. No real Gmail is used.
+    cookies = http.cookiejar.CookieJar()
+    browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookies))
+    with browser.open('http://127.0.0.1:5055/settings') as response:
+        page = response.read().decode()
+    csrf = re.search(r'name="csrf" value="([^"]+)"', page).group(1)
+    revision = re.search(r'name="revision" value="([^"]+)"', page).group(1)
+    web_before, worker_before = pid('printer-app-web.service'), pid('printer-app-worker.service')
+    request = urllib.request.Request('http://127.0.0.1:5055/settings',
+        data=urllib.parse.urlencode({'csrf': csrf, 'revision': revision, 'EMAIL_ENABLED': '0',
+             'EMAIL_POLL_SECONDS': '91', 'PRINTER_TIMEZONE': 'America/Chicago',
+             'EMAIL_SUBJECT_CONTAINS': 'BROWSER SETTINGS CHECK'}).encode(),
+        headers={'Origin': 'http://127.0.0.1:5055'})
+    with browser.open(request) as response:
+        assert response.status == 200 and b'Settings saved' in response.read()
+    for _ in range(30):
+        with browser.open('http://127.0.0.1:5055/api/status') as response:
+            applied = json.load(response)
+        if applied['settings_applied'] and applied['gmail'] == 'DISABLED':
+            break
+        time.sleep(1)
+    assert applied['settings_applied'] and applied['gmail'] == 'DISABLED', applied
+    assert pid('printer-app-web.service') == web_before
+    assert pid('printer-app-worker.service') == worker_before
+    env = Path.home()/'.config/printer-app/env'
+    assert 'EMAIL_POLL_SECONDS="91"' in env.read_text()
+    assert env.stat().st_mode & 0o777 == 0o600
+    run('sudo','-n','systemctl','restart','printer-app-worker.service')
+    wait_health(5055)
+    with browser.open('http://127.0.0.1:5055/settings') as response:
+        assert b'BROWSER SETTINGS CHECK' in response.read()
+    print('PASS: browser settings saved under systemd sandbox, applied without restart, and persisted after worker restart.')
     # Installed source and both printer processes must survive removal of Stats.
     web_pid, worker_pid = pid('printer-app-web.service'), pid('printer-app-worker.service')
     assert web_pid != '0' and worker_pid != '0'

@@ -8,38 +8,53 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import g, Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
 
-from .config import Config
+from .config import Config, environment_file
+from .settings import SettingsService, SettingsError
+from .settings_repository import SettingsRepository, SettingsStorageError, SettingsConflict
+from .gmail_client import test_connection
 from .db import Database
 
 
-def create_app(cfg: Config | None = None) -> Flask:
+def create_app(cfg: Config | None = None, settings_service: SettingsService | None = None) -> Flask:
     cfg = cfg or Config.from_env()
     if len(cfg.secret_key) < 32:
         raise ValueError('Printer UI session secret is required. Run printer_app.bootstrap init first.')
+    settings = settings_service or SettingsService(
+        SettingsRepository(cfg.env_file or environment_file()), cfg, test_connection)
     app = Flask(__name__)
     app.config.update(SECRET_KEY=cfg.secret_key, SESSION_COOKIE_NAME='printer_app_session',
         SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
         SESSION_COOKIE_SECURE=cfg.secure_cookie, PERMANENT_SESSION_LIFETIME=8 * 3600,
-        MAX_CONTENT_LENGTH=8192, MAX_FORM_MEMORY_SIZE=8192, MAX_FORM_PARTS=10)
+        MAX_CONTENT_LENGTH=8192, MAX_FORM_MEMORY_SIZE=8192, MAX_FORM_PARTS=24)
     db = Database(cfg.db_path)
     app.extensions['printer_db'] = db
+    app.extensions['printer_settings'] = settings
 
     @app.template_filter('localtime')
     def localtime(value):
-        return datetime.fromtimestamp(float(value), ZoneInfo(cfg.timezone)).strftime('%Y-%m-%d %H:%M:%S %Z') if value else '—'
+        return datetime.fromtimestamp(float(value), ZoneInfo(getattr(g, 'printer_config', cfg).timezone)).strftime('%Y-%m-%d %H:%M:%S %Z') if value else '—'
 
     @app.before_request
     def protect_writes():
-        if request.endpoint == 'health':
+        if request.endpoint in ('health', 'static'):
             return None
+        try:
+            g.printer_config, g.settings_revision = settings.read()
+        except (SettingsError, SettingsStorageError):
+            g.printer_config, g.settings_revision = cfg, ''
         if 'csrf' not in session:
             session['csrf'] = secrets.token_urlsafe(32)
             session.permanent = True
         if request.method == 'POST':
+            origin = request.headers.get('Origin')
+            if (origin and origin != request.host_url.rstrip('/')) or request.headers.get('Sec-Fetch-Site') == 'cross-site':
+                abort(403, 'Cross-site changes are not allowed')
+            if any(len(request.form.getlist(key)) != 1 for key in request.form):
+                abort(400, 'Duplicate form field')
             supplied = request.form.get('csrf', '')
-            if not hmac.compare_digest(str(session['csrf']), supplied):
+            if not hmac.compare_digest(str(session['csrf']).encode(), supplied.encode()):
                 abort(400, 'Invalid CSRF token')
         return None
 
@@ -50,13 +65,16 @@ def create_app(cfg: Config | None = None) -> Flask:
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
         response.headers['Referrer-Policy'] = 'no-referrer'
         response.headers.setdefault('Content-Security-Policy',
-            "default-src 'self'; script-src 'none'; style-src 'self'; frame-src 'self'; "
+            "default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; "
             "object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'")
         return response
 
     def state():
         heartbeat = db.get('worker_heartbeat', 0)
-        return dict(queue=cfg.queue, printer=db.get('printer_status', {'known': False, 'online': False, 'detail': 'Waiting for worker'}),
+        current = getattr(g, 'printer_config', cfg)
+        return dict(queue=current.queue, email_enabled=current.email_enabled,
+            settings_applied=bool(getattr(g, 'settings_revision', '')) and g.settings_revision == db.get('settings_revision'),
+            settings_error=db.get('settings_error', ''), printer=db.get('printer_status', {'known': False, 'online': False, 'detail': 'Waiting for worker'}),
             worker_alive=time.time() - heartbeat < 30, paused=db.get('paused', False),
             last_check=db.get('last_check'), next_check=db.get('next_check'),
             gmail=db.get('gmail_state', 'STARTING'), monitor_error=db.get('monitor_error', ''),
@@ -77,6 +95,36 @@ def create_app(cfg: Config | None = None) -> Flask:
     @app.get('/system/print-control')
     def control():
         return render_template('control.html', state=state(), jobs=db.recent())
+
+    def settings_view(error='', code=200):
+        try:
+            current, revision = settings.read()
+        except (SettingsError, SettingsStorageError):
+            current, revision = cfg, ''
+            error, code = 'Could not read settings. Use the leaderboard Update button to repair the installation.', 503
+        return render_template('settings.html', values=settings.public_values(current),
+            password_saved=bool(current.email_password), revision=revision, queue=current.queue,
+            error=error, saved=request.args.get('saved') == '1', state=state()), code
+
+    @app.route('/settings', methods=['GET', 'POST'])
+    def settings_page():
+        if request.method == 'POST':
+            try:
+                settings.save(request.form.to_dict())
+            except SettingsConflict as exc:
+                return settings_view(str(exc), 409)
+            except (SettingsError, SettingsStorageError) as exc:
+                return settings_view(str(exc), 400)
+            return redirect(url_for('settings_page', saved='1'), code=303)
+        return settings_view()
+
+    @app.post('/settings/test-email')
+    def settings_test_email():
+        try:
+            ok, message = settings.test_email(request.form.to_dict())
+            return jsonify(ok=ok, message=message), 200 if ok else 400
+        except (SettingsError, SettingsStorageError) as exc:
+            return jsonify(ok=False, message=str(exc)), 400
 
     @app.get('/api/status')
     def api_status():

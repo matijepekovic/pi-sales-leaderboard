@@ -93,43 +93,47 @@ Excel output uses a bounded print area, repeating header, 11x17 landscape, one
 page wide, and unrestricted page height. The actual rendered PDF page count makes
 the print decision.
 
-## Gmail and configuration
+## Settings in the browser — no terminal
 
-All secrets belong in:
+Open **Print Control → Settings** at `http://<pi-ip>:5055/settings`.
+Enter the Gmail address and Google app password, mailbox/label, subject and sender
+filters, lookback window and polling interval. Use **Test Gmail** to test the
+entered credentials without saving, fetching emails or printing. Then use
+**Save Settings**. The password stays in the form during a connection test, but
+is never returned by the server, stored in a browser cookie or shown again.
+Leaving the password blank keeps the saved one; an explicit checkbox removes it.
+Changing Gmail accounts requires a new app password.
 
-```text
-~/.config/printer-app/env
-```
+Settings also include the email-monitoring switch, timezone, printer retry delay,
+Excel conversion timeout and oversized-attachment warning threshold. The existing
+CUPS queue is displayed read-only: the working Konica/Account Track configuration,
+server address, executable paths and storage locations cannot be changed via HTTP.
+PDF/Excel page rules are unchanged. Large attachments still download normally.
 
-The printer app never stores Gmail credentials in Stats or Git.
+Saving with email printing enabled automatically processes qualifying emails in
+the lookback window. Empty subject/sender filters match everything. Test Gmail
+does not enable monitoring or modify saved values. Disabling email monitoring
+stops new checks (including Run Now); already downloaded print work continues.
+Pause/Resume on the dashboard remain temporary polling controls.
 
-Important variables:
+`settings.py` owns validation and configuration workflows; `settings_repository.py`
+owns locked, atomic private-file writes and stale-form conflict checks. Secrets
+remain in `~/.config/printer-app/env`, mode 0600, outside either source tree and
+outside Stats. Existing noneditable settings and credentials are preserved.
+The web process has write access only to the printer data and configuration
+directories. The worker can only read the configuration directory.
 
-```text
-EMAIL_USER=
-EMAIL_APP_PASSWORD=
-EMAIL_MAILBOX=INBOX
-EMAIL_SUBJECT_CONTAINS=
-EMAIL_FROM_CONTAINS=
-EMAIL_LOOKBACK_DAYS=3
-EMAIL_POLL_SECONDS=60
-PRINTER_QUEUE=konicaa
-PRINTER_HOST=0.0.0.0
-PRINTER_PORT=5055
-PRINTER_SECRET_KEY=
-PRINTER_TIMEZONE=America/Los_Angeles
-PRINTER_SECURE_COOKIE=0
-MAX_ATTACHMENT_MB=20
-CONVERSION_TIMEOUT_SECONDS=120
-PRINTER_RETRY_SECONDS=60
-```
+The worker re-reads saved settings between operations, even when systemd inherited
+older environment values. No terminal, sudo call or service restart is used when
+saving. An operation already in progress finishes with its previous settings;
+new settings take effect on the following cycle. The page reports whether the
+worker has applied the saved revision. Updates/restarts retain these settings.
 
-`MAX_ATTACHMENT_MB` is a warning threshold only. Larger email attachments are
-still downloaded and processed normally.
-
-The first successful Gmail scan processes qualifying messages in the configured
-lookback window. Empty subject and sender filters match everything, so configure
-filters deliberately before enabling a busy mailbox.
+This page is intentionally unauthenticated, as requested. Anyone with network
+access to port 5055 can control printing, change settings and read report previews.
+Keep it on a trusted LAN; HTTPS alone does not restrict who may access it.
+State-changing requests require CSRF and same-origin checks. Gmail tests connect
+only to Gmail's fixed TLS endpoint; no arbitrary server/command/path can be supplied.
 
 ## Existing printer setup
 
@@ -195,7 +199,8 @@ reports.
 
 ## Testing
 
-CI covers direct no-login UI access, CSRF protection, dynamic Sub Status grouping,
+CI covers browser configuration persistence/live reload, secret masking, validation,
+read-only Gmail connection tests, direct no-login UI access, CSRF protection, dynamic Sub Status grouping,
 PDF and Excel processing, oversized downloads, deduplication, real LibreOffice
 rendering, a disposable CUPS sink, restart recovery, printer/Gmail outages, v133
 old-ZIP upgrade compatibility, v134 printer delivery compatibility, and independent

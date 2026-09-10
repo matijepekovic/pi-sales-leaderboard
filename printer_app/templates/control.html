@@ -3,13 +3,14 @@
 <div class="cards"><section><h2>Printer</h2><p class="status {{ 'good' if state.printer.online else 'error' }}">{{ 'Online' if state.printer.online else 'Offline / unavailable' }}</p>
 <dl><dt>Queue</dt><dd>{{ state.queue }}</dd><dt>Last successful print</dt><dd>{{ state.last_success|localtime }}</dd><dt>Queue detail</dt><dd>{{ state.printer.detail or 'Ready' }}</dd><dt>Last printer error</dt><dd>{% if state.last_error %}{{ state.last_error.at|localtime }}<br>{{ state.last_error.message }}{% else %}—{% endif %}</dd></dl>
 <p class="muted">Online reflects CUPS status. Printed means CUPS reported completion, not independent verification of paper output.</p></section>
-<section><h2>Email monitor</h2><p class="status {{ 'error' if not state.worker_alive or state.monitor_error else 'good' }}">{{ 'Worker offline' if not state.worker_alive else 'Paused' if state.paused else 'Error' if state.monitor_error else 'Running' }}</p>
+<section><h2>Email monitor</h2><p class="status {{ 'error' if not state.worker_alive or state.monitor_error else 'good' }}">{{ 'Worker offline' if not state.worker_alive else 'Disabled' if not state.email_enabled else 'Paused' if state.paused else 'Error' if state.monitor_error else 'Running' }}</p>
 <dl><dt>Gmail</dt><dd>{{ state.gmail }}</dd><dt>Last check</dt><dd>{{ state.last_check|localtime }}</dd><dt>Next check</dt><dd>{{ 'Paused' if state.paused else state.next_check|localtime }}</dd></dl>
+{% if state.settings_error %}<p class="error">{{ state.settings_error }}</p>{% endif %}
 {% if state.monitor_error %}<p class="error">{{ state.monitor_error }}</p>{% endif %}
 <p class="muted">Pause stops inbox polling. Already queued reports continue. Run Now performs one inbox check even while paused.</p></section></div>
 <div class="toolbar">{% for action,label in [('run-now','Run Now'),('pause','Pause'),('resume','Resume'),('test-print','Test Print')] %}<form method="post" action="{{ url_for('command', action=action) }}"><input type="hidden" name="csrf" value="{{ session.csrf }}"><button>{{ label }}</button></form>{% endfor %}</div>
 <section><h2>Recent jobs</h2><p class="muted">Excel reports print only when their rendered PDF has exactly one page. Incoming PDFs print unchanged, including multiple pages.</p>
 <div class="table-wrap"><table><thead><tr><th>Time</th><th>Email / attachment</th><th>Sub Status</th><th>Pages</th><th>Result</th><th>Reason</th><th>Details</th></tr></thead><tbody>
 {% for job in jobs %}<tr><td>{{ job.created|localtime }}</td><td>{{ job.subject or 'Local test' }}<br><span class="muted">{{ job.filename or 'Test print' }}</span></td><td>{{ job.substatus or '—' }}</td><td>{{ job.page_count if job.page_count is not none else '—' }}</td><td><strong>{{ job.status }}</strong>{% if job.failure_kind %}<br>{{ job.failure_kind }}{% endif %}</td><td>{{ job.error or '—' }}</td><td><a href="{{ url_for('job_detail', job_id=job.id) }}">Preview &amp; log</a></td></tr>
-{% else %}<tr><td colspan="7">No jobs yet. Configure Gmail in the private environment file or use Test Print.</td></tr>{% endfor %}
+{% else %}<tr><td colspan="7">No jobs yet. <a href="{{ url_for('settings_page') }}">Set up Gmail in Settings</a> or use Test Print.</td></tr>{% endfor %}
 </tbody></table></div></section>{% endblock %}
