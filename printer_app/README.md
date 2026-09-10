@@ -35,10 +35,19 @@ not reinstall or restart the separate installed Stats runtime.
 | `.xlsx`, `.xls`, `.xlsm` | Detect the main table, split dynamically by actual Sub Status values, create clean values-only workbooks and convert each separately. |
 | Excel-generated PDF, exactly one page | Print that report on Tabloid media, landscape PDF layout. |
 | Excel-generated PDF, two or more pages | Retain report preview but print **only a one-page error sheet** for that group. |
-| Unsupported, corrupt, missing Sub Status, no data, unsafe/oversized input | Print a one-page error sheet. |
+| Oversized attachment | Download the entire attachment and process normally; size alone is not an error. |
+| Unsupported, corrupt, missing Sub Status, no data, unsafe input | Print a one-page error sheet. |
 | One group fails | Continue all other groups. |
 | Printer submission rejected or CUPS reports aborted/cancelled | Record the failure; replace the original with an error sheet and retry automatically. |
 | CUPS unavailable | Retain durable pending jobs and retry; never claim physical output while offline. |
+
+**Oversized attachments are downloaded, not rejected or truncated.** The existing
+`MAX_ATTACHMENT_MB` setting is retained as a warning threshold only; existing env
+files need no change. Each attachment is fetched individually in full and decoded
+in memory, then saved atomically. This is intended for the small reports used by
+this application, not arbitrary-size bulk transfers. MIME-structure and workbook
+safety checks remain in place; they do not reject a file merely for exceeding the
+attachment warning threshold. Failed network downloads remain pending for retry.
 
 **The last requested rule takes precedence: a two-page incoming PDF prints both
 pages. The one-page limit applies only to Excel-generated reports.** There is no
@@ -216,7 +225,7 @@ credentials, email details or filesystem paths are exposed.
 | `PRINTER_SECRET_KEY` | Generated independent session signing key. |
 | `PRINTER_SECURE_COOKIE` | `0`; use `1` behind HTTPS. |
 | `PRINTER_TIMEZONE` | `America/Los_Angeles` |
-| `MAX_ATTACHMENT_MB` | `20`, maximum 100. Encoded bodies are bounded before decoding. |
+| `MAX_ATTACHMENT_MB` | `20`; legacy-named warning threshold only (configurable 1–100). Larger attachments are downloaded normally. |
 | `CONVERSION_TIMEOUT_SECONDS` | `120`, allowed 10–600. |
 | `PRINTER_RETRY_SECONDS` | `60`, allowed 10–3600. |
 | `PRINTER_DATA_DIR` | `~/.local/share/printer-app`; rerun install after changing so unit write permissions update. |
@@ -263,6 +272,9 @@ per-group conversion/page failures, unsupported/corrupt files, one-page error
 reports, duplicate UIDs/Message-IDs, restart recovery, held submission recovery,
 printer outages, unknown completion, standalone auth, CSRF, rate limiting,
 preview path confinement, secret exclusion and no Stats imports/service links.
+Oversized-download regression tests cover declared and decoded size, all supported
+transfer encodings, intact multi-page PDF bytes, restart deduplication and network
+failure recovery without converting an oversized attachment into a size error.
 
 ### Hardware acceptance on your Pi (not implied by CI)
 
@@ -283,7 +295,8 @@ Record results for these checks after installation:
 11. Send a corrupt workbook, missing Sub Status header, and empty table; verify
     the correct physical error reasons.
 12. Recheck the same email, restart the worker mid-job and recheck again; verify
-    one original submission/request is reused, not duplicated.
+    one original submission/request is reused, not duplicated. Send an attachment
+    above `MAX_ATTACHMENT_MB` and verify it downloads intact without a size error.
 13. Reboot; both printer units return automatically and completed jobs stay deduped.
 14. Interrupt Gmail connectivity; UI/heartbeat remain alive and polling recovers.
 15. Interrupt the printer/CUPS connection; failures are visible and pending output
