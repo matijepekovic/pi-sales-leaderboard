@@ -1,0 +1,33 @@
+[Unit]
+Description=Independent Printer Automation Web UI
+After=network.target
+
+[Service]
+Type=simple
+User=scoreboard
+Group=scoreboard
+WorkingDirectory=@HOME@/.local/share/printer-app/current
+EnvironmentFile=@HOME@/.config/printer-app/env
+ExecStart=@HOME@/.local/share/printer-app/current/.venv/bin/python -m printer_app web
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@HOME@/.local/share/printer-app
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=256M
+Nice=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=printer-app-web
+
+[Install]
+WantedBy=multi-user.target

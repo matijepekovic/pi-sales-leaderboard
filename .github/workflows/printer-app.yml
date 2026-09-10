@@ -1,0 +1,38 @@
+name: Independent printer application
+on:
+  push:
+    branches: [main, 'feature/standalone-printer-*']
+    paths: ['printer_app/**', '.github/workflows/printer-app.yml']
+  pull_request:
+    paths: ['printer_app/**', 'app/**', 'stats_core/**', '.github/workflows/printer-app.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: printer_app/requirements.txt
+      - name: Install independent system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice-calc libcups2-dev fonts-dejavu-core
+      - name: Install only printer Python dependencies
+        run: python -m pip install -r printer_app/requirements.txt pytest xlwt
+      - name: Syntax checks
+        run: |
+          python -m compileall -q printer_app
+          bash -n printer_app/install.sh printer_app/update.sh
+      - name: Boundaries, failure handling, real LibreOffice conversion
+        run: python -m pytest printer_app/tests -v --junitxml=printer-test-results.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: printer-test-results
+          path: printer-test-results.xml
