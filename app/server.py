@@ -46,6 +46,7 @@ from database import (
     set_rep_team_assignments,
 )
 import source_picker
+import update_delivery
 from sources import tableau_configured, tableau_mapped
 from sources.tableau import TableauSource, TableauError, resolve_dates
 from tableau_scheduler import refresh_product_close, start_tableau_scheduler
@@ -583,12 +584,13 @@ def version_key(value):
 def github_remote_info(repo_value):
     repo = normalize_github_repo(repo_value)
 
-    repo_info = github_api_json(f"/repos/{repo}")
-    default_branch = str(repo_info.get("default_branch") or "main")
+    # The Pi distribution channel is explicitly main, independent of the repo default.
+    default_branch = "main"
 
     encoded_branch = urllib.parse.quote(default_branch, safe="")
+    revision = github_api_json(f"/repos/{repo}/git/ref/heads/{encoded_branch}")["object"]["sha"]
     version_info = github_api_json(
-        f"/repos/{repo}/contents/VERSION?ref={encoded_branch}"
+        f"/repos/{repo}/contents/VERSION?ref={revision}"
     )
 
     encoded = str(version_info.get("content") or "").replace("\n", "")
@@ -607,6 +609,7 @@ def github_remote_info(repo_value):
         "repo": repo,
         "branch": default_branch,
         "version": remote_version,
+        "revision": revision,
     }
 
 
@@ -658,6 +661,15 @@ def check_github_update(install=False):
         set_meta("github_remote_version", remote_version)
 
         update_available = version_key(remote_version) > version_key(local_version)
+        # Distribution boundary only. Installer failures must not abort a Stats update.
+        bundle_available = False
+        try:
+            bundle = update_delivery.remote_bundle(remote["revision"])
+            bundle_available = update_delivery.needs_install(bundle)
+            if install:
+                update_delivery.request_install(bundle)
+        except Exception:
+            app.logger.exception("Bundled printer delivery check failed; Stats update continues")
 
         if not update_available:
             status = f"Up to date — v{local_version}"
@@ -671,6 +683,8 @@ def check_github_update(install=False):
                 "update_available": False,
                 "installed": False,
                 "message": status,
+                "printer_update_available": bundle_available,
+                "bundled_app": update_delivery.status(),
             }
 
         if not install:
@@ -698,7 +712,7 @@ def check_github_update(install=False):
 
         try:
             set_meta("github_update_status", f"Downloading v{remote_version}…")
-            download_github_repo_zip(remote["repo"], remote["branch"], temp_path)
+            download_github_repo_zip(remote["repo"], remote["revision"], temp_path)
 
             set_meta("github_update_status", f"Installing v{remote_version}…")
             result = install_update_zip(temp_path)
@@ -719,6 +733,7 @@ def check_github_update(install=False):
             "update_available": True,
             "installed": True,
             "message": f"Installed v{result.get('version') or remote_version}.",
+            "bundled_app": update_delivery.status(),
         }
     except Exception as exc:
         set_meta("github_update_status", f"GitHub update error: {exc}")
@@ -1947,7 +1962,52 @@ def api_github_status():
         "last_check": get_meta("github_last_check", ""),
         "status": get_meta("github_update_status", "Not configured"),
         "check_minutes": int(GITHUB_CHECK_SECONDS / 60),
+        "bundled_app": update_delivery.status(),
     })
+
+
+@app.get("/api/github/available")
+def api_github_available():
+    try:
+        remote = github_remote_info(HARD_CODED_GITHUB_REPO)
+    except Exception:
+        return jsonify(ok=False, error="Could not check GitHub for application updates."), 502
+    printer_available, printer_error = False, ""
+    try:
+        bundle = update_delivery.remote_bundle(remote["revision"])
+        printer_available = update_delivery.needs_install(bundle)
+    except Exception:
+        printer_error = "Printer release check failed; Stats can still be updated."
+    return jsonify(ok=True, installed_version=software_version(), remote_version=remote["version"],
+        stats_update_available=version_key(remote["version"]) > version_key(software_version()),
+        printer_update_available=printer_available, printer_check_error=printer_error,
+        bundled_app=update_delivery.status())
+
+
+@app.post("/api/github/printer-login")
+def api_github_printer_login():
+    # Setup credential delivery is the only secret exposed here. It is never in
+    # public status/config payloads and never substitutes for printer authentication.
+    if not pin_is_set() or not is_unlocked():
+        return jsonify(ok=False, error="Set and unlock a Settings PIN to view the initial printer login."), 403
+    if not request.is_json or request.headers.get("X-Requested-With") != "Stats-Update":
+        abort(400)
+    origin = request.headers.get("Origin")
+    if origin and origin != request.host_url.rstrip("/"):
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        abort(400)
+    if body.get("saved") is True:
+        update_delivery.forget_initial_login()
+        response = jsonify(ok=True)
+    else:
+        login = update_delivery.initial_login()
+        if not login:
+            return jsonify(ok=False, error="No initial login is pending. Use your existing printer login."), 404
+        response = jsonify(ok=True, login=login)
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @app.post("/api/github/check")
@@ -2062,6 +2122,10 @@ def ensure_labwc_kiosk_autostart():
     except Exception as exc:
         set_meta("kiosk_startup_status", f"labwc setup failed: {exc}")
 
+
+# This one-time distribution handoff also reaches installations whose old ZIP
+# updater copied app/ but not printer_app/. No printer runs in the Stats process.
+update_delivery.start_initial_install()
 
 # Initialize on import because production runs through Waitress.
 init_db()

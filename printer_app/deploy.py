@@ -21,7 +21,11 @@ UNITS = ['printer-app-web.service', 'printer-app-worker.service']
 SKIP = {'data', '.venv', '__pycache__', '.pytest_cache', '.git'}
 
 
-def run(command, **kwargs):
+def run(command, *, unattended=False, **kwargs):
+    if unattended:
+        kwargs.setdefault('stdin', subprocess.DEVNULL)
+        if command[0] == 'sudo':
+            command = ['sudo', '-n', *command[1:]]
     return subprocess.run(command, check=True, **kwargs)
 
 
@@ -55,7 +59,7 @@ def release_paths(release: Path):
     return json.loads(result.stdout)
 
 
-def install_units(release: Path, base: Path, paths: dict):
+def install_units(release: Path, base: Path, paths: dict, *, unattended=False):
     with tempfile.TemporaryDirectory() as temp:
         for unit in UNITS:
             text = (release / 'printer_app/systemd' / unit).read_text()
@@ -65,9 +69,9 @@ def install_units(release: Path, base: Path, paths: dict):
                 text = text.replace('@' + key + '@', value)
             target = Path(temp) / unit
             target.write_text(text)
-            run(['sudo', 'install', '-m', '0644', str(target), '/etc/systemd/system/' + unit])
-    run(['sudo', 'systemctl', 'daemon-reload'])
-    run(['sudo', 'systemctl', 'enable', *UNITS])
+            run(['sudo', 'install', '-m', '0644', str(target), '/etc/systemd/system/' + unit], unattended=unattended)
+    run(['sudo', 'systemctl', 'daemon-reload'], unattended=unattended)
+    run(['sudo', 'systemctl', 'enable', *UNITS], unattended=unattended)
 
 
 def healthy(paths: dict) -> bool:
@@ -83,23 +87,23 @@ def healthy(paths: dict) -> bool:
     return False
 
 
-def activate(base: Path, release: Path):
+def activate(base: Path, release: Path, *, unattended=False):
     current = base / 'current'
     old = current.resolve() if current.is_symlink() else None
     paths = release_paths(release)
-    install_units(release, base, paths)
+    install_units(release, base, paths, unattended=unattended)
     if old and old != release:
         atomic_link(base / 'previous', old)
     atomic_link(current, release)
     try:
-        run(['sudo', 'systemctl', 'restart', *UNITS])
+        run(['sudo', 'systemctl', 'restart', *UNITS], unattended=unattended)
         if not healthy(paths):
             raise RuntimeError('Printer health check failed after deployment')
     except Exception:
         if old and old != release:
             atomic_link(current, old)
-            install_units(old, base, release_paths(old))
-            run(['sudo', 'systemctl', 'restart', *UNITS])
+            install_units(old, base, release_paths(old), unattended=unattended)
+            run(['sudo', 'systemctl', 'restart', *UNITS], unattended=unattended)
             print('Restored previous printer release. Database was NOT rolled back.', file=sys.stderr)
         raise
     print('Printer release: ' + release.name)
@@ -108,9 +112,19 @@ def activate(base: Path, release: Path):
     print('Stats files, service and database were not touched.')
 
 
+def save_result(target: Path | None, release: Path, *, changed: bool):
+    if target is not None:
+        paths = release_paths(release)
+        target.write_text(json.dumps({'port': paths['port'], 'changed': changed}), encoding='utf-8')
+        target.chmod(0o600)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['install', 'update', 'rollback'])
+    parser.add_argument('--unattended', action='store_true')
+    parser.add_argument('--initial-login-file', type=Path)
+    parser.add_argument('--result-file', type=Path)
     args = parser.parse_args()
     if sys.version_info < (3, 10):
         raise SystemExit('Python 3.10 or newer is required')
@@ -129,16 +143,17 @@ def main():
             release = previous.resolve()
             # Refuse incompatible schemas; NEVER restore an older deduplication DB.
             run([str(release / '.venv/bin/python'), '-m', 'printer_app.bootstrap', 'migrate'], cwd=release)
-            activate(base, release)
+            activate(base, release, unattended=args.unattended)
             return
         source = Path(__file__).resolve().parent
         release = releases / fingerprint(source)
         current = base / 'current'
         if current.is_symlink() and current.resolve() == release and (release / '.ready').exists():
             if args.action == 'install':
-                activate(base, release)
+                activate(base, release, unattended=args.unattended)
             else:
                 print('printer_app is unchanged; no dependency install or service restart.')
+            save_result(args.result_file, release, changed=False)
             return
         if not (release / '.ready').exists():
             if current.is_symlink() and current.resolve() == release:
@@ -156,9 +171,15 @@ def main():
             run([python, '-m', 'compileall', '-q', str(release / 'printer_app')])
             (release / '.ready').write_text(release.name + '\n')
         python = str(release / '.venv/bin/python')
-        run([python, '-m', 'printer_app.bootstrap', 'init'], cwd=release)
+        init = [python, '-m', 'printer_app.bootstrap', 'init']
+        if args.initial_login_file:
+            init.extend(['--initial-login-file', str(args.initial_login_file)])
+        elif args.unattended:
+            raise SystemExit('Unattended setup requires a private --initial-login-file')
+        run(init, cwd=release)
         run([python, '-m', 'printer_app.bootstrap', 'migrate'], cwd=release)
-        activate(base, release)
+        activate(base, release, unattended=args.unattended)
+        save_result(args.result_file, release, changed=True)
 
 
 if __name__ == '__main__':

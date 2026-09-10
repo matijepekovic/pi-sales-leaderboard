@@ -1,0 +1,64 @@
+name: Bundled application update
+on:
+  push:
+    branches: [main, fix/leaderboard-printer-update]
+    paths: ['app/**', 'printer_app/**', 'tests/**', 'VERSION', '.github/workflows/bundled-update.yml']
+  pull_request:
+    paths: ['app/**', 'printer_app/**', 'tests/**', 'VERSION', '.github/workflows/bundled-update.yml']
+permissions:
+  contents: read
+jobs:
+  delivery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Independent test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv python3-dev build-essential libcups2-dev cups-client cups-daemon libreoffice-calc fonts-liberation fonts-dejavu-core
+          python -m pip install -r printer_app/requirements.txt pytest xlwt
+      - name: Disposable CI-only printer sinks (no physical printer)
+        run: |
+          echo 'FileDevice Yes' | sudo tee -a /etc/cups/cups-files.conf
+          sudo systemctl restart cups
+          sudo lpadmin -p printer_app_ci -E -v file:/tmp/printer-app-ci-output -m raw
+          sudo lpadmin -p konicaa -E -v file:/tmp/bundled-update-ci-output -m raw
+      - name: Boundary, recovery, print and old-updater regressions
+        env:
+          PRINTER_CUPS_INTEGRATION: '1'
+        run: |
+          python -m compileall -q app/server.py app/update_delivery.py printer_app tests
+          node --check app/static/software-manual-v107.js
+          bash -n printer_app/install.sh printer_app/launch.sh scripts/update-printer-app.sh
+          python -m pytest printer_app/tests tests/test_update_delivery.py -v
+      - name: Real old ZIP upgrade and independent systemd lifecycle
+        env:
+          DELIVERY_SOURCE_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          sudo useradd --create-home --shell /bin/bash scoreboard
+          # Disposable VM setup only. The application never installs a sudoers rule.
+          echo 'scoreboard ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/bundled-update-ci
+          sudo mkdir -p /home/scoreboard/source
+          sudo cp -R app printer_app tests requirements.txt VERSION kiosk.sh pi-tableau-leaderboard.service /home/scoreboard/source/
+          sudo chown -R scoreboard:scoreboard /home/scoreboard/source
+          git show 59c25897c7ee002e658608a48e89bb91089375eb:app/server.py > /tmp/legacy-server.py
+          PRINTER_TREE=$(git rev-parse "$DELIVERY_SOURCE_REF:printer_app")
+          sudo -u scoreboard -H /usr/bin/python3 /home/scoreboard/source/tests/smoke_bundled_update.py /home/scoreboard/source /tmp/legacy-server.py "$DELIVERY_SOURCE_REF" "$PRINTER_TREE"
+          sudo journalctl -u printer-app-install.service --no-pager > /tmp/printer-install-journal.txt
+          sudo -u scoreboard -H python3 -c 'import json,pathlib; p=pathlib.Path.home()/".local/share/leaderboard-distribution/initial-login.json"; assert json.loads(p.read_text())["password"] not in pathlib.Path("/tmp/printer-install-journal.txt").read_text()'
+      - name: Build exact update ZIP
+        run: git archive --format=zip HEAD -o /tmp/leaderboard-update.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leaderboard-update
+          path: /tmp/leaderboard-update.zip
+          retention-days: 7
+      - name: Service diagnostics
+        if: always()
+        run: sudo journalctl -u printer-app-install.service -u printer-app-web.service -u printer-app-worker.service -u pi-tableau-leaderboard.service --no-pager -n 100

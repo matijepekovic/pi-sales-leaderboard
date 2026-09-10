@@ -17,6 +17,7 @@ from .db import Database
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['init', 'migrate', 'paths', 'set-password'])
+    parser.add_argument('--initial-login-file', type=Path, help='Private credential handoff for unattended installation')
     args = parser.parse_args()
     os.umask(0o077)
     env = Path(os.environ.get('PRINTER_ENV_FILE', '~/.config/printer-app/env')).expanduser()
@@ -26,14 +27,36 @@ def main():
             return
         env.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         password = secrets.token_urlsafe(18)
+        if args.initial_login_file:
+            # Persist the handoff before the environment so an interrupted first
+            # install can recover the same password without leaking it to logs.
+            target = args.initial_login_file.expanduser().resolve()
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if target.exists():
+                previous = json.loads(target.read_text())
+                if previous.get('username') != 'admin' or len(previous.get('password', '')) < 20:
+                    raise SystemExit('Invalid private initial-login handoff; refusing to overwrite it')
+                password = previous['password']
+            else:
+                temporary = target.with_name(target.name + '.new')
+                with temporary.open('w') as stream:
+                    os.chmod(temporary, 0o600)
+                    json.dump({'username': 'admin', 'password': password}, stream)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                temporary.replace(target)
         text = (Path(__file__).with_name('.env.example')).read_text()
         text = text.replace('PRINTER_UI_PASSWORD_HASH=\n', 'PRINTER_UI_PASSWORD_HASH=' + generate_password_hash(password, method='pbkdf2:sha256:600000') + '\n')
         text = text.replace('PRINTER_SECRET_KEY=\n', 'PRINTER_SECRET_KEY=' + secrets.token_hex(32) + '\n')
         with env.open('x') as stream:
             stream.write(text)
         env.chmod(0o600)
-        print('Printer UI username: admin\nInitial printer UI password: ' + password)
-        print('Save this password. It is shown only once. Gmail is not configured yet.')
+        if args.initial_login_file:
+            # Setup-only handoff; never emit an unattended password into journals.
+            print('Printer UI credentials created; private setup handoff saved.')
+        else:
+            print('Printer UI username: admin\nInitial printer UI password: ' + password)
+            print('Save this password. It is shown only once. Gmail is not configured yet.')
         return
     if args.action == 'set-password':
         if not env.exists():
