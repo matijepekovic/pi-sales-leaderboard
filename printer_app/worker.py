@@ -11,7 +11,9 @@ import uuid
 from pathlib import Path
 
 from . import converter, parser
-from .config import Config, clean_text, safe_name
+from .config import Config, clean_text, safe_name, environment_file
+from .settings import SettingsService, SettingsError
+from .settings_repository import SettingsRepository, SettingsStorageError
 from .db import Database
 from .error_pages import error_page
 from .gmail_client import GmailClient
@@ -226,7 +228,12 @@ class Engine:
 class RedactingFormatter(logging.Formatter):
     def __init__(self, cfg):
         super().__init__('%(asctime)s %(levelname)s %(name)s %(message)s')
-        self.secrets = [s for s in (cfg.email_password, cfg.secret_key, cfg.password_hash) if s]
+        self.secrets = ()
+        self.update(cfg)
+
+    def update(self, cfg):
+        values = set(self.secrets) | {s for s in (cfg.email_password, cfg.secret_key, cfg.password_hash) if s}
+        self.secrets = tuple(sorted(values, key=len, reverse=True))
 
     def format(self, record):
         text = super().format(record)
@@ -238,7 +245,9 @@ class RedactingFormatter(logging.Formatter):
 def main():
     cfg = Config.from_env()
     handler = logging.StreamHandler()
-    handler.setFormatter(RedactingFormatter(cfg))
+    formatter = RedactingFormatter(cfg)
+    handler.setFormatter(formatter)
+    settings = SettingsService(SettingsRepository(cfg.env_file or environment_file()), cfg)
     logging.basicConfig(level=logging.INFO, handlers=[handler])
     db = Database(cfg.db_path)
     stop = threading.Event()
@@ -260,11 +269,29 @@ def main():
         thread = threading.Thread(target=heartbeat, daemon=True, name='printer-heartbeat')
         thread.start()
         next_poll, next_status = 0, 0
+        active_revision = None
         log.info('Independent printer worker started, queue=%s', cfg.queue)
         try:
             while not stop.is_set():
                 try:
                     now = time.time()
+                    # Apply only between operations: never interrupt a workbook or
+                    # an in-flight CUPS transaction. Queue/path identity is immutable.
+                    try:
+                        updated, revision = settings.read()
+                        if revision != active_revision:
+                            if updated != cfg:
+                                cfg = updated
+                                formatter.update(cfg)
+                                engine = Engine(cfg, db, stop=stop)
+                                gmail = GmailClient(cfg, db, stop=stop)
+                                next_poll, next_status = 0, 0
+                            active_revision = revision
+                            db.set('settings_revision', revision)
+                            log.info('Printer settings applied')
+                        db.set('settings_error', '')
+                    except (SettingsError, SettingsStorageError):
+                        db.set('settings_error', 'Could not load new settings; previous settings remain active.')
                     if now >= next_status:
                         status = engine.printer.status()
                         db.set('printer_status', status)
@@ -279,7 +306,10 @@ def main():
                         if row['name'] == 'test-print':
                             engine.test_print()
                     paused = db.get('paused', False)
-                    if not paused or force:
+                    if not cfg.email_enabled:
+                        db.set('gmail_state', 'DISABLED')
+                        db.set('next_check', None)
+                    elif not paused or force:
                         if now >= next_poll or force:
                             db.set('last_check', now)
                             try:

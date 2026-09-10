@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block title %}Printer Settings{% endblock %}
+{% block content %}
+<div class="heading"><div><p class="eyebrow">PRINTER AUTOMATION</p><h1>Settings</h1></div><a class="button" href="{{ url_for('control') }}">Back to Print Control</a></div>
+<p class="notice">No login is required. Anyone who can reach this page can change settings and view reports. Keep this app on your trusted local network.</p>
+{% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
+{% if saved %}<p class="notice good" role="status">Settings saved on the Pi. No terminal commands or restart needed.</p>{% endif %}
+<p id="settingsApplied" class="muted" role="status">{{ state.settings_error or ('Settings applied by worker.' if state.settings_applied else 'The worker applies saved settings after its current operation. Refresh to check.') }}</p>
+<form id="printerSettings" method="post" action="{{ url_for('settings_page') }}" autocomplete="off">
+<input type="hidden" name="csrf" value="{{ session.csrf }}">
+<input type="hidden" name="revision" value="{{ revision }}">
+<div class="cards">
+<section><h2>Gmail connection</h2>
+<label class="check"><input type="checkbox" name="EMAIL_ENABLED" value="1" {% if values.EMAIL_ENABLED == '1' %}checked{% endif %}> Enable automatic email printing</label>
+<p class="muted">Turning this off stops new inbox checks. Already downloaded jobs continue printing.</p>
+<label>Gmail address<input type="email" name="EMAIL_USER" value="{{ values.EMAIL_USER }}" maxlength="254" placeholder="reports@gmail.com" autocomplete="username"></label>
+<label>Google app password<input type="password" name="EMAIL_APP_PASSWORD" maxlength="256" autocomplete="new-password" placeholder="{{ 'Saved — leave blank to keep it' if password_saved else 'Enter your Google app password' }}"></label>
+<p class="muted">Use a Google app password, not your normal Google password. Saved passwords are never displayed. Changing the account requires a new app password.</p>
+{% if password_saved %}<label class="check"><input type="checkbox" name="clear_password" value="1"> Remove the saved app password</label>{% endif %}
+<label>Mailbox / Gmail label<input name="EMAIL_MAILBOX" value="{{ values.EMAIL_MAILBOX }}" maxlength="512" required></label>
+<button id="testEmail" type="button" data-url="{{ url_for('settings_test_email') }}">Test Gmail</button>
+<p id="emailTestResult" class="muted" role="status">Tests the entries above without saving, downloading attachments, or printing.</p>
+<noscript><p>Enable JavaScript to test Gmail. Saving settings works without JavaScript.</p></noscript>
+</section>
+<section><h2>Which emails to print</h2>
+<label>Subject contains<input name="EMAIL_SUBJECT_CONTAINS" value="{{ values.EMAIL_SUBJECT_CONTAINS }}" maxlength="512" placeholder="For example: Daily report"></label>
+<label>Sender contains<input name="EMAIL_FROM_CONTAINS" value="{{ values.EMAIL_FROM_CONTAINS }}" maxlength="512" placeholder="For example: reports@example.com"></label>
+<p class="muted">Both filters must match when filled in. Matching ignores case. The sender filter is not proof of who sent the email.</p>
+<label>Look back this many days<input type="number" name="EMAIL_LOOKBACK_DAYS" value="{{ values.EMAIL_LOOKBACK_DAYS }}" min="1" max="3650" required></label>
+<label>Check every (seconds)<input type="number" name="EMAIL_POLL_SECONDS" value="{{ values.EMAIL_POLL_SECONDS }}" min="10" max="86400" required></label>
+<p class="notice">Saving with email printing enabled automatically processes matching messages in this lookback window. Empty filters match every email. Previously processed messages are not printed again.</p>
+</section>
+</div>
+<section><h2>Printing and time</h2>
+<div class="form-grid">
+<label>Existing printer queue<input value="{{ queue }}" readonly aria-readonly="true"><span class="muted">Uses the working CUPS queue. Driver and Account Track settings are not changed here.</span></label>
+<label>Timezone<input name="PRINTER_TIMEZONE" value="{{ values.PRINTER_TIMEZONE }}" list="timezones" maxlength="128" required></label>
+<label>Retry printer errors after (seconds)<input type="number" name="PRINTER_RETRY_SECONDS" value="{{ values.PRINTER_RETRY_SECONDS }}" min="10" max="3600" required></label>
+<label>Excel conversion timeout (seconds)<input type="number" name="CONVERSION_TIMEOUT_SECONDS" value="{{ values.CONVERSION_TIMEOUT_SECONDS }}" min="10" max="600" required></label>
+<label>Large attachment warning (MB)<input type="number" name="MAX_ATTACHMENT_MB" value="{{ values.MAX_ATTACHMENT_MB }}" min="1" max="100" required><span class="muted">Only a warning. Larger attachments still download and process normally.</span></label>
+</div>
+<datalist id="timezones"><option value="America/Los_Angeles"><option value="America/Denver"><option value="America/Chicago"><option value="America/New_York"><option value="UTC"></datalist>
+<p class="muted">Incoming PDFs print unchanged. Excel reports use Tabloid 11×17 landscape; multi-page Excel output prints an error sheet instead.</p>
+</section>
+<div class="toolbar"><button class="primary" type="submit">Save Settings</button><a class="button" href="{{ url_for('settings_page') }}">Discard changes</a></div>
+</form>
+<script src="{{ url_for('static', filename='settings.js') }}" defer></script>
+{% endblock %}

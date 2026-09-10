@@ -253,3 +253,19 @@ class GmailClient:
                 count += 1
             self.db.set('gmail_state', 'CONNECTED')
         return count
+
+
+def test_connection(cfg: Config) -> tuple[bool, str]:
+    """Check credentials and a read-only mailbox. Never search, fetch or print."""
+    try:
+        with imaplib.IMAP4_SSL('imap.gmail.com', 993,
+                ssl_context=ssl.create_default_context(), timeout=10) as client:
+            client.login(cfg.email_user, cfg.email_password)
+            mailbox = '"' + cfg.mailbox.replace('\\', '\\\\').replace('"', '\\"') + '"'
+            if client.select(mailbox, readonly=True)[0] != 'OK':
+                return False, 'Gmail connected, but the mailbox could not be opened. Check its name.'
+        return True, 'Connected to Gmail. Mailbox is accessible. Nothing was downloaded or printed.'
+    except imaplib.IMAP4.error:
+        return False, 'Gmail rejected the connection. Check the email address, Google app password, and mailbox.'
+    except (OSError, TimeoutError):
+        return False, 'Gmail could not be reached securely. Check the Pi network connection and try again.'
