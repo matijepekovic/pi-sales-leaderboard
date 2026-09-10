@@ -3,6 +3,7 @@ set -u
 
 DATA_DIR="$HOME/.local/share/pi-tableau-leaderboard"
 PROFILE_DIR="$DATA_DIR/chromium-kiosk-profile"
+FULLSCREEN_DISABLED="$DATA_DIR/fullscreen-disabled.flag"
 mkdir -p "$PROFILE_DIR"
 
 BROWSER=""
@@ -19,7 +20,7 @@ if [ -z "$BROWSER" ]; then
 fi
 
 # Ensure an old kiosk-profile Chromium cannot absorb the new launch and ignore
-# kiosk flags.
+# the selected fullscreen/windowed mode. Other browser profiles are untouched.
 pkill -f "chromium.*chromium-kiosk-profile" >/dev/null 2>&1 || true
 sleep 1
 
@@ -29,10 +30,17 @@ rm -f \
   "$PROFILE_DIR/SingletonSocket" \
   >/dev/null 2>&1 || true
 
+# Read the persistent pause on EVERY launch, including an old watchdog's
+# crash/restart loop. The remote can change mode without a reboot or reinstall.
+MODE_ARGS=(--kiosk)
+if [ -f "$FULLSCREEN_DISABLED" ]; then
+  MODE_ARGS=(--new-window)
+fi
+
 exec "$BROWSER" \
   http://127.0.0.1:8765/ \
   --user-data-dir="$PROFILE_DIR" \
-  --kiosk \
+  "${MODE_ARGS[@]}" \
   --start-maximized \
   --noerrdialogs \
   --disable-infobars \

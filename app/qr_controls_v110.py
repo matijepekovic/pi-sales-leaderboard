@@ -10,6 +10,7 @@ from database import get_meta, get_settings, save_settings, set_meta
 import keyboard_controls_v112
 import product_controls_v115
 import temporary_date_v113
+import fullscreen_controls
 
 # v113+: layer temporary date rows underneath the existing mapping preview.
 # This happens during import, before the first display request is served.
@@ -109,5 +110,7 @@ def install_routes(app):
     if temporary_date_v113.install_routes(app):
         changed = True
     if product_controls_v115.install_routes(app):
+        changed = True
+    if fullscreen_controls.install_routes(app):
         changed = True
     return changed
