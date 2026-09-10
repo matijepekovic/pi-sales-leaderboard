@@ -76,7 +76,7 @@ def main():
     namespace['install_update_zip'](package)
     assert not (installed/'printer_app').exists()
     assert pid('pi-tableau-leaderboard.service') == original_pid
-    assert (installed/'VERSION').read_text().strip() == '134'
+    assert (installed/'VERSION').read_text().strip() == '135'
     spec = importlib.util.spec_from_file_location('delivery', installed/'app/update_delivery.py')
     delivery = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(delivery)
@@ -124,7 +124,7 @@ def main():
     wait_health(5055)
     assert subprocess.check_output(['systemctl','is-enabled','printer-app-web.service'],text=True).strip() == 'enabled'
     assert subprocess.check_output(['systemctl','is-enabled','printer-app-worker.service'],text=True).strip() == 'enabled'
-    print('PASS: old ZIP updater → detached printer install → independent Stats/printer lifecycles; unchanged update is a no-op.')
+    print('PASS: old ZIP updater → detached no-login printer install → independent Stats/printer lifecycles; unchanged update is a no-op.')
 
 
 if __name__ == '__main__':
