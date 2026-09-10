@@ -1,107 +1,64 @@
 name: Bundled application update
 on:
   push:
-    branches: [fix/leaderboard-printer-update]
-    paths: ['.github/workflows/bundled-update.yml']
+    branches: [main, fix/leaderboard-printer-update]
+    paths: ['app/**', 'printer_app/**', 'tests/**', 'VERSION', '.github/workflows/bundled-update.yml']
+  pull_request:
+    paths: ['app/**', 'printer_app/**', 'tests/**', 'VERSION', '.github/workflows/bundled-update.yml']
 permissions:
-  contents: write
+  contents: read
 jobs:
-  prepare:
+  delivery:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare checked source blob (development branch only)
-        env:
-          GH_TOKEN: ${{ github.token }}
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Independent test dependencies
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import hashlib, json, os, urllib.request
-          p=Path('app/server.py');s=p.read_text()
-          def blob_sha(text):
-              data=text.encode()
-              return hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
-          assert blob_sha(s)=='88f9b623c6295e7583d6a20e240ebf5eb6cb7ea0'
-          s=s.replace('import source_picker\n', 'import source_picker\nimport update_delivery\n', 1)
-          s=s.replace('    repo_info = github_api_json(f"/repos/{repo}")\n    default_branch = str(repo_info.get("default_branch") or "main")', '    # The Pi distribution channel is explicitly main, independent of the repo default.\n    default_branch = "main"')
-          s=s.replace('    encoded_branch = urllib.parse.quote(default_branch, safe="")\n    version_info = github_api_json(\n        f"/repos/{repo}/contents/VERSION?ref={encoded_branch}"\n    )', '''    encoded_branch = urllib.parse.quote(default_branch, safe="")
-              revision = github_api_json(f"/repos/{repo}/git/ref/heads/{encoded_branch}")["object"]["sha"]
-              version_info = github_api_json(
-                  f"/repos/{repo}/contents/VERSION?ref={revision}"
-              )''')
-          s=s.replace('        "branch": default_branch,\n        "version": remote_version,', '        "branch": default_branch,\n        "version": remote_version,\n        "revision": revision,')
-          s=s.replace('        update_available = version_key(remote_version) > version_key(local_version)\n', '''        update_available = version_key(remote_version) > version_key(local_version)
-                  # Distribution boundary only. Installer failures must not abort a Stats update.
-                  bundle_available = False
-                  try:
-                      bundle = update_delivery.remote_bundle(remote["revision"])
-                      bundle_available = update_delivery.needs_install(bundle)
-                      if install:
-                          update_delivery.request_install(bundle)
-                  except Exception:
-                      app.logger.exception("Bundled printer delivery check failed; Stats update continues")
-          ''')
-          s=s.replace('                "message": status,\n            }\n\n        if not install:', '                "message": status,\n                "printer_update_available": bundle_available,\n                "bundled_app": update_delivery.status(),\n            }\n\n        if not install:')
-          s=s.replace('download_github_repo_zip(remote["repo"], remote["branch"], temp_path)', 'download_github_repo_zip(remote["repo"], remote["revision"], temp_path)')
-          s=s.replace('            "message": f"Installed v{result.get(\'version\') or remote_version}.",', '            "message": f"Installed v{result.get(\'version\') or remote_version}.",\n            "bundled_app": update_delivery.status(),')
-          s=s.replace('        "check_minutes": int(GITHUB_CHECK_SECONDS / 60),', '        "check_minutes": int(GITHUB_CHECK_SECONDS / 60),\n        "bundled_app": update_delivery.status(),')
-          anchor='@app.post("/api/github/check")\ndef api_github_check():'
-          insert='''@app.get("/api/github/available")
-          def api_github_available():
-              try:
-                  remote = github_remote_info(HARD_CODED_GITHUB_REPO)
-              except Exception:
-                  return jsonify(ok=False, error="Could not check GitHub for application updates."), 502
-              printer_available, printer_error = False, ""
-              try:
-                  bundle = update_delivery.remote_bundle(remote["revision"])
-                  printer_available = update_delivery.needs_install(bundle)
-              except Exception:
-                  printer_error = "Printer release check failed; Stats can still be updated."
-              return jsonify(ok=True, installed_version=software_version(), remote_version=remote["version"],
-                  stats_update_available=version_key(remote["version"]) > version_key(software_version()),
-                  printer_update_available=printer_available, printer_check_error=printer_error,
-                  bundled_app=update_delivery.status())
-          
-          
-          @app.post("/api/github/printer-login")
-          def api_github_printer_login():
-              # Setup credential delivery is the only secret exposed here. It is never in
-              # public status/config payloads and never substitutes for printer authentication.
-              if not pin_is_set() or not is_unlocked():
-                  return jsonify(ok=False, error="Set and unlock a Settings PIN to view the initial printer login."), 403
-              if not request.is_json or request.headers.get("X-Requested-With") != "Stats-Update":
-                  abort(400)
-              origin = request.headers.get("Origin")
-              if origin and origin != request.host_url.rstrip("/"):
-                  abort(403)
-              body = request.get_json(silent=True) or {}
-              if not isinstance(body, dict):
-                  abort(400)
-              if body.get("saved") is True:
-                  update_delivery.forget_initial_login()
-                  response = jsonify(ok=True)
-              else:
-                  login = update_delivery.initial_login()
-                  if not login:
-                      return jsonify(ok=False, error="No initial login is pending. Use your existing printer login."), 404
-                  response = jsonify(ok=True, login=login)
-              response.headers["Cache-Control"] = "private, no-store"
-              return response
-          
-          
-          '''
-          assert anchor in s;s=s.replace(anchor, insert+anchor)
-          s=s.replace('# Initialize on import because production runs through Waitress.\ninit_db()', '''# This one-time distribution handoff also reaches installations whose old ZIP
-          # updater copied app/ but not printer_app/. No printer runs in the Stats process.
-          update_delivery.start_initial_install()
-          
-          # Initialize on import because production runs through Waitress.
-          init_db()''')
-          assert blob_sha(s)=='13acf34e79e2c6443b250de4af9cec79f5229fa7', blob_sha(s)
-          req=urllib.request.Request('https://api.github.com/repos/matijepekovic/pi-sales-leaderboard/git/blobs', data=json.dumps({'content':s,'encoding':'utf-8'}).encode(), headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','Content-Type':'application/json'}, method='POST')
-          with urllib.request.urlopen(req) as response:
-              result=json.load(response)
-          print('Checked server blob:',result['sha'])
-          PY
+          sudo apt-get update
+          sudo apt-get install -y python3-venv python3-dev build-essential libcups2-dev cups-client cups-daemon libreoffice-calc fonts-liberation fonts-dejavu-core
+          python -m pip install -r printer_app/requirements.txt pytest xlwt
+      - name: Disposable CI-only printer sinks (no physical printer)
+        run: |
+          echo 'FileDevice Yes' | sudo tee -a /etc/cups/cups-files.conf
+          sudo systemctl restart cups
+          sudo lpadmin -p printer_app_ci -E -v file:/tmp/printer-app-ci-output -m raw
+          sudo lpadmin -p konicaa -E -v file:/tmp/bundled-update-ci-output -m raw
+      - name: Boundary, recovery, print and old-updater regressions
+        env:
+          PRINTER_CUPS_INTEGRATION: '1'
+        run: |
+          python -m compileall -q app/server.py app/update_delivery.py printer_app tests
+          node --check app/static/software-manual-v107.js
+          bash -n printer_app/install.sh printer_app/launch.sh scripts/update-printer-app.sh
+          python -m pytest printer_app/tests tests/test_update_delivery.py -v
+      - name: Real old ZIP upgrade and independent systemd lifecycle
+        env:
+          DELIVERY_SOURCE_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          sudo useradd --create-home --shell /bin/bash scoreboard
+          # Disposable VM setup only. The application never installs a sudoers rule.
+          echo 'scoreboard ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/bundled-update-ci
+          sudo mkdir -p /home/scoreboard/source
+          sudo cp -R app printer_app tests requirements.txt VERSION kiosk.sh pi-tableau-leaderboard.service /home/scoreboard/source/
+          sudo chown -R scoreboard:scoreboard /home/scoreboard/source
+          git show 59c25897c7ee002e658608a48e89bb91089375eb:app/server.py > /tmp/legacy-server.py
+          PRINTER_TREE=$(git rev-parse "$DELIVERY_SOURCE_REF:printer_app")
+          sudo -u scoreboard -H /usr/bin/python3 /home/scoreboard/source/tests/smoke_bundled_update.py /home/scoreboard/source /tmp/legacy-server.py "$DELIVERY_SOURCE_REF" "$PRINTER_TREE"
+          sudo journalctl -u printer-app-install.service --no-pager > /tmp/printer-install-journal.txt
+          sudo -u scoreboard -H python3 -c 'import json,pathlib; p=pathlib.Path.home()/".local/share/leaderboard-distribution/initial-login.json"; assert json.loads(p.read_text())["password"] not in pathlib.Path("/tmp/printer-install-journal.txt").read_text()'
+      - name: Build exact update ZIP
+        run: git archive --format=zip HEAD -o /tmp/leaderboard-update.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leaderboard-update
+          path: /tmp/leaderboard-update.zip
+          retention-days: 7
+      - name: Service diagnostics
+        if: always()
+        run: sudo journalctl -u printer-app-install.service -u printer-app-web.service -u printer-app-worker.service -u pi-tableau-leaderboard.service --no-pager -n 100
