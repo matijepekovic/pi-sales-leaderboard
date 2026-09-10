@@ -28,7 +28,7 @@ def create_app(config, control):
         session.setdefault('csrf', secrets.token_urlsafe(32))
         if request.method == 'POST':
             supplied = request.form.get('csrf', '')
-            if not hmac.compare_digest(supplied, session['csrf']):
+            if not hmac.compare_digest(supplied.encode('utf-8'), session['csrf'].encode('utf-8')):
                 abort(400, 'Invalid CSRF token')
         if request.endpoint not in {'login', 'static'} and not session.get('authenticated'):
             if request.path.startswith('/api/'):

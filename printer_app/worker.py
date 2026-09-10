@@ -23,7 +23,6 @@ class Worker:
                 self.repo.ingest(message)
             status = {'state': 'running', 'gmail': 'connected'}
         except Exception as exc:
-            # IMAP exceptions can contain server-supplied text. Do not log credential-bearing details.
             status = {'state': 'error', 'gmail': 'disconnected', 'error': 'Gmail check failed: ' + type(exc).__name__}
             log.warning('Gmail check failed: %s', type(exc).__name__)
         self.next_check = time.time() + self.config.poll_seconds
@@ -42,10 +41,10 @@ class Worker:
             for command in commands:
                 if command['kind'] == 'run':
                     self.repo.acknowledge(command['id'])
-        if not paused or run_now:
-            self.printing.prepare()
-        # Test Print is an explicit one-shot, including while the monitor is paused.
-        self.printing.dispatch(allow_new=not paused or run_now or any(c['kind'] == 'test' for c in commands))
+        # Pause belongs to the email monitor. Already downloaded work, errors and
+        # CUPS reconciliation continue so pause never strands a physical output.
+        self.printing.prepare()
+        self.printing.dispatch()
         try:
             self.repo.put('printer', self.printing.printer.snapshot())
         except Exception as exc:

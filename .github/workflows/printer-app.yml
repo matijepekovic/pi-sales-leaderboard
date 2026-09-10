@@ -2,7 +2,7 @@ name: Independent printer application
 on:
   push:
     branches: [main, 'feature/standalone-printer-*']
-    paths: ['printer_app/**', '.github/workflows/printer-app.yml']
+    paths: ['printer_app/**', 'app/**', 'stats_core/**', '.github/workflows/printer-app.yml']
   pull_request:
     paths: ['printer_app/**', 'app/**', 'stats_core/**', '.github/workflows/printer-app.yml']
   workflow_dispatch:

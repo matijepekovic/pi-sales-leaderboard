@@ -1,7 +1,11 @@
-"""Small, application-owned contracts at the mail, renderer and printer boundaries."""
+"""Application-owned contracts at the mail, renderer and printer boundaries."""
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Protocol, Any
+
+
+class ConversionError(RuntimeError):
+    """A renderer could not produce a usable report."""
 
 
 @dataclass(frozen=True)

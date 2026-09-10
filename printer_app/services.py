@@ -2,7 +2,8 @@
 import logging
 from pathlib import Path
 import time
-from .converter import ConversionError, page_count
+from .contracts import ConversionError
+from .pdfs import page_count
 from .error_pages import error_page
 from .files import contained, safe_name
 from .parser import ParserError, parse
@@ -15,12 +16,15 @@ class PrintService:
         self.config, self.repo = config, repository
         self.renderer, self.printer, self.parser = renderer, printer, parser
 
+    def has_error_output(self, job_id):
+        return any(o['kind'] == 'ERROR' for o in self.repo.outputs(job_id))
+
     def error(self, job, kind, reason):
+        if self.has_error_output(job['id']):
+            return
         self.repo.set_job(job['id'], kind, reason, kind)
         self.repo.step(job['id'], reason)
         log.warning('Job %s: %s', job['id'], reason)
-        if any(o['kind'] == 'ERROR' for o in self.repo.outputs(job['id'])):
-            return
         path = self.config.data_dir / 'outputs' / job['id'] / 'ERROR.pdf'
         error_page(path, job, reason)
         self.repo.add_output(job['id'], 'ERROR', path, 1, printable=True)
@@ -34,7 +38,6 @@ class PrintService:
                 self.prepare_attachment(attachment)
                 self.repo.finish_attachment(attachment['id'])
             except OSError:
-                # Disk-full or permissions failures must not silently acknowledge an attachment.
                 log.error('Artifact storage unavailable; attachment %s remains pending', attachment['id'])
                 raise
 
@@ -51,7 +54,8 @@ class PrintService:
                 self.repo.step(job['id'], f'Incoming PDF: {pages} page(s), printing directly without the Excel page limit')
                 self.repo.add_output(job['id'], 'REPORT', path, pages, printable=True)
             except Exception as exc:
-                self.error(job, 'CONVERSION ERROR', 'PDF PREFLIGHT FAILED: ' + type(exc).__name__)
+                reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+                self.error(job, 'CONVERSION ERROR', 'PDF PREFLIGHT FAILED: ' + reason)
             return
         if suffix not in {'.xlsx', '.xls', '.xlsm'}:
             job = self.repo.job(attachment, '__file__')
@@ -94,12 +98,23 @@ class PrintService:
 
     def printer_failure(self, output, reason):
         self.repo.put('last_printer_error', {'at': time.time(), 'reason': reason})
-        self.repo.set_job(output['job_id'], 'PRINTER ERROR', reason)
-        self.repo.step(output['job_id'], reason)
         if output['kind'] == 'ERROR':
+            self.repo.set_job(output['job_id'], 'PRINTER ERROR', reason)
+            self.repo.step(output['job_id'], reason)
             self.repo.set_output(output['id'], 'RETRY', delay=60)
         else:
+            # Make the fallback durable before removing the failed report from recovery.
+            self.error(self.repo.detail(output['job_id']), 'PRINTER ERROR', reason)
             self.repo.set_output(output['id'], 'FAILED')
+
+    def uncertain(self, output, attempt, reason):
+        if output['kind'] == 'REPORT' and self.has_error_output(output['job_id']):
+            return
+        self.repo.set_job(output['job_id'], 'PRINTER ERROR', reason)
+        self.repo.put('last_printer_error', {'at': time.time(), 'reason': reason})
+        if output['kind'] == 'REPORT' and time.time() - attempt['started'] >= 60:
+            # Do not repeat the original report. Print a diagnostic after allowing
+            # CUPS time to make an interrupted submission visible in its history.
             self.error(self.repo.detail(output['job_id']), 'PRINTER ERROR', reason)
 
     def dispatch(self, allow_new=True):
@@ -108,40 +123,43 @@ class PrintService:
                 self.dispatch_output(output, allow_new)
             except Exception as exc:
                 self.repo.put('last_printer_error', {'at': time.time(), 'reason': 'CUPS communication failed: ' + type(exc).__name__})
-                # Leave the durable state intact for recovery; do not blindly reprint.
                 log.warning('CUPS operation failed for output %s: %s', output['id'], type(exc).__name__)
 
     def dispatch_output(self, output, allow_new):
         state = output['state']
+        fallback_exists = output['kind'] == 'REPORT' and self.has_error_output(output['job_id'])
         if state in {'SUBMITTING', 'UNCERTAIN'}:
             attempt = self.repo.latest_attempt(output['id'])
             if attempt is None:
                 raise RuntimeError('Missing durable print attempt')
+            if attempt['state'] == 'FAILED':
+                self.printer_failure(output, 'PRINTER SUBMISSION FAILED: ' + attempt['detail'])
+                return
             found = self.printer.find(attempt['token'])
             if found:
                 self.repo.set_output(output['id'], 'SUBMITTED', found)
                 self.repo.finish_attempt(attempt['id'], 'SUBMITTED', found, 'Recovered by unique CUPS job title')
-                self.repo.set_job(output['job_id'], 'SUBMITTED')
+                if not fallback_exists:
+                    self.repo.set_job(output['job_id'], 'SUBMITTED')
             else:
-                # There is no atomic transaction between SQLite and CUPS. An absent
-                # history entry is not permission to submit the same report again.
                 self.repo.set_output(output['id'], 'UNCERTAIN')
-                reason = 'PRINTER SUBMISSION OUTCOME UNKNOWN; automatic duplicate submission is blocked'
-                self.repo.set_job(output['job_id'], 'PRINTER ERROR', reason)
-                self.repo.put('last_printer_error', {'at': time.time(), 'reason': reason})
+                self.uncertain(output, attempt, 'PRINTER SUBMISSION OUTCOME UNKNOWN; the original report will not be submitted again')
             return
         if state == 'SUBMITTED':
             outcome = self.printer.state(output['request_id'])
             if outcome == 'COMPLETED':
                 self.repo.set_output(output['id'], 'COMPLETED')
                 result = 'ERROR PRINTED' if output['kind'] == 'ERROR' else 'PRINTED'
-                self.repo.set_job(output['job_id'], result)
+                if not fallback_exists:
+                    self.repo.set_job(output['job_id'], result)
                 self.repo.put('last_successful_print', {'at': time.time(), 'request_id': output['request_id'], 'result': result})
                 self.repo.step(output['job_id'], 'CUPS reports job completed: ' + output['request_id'])
             elif outcome == 'FAILED':
                 self.printer_failure(output, 'PRINTER JOB CANCELED OR ABORTED: ' + output['request_id'])
             elif outcome == 'UNKNOWN':
-                self.repo.set_job(output['job_id'], 'PRINTER ERROR', 'CUPS JOB STATE UNAVAILABLE; not resubmitting automatically')
+                attempt = self.repo.latest_attempt(output['id'])
+                if attempt:
+                    self.uncertain(output, attempt, 'CUPS JOB STATE UNAVAILABLE; the original report will not be submitted again')
             return
         if not allow_new or output['retry_at'] > time.time():
             return

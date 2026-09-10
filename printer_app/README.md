@@ -1,31 +1,59 @@
 # Independent Raspberry Pi printer automation
 
-This directory is a **second application**, not a Stats feature. It has its own Flask instance, Waitress web process, worker process, authentication, environment, virtual environment, SQLite database, artifacts, logs and systemd units. It imports no Stats modules. Stats can be stopped, crashed, updated or removed without stopping an installed printer release, and vice versa. Both applications share only repository distribution. No existing Stats file, route, service, dependency or database is modified.
+This directory is a **second application**, not a Stats feature. Its web server, worker, authentication, environment, virtual environments, SQLite database, artifacts, logs and systemd units are all independent. It imports no Stats modules. Stats can be stopped, crashed, updated or removed without stopping an installed printer release, and vice versa. Both applications share only repository distribution. No existing Stats file, route, service, dependency, VERSION or database is modified.
 
-## Final behavior
+## Printing behavior
 
-* **Received PDFs print directly**, including multi-page PDFs. They are validated as readable, non-encrypted PDFs but are neither converted nor subjected to the Excel one-page limit. Existing queue defaults are retained for these PDFs.
-* `.xlsx`, `.xls` and `.xlsm` are read as cached values. The largest unambiguous table with a `Sub Status` header is detected, outer blank area is removed, headers/column order are preserved, and actual Sub Status values determine the groups. No status names are hardcoded. Blank values form a `(blank)` group. A tie between main-table candidates is a parser error rather than a guess. Rows with data but blank status are not discarded.
-* Each group becomes a new **values-only, macro-free** workbook, with Tabloid (11×17 inch) landscape layout and a bounded print area. Fit-to-width is enabled; height is not forced into one unreadable page. The actual resulting PDF is checked using pypdf. One page prints the report. Two or more pages print a **one-page physical error sheet instead**, with the rejected report retained for preview/download.
-* Unsupported files, corrupt input, missing Sub Status, empty tables, uncached formulas and conversion failures produce one-page error sheets. A failing group does not cancel the others. There is **no approval queue**.
-* **Oversized attachments are downloaded**, not rejected because of size. `ATTACHMENT_WARN_MB` is only a warning. IMAP downloads use one-megabyte chunks to disk. MIME decoding still uses memory; the worker has a separate systemd memory limit. Free-disk protection leaves messages unacknowledged for retry rather than discarding them. ZIP expansion and cell-count safeguards apply to parsing, not downloading, and produce a physical processing-error sheet.
+**Received PDFs print directly**, including multi-page PDFs. They are checked for readable, non-encrypted PDF content, but are not converted, reformatted or subjected to the Excel one-page rule. Existing queue defaults are retained.
 
-## Ownership and boundaries
+**Oversized attachments are downloaded**, not rejected because of size. `ATTACHMENT_WARN_MB` is a warning only. IMAP downloads use one-megabyte chunks to disk; subsequent MIME decoding still uses memory. The worker has its own memory limit. Low free disk space leaves mail unacknowledged for retry rather than silently losing it. ZIP expansion and cell-count safeguards apply to workbook parsing, not downloading, and produce a processing-error sheet.
 
-`bootstrap.py` is this application's composition root. `config.py` owns only its environment. `db.py` owns connection/schema/migration/backup; all business SQL is in `repository.py`. `contracts.py` defines normalized mail, report and printer contracts. `gmail_client.py`, `converter.py` and `printer.py` are replaceable adapters. `parser.py` reads tables without Office execution. `services.py` owns workflows and the monitoring/control contract. `worker.py` owns polling, a process lock, commands and heartbeat. `web.py`, `templates/` and `static/` own HTTP/UI. `error_pages.py` renders fixed one-page error sheets independently of LibreOffice. There is no dependency on Stats bootstrap or runtime.
+Excel `.xlsx`, `.xls` and `.xlsm` files are read as cached values. The largest unambiguous table with a `Sub Status` header is detected. Outer blank area is removed; headers, column order and number formats are preserved. Actual Sub Status values determine the groups; **no status names are hardcoded**. Blank values form a `(blank)` group and are not discarded. Equally sized main-table candidates cause an explicit parser error instead of a guess.
 
-## Install on the Pi
+Each group becomes a new **values-only, macro-free workbook** with a defined print area and Tabloid (11×17 inch) landscape layout. Fit-to-width is enabled; height is not forced into one unreadable page. LibreOffice runs headlessly with an isolated profile and a timeout that terminates its complete process group. It never opens the original untrusted workbook. Formula strings remain literal text; cached formulas are not executed. Missing cached formula values cause a clear error rather than printing an incorrect blank result.
 
-Run as **scoreboard**, inside the existing checkout on **main**:
+The resulting PDF is measured using pypdf. Exactly one page prints the report. Two or more pages print a **one-page physical error sheet instead**, retaining the rejected report for preview/download. Unsupported input, corruption, missing Sub Status, empty tables and conversion failures also produce error sheets. Each rendered group succeeds or fails independently. The error sheet includes filename, email subject, sender, Sub Status, reason, local timestamp and job ID. Long fields are bounded to retain one-page output; full details remain in the UI.
+
+There is **no approval workflow**. Previews are for monitoring only.
+
+## Ownership and replaceability
+
+| Owner | Responsibility |
+| --- | --- |
+| `bootstrap.py` | This application's sole composition root |
+| `config.py`, `.env.example` | Printer-only configuration |
+| `db.py` | Connections, schema, migrations, consistent backups |
+| `repository.py` | All business-data SQL |
+| `contracts.py` | Normalized mail, report, conversion-error and printer contracts |
+| `gmail_client.py` | Replaceable read-only IMAP source adapter |
+| `parser.py` | Cached-value table detection and dynamic status splitting |
+| `converter.py` | Replaceable LibreOffice renderer |
+| `printer.py` | Replaceable CUPS adapter |
+| `pdfs.py`, `error_pages.py` | Renderer-independent preflight and error-sheet generation |
+| `processes.py` | Shared child-process secret-exclusion policy |
+| `services.py` | Printing workflows and web-facing monitoring/control contract |
+| `worker.py` | Polling, durable commands, single-worker process lock and heartbeat |
+| `web.py`, `templates/`, `static/` | Independent HTTP, authentication and UI |
+| `deploy.py`, shell scripts, `systemd/` | Printer-only installation and deployment |
+
+Neither the printer adapter nor the workflow nor the error-sheet renderer imports the LibreOffice adapter. Removing or replacing that adapter does not require rewriting them. The printer composition root has no relationship to Stats' composition root. CI checks these boundaries in both directions.
+
+## Installation on the Pi
+
+Inside the repository checkout on **main**, run as **scoreboard**, not root:
 
 ```bash
 git pull --ff-only origin main
 bash printer_app/install.sh
 ```
 
-The installer uses sudo only to install Python/LibreOffice/CUPS-client build dependencies and install/enable the two service units. **It does not use lpadmin, replace the Konica driver/filter, change queue options, change Account Track, or alter Stats.** It verifies that `konicaa` already exists. Python 3.10 or newer is required. Both running services are non-root `scoreboard` processes. A private UI password is requested during first setup; there is no default password.
+Python 3.10+ is required. The installer uses sudo only for system packages and installing/enabling the two printer service units. It installs independent Python dependencies into a new printer-only venv and verifies LibreOffice, `lp`, and existing queue `konicaa`.
 
-Then configure the mailbox and filters in the private environment file:
+**It does not run lpadmin, replace the Konica driver/filter, change Account Track or queue defaults, or modify Stats.** The working Konica Minolta bizhub C360i driver and `KMbeuEmpPS.pl` setup remain outside this application's responsibilities.
+
+First setup asks for a printer UI password of at least 12 characters. There is no default password. The username defaults to `admin`. The private environment file is created outside the repository.
+
+Configure Gmail and filters on the Pi:
 
 ```bash
 nano ~/.config/printer-app/env
@@ -33,30 +61,42 @@ chmod 600 ~/.config/printer-app/env
 sudo systemctl restart printer-app-web.service printer-app-worker.service
 ```
 
-Enter Gmail app credentials only on the Pi, never into the repository. With no Gmail credentials, the web UI and worker still start, but the Email Monitor reports a connection error. Before adding credentials, set the sender/subject filters and lookback window deliberately: the first successful scan processes qualifying attachments in that window, even if mail is already marked read. No flags, labels, messages or attachments are deleted or changed in Gmail. A sliding lookback window is used on each poll; increase it after an outage longer than the window to catch older unprocessed messages. Inline MIME parts with filenames are treated as attachments; ordinary email body text is not printed.
+Set `EMAIL_USER`, `EMAIL_APP_PASSWORD`, and the sender/subject filters before enabling real mailbox access. With missing or invalid Gmail credentials, the web and worker stay up but Email Monitor reports an error. Never commit the real environment file or paste credentials into source code.
 
-Web: `http://<pi-ip>:5055/system/print-control` (also `/`). This is separate from Stats and absent from its menu. UI username defaults to `admin`; the password is the one chosen at installation. Use only on a trusted LAN; HTTP is not encrypted. Do not port-forward this service. For untrusted networks, use an HTTPS reverse proxy or a trusted VPN; set `COOKIE_SECURE=1` when serving via HTTPS. Authentication, CSRF protection, login throttling and cookies are independent of Stats. No filesystem browsing or secret-reading endpoint is provided.
+**The first successful scan prints qualifying attachments within the lookback window, including previously read emails.** Pick filters and `EMAIL_LOOKBACK_DAYS` deliberately before connecting the account. Mail is accessed read-only: no message deletion, flag changes or marking mail as read. Named inline MIME files are treated as attachments; normal email body text is not printed. The rolling lookback window is searched on every poll. After an outage longer than that window, increase it to catch older unprocessed mail.
 
-The health route is unauthenticated and contains only four booleans:
+## Web interface and controls
+
+```text
+http://<pi-ip>:5055/system/print-control
+```
+
+The root `/` opens the same page. This URL is not added to the Stats menu. The UI has its own login, hashed password, signed cookie, login throttling and CSRF protection. It provides queue status, last print/error, Gmail state, last/next check, Run Now, Pause, Resume, Test Print, Refresh, recent jobs, generated-file downloads, PDF previews, timestamps, processing steps and print-command results.
+
+**Pause stops automatic email polling only.** Already downloaded work, physical error sheets and CUPS reconciliation continue. Run Now performs one email scan even while paused; Test Print submits one local test sheet. To stop this application's processing completely, stop its worker service. Existing jobs already accepted into the CUPS spool are owned by CUPS.
+
+Direct HTTP is for a **trusted LAN only**, not the public internet. Do not port-forward port 5055. Use HTTPS or a trusted VPN for untrusted networks; set `COOKIE_SECURE=1` when the UI is served over HTTPS. The application never exposes Gmail secrets, UI password hashes or arbitrary filesystem paths through its UI. File retrieval uses recorded output IDs and path containment checks.
+
+Unauthenticated basic health contains only four booleans:
 
 ```bash
 curl -fsS http://127.0.0.1:5055/health
 ```
 
-It checks web liveness, database access, fresh worker heartbeat and the worker's knowledge of the CUPS queue. Gmail authentication is reported only in the authenticated UI. Printer online/offline status is **CUPS-reported**, not a separate physical network probe.
+Fields are `web_alive`, `database_accessible`, `worker_running`, and `cups_queue_known`. Healthy returns HTTP 200; degraded returns 503. The worker heartbeat is independent of slow email/conversion work. Gmail connection details require login. Queue online/offline status is CUPS-reported, not a separate physical-device probe.
 
-## Services, storage and logging
+## Services, paths and logs
 
-| Item | Location / command |
+| Item | Default |
 | --- | --- |
 | Web unit | `printer-app-web.service` |
 | Worker unit | `printer-app-worker.service` |
-| Private environment | `/home/scoreboard/.config/printer-app/env` |
+| Environment | `/home/scoreboard/.config/printer-app/env` |
 | Database | `/home/scoreboard/.local/share/printer-app/data/printer_app.db` |
-| Attachments and previews | `.../data/attachments/` and `.../data/outputs/` |
-| Immutable deployed code and venvs | `.../printer-app/releases/<content-hash>/` |
+| Attachments and previews | `.../printer-app/data/attachments/` and `.../data/outputs/` |
+| Immutable printer code and venvs | `.../printer-app/releases/<content-hash>/` |
 | Active / previous release | `.../printer-app/current` and `.../printer-app/previous` |
-| Database deployment backups | `.../printer-app/backups/` |
+| Database backups | `.../printer-app/backups/` |
 
 ```bash
 systemctl status printer-app-web.service printer-app-worker.service
@@ -64,33 +104,41 @@ journalctl -u printer-app-web.service -u printer-app-worker.service -f
 sudo systemctl restart printer-app-worker.service
 ```
 
-There are no Requires/PartOf/BindsTo relationships with Stats or with each other. The web stays up when the worker is unavailable; health becomes degraded. The worker continues when the web is stopped. Each has its own cgroup, restart policy and journal identifier. A persistent advisory lock prevents two printer workers from owning the same data directory. Never point `PRINTER_DATA_DIR` at Stats storage. The supplied unit sandbox permits writes only below the printer state root; custom data paths require adjusting **only these printer units**.
+Both units run as `scoreboard`, start at boot and restart on failure. They have their own working directory, environment, journal identifiers and resource limits. Neither has a Requires/PartOf/BindsTo relationship with Stats or with the other printer unit. The web stays up when the worker is unavailable; the worker continues if the web is stopped. A process lock prevents two workers using the same printer database.
+
+Normal operation needs no root access. Systemd allows writes only under the printer state root. Never point `PRINTER_DATA_DIR` at Stats storage. A custom data location outside that root requires modifying only these printer units' sandbox permissions.
 
 ## Update and rollback
 
-From the repository checkout, as scoreboard:
+From the checkout, as scoreboard:
 
 ```bash
 bash printer_app/update.sh
 ```
 
-This checks that the checkout is `main`, refuses modified tracked files, performs `git pull --ff-only origin main`, and compares the printer source content to the active printer release. If printer code is unchanged, neither printer service is restarted. If changed, it installs dependencies into a **new printer-only virtual environment**, installs printer units, backs up the printer database, migrates, switches the active release, restarts **only the printer units**, and checks health. A failed activation switches back to the prior printer code. Stats is never stopped or restarted by this command. Updated Stats files in the checkout follow Stats' own deployment/restart policy.
+This refuses a non-main branch or modified tracked files, runs `git pull --ff-only origin main`, and compares printer source content with the active release. Unchanged printer code means **no dependency installation and no printer restart**. Changed printer code is staged into a new independent venv, its database is backed up and migrated, its release symlink is switched, only the two printer units are restarted, and health is checked. A failed activation switches back to the previous printer code. Stats is never stopped or restarted by this command.
 
-Already pulled? Deploy without another pull:
+Already pulled? Deploy just the printer files:
 
 ```bash
 python3 printer_app/deploy.py deploy
 ```
 
-Rollback printer code independently, without resetting `main`, reverting unrelated commits or deleting job history:
+Rollback only printer code without resetting main or reverting unrelated application changes:
 
 ```bash
 python3 printer_app/deploy.py rollback
 ```
 
-Do **not** restore an old print database as a routine rollback: forgetting completed jobs can cause duplicate physical output. Rollback retains the live print ledger. Schema version 1 is used; future migrations must preserve rollback compatibility or explicitly document a recovery plan. Deployed release directories are deployment snapshots, not competing implementations or version-numbered source files. They are intentionally outside the source checkout so Git pulls/Stats updates cannot replace code in a running printer process. Old releases and previews are retained; monitor disk use and remove only unreferenced releases/archived artifacts after preserving required records.
+A previous installed printer release is required. For a first-install undo, disable and stop only the printer units:
 
-**Existing updater distinction:** the current Stats in-app updater is a VERSION-gated ZIP installer that copies only Stats paths. It is deliberately unchanged; its button does not deploy this application. A raw `git pull` delivers the files but does not restart a service by itself. Use the command above as the Git-pull-and-printer-deploy entrypoint. This is not a runtime call from Stats into the printer application.
+```bash
+sudo systemctl disable --now printer-app-web.service printer-app-worker.service
+```
+
+Rollback **retains the live print ledger**. Do not routinely restore an older print database: forgetting completed jobs risks duplicates. Schema version 1 is used; future migrations must retain rollback compatibility or document explicit recovery. Old code/venvs are deployment snapshots outside the checkout, not duplicate source implementations. They keep running code insulated from Git pulls or Stats updates. Previews and old releases are retained; monitor disk use and archive/remove unneeded data deliberately.
+
+**Important updater distinction:** the current Stats in-app updater is a VERSION-gated ZIP installer that copies only Stats paths. It remains unchanged and its button does not deploy this app. A raw Git pull delivers files but cannot restart services by itself. The printer update command above is the Git-pull-and-deploy entrypoint. Updated Stats files remain subject to Stats' own deployment/restart policy. There is no runtime call from either application into the other.
 
 ## Environment variables
 
@@ -103,20 +151,20 @@ Do **not** restore an old print database as a routine rollback: forgetting compl
 | `EMAIL_FROM_CONTAINS` | Empty; case-insensitive substring filter, not sender authentication |
 | `EMAIL_LOOKBACK_DAYS` | `1`; rolling search window |
 | `EMAIL_POLL_SECONDS` | `60`; minimum 10 |
-| `ATTACHMENT_WARN_MB` | `25`; warning only, **not a rejection threshold** |
-| `DISK_RESERVE_MB` | `128`; retry mail later below this free-space threshold |
+| `ATTACHMENT_WARN_MB` | `25`; warning only, larger files still download |
+| `DISK_RESERVE_MB` | `128`; defer mail below this free-space threshold |
 | `CONVERSION_TIMEOUT_SECONDS` | `90` |
 | `PRINTER_QUEUE` | `konicaa` |
 | `PRINTER_HOST` / `PRINTER_PORT` | `0.0.0.0` / `5055` |
-| `PRINTER_DATA_DIR` | Printer-owned directory listed above |
+| `PRINTER_DATA_DIR` | Separate printer directory listed above |
 | `UI_USER` | `admin` |
-| `UI_PASSWORD_HASH` | Generated by configure; required, never a plaintext UI password |
+| `UI_PASSWORD_HASH` | Generated by configure; required |
 | `SESSION_SECRET` | Generated random secret; required |
-| `COOKIE_SECURE` | `0` for direct LAN HTTP; use `1` with HTTPS |
-| `TZ` | Example uses `America/Los_Angeles`; local time shown on sheets/UI |
-| `PRINTER_ENV` | Optional override of the private environment-file path for manual runs |
+| `COOKIE_SECURE` | `0` for direct LAN HTTP; `1` with HTTPS |
+| `TZ` | Example uses `America/Los_Angeles` |
+| `PRINTER_ENV` | Optional private environment path override for manual runs |
 
-Change the UI password with the deployed interpreter, then restart only the web unit:
+Change the UI password:
 
 ```bash
 cd ~/.local/share/printer-app/current
@@ -124,17 +172,21 @@ cd ~/.local/share/printer-app/current
 sudo systemctl restart printer-app-web.service
 ```
 
-## Delivery, retries and the physical-print boundary
+## Print ledger, retries and physical-output limits
 
-The database records mailbox scope, UIDVALIDITY, UID, Message-ID, attachment hash, each Sub Status job, artifacts, page counts, processing steps, timestamps, every submission token and the `lp` request ID. UID identity and Message-ID prevent replay of a processed message across restarts. Hashes are recorded, not globally deduplicated: two deliberately separate messages with identical attachments may legitimately need two prints.
+The database records mailbox scope, UIDVALIDITY, UID, Message-ID, attachment hash, each status group, generated paths, page counts, state/errors, processing steps, timestamps, submission tokens and `lp` request IDs. UID and Message-ID deduplication persist across restarts. Hashes are audited, not globally deduplicated: a genuinely new email containing the same report may legitimately require another print.
 
-`SUBMITTED` means accepted by CUPS, **not printed**. Only CUPS state `completed` produces `PRINTED` or `ERROR PRINTED`. CUPS does not provide independent confirmation that a person received a complete physical sheet. If the device is offline but CUPS accepts the job, the existing CUPS spool waits; the app does not submit copies on every poll. A known rejected/canceled/aborted report is replaced by an error sheet. Known failures to submit an error sheet are retried after 60 seconds, including after worker restart. Missing CUPS history is not treated as success.
+`SUBMITTED` means accepted by CUPS, not physically printed. Only CUPS state `completed` produces `PRINTED` or `ERROR PRINTED`; this is not independent proof that someone received paper. `failure_kind` retains parser/conversion/printer errors alongside the delivery status. Device-offline jobs accepted by CUPS stay in its spool; the app does not create another copy on every poll. Known report rejection/cancellation/abortion results in an error sheet. Known error-sheet submission failures are retried every 60 seconds, including after restart.
 
-There is no distributed transaction between SQLite and a physical printer. A unique CUPS job title lets the worker reconcile a process crash after `lp` accepted the job but before its request ID was committed. If an interrupted submission cannot be found in CUPS history, its state is **uncertain** and automatic duplicate submission is blocked. Do not clear that state/database merely to force retry. This exceptional state requires inspecting CUPS/job history; it is not a manual-approval workflow. No program can guarantee both exactly-once physical output and automatic retry when the printer's outcome has become unknowable. The UI records this explicitly rather than claiming a successful print.
+SQLite and a physical printer cannot share an atomic transaction. Each attempt has a unique CUPS title for reconciliation after a crash between submission and database acknowledgement. An interrupted submission without a recoverable receipt is **uncertain**, never blindly resubmitted. After 60 seconds without a known result, an uncertain original report generates one automatic diagnostic sheet; the original remains available for reconciliation and is not sent again. The same applies when a recorded CUPS job's history becomes unavailable. This is automatic error reporting, not manual approval.
 
-## Tests
+If the diagnostic sheet's own submission is also uncertain, its receipt must be reconciled rather than recursively printing more error sheets. The UI records the uncertainty. A broken/offline printer cannot guarantee immediate physical output; an unknowable device outcome cannot simultaneously guarantee exactly-once paper delivery and unlimited automatic retries. Never clear the database simply to force a retry. Preserve CUPS job history for recovery.
 
-CI runs the independent test suite, real LibreOffice rendering tests, Python compilation, shell syntax checks and architectural boundary checks. Tests use fake mail and printer adapters: **CI never accesses your mailbox or physically prints**.
+## Automated tests
+
+The independent CI workflow installs only printer dependencies and runs real LibreOffice conversion alongside fake IMAP/CUPS adapters, pipeline recovery, oversized downloads, authentication, Python compilation, shell syntax and architecture checks. CI never accesses your mailbox or physically prints. The package is also copied away from the Stats repository and started independently in a subprocess test.
+
+With LibreOffice and CUPS development dependencies installed:
 
 ```bash
 python3 -m venv /tmp/printer-tests
@@ -142,15 +194,13 @@ python3 -m venv /tmp/printer-tests
 /tmp/printer-tests/bin/python -m pytest printer_app/tests -v
 ```
 
-On the actual Pi, with the real mailbox/queue configured:
+## On-Pi acceptance procedure
 
-1. Keep Stats running; install this app and verify its authenticated UI and `/health`. Record Stats' PID. A printer-only update must not change that PID or its routes.
-2. Stop Stats with its existing service command; verify the printer UI, Gmail poll and a physical Test Print. Start Stats again. Stop both printer units; verify Stats still works. Restart the printer units. Separately stop the web unit and verify the worker continues processing, then reverse the test.
-3. Send a one-page **and a two-page received PDF**: both print directly (the final PDF instruction overrides the original one-page restriction for received PDFs).
-4. Send XLSX/XLS/XLSM fixtures with multiple **arbitrary** Sub Status names. Check separate Tabloid landscape PDFs, header/column preservation and actual output.
-5. Make one group long enough to render to multiple pages: only its one-page error sheet prints, other groups print normally. Check the rejected PDF is downloadable. Send a corrupt workbook, a missing-status workbook and an unsupported attachment; each produces a physical error sheet.
-6. Restart worker after ingestion and poll the same message again: no duplicate report. A distinct new email carrying the same attachment should still print. Send an attachment over the warning threshold: it is downloaded, not rejected for size.
-7. Disconnect Gmail: polling records an error while web/worker remain alive; restore credentials/network and verify recovery. Turn the printer off: check that jobs stay queued or show recorded errors, never false completion. Turn it on and verify completion/retry. Retain CUPS job history for crash reconciliation.
-8. Verify login, incorrect credentials, CSRF rejection, authenticated previews, no secret disclosure, and no ability to request arbitrary files. Reboot and confirm both printer units start independently of Stats.
+1. Keep Stats running; install the printer app and verify authenticated UI/health. Record Stats' PID and existing routes. A printer-only deployment must not change them. Stop Stats using its existing service command, verify printer polling and a physical Test Print, then start Stats again. Stop printer units and verify Stats remains operational. Separately stop web and worker to verify their independent lifecycles.
+2. Send one-page and two-page **received PDFs**: both print directly. Send XLSX, XLS and XLSM workbooks with arbitrary status names and verify separate Tabloid landscape reports with preserved headers/columns. No macros should execute.
+3. Make one Excel group long enough to render to multiple pages. Only its one-page physical error sheet should print; other groups continue. Confirm the rejected PDF remains downloadable. Send corrupt, unsupported, missing-status and empty-table inputs and inspect their physical error sheets.
+4. Restart the worker and re-poll the same email: no duplicate report. Send a genuinely new message with identical attachment bytes: it should print. Send an attachment larger than the warning threshold: it still downloads. Check job timestamps, hashes, steps and request IDs.
+5. Interrupt Gmail connectivity: the web and worker stay alive and recover. Turn off the printer: jobs remain queued or record errors, never false completion. Restore it and check completion/retry. Pause polling and confirm already downloaded work continues. Verify Run Now, Resume and Test Print.
+6. Check independent login, wrong-password throttling, CSRF rejection, authenticated previews and no secret/arbitrary-file disclosure. Confirm only the private example, not real secrets, is committed. Reboot and verify both printer units start without depending on Stats.
 
-The Konica Minolta bizhub C360i, its `KMbeuEmpPS.pl` filter and working Account Track setup are intentionally outside this application's responsibilities.
+Physical Raspberry Pi operation, live Gmail, Account Track and actual printed sheets require this on-device acceptance test; automated tests do not substitute for it.

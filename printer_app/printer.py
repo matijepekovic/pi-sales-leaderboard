@@ -2,7 +2,7 @@
 import re
 import subprocess
 from .contracts import Submission
-from .converter import safe_environment
+from .processes import safe_environment
 
 
 class CupsPrinter:
@@ -55,6 +55,6 @@ class CupsPrinter:
         try:
             attrs = self.connection_factory().getJobAttributes(int(request_id.rsplit('-', 1)[1]))
         except Exception:
-            return 'UNKNOWN'  # Missing history is not proof of completion or failure.
+            return 'UNKNOWN'
         state = attrs.get('job-state')
         return 'COMPLETED' if state == 9 else 'FAILED' if state in (7, 8) else 'WAITING'

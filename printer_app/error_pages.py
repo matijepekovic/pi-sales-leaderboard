@@ -1,12 +1,34 @@
 """A fixed one-page physical error sheet, independent of LibreOffice."""
 from datetime import datetime
 from pathlib import Path
-import textwrap
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
-from .converter import page_count
+from .pdfs import page_count
+
+
+def wrapped_lines(text, font, size=12, width=528, maximum=3):
+    """Bound both actual glyph width and line count, including very long filenames."""
+    text = ' '.join(str(text).replace('\x00', '').split()) or '-'
+    result = []
+    while text and len(result) < maximum:
+        end = 0
+        while end < len(text) and pdfmetrics.stringWidth(text[:end + 1], font, size) <= width:
+            end += 1
+        end = max(1, end)
+        if end < len(text):
+            space = text.rfind(' ', 0, end)
+            if space > 0:
+                end = space
+        result.append(text[:end])
+        text = text[end:].lstrip()
+    if text:
+        line = result[-1]
+        while line and pdfmetrics.stringWidth(line + '...', font, size) > width:
+            line = line[:-1]
+        result[-1] = line + '...'
+    return result
 
 
 def error_page(path: Path, job: dict, reason: str, title='PRINT ERROR'):
@@ -37,13 +59,7 @@ def error_page(path: Path, job: dict, reason: str, title='PRINT ERROR'):
         canvas.drawString(42, y, name.upper())
         y -= 18
         canvas.setFont(font, 12)
-        text = ' '.join(str(value).replace('\x00', '').split())
-        lines = textwrap.wrap(text, width=66, break_long_words=True) or ['-']
-        maximum = 5 if name == 'Reason' else 3
-        if len(lines) > maximum:
-            lines = lines[:maximum]
-            lines[-1] = lines[-1][:62] + '...'
-        for line in lines:
+        for line in wrapped_lines(value, font, maximum=5 if name == 'Reason' else 3):
             canvas.drawString(42, y, line)
             y -= 16
         y -= 15
