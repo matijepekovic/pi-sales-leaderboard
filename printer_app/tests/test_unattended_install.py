@@ -1,40 +1,36 @@
-"""The standalone setup CLI supports a UI-driven installer without sharing auth."""
+"""The standalone setup CLI supports UI-driven delivery without sharing auth."""
 import json
-import os
 from pathlib import Path
-import stat
 import subprocess
 import sys
-
-from werkzeug.security import check_password_hash
 
 from printer_app import bootstrap, deploy
 
 
-def test_private_initial_login_is_not_logged(tmp_path, monkeypatch, capsys):
+def test_v134_login_handoff_is_removed_and_no_credentials_are_created(tmp_path, monkeypatch, capsys):
     env = tmp_path / 'private/env'
     login = tmp_path / 'delivery/initial-login.json'
+    login.parent.mkdir(parents=True)
+    login.write_text(json.dumps({'username': 'admin', 'password': 'old-cleartext-password'}))
     monkeypatch.setenv('PRINTER_ENV_FILE', str(env))
     monkeypatch.setattr(sys, 'argv', ['bootstrap', 'init', '--initial-login-file', str(login)])
     bootstrap.main()
-    credentials = json.loads(login.read_text())
-    assert len(credentials['password']) >= 20
-    assert credentials['password'] not in capsys.readouterr().out
-    password_hash = next(line.partition('=')[2] for line in env.read_text().splitlines() if line.startswith('PRINTER_UI_PASSWORD_HASH='))
-    assert check_password_hash(password_hash, credentials['password'])
-    assert credentials['password'] not in env.read_text()
-    assert stat.S_IMODE(login.stat().st_mode) == stat.S_IMODE(env.stat().st_mode) == 0o600
-    before = env.read_bytes()
-    bootstrap.main()
-    assert env.read_bytes() == before
-    assert json.loads(login.read_text()) == credentials
+    assert not login.exists()
+    text = env.read_text()
+    assert 'PRINTER_UI_USER=' not in text
+    assert 'PRINTER_UI_PASSWORD_HASH=' not in text
+    assert 'PRINTER_SECRET_KEY=' in text
+    output = capsys.readouterr().out
+    assert 'old-cleartext-password' not in output
+    assert 'no login' in output.lower()
 
 
 def test_existing_configuration_is_never_reset(tmp_path, monkeypatch, capsys):
     env = tmp_path / 'env'
-    original = b'EMAIL_USER=existing@example.test\nPRINTER_UI_PASSWORD_HASH=existing\n'
+    original = b'EMAIL_USER=existing@example.test\nPRINTER_UI_PASSWORD_HASH=existing\nPRINTER_SECRET_KEY=existing-secret-key-value-that-is-long-enough-123456\n'
     env.write_bytes(original)
     login = tmp_path / 'initial-login.json'
+    login.write_text(json.dumps({'username': 'admin', 'password': 'stale-password'}))
     monkeypatch.setenv('PRINTER_ENV_FILE', str(env))
     monkeypatch.setattr(sys, 'argv', ['bootstrap', 'init', '--initial-login-file', str(login)])
     bootstrap.main()
@@ -43,16 +39,20 @@ def test_existing_configuration_is_never_reset(tmp_path, monkeypatch, capsys):
     assert 'existing@example.test' not in capsys.readouterr().out
 
 
-def test_interrupted_initial_handoff_recovers_same_credentials(tmp_path, monkeypatch):
+def test_interrupted_old_handoff_is_deleted_not_recovered(tmp_path, monkeypatch):
     env = tmp_path / 'env'
     login = tmp_path / 'initial-login.json'
-    password = 'fixture-recovery-password-123'
-    login.write_text(json.dumps({'username':'admin', 'password':password}))
+    login.write_text(json.dumps({'username': 'admin', 'password': 'fixture-recovery-password-123'}))
     monkeypatch.setenv('PRINTER_ENV_FILE', str(env))
     monkeypatch.setattr(sys, 'argv', ['bootstrap', 'init', '--initial-login-file', str(login)])
     bootstrap.main()
-    value = next(line.partition('=')[2] for line in env.read_text().splitlines() if line.startswith('PRINTER_UI_PASSWORD_HASH='))
-    assert check_password_hash(value, password)
+    assert not login.exists()
+    text = env.read_text()
+    assert 'PRINTER_UI_PASSWORD_HASH=' not in text
+    before = env.read_bytes()
+    bootstrap.main()
+    assert env.read_bytes() == before
+    assert not login.exists()
 
 
 def test_unattended_service_setup_uses_noninteractive_sudo(monkeypatch):
