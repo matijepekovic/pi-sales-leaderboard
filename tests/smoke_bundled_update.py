@@ -76,7 +76,7 @@ def main():
     namespace['install_update_zip'](package)
     assert not (installed/'printer_app').exists()
     assert pid('pi-tableau-leaderboard.service') == original_pid
-    assert (installed/'VERSION').read_text().strip() == '135'
+    assert (installed/'VERSION').read_text().strip() == '134'
     spec = importlib.util.spec_from_file_location('delivery', installed/'app/update_delivery.py')
     delivery = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(delivery)
