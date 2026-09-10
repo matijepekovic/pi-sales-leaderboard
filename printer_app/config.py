@@ -48,9 +48,10 @@ class Config:
     queue: str = 'konicaa'
     host: str = '0.0.0.0'
     port: int = 5055
-    ui_user: str = 'admin'
-    password_hash: str = ''
     secret_key: str = ''
+    # Existing v134 installs may still contain this hash. It is ignored by the
+    # UI and retained only so the worker can redact it if it appears in logs.
+    password_hash: str = ''
     secure_cookie: bool = False
     timezone: str = 'America/Los_Angeles'
     attachment_limit: int = 20 * 1024 * 1024
@@ -78,9 +79,8 @@ class Config:
             queue=e.get('PRINTER_QUEUE', 'konicaa'),
             host=e.get('PRINTER_HOST', '0.0.0.0'),
             port=int(e.get('PRINTER_PORT', '5055')),
-            ui_user=e.get('PRINTER_UI_USER', 'admin'),
-            password_hash=e.get('PRINTER_UI_PASSWORD_HASH', ''),
             secret_key=e.get('PRINTER_SECRET_KEY', ''),
+            password_hash=e.get('PRINTER_UI_PASSWORD_HASH', ''),
             secure_cookie=e.get('PRINTER_SECURE_COOKIE', '0') == '1',
             timezone=e.get('PRINTER_TIMEZONE', 'America/Los_Angeles'),
             attachment_limit=int(e.get('MAX_ATTACHMENT_MB', '20')) * 1024 * 1024,
