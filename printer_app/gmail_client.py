@@ -1,4 +1,4 @@
-"""Read-only Gmail IMAP. Fetch bounded attachments individually, not entire messages."""
+"""Read-only Gmail IMAP. Download attachments individually without a size rejection."""
 from __future__ import annotations
 
 import base64
@@ -230,15 +230,11 @@ class GmailClient:
                     saved = self.db.one('SELECT state FROM attachments WHERE message_id=? AND part=?', (record['id'], part['part']))
                     if saved and saved['state'] != 'DOWNLOADING':
                         continue
-                    maximum = cfg.attachment_limit * 3 + 8192  # quoted-printable/base64 expansion is checked again below
-                    if part['size'] > maximum:
-                        self._store(record['id'], part['part'], part['filename'], error='ATTACHMENT EXCEEDS SIZE LIMIT')
-                        continue
-                    result = self._fetch(client, uid, f'(BODY.PEEK[{part["part"]}]<0.{maximum+1}>)')
+                    # Fetch the entire attachment, not a prefix capped by its size.
+                    # MAX_ATTACHMENT_MB is retained as a warning threshold only.
+                    result = self._fetch(client, uid, f'(BODY.PEEK[{part["part"]}])')
                     encoded = self._literal(result)
                     try:
-                        if len(encoded) > maximum:
-                            raise ValueError('ATTACHMENT EXCEEDS SIZE LIMIT')
                         if part['encoding'] == 'BASE64':
                             payload = base64.b64decode(re.sub(rb'\s+', b'', encoded), validate=True)
                         elif part['encoding'] == 'QUOTED-PRINTABLE':
@@ -248,7 +244,8 @@ class GmailClient:
                         else:
                             raise ValueError('UNSUPPORTED ATTACHMENT ENCODING')
                         if len(payload) > cfg.attachment_limit:
-                            raise ValueError('ATTACHMENT EXCEEDS SIZE LIMIT')
+                            log.warning('Oversized attachment downloaded: uid=%s part=%s bytes=%s; continuing normally',
+                                        uid, part['part'], len(payload))
                         self._store(record['id'], part['part'], part['filename'], payload)
                     except ValueError as exc:
                         self._store(record['id'], part['part'], part['filename'], error=clean_text(exc))
