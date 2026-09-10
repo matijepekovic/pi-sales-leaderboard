@@ -1,0 +1,59 @@
+name: Printer app tests
+on:
+  push:
+    branches: [main, codex/printer-automation]
+    paths: ['printer_app/**', 'scripts/update-printer-app.sh', '.github/workflows/printer-app-tests.yml']
+  pull_request:
+    paths: ['printer_app/**', 'scripts/update-printer-app.sh', '.github/workflows/printer-app-tests.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  printer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Independent printer dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcups2-dev cups-client cups-daemon libreoffice-calc fonts-liberation fonts-dejavu-core
+          python -m pip install -r printer_app/requirements.txt pytest xlwt
+      - name: Isolated CI-only CUPS sink (never a physical printer)
+        run: |
+          echo 'FileDevice Yes' | sudo tee -a /etc/cups/cups-files.conf
+          sudo systemctl restart cups
+          sudo lpadmin -p printer_app_ci -E -v file:/tmp/printer-app-ci-output -m raw
+      - name: Tests, real LibreOffice conversion and CUPS receipt recovery
+        env:
+          PRINTER_CUPS_INTEGRATION: '1'
+        run: |
+          python -m compileall -q printer_app
+          bash -n printer_app/install.sh printer_app/launch.sh scripts/update-printer-app.sh
+          python -m pytest printer_app/tests -v
+      - name: Standalone systemd deployment smoke test (no Stats service)
+        run: |
+          sudo useradd --create-home --shell /bin/bash scoreboard
+          sudo mkdir -p /home/scoreboard/source
+          sudo cp -R printer_app /home/scoreboard/source/
+          sudo chown -R scoreboard:scoreboard /home/scoreboard/source
+          echo 'scoreboard ALL=(root) NOPASSWD: /usr/bin/install, /usr/bin/systemctl' | sudo tee /etc/sudoers.d/printer-app-ci
+          PYTHON="$(command -v python)"
+          sudo -u scoreboard -H bash -c 'cd /home/scoreboard/source; "$1" -m printer_app.bootstrap init' _ "$PYTHON"
+          sudo -u scoreboard -H sed -i 's/PRINTER_QUEUE=konicaa/PRINTER_QUEUE=printer_app_ci/' /home/scoreboard/.config/printer-app/env
+          sudo -u scoreboard -H "$PYTHON" /home/scoreboard/source/printer_app/deploy.py install
+          curl --fail http://127.0.0.1:5055/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/)" = 302
+          sudo systemctl stop printer-app-web.service
+          sudo systemctl is-active --quiet printer-app-worker.service
+          sudo systemctl start printer-app-web.service
+          sudo systemctl stop printer-app-worker.service
+          sudo systemctl is-active --quiet printer-app-web.service
+          for i in $(seq 1 10); do curl -s http://127.0.0.1:5055/health >/tmp/printer-health.json && break || sleep 1; done
+          python -c 'import json; assert json.load(open("/tmp/printer-health.json"))["worker_running"] is False'
+      - name: Printer service diagnostics
+        if: always()
+        run: sudo journalctl -u printer-app-web.service -u printer-app-worker.service --no-pager -n 80

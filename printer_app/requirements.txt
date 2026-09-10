@@ -1,0 +1,8 @@
+Flask>=3.1.2,<4
+waitress>=3.0.2,<4
+openpyxl>=3.1.5,<4
+xlrd>=2.0.2,<3
+pypdf>=6.1,<7
+reportlab>=4.4.3,<5
+defusedxml>=0.7.1,<1
+pycups>=2.0.4,<3
