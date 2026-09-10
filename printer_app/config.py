@@ -48,8 +48,6 @@ class Config:
     queue: str = 'konicaa'
     host: str = '0.0.0.0'
     port: int = 5055
-    ui_user: str = 'admin'
-    password_hash: str = ''
     secret_key: str = ''
     secure_cookie: bool = False
     timezone: str = 'America/Los_Angeles'
@@ -78,8 +76,6 @@ class Config:
             queue=e.get('PRINTER_QUEUE', 'konicaa'),
             host=e.get('PRINTER_HOST', '0.0.0.0'),
             port=int(e.get('PRINTER_PORT', '5055')),
-            ui_user=e.get('PRINTER_UI_USER', 'admin'),
-            password_hash=e.get('PRINTER_UI_PASSWORD_HASH', ''),
             secret_key=e.get('PRINTER_SECRET_KEY', ''),
             secure_cookie=e.get('PRINTER_SECURE_COOKIE', '0') == '1',
             timezone=e.get('PRINTER_TIMEZONE', 'America/Los_Angeles'),
