@@ -1,7 +1,6 @@
-"""Standalone authenticated web UI. This process never polls email or submits print jobs."""
+"""Standalone printer control UI. This process never polls email or submits print jobs."""
 from __future__ import annotations
 
-import hashlib
 import hmac
 import secrets
 import time
@@ -10,7 +9,6 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
-from werkzeug.security import check_password_hash
 
 from .config import Config
 from .db import Database
@@ -18,8 +16,8 @@ from .db import Database
 
 def create_app(cfg: Config | None = None) -> Flask:
     cfg = cfg or Config.from_env()
-    if not cfg.password_hash or len(cfg.secret_key) < 32:
-        raise ValueError('Printer UI credentials are required. Run printer_app.bootstrap init first.')
+    if len(cfg.secret_key) < 32:
+        raise ValueError('Printer UI session secret is required. Run printer_app.bootstrap init first.')
     app = Flask(__name__)
     app.config.update(SECRET_KEY=cfg.secret_key, SESSION_COOKIE_NAME='printer_app_session',
         SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
@@ -27,26 +25,22 @@ def create_app(cfg: Config | None = None) -> Flask:
         MAX_CONTENT_LENGTH=8192, MAX_FORM_MEMORY_SIZE=8192, MAX_FORM_PARTS=10)
     db = Database(cfg.db_path)
     app.extensions['printer_db'] = db
-    auth_version = hashlib.sha256(cfg.password_hash.encode()).hexdigest()
 
     @app.template_filter('localtime')
     def localtime(value):
         return datetime.fromtimestamp(float(value), ZoneInfo(cfg.timezone)).strftime('%Y-%m-%d %H:%M:%S %Z') if value else '—'
 
     @app.before_request
-    def protect():
+    def protect_writes():
         if request.endpoint == 'health':
             return None
         if 'csrf' not in session:
             session['csrf'] = secrets.token_urlsafe(32)
+            session.permanent = True
         if request.method == 'POST':
             supplied = request.form.get('csrf', '')
             if not hmac.compare_digest(str(session['csrf']), supplied):
                 abort(400, 'Invalid CSRF token')
-        if request.endpoint not in ('login', 'static') and session.get('auth') != auth_version:
-            if request.path.startswith('/api/'):
-                return jsonify(error='Authentication required'), 401
-            return redirect(url_for('login'))
         return None
 
     @app.after_request
@@ -59,34 +53,6 @@ def create_app(cfg: Config | None = None) -> Flask:
             "default-src 'self'; script-src 'none'; style-src 'self'; frame-src 'self'; "
             "object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'")
         return response
-
-    @app.route('/login', methods=['GET', 'POST'])
-    def login():
-        error = ''
-        if request.method == 'POST':
-            address = request.remote_addr or 'unknown'
-            now = time.time()
-            with db.connect() as conn:
-                conn.execute('DELETE FROM login_limits WHERE reset_at<?', (now,))
-                row = conn.execute('SELECT * FROM login_limits WHERE address=?', (address,)).fetchone()
-                if row and row['attempts'] >= 10:
-                    return render_template('login.html', error='Too many attempts. Try again in five minutes.'), 429
-                conn.execute('''INSERT INTO login_limits VALUES (?,1,?) ON CONFLICT(address)
-                    DO UPDATE SET attempts=attempts+1''', (address, now + 300))
-            valid = check_password_hash(cfg.password_hash, request.form.get('password', ''))
-            if valid and hmac.compare_digest(request.form.get('username', ''), cfg.ui_user):
-                db.execute('DELETE FROM login_limits WHERE address=?', (address,))
-                session.clear()
-                session.update(auth=auth_version, csrf=secrets.token_urlsafe(32))
-                session.permanent = True
-                return redirect(url_for('control'))
-            error = 'Incorrect username or password.'
-        return render_template('login.html', error=error), 401 if error else 200
-
-    @app.post('/logout')
-    def logout():
-        session.clear()
-        return redirect(url_for('login'))
 
     def state():
         heartbeat = db.get('worker_heartbeat', 0)
