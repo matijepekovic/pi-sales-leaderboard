@@ -50,8 +50,9 @@ jobs:
           git show 59c25897c7ee002e658608a48e89bb91089375eb:app/server.py > /tmp/legacy-server.py
           PRINTER_TREE=$(git rev-parse "$DELIVERY_SOURCE_REF:printer_app")
           sudo -u scoreboard -H /usr/bin/python3 /home/scoreboard/source/tests/smoke_bundled_update.py /home/scoreboard/source /tmp/legacy-server.py "$DELIVERY_SOURCE_REF" "$PRINTER_TREE"
-          sudo journalctl -u printer-app-install.service --no-pager > /tmp/printer-install-journal.txt
-          sudo -u scoreboard -H python3 -c 'import json,pathlib; p=pathlib.Path.home()/".local/share/leaderboard-distribution/initial-login.json"; assert json.loads(p.read_text())["password"] not in pathlib.Path("/tmp/printer-install-journal.txt").read_text()'
+          test ! -e /home/scoreboard/.local/share/leaderboard-distribution/initial-login.json
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/system/print-control)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/login)" = 404
       - name: Build exact update ZIP
         run: git archive --format=zip HEAD -o /tmp/leaderboard-update.zip
       - uses: actions/upload-artifact@v4
