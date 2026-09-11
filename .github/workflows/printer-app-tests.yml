@@ -17,19 +17,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Independent printer dependencies
+      - name: Independent printer and browser test dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libcups2-dev cups-client cups-daemon libreoffice-calc fonts-liberation fonts-dejavu-core
-          python -m pip install -r printer_app/requirements.txt pytest xlwt
+          python -m pip install -r printer_app/requirements.txt pytest xlwt 'playwright>=1.55,<2'
+          python -m playwright install --with-deps chromium
       - name: Isolated CI-only CUPS sink (never a physical printer)
         run: |
           echo 'FileDevice Yes' | sudo tee -a /etc/cups/cups-files.conf
           sudo systemctl restart cups
           sudo lpadmin -p printer_app_ci -E -v file:/tmp/printer-app-ci-output -m raw
-      - name: Tests, real LibreOffice conversion and CUPS receipt recovery
+      - name: Tests, native browser forms, real LibreOffice conversion and CUPS receipt recovery
         env:
           PRINTER_CUPS_INTEGRATION: '1'
+          PRINTER_BROWSER_TESTS: '1'
         run: |
           python -m compileall -q printer_app
           bash -n printer_app/install.sh printer_app/launch.sh scripts/update-printer-app.sh
