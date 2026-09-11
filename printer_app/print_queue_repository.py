@@ -87,20 +87,26 @@ class PrintQueueRepository:
             return count
 
     def eligible(self, job: dict, immediate: bool) -> bool:
-        if job['attachment_id'] is None or immediate:
+        if job['attachment_id'] is None:
             return True
-        return bool(self.db.one('''SELECT 1 FROM print_queue_releases WHERE attachment_id=?
-            UNION ALL SELECT 1 FROM print_attempts WHERE job_id=? LIMIT 1''',
-            (job['attachment_id'], job['id'])))
+        # Preparation runs concurrently with dispatch. READY is intermediate
+        # until process_attachment finishes recording every output/step and
+        # marks the attachment DONE. Never spool a file still being finalized.
+        # Existing CUPS attempts always remain eligible for reconciliation.
+        return bool(self.db.one('''SELECT 1 FROM print_attempts WHERE job_id=?
+            UNION ALL SELECT 1 FROM attachments a WHERE a.id=? AND a.state='DONE'
+            AND (? OR EXISTS (SELECT 1 FROM print_queue_releases r WHERE r.attachment_id=a.id))
+            LIMIT 1''', (job['id'], job['attachment_id'], int(immediate))))
 
     def due_jobs(self, now: float, immediate: bool) -> list[dict]:
         # Filter before LIMIT: waiting jobs cannot starve a released batch or
         # prevent reconciliation of a job already submitted to CUPS.
         return self.db.rows('''SELECT j.* FROM jobs j
             WHERE j.status IN ('READY','SUBMITTED','PRINTER ERROR') AND j.next_attempt<=?
-            AND (? OR j.attachment_id IS NULL
-                OR EXISTS (SELECT 1 FROM print_queue_releases r WHERE r.attachment_id=j.attachment_id)
-                OR EXISTS (SELECT 1 FROM print_attempts p WHERE p.job_id=j.id))
+            AND (j.attachment_id IS NULL
+                OR EXISTS (SELECT 1 FROM print_attempts p WHERE p.job_id=j.id)
+                OR (EXISTS (SELECT 1 FROM attachments a WHERE a.id=j.attachment_id AND a.state='DONE')
+                    AND (? OR EXISTS (SELECT 1 FROM print_queue_releases r WHERE r.attachment_id=j.attachment_id))))
             ORDER BY j.id LIMIT 20''', (now, int(immediate)))
 
     def waiting(self) -> dict:
