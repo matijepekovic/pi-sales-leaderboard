@@ -64,7 +64,10 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-        response.headers['Referrer-Policy'] = 'no-referrer'
+        # no-referrer makes native form POSTs send Origin: null, so our own
+        # Settings/Control forms fail the origin guard. Keep same-origin metadata
+        # while still withholding referrers from every external destination.
+        response.headers['Referrer-Policy'] = 'same-origin'
         response.headers.setdefault('Content-Security-Policy',
             "default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; "
             "object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'")
