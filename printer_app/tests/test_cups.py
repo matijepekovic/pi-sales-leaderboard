@@ -9,6 +9,7 @@ from pypdf import PdfWriter
 
 from printer_app.config import Config
 from printer_app.printer import Printer
+from printer_app.print_options import PrintOptions
 
 
 @pytest.mark.skipif(os.environ.get('PRINTER_CUPS_INTEGRATION') != '1', reason='Requires isolated CI CUPS sink')
@@ -21,7 +22,7 @@ def test_real_cups_hold_receipt_find_release_and_completion(tmp_path):
     writer.write(path)
     token = 'printer-app-ci-' + uuid.uuid4().hex
     assert printer.status()['known']
-    jid, result, command = printer.hold(path, token, False)
+    jid, result, command = printer.hold(path, token, PrintOptions(), received_pdf=True)
     assert 'request id is printer_app_ci-' in result
     assert printer.attributes(jid)['job-state'] == 4
     assert printer.find(token)[0]['job-id'] == jid
