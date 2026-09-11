@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from .print_options import PrintOptions, FIELDS as PRINT_FIELDS
+
 
 def clean_text(value: object, limit: int = 1000) -> str:
     return ''.join(c if c.isprintable() or c == '\n' else ' ' for c in str(value))[:limit]
@@ -66,6 +68,7 @@ class Config:
     retry_seconds: int = 60
     libreoffice: str = '/usr/bin/libreoffice'
     env_file: Path | None = None
+    print_options: PrintOptions = field(default_factory=PrintOptions)
 
     @property
     def db_path(self) -> Path:
@@ -80,6 +83,7 @@ class Config:
         cfg = cls(
             data_dir=Path(e.get('PRINTER_DATA_DIR', '~/.local/share/printer-app')).expanduser().resolve(),
             env_file=path,
+            print_options=PrintOptions().apply({k: v for k, v in e.items() if k in PRINT_FIELDS}),
             email_enabled=e.get('EMAIL_ENABLED', '1') == '1',
             email_user=e.get('EMAIL_USER', '').strip(),
             email_password=e.get('EMAIL_APP_PASSWORD', '').replace(' ', ''),

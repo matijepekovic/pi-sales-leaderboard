@@ -6,6 +6,7 @@ import threading
 from typing import Callable, Mapping
 
 from .config import Config
+from .print_options import FIELDS as PRINT_FIELDS
 from .settings_repository import SettingsRepository
 
 # Only operational settings are editable. Paths, session secrets, binaries,
@@ -22,7 +23,7 @@ NUMBER_FIELDS = {
     'CONVERSION_TIMEOUT_SECONDS': ('conversion_timeout', 10, 600),
     'PRINTER_RETRY_SECONDS': ('retry_seconds', 10, 3600),
 }
-EDITABLE = set(TEXT_FIELDS) | set(NUMBER_FIELDS) | {'EMAIL_APP_PASSWORD', 'EMAIL_ENABLED'}
+EDITABLE = set(TEXT_FIELDS) | set(NUMBER_FIELDS) | PRINT_FIELDS | {'EMAIL_APP_PASSWORD', 'EMAIL_ENABLED'}
 
 
 class SettingsError(ValueError):
@@ -37,12 +38,15 @@ class SettingsService:
 
     def _apply(self, current: Config, patch: Mapping[str, str]) -> Config:
         values = {}
+        printing = {}
         for key, value in patch.items():
             if key not in EDITABLE:
                 raise SettingsError('This setting cannot be changed from the printer webpage.')
             if not isinstance(value, str) or len(value) > 512 or any(not c.isprintable() for c in value):
                 raise SettingsError('Settings must contain single-line text of at most 512 characters.')
-            if key in TEXT_FIELDS:
+            if key in PRINT_FIELDS:
+                printing[key] = value
+            elif key in TEXT_FIELDS:
                 values[TEXT_FIELDS[key]] = value.strip()
             elif key in NUMBER_FIELDS:
                 attr, low, high = NUMBER_FIELDS[key]
@@ -55,6 +59,10 @@ class SettingsService:
                 values['email_enabled'] = value == '1'
             else:
                 values['email_password'] = value.replace(' ', '')
+        try:
+            values['print_options'] = current.print_options.apply(printing)
+        except ValueError as exc:
+            raise SettingsError(str(exc)) from None
         cfg = replace(current, **values)
         if not cfg.mailbox:
             raise SettingsError('Enter a mailbox, usually INBOX.')
@@ -75,6 +83,7 @@ class SettingsService:
         result.update({key: str(getattr(cfg, spec[0]) // (1048576 if key == 'MAX_ATTACHMENT_MB' else 1))
                        for key, spec in NUMBER_FIELDS.items()})
         result['EMAIL_ENABLED'] = '1' if cfg.email_enabled else '0'
+        result.update(cfg.print_options.environment())
         return result
 
     def candidate(self, form: Mapping[str, str]) -> tuple[Config, dict[str, str], str]:

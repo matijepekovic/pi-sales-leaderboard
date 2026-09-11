@@ -1,0 +1,22 @@
+<section id="printSettings"><h2>How reports print</h2>
+<p>Excel reports keep their original cells, colors, fonts, merged headings, column widths, row heights and totals. Nothing is split by Sub Status or rebuilt into a new table.</p>
+<div class="form-grid">
+{% for key in ['PRINT_PAPER', 'PRINT_ORIENTATION', 'PRINT_COLOR', 'PRINT_SIDES'] %}
+<label>{{ print_choices[key][1] }}<select name="{{ key }}">{% for value, label in print_choices[key][2] %}<option value="{{ value }}" {% if values[key] == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+{% endfor %}
+<label>Copies<input type="number" name="PRINT_COPIES" value="{{ values.PRINT_COPIES }}" min="1" max="20" required></label>
+<label>{{ print_choices.PDF_SCALING[1] }}<select name="PDF_SCALING">{% for value, label in print_choices.PDF_SCALING[2] %}<option value="{{ value }}" {% if values.PDF_SCALING == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+</div>
+<p class="muted">Paper, orientation, color, sides and copies apply to all new reports. They are job options, not changes to your Konica queue or Account Track. Received PDF files are never rewritten, split or subject to the Excel page limit.</p>
+<h3>Excel page layout</h3>
+<div class="form-grid">
+{% for key in ['EXCEL_SCALE', 'EXCEL_MARGINS', 'EXCEL_SHEETS', 'EXCEL_PAGE_POLICY'] %}
+<label>{{ print_choices[key][1] }}<select name="{{ key }}">{% for value, label in print_choices[key][2] %}<option value="{{ value }}" {% if values[key] == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+{% endfor %}
+<label>Custom scale (%)<input type="number" name="EXCEL_SCALE_PERCENT" value="{{ values.EXCEL_SCALE_PERCENT }}" min="10" max="400" required><span class="muted">Used only when Excel scaling is set to Custom percentage.</span></label>
+</div>
+<p class="muted">Keep workbook settings uses the saved print areas, margins, orientation and scaling. Files with no saved page setup use LibreOffice's defaults. Fit each sheet on one page may make a large report very small. A workbook with multiple sheets may still produce multiple pages.</p>
+<p class="notice">These are saved defaults for future jobs, not per-report rules. Already prepared/submitted jobs retain their own settings so retries cannot change a report halfway through. Error sheets always use one copy, single-sided Letter paper.</p>
+<p class="muted">LibreOffice renders Excel files on the Pi; fonts and some Excel features can differ from printing in Microsoft Excel. The generated PDF in each job shows the rendered layout. Color, sides and paper selection still depend on the printer's capabilities.</p>
+<button class="primary" type="submit">Save Settings</button>
+</section>
