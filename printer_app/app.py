@@ -16,6 +16,9 @@ from .settings import SettingsService, SettingsError
 from .settings_repository import SettingsRepository, SettingsStorageError, SettingsConflict
 from .gmail_client import test_connection
 from .db import Database
+from .print_schedule import DAYS as SCHEDULE_DAYS, MODES as SCHEDULE_MODES
+from .print_dispatch import PrintDispatchService
+from .print_queue_repository import PrintQueueRepository
 
 
 def create_app(cfg: Config | None = None, settings_service: SettingsService | None = None) -> Flask:
@@ -28,7 +31,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.config.update(SECRET_KEY=cfg.secret_key, SESSION_COOKIE_NAME='printer_app_session',
         SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
         SESSION_COOKIE_SECURE=cfg.secure_cookie, PERMANENT_SESSION_LIFETIME=8 * 3600,
-        MAX_CONTENT_LENGTH=8192, MAX_FORM_MEMORY_SIZE=8192, MAX_FORM_PARTS=48)
+        MAX_CONTENT_LENGTH=8192, MAX_FORM_MEMORY_SIZE=8192, MAX_FORM_PARTS=64)
     db = Database(cfg.db_path)
     app.extensions['printer_db'] = db
     app.extensions['printer_settings'] = settings
@@ -73,6 +76,27 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             "object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'")
         return response
 
+    def dispatch():
+        current = getattr(g, 'printer_config', cfg)
+        return PrintDispatchService(PrintQueueRepository(db), current.print_schedule, current.timezone)
+
+    def settings_form():
+        # Distinct checkbox names keep the duplicate-field protection intact;
+        # normalize only here, where browser form details belong.
+        values = request.form.to_dict()
+        if values.pop('schedule_days_present', '') == '1':
+            if 'PRINT_SCHEDULE_DAYS' in values:
+                abort(400, 'Duplicate schedule days representation')
+            selected = []
+            for key, _ in SCHEDULE_DAYS:
+                value = values.pop('schedule_day_' + key, None)
+                if value is not None:
+                    if value != '1':
+                        abort(400, 'Invalid schedule day')
+                    selected.append(key)
+            values['PRINT_SCHEDULE_DAYS'] = ','.join(selected)
+        return values
+
     def state():
         heartbeat = db.get('worker_heartbeat', 0)
         current = getattr(g, 'printer_config', cfg)
@@ -82,7 +106,8 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             worker_alive=time.time() - heartbeat < 30, paused=db.get('paused', False),
             last_check=db.get('last_check'), next_check=db.get('next_check'),
             gmail=db.get('gmail_state', 'STARTING'), monitor_error=db.get('monitor_error', ''),
-            last_success=db.get('last_successful_print'), last_error=db.get('last_printer_error'))
+            last_success=db.get('last_successful_print'), last_error=db.get('last_printer_error'),
+            print_schedule=dispatch().summary())
 
     @app.get('/health')
     def health():
@@ -98,7 +123,8 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     @app.get('/')
     @app.get('/system/print-control')
     def control():
-        return render_template('control.html', state=state(), jobs=db.recent())
+        timing = dispatch()
+        return render_template('control.html', state=state(), jobs=[timing.describe_job(j) for j in db.recent()])
 
     def settings_view(error='', code=200):
         try:
@@ -109,13 +135,14 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         return render_template('settings.html', values=settings.public_values(current),
             password_saved=bool(current.email_password), revision=revision, queue=current.queue,
             print_choices=PRINT_CHOICES, print_numbers=PRINT_NUMBERS,
+            schedule_days=SCHEDULE_DAYS, schedule_modes=SCHEDULE_MODES,
             error=error, saved=request.args.get('saved') == '1', state=state()), code
 
     @app.route('/settings', methods=['GET', 'POST'])
     def settings_page():
         if request.method == 'POST':
             try:
-                settings.save(request.form.to_dict())
+                settings.save(settings_form())
             except SettingsConflict as exc:
                 return settings_view(str(exc), 409)
             except (SettingsError, SettingsStorageError) as exc:
@@ -126,7 +153,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     @app.post('/settings/test-email')
     def settings_test_email():
         try:
-            ok, message = settings.test_email(request.form.to_dict())
+            ok, message = settings.test_email(settings_form())
             return jsonify(ok=ok, message=message), 200 if ok else 400
         except (SettingsError, SettingsStorageError) as exc:
             return jsonify(ok=False, message=str(exc)), 400
@@ -137,7 +164,9 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
 
     @app.post('/control/<action>')
     def command(action):
-        if action in ('pause', 'resume'):
+        if action == 'print-queued-now':
+            dispatch().request_print_now()
+        elif action in ('pause', 'resume'):
             db.set('paused', action == 'pause')
         elif action in ('run-now', 'test-print'):
             with db.connect() as conn:
@@ -154,7 +183,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             abort(404)
         outputs = db.rows('SELECT * FROM outputs WHERE job_id=? ORDER BY id', (job_id,))
         preview = next((item for item in reversed(outputs) if item['path'].lower().endswith('.pdf')), None)
-        return render_template('job.html', job=job, outputs=outputs, preview=preview,
+        return render_template('job.html', job=dispatch().describe_job(job), outputs=outputs, preview=preview,
             print_settings=db.job_print_settings(job_id),
             steps=db.rows('SELECT * FROM steps WHERE job_id=? ORDER BY id', (job_id,)),
             attempts=db.rows('SELECT * FROM print_attempts WHERE job_id=? ORDER BY id', (job_id,)))

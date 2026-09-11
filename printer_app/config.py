@@ -8,6 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .print_options import PrintOptions, FIELDS as PRINT_FIELDS
+from .print_schedule import PrintSchedule, FIELDS as SCHEDULE_FIELDS
 
 
 def clean_text(value: object, limit: int = 1000) -> str:
@@ -69,6 +70,7 @@ class Config:
     libreoffice: str = '/usr/bin/libreoffice'
     env_file: Path | None = None
     print_options: PrintOptions = field(default_factory=PrintOptions)
+    print_schedule: PrintSchedule = field(default_factory=PrintSchedule)
 
     @property
     def db_path(self) -> Path:
@@ -84,6 +86,7 @@ class Config:
             data_dir=Path(e.get('PRINTER_DATA_DIR', '~/.local/share/printer-app')).expanduser().resolve(),
             env_file=path,
             print_options=PrintOptions().apply({k: v for k, v in e.items() if k in PRINT_FIELDS}),
+            print_schedule=PrintSchedule().apply({k: v for k, v in e.items() if k in SCHEDULE_FIELDS}),
             email_enabled=e.get('EMAIL_ENABLED', '1') == '1',
             email_user=e.get('EMAIL_USER', '').strip(),
             email_password=e.get('EMAIL_APP_PASSWORD', '').replace(' ', ''),
