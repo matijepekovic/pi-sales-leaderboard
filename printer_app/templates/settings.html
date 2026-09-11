@@ -9,6 +9,7 @@
 <form id="printerSettings" method="post" action="{{ url_for('settings_page') }}" autocomplete="off">
 <input type="hidden" name="csrf" value="{{ session.csrf }}">
 <input type="hidden" name="revision" value="{{ revision }}">
+{% include 'print_settings.html' %}
 <div class="cards">
 <section><h2>Gmail connection</h2>
 <label class="check"><input type="checkbox" name="EMAIL_ENABLED" value="1" {% if values.EMAIL_ENABLED == '1' %}checked{% endif %}> Enable automatic email printing</label>
@@ -40,7 +41,7 @@
 <label>Large attachment warning (MB)<input type="number" name="MAX_ATTACHMENT_MB" value="{{ values.MAX_ATTACHMENT_MB }}" min="1" max="100" required><span class="muted">Only a warning. Larger attachments still download and process normally.</span></label>
 </div>
 <datalist id="timezones"><option value="America/Los_Angeles"><option value="America/Denver"><option value="America/Chicago"><option value="America/New_York"><option value="UTC"></datalist>
-<p class="muted">Incoming PDFs print unchanged. Excel reports use Tabloid 11×17 landscape; multi-page Excel output prints an error sheet instead.</p>
+
 </section>
 <div class="toolbar"><button class="primary" type="submit">Save Settings</button><a class="button" href="{{ url_for('settings_page') }}">Discard changes</a></div>
 </form>

@@ -12,7 +12,9 @@ import pytest
 from openpyxl import Workbook, load_workbook
 from pypdf import PdfReader, PdfWriter
 
-from printer_app import converter, parser
+from printer_app import converter
+from printer_app.print_options import PrintOptions
+from dataclasses import replace
 from printer_app.config import Config, safe_name
 from printer_app.db import Database
 from printer_app.deploy import fingerprint, source_files
@@ -36,6 +38,8 @@ def workbook(path: Path, rows=None):
     sheet.append(['A title above the table'])
     sheet.append([])
     sheet.append(['Name', 'Sub Status', 'Amount'])
+    sheet.column_dimensions['A'].width = 30
+    sheet.column_dimensions['B'].width = 30
     for row in rows or [['A', 'Arbitrary / QC', 12], ['B', 'Waiting for XYZ', 15], ['C', 'Arbitrary / QC', 20]]:
         sheet.append(row)
     book.save(path)
@@ -53,12 +57,12 @@ class FakePrinter:
             raise PrinterError('CUPS CONNECTION FAILED')
         return [dict(value, **{'job-id': key}) for key, value in self.jobs.items() if value['job-name'] == token]
 
-    def hold(self, path, token, tabloid):
+    def hold(self, path, token, options, *, received_pdf=False):
         if self.fail_hold:
             self.fail_hold = False
             raise SubmissionRejected('PRINTER SUBMISSION FAILED')
         jid = len(self.jobs) + 1
-        self.jobs[jid] = {'job-name': token, 'job-state': 4, 'path': str(path), 'tabloid': tabloid}
+        self.jobs[jid] = {'job-name': token, 'job-state': 4, 'path': str(path), 'options': options, 'received_pdf': received_pdf}
         return jid, f'request id is konicaa-{jid} (1 file(s))', ['lp', '-H', 'hold', '--', str(path)]
 
     def attributes(self, jid):
@@ -102,53 +106,6 @@ def complete(rig):
             engine.advance(job)
 
 
-def test_dynamic_groups_and_column_order(tmp_path):
-    groups = parser.parse(workbook(tmp_path / 'source.xlsx'))
-    assert [g.label for g in groups] == ['Arbitrary / QC', 'Waiting for XYZ']
-    assert groups[0].headers == ['Name', 'Sub Status', 'Amount']
-    assert len(groups[0].rows) == 2
-
-
-def test_missing_header_and_no_rows(tmp_path):
-    book = Workbook()
-    book.active.append(['Name', 'Status'])
-    path = tmp_path / 'wrong.xlsx'
-    book.save(path)
-    with pytest.raises(parser.ParseError, match='SUB STATUS COLUMN NOT FOUND'):
-        parser.parse(path)
-    book.active.cell(1, 2, 'Sub Status')
-    book.save(path)
-    with pytest.raises(parser.ParseError, match='NO PRINTABLE ROWS'):
-        parser.parse(path)
-
-
-def test_blank_status_group_is_not_silently_dropped(tmp_path):
-    groups = parser.parse(workbook(tmp_path / 'blank.xlsx', [['A', None, 10], ['B', 'Actual', 11]]))
-    assert len(groups) == 2
-    assert groups[0].error == 'ROW HAS NO SUB STATUS VALUE'
-
-
-def test_missing_formula_cache_is_an_error(tmp_path):
-    path = workbook(tmp_path / 'formula.xlsx', [['A', 'Anything', '=2+3']])
-    with pytest.raises(parser.ParseError, match='FORMULA HAS NO CACHED VALUE'):
-        parser.parse(path)
-
-
-def test_values_only_output_and_print_area(tmp_path):
-    group = parser.Group('x', 'Dynamic', ['Name', 'Sub Status', 'Amount'], [['=HYPERLINK("x")', 'Dynamic', 5]])
-    path = tmp_path / 'safe.xlsx'
-    converter.write_workbook(group, path)
-    book = load_workbook(path, data_only=False)
-    sheet = book.active
-    assert sheet['A2'].data_type == 's'
-    assert sheet.page_setup.fitToWidth == 1 and sheet.page_setup.fitToHeight == 0
-    assert sheet.page_setup.orientation == 'landscape'
-    assert str(sheet.page_setup.paperSize) == str(sheet.PAPERSIZE_TABLOID)
-    assert 'A1:C2' in str(sheet.print_area).replace('$', '')
-    with zipfile.ZipFile(path) as archive:
-        assert not any('vba' in name.lower() or 'externallink' in name.lower() for name in archive.namelist())
-
-
 @pytest.mark.parametrize('pages', [1, 2, 5])
 def test_incoming_pdfs_print_directly_even_multipage(rig, tmp_path, pages):
     cfg, db, printer, engine = rig
@@ -174,31 +131,64 @@ def test_bad_attachments_print_one_error_sheet(rig, tmp_path, filename, payload)
     assert 'PRINT ERROR' in PdfReader(printer.printed[0]).pages[0].extract_text()
 
 
-def test_each_group_independent_and_multi_page_excel_blocked(rig, tmp_path, monkeypatch):
+def test_whole_workbook_is_one_job_without_splitting(rig, tmp_path, monkeypatch):
     _, db, printer, engine = rig
-    source = workbook(tmp_path / 'groups.xlsx', [['A', 'First', 1], ['B', 'Second', 2], ['C', 'Third', 3]])
+    source = workbook(tmp_path / 'groups.xlsx')
+    original = source.read_bytes()
     def render(path, directory, cfg):
-        return pdf(directory / (path.stem + '.pdf'), 3 if path.stem == 'Second' else 1)
+        assert path.read_bytes() == original
+        return pdf(directory / 'report.pdf')
     monkeypatch.setattr(converter, 'convert', render)
     engine.process_attachment(attach(rig, source))
     complete(rig)
-    jobs = {j['substatus']: j for j in db.recent()}
-    assert jobs['First']['status'] == jobs['Third']['status'] == 'PRINTED'
-    assert jobs['Second']['status'] == 'ERROR PRINTED'
-    assert jobs['Second']['page_count'] == 3
-    assert len(printer.printed) == 3 and all(converter.page_count(Path(p)) == 1 for p in printer.printed)
+    assert len(db.recent()) == len(printer.printed) == 1
+    assert db.recent()[0]['substatus'] == ''
+    assert db.recent()[0]['group_key'] == 'workbook'
+    assert source.read_bytes() == original
 
 
-def test_one_conversion_exception_does_not_abort_other_groups(rig, tmp_path, monkeypatch):
+@pytest.mark.parametrize('policy,expected', [('one-page', 'ERROR PRINTED'), ('all', 'PRINTED')])
+def test_excel_page_policy(rig, tmp_path, monkeypatch, policy, expected):
+    cfg, db, printer, _ = rig
+    engine = Engine(replace(cfg, print_options=PrintOptions(page_policy=policy)), db, printer)
+    monkeypatch.setattr(converter, 'convert', lambda path, directory, cfg: pdf(directory / 'report.pdf', 3))
+    engine.process_attachment(attach(rig, workbook(tmp_path / 'long.xlsx')))
+    complete((cfg, db, printer, engine))
+    assert db.recent()[0]['status'] == expected
+    assert db.recent()[0]['page_count'] == 3
+    assert converter.page_count(Path(printer.printed[0])) == (1 if policy == 'one-page' else 3)
+
+
+def test_one_conversion_exception_does_not_abort_other_attachments(rig, tmp_path, monkeypatch):
     _, db, printer, engine = rig
-    source = workbook(tmp_path / 'groups.xlsx', [['A', 'First', 1], ['B', 'Second', 2]])
-    def render(path, directory, cfg):
-        if path.stem == 'First':
-            raise converter.ConversionError('EXCEL CONVERSION FAILED')
-        return pdf(directory / (path.stem + '.pdf'))
-    monkeypatch.setattr(converter, 'convert', render)
-    engine.process_attachment(attach(rig, source))
+    monkeypatch.setattr(converter, 'convert', lambda *a: (_ for _ in ()).throw(converter.ConversionError('EXCEL CONVERSION FAILED')))
+    engine.process_attachment(attach(rig, workbook(tmp_path / 'broken.xlsx')))
+    engine.process_attachment(attach(rig, pdf(tmp_path / 'okay.pdf')))
     complete(rig)
+    assert {j['status'] for j in db.recent()} == {'PRINTED', 'ERROR PRINTED'}
+
+
+def test_saved_job_settings_survive_restart_and_later_changes(rig, tmp_path, monkeypatch):
+    cfg, db, printer, _ = rig
+    first = PrintOptions(paper='tabloid', orientation='landscape', copies=3, sides='two-sided-short-edge')
+    engine = Engine(replace(cfg, print_options=first), db, printer)
+    engine.process_attachment(attach(rig, pdf(tmp_path / 'original.pdf')))
+    later = Engine(replace(cfg, print_options=PrintOptions(copies=10, color='monochrome')), db, printer)
+    complete((cfg, db, printer, later))
+    assert printer.jobs[1]['options'] == first
+    assert Database(cfg.db_path).job_print_settings(db.recent()[0]['id']) == first.snapshot()
+
+
+def test_legacy_partial_workbook_never_reprints_as_full_report(rig, tmp_path, monkeypatch):
+    _, db, _, engine = rig
+    attachment = attach(rig, workbook(tmp_path / 'legacy.xlsx'))
+    now = time.time()
+    db.execute("INSERT INTO jobs(attachment_id,group_key,status,created,updated) VALUES (?,'value:Old','PRINTED',?,?)", (attachment['id'], now, now))
+    db.execute("INSERT INTO jobs(attachment_id,group_key,status,created,updated) VALUES (?,'value:Next','PREPARING',?,?)", (attachment['id'], now, now))
+    monkeypatch.setattr(converter, 'convert', lambda *a: pytest.fail('Do not print the full workbook again'))
+    engine.process_attachment(attachment)
+    complete(rig)
+    assert len(db.recent()) == 2
     assert {j['status'] for j in db.recent()} == {'PRINTED', 'ERROR PRINTED'}
 
 
@@ -218,7 +208,7 @@ def test_crash_after_cups_hold_before_sqlite_receipt(rig, tmp_path):
     job = db.recent()[0]
     token = 'printer-app-crash-test'
     db.execute('INSERT INTO print_attempts(job_id,token,created,updated) VALUES (?,?,?,?)', (job['id'], token, time.time(), time.time()))
-    printer.hold(Path(job['printable']), token, False)
+    printer.hold(Path(job['printable']), token, PrintOptions())
     restarted = Engine(cfg, Database(cfg.db_path), printer)
     restarted.advance(db.job(job['id']))
     restarted.advance(db.job(job['id']))
@@ -332,34 +322,35 @@ def test_gmail_unconfigured_does_not_crash(rig):
 
 def test_xls_support(tmp_path):
     xlwt = pytest.importorskip('xlwt')
-    pytest.importorskip('xlrd')
-    book = xlwt.Workbook()
-    sheet = book.add_sheet('Report')
-    for r, row in enumerate([['Name', 'Sub Status'], ['A', 'A real status']]):
-        for c, value in enumerate(row): sheet.write(r, c, value)
-    path = tmp_path / 'old.xls'
-    book.save(str(path))
-    assert parser.parse(path)[0].label == 'A real status'
-
-
-def test_xlsm_is_read_without_macro_preservation(tmp_path):
-    path = workbook(tmp_path / 'macro.xlsm')
-    assert len(parser.parse(path)) == 2
-
-
-def test_real_libreoffice_tabloid_conversion(tmp_path):
     if not shutil.which('libreoffice'):
         pytest.skip('LibreOffice not installed')
-    cfg = Config(data_dir=tmp_path)
-    group = parser.Group('value:X', 'X', ['Name', 'Sub Status', 'Value'], [['One', 'X', 42]])
-    source = tmp_path / 'report.xlsx'
-    converter.write_workbook(group, source)
-    result = converter.convert(source, tmp_path, cfg)
+    book = xlwt.Workbook()
+    sheet = book.add_sheet('Report')
+    sheet.write(0, 0, 'Legacy workbook, no required columns')
+    path = tmp_path / 'old.xls'
+    book.save(str(path))
+    original = path.read_bytes()
+    result = converter.convert(path, tmp_path / 'result', Config(data_dir=tmp_path))
+    assert 'Legacy workbook' in PdfReader(result).pages[0].extract_text()
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize('suffix', ['.xlsx', '.xlsm'])
+def test_original_workbook_tabloid_conversion(tmp_path, suffix):
+    if not shutil.which('libreoffice'):
+        pytest.skip('LibreOffice not installed')
+    cfg = Config(data_dir=tmp_path, print_options=PrintOptions(paper='tabloid', orientation='landscape', excel_scale='fit-page'))
+    source = workbook(tmp_path / ('original' + suffix))
+    before = source.read_bytes()
+    result = converter.convert(source, tmp_path / 'result', cfg)
     assert converter.page_count(result) == 1
     page = PdfReader(result).pages[0]
     assert abs(float(page.mediabox.width) - 1224) < 2
     assert abs(float(page.mediabox.height) - 792) < 2
-    assert 'One' in page.extract_text()
+    assert 'A title above the table' in page.extract_text()
+    assert 'Arbitrary / QC' in page.extract_text()
+    assert 'Waiting for XYZ' in page.extract_text()
+    assert source.read_bytes() == before
 
 
 def test_runtime_secrets_and_data_are_excluded_from_release(tmp_path):

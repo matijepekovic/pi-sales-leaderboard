@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 from .config import Config, clean_text
+from .print_options import PrintOptions
 
 
 class PrinterError(RuntimeError):
@@ -78,11 +79,22 @@ class Printer:
             raise SubmissionRejected('PRINTER SUBMISSION FAILED: ' + text)
         return text
 
-    def hold(self, path: Path, token: str, tabloid: bool) -> tuple[int, str, list[str]]:
+    def hold(self, path: Path, token: str, options: PrintOptions, *, received_pdf=False) -> tuple[int, str, list[str]]:
         # No print can occur until the receipt is persisted and the worker releases it.
-        command = ['lp', '-d', self.cfg.queue, '-n', '1', '-t', token, '-H', 'hold']
-        if tabloid:
-            command += ['-o', 'media=Tabloid']
+        command = ['lp', '-d', self.cfg.queue, '-n', str(options.copies), '-t', token, '-H', 'hold']
+        if options.paper != 'source':
+            paper = {'tabloid': 'Tabloid', 'letter': 'Letter', 'legal': 'Legal', 'a4': 'A4', 'a3': 'A3'}[options.paper]
+            command += ['-o', 'media=' + paper]
+        if options.orientation != 'source':
+            command += ['-o', 'orientation-requested=' + ('4' if options.orientation == 'landscape' else '3')]
+        if options.color != 'default':
+            command += ['-o', 'print-color-mode=' + options.color]
+        if options.sides != 'default':
+            command += ['-o', 'sides=' + options.sides]
+        if received_pdf and options.pdf_scaling != 'default':
+            command += ['-o', 'print-scaling=' + ('fit' if options.pdf_scaling == 'fit' else 'none'),
+                        '-o', 'fit-to-page=' + ('true' if options.pdf_scaling == 'fit' else 'false')]
+
         command += ['--', str(path.resolve())]
         result = self.run(command)
         match = re.search(r'request id is ' + re.escape(self.cfg.queue) + r'-(\d+)\b', result)

@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from flask import g, Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
 
+from .print_options import CHOICES as PRINT_CHOICES, NUMBERS as PRINT_NUMBERS
 from .config import Config, environment_file
 from .settings import SettingsService, SettingsError
 from .settings_repository import SettingsRepository, SettingsStorageError, SettingsConflict
@@ -27,7 +28,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.config.update(SECRET_KEY=cfg.secret_key, SESSION_COOKIE_NAME='printer_app_session',
         SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
         SESSION_COOKIE_SECURE=cfg.secure_cookie, PERMANENT_SESSION_LIFETIME=8 * 3600,
-        MAX_CONTENT_LENGTH=8192, MAX_FORM_MEMORY_SIZE=8192, MAX_FORM_PARTS=24)
+        MAX_CONTENT_LENGTH=8192, MAX_FORM_MEMORY_SIZE=8192, MAX_FORM_PARTS=48)
     db = Database(cfg.db_path)
     app.extensions['printer_db'] = db
     app.extensions['printer_settings'] = settings
@@ -104,6 +105,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             error, code = 'Could not read settings. Use the leaderboard Update button to repair the installation.', 503
         return render_template('settings.html', values=settings.public_values(current),
             password_saved=bool(current.email_password), revision=revision, queue=current.queue,
+            print_choices=PRINT_CHOICES, print_numbers=PRINT_NUMBERS,
             error=error, saved=request.args.get('saved') == '1', state=state()), code
 
     @app.route('/settings', methods=['GET', 'POST'])
@@ -150,6 +152,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         outputs = db.rows('SELECT * FROM outputs WHERE job_id=? ORDER BY id', (job_id,))
         preview = next((item for item in reversed(outputs) if item['path'].lower().endswith('.pdf')), None)
         return render_template('job.html', job=job, outputs=outputs, preview=preview,
+            print_settings=db.job_print_settings(job_id),
             steps=db.rows('SELECT * FROM steps WHERE job_id=? ORDER BY id', (job_id,)),
             attempts=db.rows('SELECT * FROM print_attempts WHERE job_id=? ORDER BY id', (job_id,)))
 

@@ -107,6 +107,22 @@ class Database:
           FROM jobs j LEFT JOIN attachments a ON a.id=j.attachment_id
           LEFT JOIN processed_messages m ON m.id=a.message_id WHERE j.id=?''', (job_id,))
 
+    def create_job(self, attachment_id: int | None, key: str, options: dict) -> int:
+        now = time.time()
+        with self.connect() as conn:
+            existing = conn.execute('SELECT id FROM jobs WHERE attachment_id=? AND group_key=?',
+                                    (attachment_id, key)).fetchone()
+            if existing:
+                return existing['id']
+            job_id = conn.execute("""INSERT INTO jobs(attachment_id,group_key,status,created,updated)
+                VALUES (?,?,'PREPARING',?,?)""", (attachment_id, key, now, now)).lastrowid
+            conn.execute('INSERT INTO meta(key,value) VALUES (?,?)',
+                         ('job_print_settings:' + str(job_id), json.dumps(options)))
+            return job_id
+
+    def job_print_settings(self, job_id: int) -> dict | None:
+        return self.get('job_print_settings:' + str(job_id))
+
     def recent(self):
         return self.rows('''SELECT j.*,a.filename,m.subject,m.sender FROM jobs j
           LEFT JOIN attachments a ON a.id=j.attachment_id

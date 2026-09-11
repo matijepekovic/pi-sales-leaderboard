@@ -10,8 +10,10 @@ import time
 import uuid
 from pathlib import Path
 
-from . import converter, parser
-from .config import Config, clean_text, safe_name, environment_file
+from . import converter
+from .print_options import PrintOptions
+from dataclasses import replace
+from .config import Config, clean_text, environment_file
 from .settings import SettingsService, SettingsError
 from .settings_repository import SettingsRepository, SettingsStorageError
 from .db import Database
@@ -28,13 +30,16 @@ class Engine:
         self.printer = printer or Printer(cfg)
         self.stop = stop or threading.Event()
 
-    def make_job(self, attachment_id, key: str, label: str = '') -> dict:
-        now = time.time()
-        self.db.execute('''INSERT OR IGNORE INTO jobs
-          (attachment_id,group_key,substatus,status,created,updated) VALUES (?,?,?,'PREPARING',?,?)''',
-          (attachment_id, key, label, now, now))
-        row = self.db.one('SELECT id FROM jobs WHERE attachment_id=? AND group_key=?', (attachment_id, key))
-        return self.db.job(row['id'])
+    def make_job(self, attachment_id, key: str) -> dict:
+        jid = self.db.create_job(attachment_id, key, self.cfg.print_options.snapshot())
+        return self.db.job(jid)
+
+    def job_options(self, job: dict) -> PrintOptions:
+        snapshot = self.db.job_print_settings(job['id'])
+        if snapshot is not None:
+            return PrintOptions(**snapshot)
+        # Pending jobs from older releases keep their old physical print choices.
+        return PrintOptions(paper='tabloid' if job['tabloid'] else 'source')
 
     def directory(self, job_id: int) -> Path:
         path = self.cfg.data_dir / 'jobs' / str(job_id)
@@ -61,58 +66,48 @@ class Engine:
 
     def process_attachment(self, attachment: dict) -> None:
         aid = attachment['id']
+        current = self.db.one('SELECT state FROM attachments WHERE id=?', (aid,))
+        if not current or current['state'] == 'DONE':
+            return
         self.db.execute("UPDATE attachments SET state='PROCESSING' WHERE id=?", (aid,))
         source = Path(attachment['path']) if attachment['path'] else None
         suffix = Path(attachment['filename']).suffix.lower()
-        if attachment['error'] or suffix not in ('.pdf', '.xlsx', '.xls', '.xlsm'):
-            job = self.make_job(aid, 'attachment-error')
-            if job['status'] == 'PREPARING':
-                self.fail(job['id'], 'PARSER ERROR', attachment['error'] or 'UNSUPPORTED ATTACHMENT TYPE')
-        elif suffix == '.pdf':
-            job = self.make_job(aid, 'pdf')
-            if job['status'] == 'PREPARING':
-                try:
-                    pages = converter.page_count(source)
-                    # Incoming PDFs print unchanged, with NO one-page restriction.
-                    self.ready(job['id'], source, pages, False)
-                    self.db.step(job['id'], 'Incoming PDF: page-limit rule bypassed; original file retained')
-                except Exception as exc:
-                    self.fail(job['id'], 'CONVERSION ERROR', str(exc))
-        else:
-            try:
-                groups = parser.parse(source)
-            except Exception as exc:
-                job = self.make_job(aid, 'parser-error')
+        existing = self.db.rows('SELECT * FROM jobs WHERE attachment_id=?', (aid,))
+        # An upgrade must not add a full-workbook print to old, partly submitted
+        # split jobs. Retain their receipts; unfinished preparation gets a diagnostic.
+        if suffix in ('.xlsx', '.xls', '.xlsm') and existing and any(j['group_key'] != 'workbook' for j in existing):
+            for job in existing:
                 if job['status'] == 'PREPARING':
-                    self.fail(job['id'], 'PARSER ERROR', str(exc))
-            else:
-                for group in groups:
-                    if self.stop.is_set():
-                        return  # Keep PROCESSING; restart reconstructs only unfinished groups.
-                    job = self.make_job(aid, group.key, group.label)
-                    if job['status'] != 'PREPARING':
-                        continue
-                    directory = self.directory(job['id'])
-                    self.db.step(job['id'], f'Sub Status split: {group.label!r}; {len(group.rows)} rows')
-                    if group.error:
-                        self.fail(job['id'], 'PARSER ERROR', group.error)
-                        continue
-                    try:
-                        workbook = directory / (safe_name(group.label).replace(' ', '_') + '.xlsx')
-                        converter.write_workbook(group, workbook)
-                        self.db.output(job['id'], 'Filtered values-only workbook', workbook)
-                        self.db.step(job['id'], 'Print area set; Tabloid landscape, fit one page wide, natural height')
-                        pdf = converter.convert(workbook, directory, self.cfg)
+                    self.fail(job['id'], 'CONVERSION ERROR',
+                              'LEGACY REPORT INTERRUPTED BY UPDATE; ORIGINAL NOT AUTOMATICALLY REPRINTED')
+        else:
+            key = 'pdf' if suffix == '.pdf' else 'workbook'
+            job = self.make_job(aid, key)
+            if job['status'] == 'PREPARING':
+                options = self.job_options(job)
+                self.db.step(job['id'], 'Saved print settings: ' + json.dumps(options.snapshot(), sort_keys=True))
+                try:
+                    if attachment['error']:
+                        raise converter.ConversionError(attachment['error'])
+                    if suffix == '.pdf':
+                        pages = converter.page_count(source)
+                        self.ready(job['id'], source, pages, False)
+                        self.db.step(job['id'], 'Incoming PDF: original bytes retained; no page-limit rule')
+                    elif suffix in ('.xlsx', '.xls', '.xlsm'):
+                        self.db.step(job['id'], 'Original workbook rendering; no header detection, row splitting or restyling')
+                        pdf = converter.convert(source, self.directory(job['id']), replace(self.cfg, print_options=options))
                         pages = converter.page_count(pdf)
-                        self.db.output(job['id'], 'Rendered report PDF', pdf)
+                        self.db.output(job['id'], 'Original-layout report PDF', pdf)
                         self.db.execute('UPDATE jobs SET page_count=? WHERE id=?', (pages, job['id']))
                         self.db.step(job['id'], f'LibreOffice conversion completed; actual PDF pages={pages}')
-                        if pages != 1:
-                            self.fail(job['id'], 'CONVERSION ERROR', f'REPORT RENDERED TO {pages} PAGES')
+                        if options.page_policy == 'one-page' and pages != 1:
+                            self.fail(job['id'], 'CONVERSION ERROR', f'REPORT RENDERED TO {pages} PAGES; ONE-PAGE RULE ENABLED')
                         else:
-                            self.ready(job['id'], pdf, pages, True)
-                    except Exception as exc:
-                        self.fail(job['id'], 'CONVERSION ERROR', str(exc) or type(exc).__name__)
+                            self.ready(job['id'], pdf, pages, False)
+                    else:
+                        raise converter.ConversionError('UNSUPPORTED ATTACHMENT TYPE')
+                except Exception as exc:
+                    self.fail(job['id'], 'CONVERSION ERROR', str(exc) or type(exc).__name__)
         self.db.execute("UPDATE attachments SET state='DONE' WHERE id=?", (aid,))
 
     def printer_problem(self, job_id: int, reason: str) -> None:
@@ -148,7 +143,9 @@ class Engine:
                 else:
                     self.db.step(jid, 'Submitting held document to CUPS; no physical printing before durable receipt')
                     try:
-                        cups_id, result, command = self.printer.hold(Path(job['printable']), attempt['token'], bool(job['tabloid']))
+                        cups_id, result, command = self.printer.hold(Path(job['printable']), attempt['token'],
+                            self.job_options(job).error_sheet() if job['is_error'] else self.job_options(job),
+                            received_pdf=bool(job['is_error']) or job['group_key'] == 'pdf')
                     except SubmissionRejected as exc:
                         self.db.execute("UPDATE print_attempts SET state='FAILED',result=?,updated=? WHERE id=?",
                                         (str(exc), time.time(), aid))
@@ -208,9 +205,7 @@ class Engine:
             self.printer_problem(jid, str(exc))
 
     def test_print(self) -> None:
-        now = time.time()
-        jid = self.db.execute("INSERT INTO jobs(group_key,status,created,updated) VALUES (?,'PREPARING',?,?)",
-                              ('test-' + uuid.uuid4().hex, now, now))
+        jid = self.db.create_job(None, 'test-' + uuid.uuid4().hex, self.cfg.print_options.snapshot())
         job = self.db.job(jid)
         pdf = error_page(self.directory(jid) / 'test.pdf', job, 'Printer app is operating independently.', self.cfg.timezone, test=True)
         self.ready(jid, pdf, converter.page_count(pdf), False)
