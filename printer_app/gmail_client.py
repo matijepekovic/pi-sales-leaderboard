@@ -95,14 +95,31 @@ def pairs(value) -> dict:
     return {str(value[i]).lower(): str(value[i+1] or '') for i in range(0, len(value)-1, 2)}
 
 
-def attachment_parts(tree, prefix=''):
+def attachment_parts(tree, prefix='', *, related_resource=False):
+    """Select report attachments, not images used to display the email body.
+
+    RFC 2387 related parts belong to one compound body, even when a resource
+    carries an ATTACHMENT disposition. Keep its root; skip only image resources.
+    No filename, image dimensions, or size heuristics identify a signature.
+    """
     if not isinstance(tree, list) or not tree:
         raise ValueError('INVALID MIME STRUCTURE')
     if isinstance(tree[0], list):
-        for number, child in enumerate(tree, 1):
-            if not isinstance(child, list):
-                break
-            yield from attachment_parts(child, f'{prefix}.{number}' if prefix else str(number))
+        count = next((i for i, part in enumerate(tree) if not isinstance(part, list)), len(tree))
+        related = count < len(tree) and str(tree[count]).upper() == 'RELATED'
+        root = 0  # RFC 2387: first part unless the start parameter says otherwise.
+        if related and len(tree) > count + 1:
+            start = pairs(tree[count + 1]).get('start')
+            if start:
+                roots = [i for i, part in enumerate(tree[:count])
+                         if len(part) > 3 and not isinstance(part[0], list)
+                         and str(part[3] or '').strip() == start.strip()]
+                # A missing/ambiguous root is not evidence for discarding images.
+                root = roots[0] if len(roots) == 1 else None
+        for index, child in enumerate(tree[:count]):
+            section = f'{prefix}.{index + 1}' if prefix else str(index + 1)
+            resource = related_resource or (related and root is not None and index != root)
+            yield from attachment_parts(child, section, related_resource=resource)
         return
     if len(tree) < 7:
         raise ValueError('INCOMPLETE MIME BODY')
@@ -118,6 +135,12 @@ def attachment_parts(tree, prefix=''):
         for k, v in pairs(disposition[1] if len(disposition) > 1 else None).items():
             m.set_param(k, v, header='Content-Disposition')
     filename = m.get_filename()
+    if major == 'IMAGE' and (m.get_content_disposition() == 'inline' or related_resource):
+        # Filter at the IMAP boundary, before downloading or creating queue/jobs.
+        # Standalone image attachments still follow the unsupported-file policy.
+        log.info('Skipped embedded email image: part=%s filename=%r',
+                 prefix or '1', safe_name(header(filename)) if filename else '(unnamed)')
+        return
     if filename or m.get_content_disposition() == 'attachment' or major == 'MESSAGE':
         section = prefix or '1'
         yield {'part': section, 'filename': safe_name(header(filename) or f'attachment-{section}'),

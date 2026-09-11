@@ -65,6 +65,20 @@ it is not a guarantee that all paper has finished printing at that exact second.
 | `PRINT_SCHEDULE_TIME` | Local `HH:MM`; default `09:00` |
 | `PRINTER_TIMEZONE` | Existing timezone setting; default `America/Los_Angeles` |
 
+## Embedded email images are not reports
+
+The Gmail attachment selector ignores `image/*` parts marked `inline` and image
+resources inside `multipart/related` bodies. A related body's root is retained
+unless it is itself an inline image. The selector uses MIME structure, including
+the related `start` parameter, not names such as `image001.png`, file sizes or
+assumptions about picture contents. Skips are logged; these images are not
+downloaded, queued or turned into physical error sheets.
+
+Separately attached images and other unsupported files still produce the normal
+error sheet. Named PDF and Excel parts are still processed even when marked
+inline. The change applies to newly collected email; existing queued jobs and
+print history are not deleted or reprocessed. It does not change the schedule.
+
 ## Gmail and print settings in the browser
 
 In **Print Control → Settings**, enter the Gmail address and Google app password,
