@@ -140,8 +140,8 @@ The worker alone releases batches and owns CUPS submission; HTTP only queues com
 | Distribution status | `~/.local/share/leaderboard-distribution/` |
 
 All environment keys/defaults are in `.env.example`. Existing credentials, noneditable
-settings and print receipts are preserved. Sources/previews are retained: monitor disk
-space and do not restore an old deduplication database. CUPS submissions are held until
+settings and print receipts are preserved. With cleanup disabled, sources/previews
+are retained: monitor disk space and do not restore an old deduplication database. CUPS submissions are held until
 the request ID is saved, then automatically released. Restarts reconcile the original
 request rather than blindly reprinting; lost CUPS history is reported as ambiguous.
 
@@ -175,3 +175,64 @@ mode, printer retries, source-layout rendering, oversized downloads, Gmail dedup
 no-login forms/CSRF, real browser form saves, and independent systemd deployment
 through the leaderboard Update mechanism. Fixtures use disposable files/printer sinks;
 no real Gmail account or physical Konica printer is used by CI.
+
+## Seven-day automatic cleanup
+
+In **Print Control → Settings → Automatic cleanup**, enable cleanup, keep **7 days**,
+and check **Also permanently delete ALL old emails in this inbox**. Save Settings.
+Both switches default to off, including on upgrade: installing code never silently
+enables destructive cleanup. The selected Gmail account and `EMAIL_MAILBOX` are
+shown alongside the permanent-deletion warning. Changing either requires fresh
+opt-in; changing subject/sender filters does not restrict cleanup.
+
+Cleanup runs hourly while the worker is running, with bounded catch-up batches.
+It continues in scheduled/hold/immediate print modes, even while email collection
+is paused/disabled. It waits for an in-progress email check before running so a
+download cannot race deletion. It runs in the collection background slot; the
+main loop can still release/print prepared reports at their scheduled time.
+Switching cleanup off is checked between deletions, including before each remote
+MOVE/STORE; an already-submitted remote command cannot be undone.
+
+* Gmail: **all** messages in the configured inbox/label with a server receipt time
+  older than the saved number of 24-hour days, irrespective of read/starred state,
+  attachment type, print status or printing filters. Original email Date headers
+  are not used. Incomplete local downloads are temporarily protected; already
+  downloaded queued reports do not protect the remote email, only the local files.
+* Pi: messages and their files/history are expired only after all associated jobs
+  have a confirmed PRINTED / ERROR PRINTED result older than the retention period.
+  Queued, retrying, interrupted and ambiguous work remains. Expired test prints
+  are also removed. Job steps, print attempts, previews and saved per-job options
+  are deleted together. Migration backups older than the period are pruned.
+* Minimal hashed identity receipts remain, without email contents, subjects,
+  filenames or print details. The Gmail collector checks them so clearing history
+  does not replay the same Message-ID after a lookback increase or mailbox UID reset.
+  SQLite reuses freed pages; the live database is never replaced or rolled back.
+
+The Gmail adapter requires MOVE, UIDPLUS and X-GM-EXT-1 capabilities and locates
+Trash through its special-use attribute (not an English folder-name assumption).
+It records each selected message's stable identity in a printer-only outbox before
+moving it. Only those selected messages are marked deleted and UID EXPUNGEd in
+Trash; **no folder-wide EXPUNGE, CLOSE, thread deletion or Empty Trash is used**.
+Interrupted moves/purges resume by the same identity. An email archived elsewhere
+before the operation is not chased into other folders. Special All Mail, Trash,
+Spam, Sent and Drafts folders cannot be configured as the cleanup source. Gmail
+labels share a message: permanently deleting an inbox message removes that same
+message from its other labels too, but does not target other mail in those labels.
+
+The last cleanup time, counts, next check and errors appear on Print Control and
+Settings. Gmail errors do not stop local cleanup or printing; failures retain
+outbox entries for retry and do not log credentials. No live Gmail account is
+contacted by tests. Update through the existing leaderboard Update button.
+
+Owners: `retention_policy.py` defines settings/normalized mail identities;
+`retention.py` owns the workflow, `retention_repository.py` owns retention SQL,
+`retention_files.py` confines filesystem deletion, and `gmail_cleanup.py` owns the
+IMAP operations. No Stats dependencies or changes to its data/services are made.
+This policy does not delete the global system journal, CUPS' own logs/history, or
+unrelated files; those belong to the operating system/printer administration.
+
+After retention has run, releases predating this feature do not consult the new
+minimal receipts. Stop the printer worker before rolling back to those releases;
+recollecting old emails with them can replay history that was intentionally purged.
+Cleanup relies on the Pi clock being correct. Shared operating-system/CUPS logs
+and accumulated runtime release environments are not covered by file retention.

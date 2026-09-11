@@ -15,6 +15,12 @@ CREATE TABLE IF NOT EXISTS processed_messages (
  message_id TEXT NOT NULL, subject TEXT NOT NULL, sender TEXT NOT NULL,
  state TEXT NOT NULL DEFAULT 'FETCHING', created REAL NOT NULL,
  UNIQUE(account,mailbox,uidvalidity,uid));
+CREATE TABLE IF NOT EXISTS retained_message_receipts (
+ identity TEXT PRIMARY KEY) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS mail_cleanup_outbox (
+ account TEXT NOT NULL, mailbox TEXT NOT NULL, message_key TEXT NOT NULL,
+ received_at REAL NOT NULL, local_identity TEXT NOT NULL,
+ PRIMARY KEY(account,mailbox,message_key)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS attachments (
  id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL REFERENCES processed_messages(id),
  part TEXT NOT NULL, filename TEXT NOT NULL, sha256 TEXT NOT NULL DEFAULT '',

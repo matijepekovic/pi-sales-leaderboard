@@ -1,0 +1,11 @@
+<section id="cleanupSettings"><h2>Automatic cleanup</h2>
+<input type="hidden" name="cleanup_present" value="1">
+<label class="check"><input type="checkbox" name="CLEANUP_ENABLED" value="1" {% if values.CLEANUP_ENABLED == '1' %}checked{% endif %}> Enable automatic cleanup</label>
+<label>Keep for (days)<input type="number" name="CLEANUP_DAYS" value="{{ values.CLEANUP_DAYS }}" min="1" max="365" required></label>
+<p>Removes completed print history, downloaded documents, generated PDFs, previews and processing files after this many days. Local jobs still queued, downloading, printing, retrying or with an unknown outcome are kept. Completed reports are kept for this many days after printing.</p>
+<label class="check"><input type="checkbox" name="CLEANUP_EMAILS" value="1" {% if values.CLEANUP_EMAILS == '1' %}checked{% endif %}> Also permanently delete ALL old emails in this inbox</label>
+<p class="notice error">Gmail account: <strong>{{ values.EMAIL_USER or 'Not configured' }}</strong><br>Inbox / label: <strong>{{ values.EMAIL_MAILBOX }}</strong><br>This deletes every message older than the retention period in that inbox, including unread, starred and unrelated messages. Sender/subject printing filters do not restrict deletion. Messages pass through Trash and are then permanently deleted; the app cannot undo this. The same Gmail message is removed from any other labels it has. Other messages, other folders and existing unrelated Trash contents are not emptied.</p>
+<p class="muted">Email age uses Gmail's received timestamp, not the sender's Date header. Already downloaded queued documents remain on the Pi. Incomplete downloads are protected until finished. Changing the Gmail account or mailbox requires enabling deletion again. Cleanup runs hourly, independently of immediate/scheduled printing and Pause Email. The first cleanup starts after saving, once any current email check finishes. Switching cleanup off stops further work; an already-sent deletion cannot be recalled.</p>
+<p class="muted">A small duplicate-prevention receipt remains so clearing history cannot cause a report to print twice. Stats, credentials, printer settings and the live database are not removed.</p>
+{% include 'cleanup_status.html' %}
+</section>

@@ -9,6 +9,7 @@ from .config import Config
 from .print_options import FIELDS as PRINT_FIELDS
 from .print_schedule import FIELDS as SCHEDULE_FIELDS
 from .settings_repository import SettingsRepository
+from .retention_policy import FIELDS as RETENTION_FIELDS, mailbox_scope
 
 # Only operational settings are editable. Paths, session secrets, binaries,
 # listening addresses, and the working CUPS/Account Track setup are not web inputs.
@@ -24,7 +25,7 @@ NUMBER_FIELDS = {
     'CONVERSION_TIMEOUT_SECONDS': ('conversion_timeout', 10, 600),
     'PRINTER_RETRY_SECONDS': ('retry_seconds', 10, 3600),
 }
-EDITABLE = set(TEXT_FIELDS) | set(NUMBER_FIELDS) | PRINT_FIELDS | SCHEDULE_FIELDS | {'EMAIL_APP_PASSWORD', 'EMAIL_ENABLED'}
+EDITABLE = set(TEXT_FIELDS) | set(NUMBER_FIELDS) | PRINT_FIELDS | SCHEDULE_FIELDS | RETENTION_FIELDS | {'EMAIL_APP_PASSWORD', 'EMAIL_ENABLED'}
 
 
 class SettingsError(ValueError):
@@ -41,6 +42,7 @@ class SettingsService:
         values = {}
         printing = {}
         schedule = {}
+        retention = {}
         for key, value in patch.items():
             if key not in EDITABLE:
                 raise SettingsError('This setting cannot be changed from the printer webpage.')
@@ -50,6 +52,8 @@ class SettingsService:
                 printing[key] = value
             elif key in SCHEDULE_FIELDS:
                 schedule[key] = value
+            elif key in RETENTION_FIELDS:
+                retention[key] = value
             elif key in TEXT_FIELDS:
                 values[TEXT_FIELDS[key]] = value.strip()
             elif key in NUMBER_FIELDS:
@@ -66,6 +70,7 @@ class SettingsService:
         try:
             values['print_options'] = current.print_options.apply(printing)
             values['print_schedule'] = current.print_schedule.apply(schedule)
+            values['retention'] = current.retention.apply(retention)
         except ValueError as exc:
             raise SettingsError(str(exc)) from None
         cfg = replace(current, **values)
@@ -80,7 +85,8 @@ class SettingsService:
     def read(self) -> tuple[Config, str]:
         stored, revision = self.repository.read()
         # File values override the environment captured by systemd at startup.
-        return self._apply(self.baseline, {k: v for k, v in stored.items() if k in EDITABLE}), revision
+        cfg = self._apply(self.baseline, {k: v for k, v in stored.items() if k in EDITABLE})
+        return replace(cfg, retention=replace(cfg.retention, email_scope=stored.get('CLEANUP_EMAIL_SCOPE', ''))), revision
 
     @staticmethod
     def public_values(cfg: Config) -> dict[str, str]:
@@ -90,6 +96,9 @@ class SettingsService:
         result['EMAIL_ENABLED'] = '1' if cfg.email_enabled else '0'
         result.update(cfg.print_options.environment())
         result.update(cfg.print_schedule.environment())
+        result.update(cfg.retention.environment())
+        if cfg.retention.email_scope != mailbox_scope(cfg.email_user, cfg.mailbox):
+            result['CLEANUP_EMAILS'] = '0'
         return result
 
     def candidate(self, form: Mapping[str, str]) -> tuple[Config, dict[str, str], str]:
@@ -108,6 +117,19 @@ class SettingsService:
             if patch.get('EMAIL_USER', current.email_user).strip() != current.email_user:
                 raise SettingsError('Enter a new app password when changing the Gmail account.')
         cfg = self._apply(current, patch)
+        changed_inbox = (current.email_user.casefold(), current.mailbox) != (cfg.email_user.casefold(), cfg.mailbox)
+        if changed_inbox:
+            if patch.get('CLEANUP_EMAILS') == '1':
+                raise SettingsError('Save the new Gmail account/mailbox first, then enable inbox deletion for it.')
+            patch.update(CLEANUP_EMAILS='0', CLEANUP_EMAIL_SCOPE='')
+            cfg = replace(cfg, retention=replace(cfg.retention, delete_emails=False, email_scope=''))
+        elif 'CLEANUP_EMAILS' in patch:
+            enabled = patch['CLEANUP_EMAILS'] == '1'
+            if enabled and (not cfg.email_user or not cfg.email_password):
+                raise SettingsError('Configure Gmail before enabling permanent inbox deletion.')
+            scope = mailbox_scope(cfg.email_user, cfg.mailbox) if enabled else ''
+            patch['CLEANUP_EMAIL_SCOPE'] = scope
+            cfg = replace(cfg, retention=replace(cfg.retention, email_scope=scope))
         return cfg, patch, revision
 
     def save(self, form: Mapping[str, str]) -> str:
