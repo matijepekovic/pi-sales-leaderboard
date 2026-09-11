@@ -11,6 +11,7 @@
 <input type="hidden" name="revision" value="{{ revision }}">
 {% include 'schedule_settings.html' %}
 {% include 'print_settings.html' %}
+{% include 'cleanup_settings.html' %}
 <div class="cards">
 <section><h2>Gmail connection</h2>
 <label class="check"><input type="checkbox" name="EMAIL_ENABLED" value="1" {% if values.EMAIL_ENABLED == '1' %}checked{% endif %}> Enable automatic email printing</label>

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .config import Config, clean_text, safe_name
 from .db import Database
+from .retention_repository import RetentionRepository
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +28,11 @@ def header(value) -> str:
         return clean_text(str(make_header(decode_header(str(value or '')))), 2000)
     except (LookupError, UnicodeError):
         return clean_text(value or '', 2000)
+
+
+def message_identity(account, mailbox, validity, uid, message_id):
+    source = message_id or f'{mailbox}:{validity}:{uid}'
+    return hashlib.sha256((account.casefold() + '\0' + source).encode()).hexdigest()
 
 
 def sexpr(data: bytes):
@@ -224,8 +230,9 @@ class GmailClient:
                     raise ValueError('EMAIL HEADER EXCEEDS SIZE LIMIT')
                 msg = BytesParser(policy=policy.default).parsebytes(raw_header)
                 subject, sender, message_id = header(msg['Subject']), header(msg['From']), header(msg['Message-ID'])
-                identity_source = message_id or f'{cfg.mailbox}:{validity}:{uid}'
-                identity = hashlib.sha256((cfg.email_user.casefold() + '\0' + identity_source).encode()).hexdigest()
+                identity = message_identity(cfg.email_user, cfg.mailbox, validity, uid, message_id)
+                if RetentionRepository(self.db).seen(identity):
+                    continue  # Expired history must not turn into another print.
                 qualifies = cfg.subject_contains.casefold() in subject.casefold() and cfg.from_contains.casefold() in sender.casefold()
                 self.db.execute('''INSERT OR IGNORE INTO processed_messages
                     (identity,account,mailbox,uidvalidity,uid,message_id,subject,sender,state,created)

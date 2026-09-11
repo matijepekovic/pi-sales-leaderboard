@@ -19,6 +19,7 @@ from .db import Database
 from .print_schedule import DAYS as SCHEDULE_DAYS, MODES as SCHEDULE_MODES
 from .print_dispatch import PrintDispatchService
 from .print_queue_repository import PrintQueueRepository
+from .retention_repository import RetentionRepository
 
 
 def create_app(cfg: Config | None = None, settings_service: SettingsService | None = None) -> Flask:
@@ -84,6 +85,9 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         # Distinct checkbox names keep the duplicate-field protection intact;
         # normalize only here, where browser form details belong.
         values = request.form.to_dict()
+        if values.pop('cleanup_present', '') == '1':
+            for key in ('CLEANUP_ENABLED', 'CLEANUP_EMAILS'):
+                values.setdefault(key, '0')
         if values.pop('schedule_days_present', '') == '1':
             if 'PRINT_SCHEDULE_DAYS' in values:
                 abort(400, 'Duplicate schedule days representation')
@@ -107,7 +111,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             last_check=db.get('last_check'), next_check=db.get('next_check'),
             gmail=db.get('gmail_state', 'STARTING'), monitor_error=db.get('monitor_error', ''),
             last_success=db.get('last_successful_print'), last_error=db.get('last_printer_error'),
-            print_schedule=dispatch().summary())
+            print_schedule=dispatch().summary(), cleanup=RetentionRepository(db).state())
 
     @app.get('/health')
     def health():

@@ -23,6 +23,10 @@ from .db import Database
 from .error_pages import error_page
 from .gmail_client import GmailClient
 from .printer import MissingJob, Printer, PrinterError, SubmissionRejected
+from .retention import RetentionService
+from .retention_repository import RetentionRepository
+from .retention_files import RetentionFiles
+from .gmail_cleanup import GmailCleanup
 
 log = logging.getLogger(__name__)
 
@@ -266,6 +270,23 @@ def main():
         engine = Engine(cfg, db, stop=stop)
         gmail = GmailClient(cfg, db, stop=stop)
 
+        def make_retention(captured):
+            def still_current():
+                if stop.is_set():
+                    return False
+                try:
+                    live, _ = settings.read()
+                    return (live.retention == captured.retention
+                            and live.email_user == captured.email_user
+                            and live.mailbox == captured.mailbox
+                            and live.email_password == captured.email_password)
+                except (SettingsError, SettingsStorageError):
+                    return False  # A settings read failure never authorizes deletion.
+            return RetentionService(captured, RetentionRepository(db),
+                                    RetentionFiles(captured.data_dir), GmailCleanup, still_current)
+
+        retention = make_retention(cfg)
+
         def heartbeat():
             while not stop.is_set():
                 try:
@@ -275,11 +296,12 @@ def main():
                 stop.wait(5)
         thread = threading.Thread(target=heartbeat, daemon=True, name='printer-heartbeat')
         thread.start()
-        # One collection task and one preparation task may run concurrently.
+        # One collection/cleanup task and one preparation task may run concurrently.
+        # Cleanup never races an IMAP download. Its network work cannot block CUPS.
         # Only this main loop can submit/release CUPS jobs, and the existing
         # process lock still prevents a second worker from doing the same work.
         background = ThreadPoolExecutor(max_workers=2, thread_name_prefix='printer-work')
-        polling, preparing = None, None
+        polling, preparing, cleaning = None, None, None
         next_poll, next_status = 0, 0
         active_revision = None
         log.info('Independent printer worker started, queue=%s', cfg.queue)
@@ -297,6 +319,7 @@ def main():
                                 formatter.update(cfg)
                                 engine = Engine(cfg, db, stop=stop)
                                 gmail = GmailClient(cfg, db, stop=stop)
+                                retention = make_retention(cfg)
                                 next_poll, next_status = 0, 0
                             active_revision = revision
                             db.set('settings_revision', revision)
@@ -328,12 +351,17 @@ def main():
                             db.set('monitor_error', 'GMAIL CHECK FAILED: ' + type(exc).__name__)
                             log.warning('Gmail check failed: %s', type(exc).__name__)
                         next_poll = time.time() + cfg.poll_seconds
+                    if cleaning is not None and cleaning.done():
+                        finished, cleaning = cleaning, None
+                        finished.result()
+                    if cleaning is None and polling is None and retention.due(now):
+                        cleaning = background.submit(retention.run)
                     paused = db.get('paused', False)
                     if not cfg.email_enabled:
                         db.set('gmail_state', 'DISABLED')
                         db.set('next_check', None)
                     elif not paused or force:
-                        if polling is None and (now >= next_poll or force):
+                        if polling is None and cleaning is None and (now >= next_poll or force):
                             db.set('last_check', now)
                             polling = background.submit(gmail.poll)
                         db.set('next_check', None if polling is not None else next_poll)

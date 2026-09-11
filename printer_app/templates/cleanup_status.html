@@ -1,0 +1,6 @@
+{% if state.cleanup %}
+<section><h2>Last cleanup</h2>
+<dl><dt>Started</dt><dd>{{ state.cleanup.started|localtime }}</dd><dt>Finished</dt><dd>{{ state.cleanup.finished|localtime }}</dd><dt>Next check (while enabled)</dt><dd>{{ state.cleanup.next_run|localtime }}</dd><dt>Removed in this run</dt><dd>{{ state.cleanup.local_jobs }} completed jobs, {{ state.cleanup.emails }} emails, {{ state.cleanup.backups }} expired backups</dd></dl>
+{% if state.cleanup.error %}<p class="notice error">{{ state.cleanup.error }}</p>{% endif %}
+</section>
+{% endif %}
