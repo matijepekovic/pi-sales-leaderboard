@@ -1,0 +1,16 @@
+<section id="scheduleSettings"><h2>When reports print</h2>
+<p>Keep gathering new emails, but wait to print until the days and time you choose. Reports and error sheets wait together in the app's own queue.</p>
+<div class="form-grid">
+<label>Print timing<select name="PRINT_SCHEDULE_MODE">{% for value, label in schedule_modes %}<option value="{{ value }}" {% if values.PRINT_SCHEDULE_MODE == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+<label>Print at<input type="time" name="PRINT_SCHEDULE_TIME" value="{{ values.PRINT_SCHEDULE_TIME }}" step="60" required><span class="muted">The same time repeats on each selected day.</span></label>
+</div>
+<fieldset><legend>Repeat on these days</legend>
+<input type="hidden" name="schedule_days_present" value="1">
+<div class="weekdays">{% for key, label in schedule_days %}<label class="check"><input type="checkbox" name="schedule_day_{{ key }}" value="1" {% if key in values.PRINT_SCHEDULE_DAYS.split(',') %}checked{% endif %}> {{ label }}</label>{% endfor %}</div>
+</fieldset>
+<p><strong>Timezone: {{ values.PRINTER_TIMEZONE }}</strong> — change it under Printing and time below.</p>
+<p><strong>Saved schedule:</strong> {{ state.print_schedule.description }}{% if state.print_schedule.next_run %}<br><strong>Next release:</strong> {{ state.print_schedule.next_run|localtime }}{% endif %}</p>
+<p class="muted">Save Settings applies this schedule to work that has not yet been submitted. Keep automatic email printing enabled to continue collecting emails. Pause Email only pauses collection; it does not pause the print schedule.</p>
+<p class="notice">Each scheduled release prints attachments collected by that time. Later arrivals wait for the next selected day. After worker downtime, an overdue batch is released when the worker returns. A released batch keeps retrying if the printer is offline.</p>
+<p class="muted">Hold queue disables automatic releases without stopping email collection. Print queued now releases the current batch once without changing your schedule. Test Print always prints immediately. Switching to Print as emails arrive releases waiting reports. Already submitted jobs cannot be recalled by changing this setting.</p>
+</section>

@@ -9,6 +9,7 @@
 <form id="printerSettings" method="post" action="{{ url_for('settings_page') }}" autocomplete="off">
 <input type="hidden" name="csrf" value="{{ session.csrf }}">
 <input type="hidden" name="revision" value="{{ revision }}">
+{% include 'schedule_settings.html' %}
 {% include 'print_settings.html' %}
 <div class="cards">
 <section><h2>Gmail connection</h2>

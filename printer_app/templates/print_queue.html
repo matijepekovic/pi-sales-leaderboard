@@ -1,0 +1,14 @@
+<section id="printQueue"><div class="heading"><h2>Print schedule &amp; waiting queue</h2><a class="button" href="{{ url_for('settings_page') }}#scheduleSettings">Edit schedule</a></div>
+<p class="status">{{ state.print_schedule.description }}</p>
+<dl><dt>Waiting attachments</dt><dd>{{ state.print_schedule.waiting.count }}</dd>
+<dt>Next scheduled release</dt><dd>{{ state.print_schedule.next_run|localtime if state.print_schedule.next_run else 'Held until you release the queue' if state.print_schedule.mode == 'hold' else 'As emails arrive' }}</dd>
+<dt>Schedule applied</dt><dd>{{ 'Yes' if state.print_schedule.applied else 'Waiting for the worker to apply saved settings' }}</dd>
+<dt>Last scheduled batch</dt><dd>{% if state.print_schedule.last_run %}{{ state.print_schedule.last_run.released_at|localtime }} · {{ state.print_schedule.last_run.attachments }} attachment(s){% else %}—{% endif %}</dd></dl>
+<p class="muted">Email collection continues independently. New arrivals after a scheduled time wait for the next batch. Work already released to printing continues, including printer retries.</p>
+<form method="post" action="{{ url_for('command', action='print-queued-now') }}"><input type="hidden" name="csrf" value="{{ session.csrf }}"><button>Print queued now</button><span class="muted"> One-time release of collected attachments; does not change the schedule.</span></form>
+{% if state.print_schedule.waiting.attachments %}
+<div class="table-wrap"><table><thead><tr><th>Collected</th><th>Email / attachment</th><th>Preparation</th><th>Details</th></tr></thead><tbody>
+{% for item in state.print_schedule.waiting.attachments %}<tr><td>{{ item.created|localtime }}</td><td>{{ item.subject }}<br>{{ item.filename }}</td><td>{{ 'Prepared' if item.state == 'DONE' else 'Preparing' if item.state == 'PROCESSING' else 'Downloading' if item.state == 'DOWNLOADING' else 'Waiting for preparation' }}</td><td>{% if item.job_id %}<a href="{{ url_for('job_detail', job_id=item.job_id) }}">Preview &amp; log</a>{% else %}Collected{% endif %}</td></tr>{% endfor %}
+</tbody></table></div><p class="muted">Showing up to 200 waiting attachments. All waiting attachments are retained.</p>
+{% else %}<p class="muted">No attachments waiting for release.</p>{% endif %}
+</section>

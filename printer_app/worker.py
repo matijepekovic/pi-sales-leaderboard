@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import fcntl
+from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
 import signal
@@ -12,6 +13,8 @@ from pathlib import Path
 
 from . import converter
 from .print_options import PrintOptions
+from .print_dispatch import PrintDispatchService
+from .print_queue_repository import PrintQueueRepository
 from dataclasses import replace
 from .config import Config, clean_text, environment_file
 from .settings import SettingsService, SettingsError
@@ -25,10 +28,13 @@ log = logging.getLogger(__name__)
 
 
 class Engine:
-    def __init__(self, cfg: Config, db: Database, printer=None, stop=None):
+    def __init__(self, cfg: Config, db: Database, printer=None, stop=None, dispatch=None):
         self.cfg, self.db = cfg, db
         self.printer = printer or Printer(cfg)
         self.stop = stop or threading.Event()
+        self.queue = PrintQueueRepository(db)
+        self.dispatch = dispatch or PrintDispatchService(self.queue, cfg.print_schedule, cfg.timezone)
+        self.dispatch.configure()
 
     def make_job(self, attachment_id, key: str) -> dict:
         jid = self.db.create_job(attachment_id, key, self.cfg.print_options.snapshot())
@@ -62,7 +68,7 @@ class Engine:
         self.db.output(job_id, 'Report PDF', pdf)
         self.db.execute('''UPDATE jobs SET printable=?,page_count=?,tabloid=?,status='READY',updated=?
             WHERE id=?''', (str(pdf), pages, int(tabloid), time.time(), job_id))
-        self.db.step(job_id, f'PDF preflight: {pages} page(s); ready for automatic printing')
+        self.db.step(job_id, f'PDF preflight: {pages} page(s); prepared for the print queue')
 
     def process_attachment(self, attachment: dict) -> None:
         aid = attachment['id']
@@ -119,6 +125,8 @@ class Engine:
         log.warning('Job %s: %s', job_id, reason)
 
     def advance(self, job: dict) -> None:
+        if not self.dispatch.allow(job):
+            return  # No CUPS submission (including error sheets) before release.
         jid = job['id']
         attempt = self.db.one('SELECT * FROM print_attempts WHERE job_id=? ORDER BY id DESC LIMIT 1', (jid,))
         if not attempt or attempt['state'] in ('FAILED', 'UNKNOWN'):
@@ -210,11 +218,15 @@ class Engine:
         pdf = error_page(self.directory(jid) / 'test.pdf', job, 'Printer app is operating independently.', self.cfg.timezone, test=True)
         self.ready(jid, pdf, converter.page_count(pdf), False)
 
-    def tick(self) -> None:
-        attachment = self.db.one("SELECT * FROM attachments WHERE state IN ('PENDING','PROCESSING') ORDER BY id LIMIT 1")
+    def prepare_next(self) -> None:
+        attachment = self.queue.next_attachment()
         if attachment and not self.stop.is_set():
             self.process_attachment(attachment)
-        for job in self.db.rows("SELECT * FROM jobs WHERE status IN ('READY','SUBMITTED','PRINTER ERROR') AND next_attempt<=? ORDER BY id LIMIT 20", (time.time(),)):
+
+    def tick(self) -> None:
+        # Scheduling/submission does not wait for email downloads or conversion.
+        # PREPARING jobs cannot enter this list until a complete PDF is recorded.
+        for job in self.dispatch.due_jobs():
             if self.stop.is_set():
                 break
             self.advance(job)
@@ -263,6 +275,11 @@ def main():
                 stop.wait(5)
         thread = threading.Thread(target=heartbeat, daemon=True, name='printer-heartbeat')
         thread.start()
+        # One collection task and one preparation task may run concurrently.
+        # Only this main loop can submit/release CUPS jobs, and the existing
+        # process lock still prevents a second worker from doing the same work.
+        background = ThreadPoolExecutor(max_workers=2, thread_name_prefix='printer-work')
+        polling, preparing = None, None
         next_poll, next_status = 0, 0
         active_revision = None
         log.info('Independent printer worker started, queue=%s', cfg.queue)
@@ -294,30 +311,39 @@ def main():
                             db.set('last_printer_error', {'at': now, 'message': status['detail'] or 'PRINTER OFFLINE'})
                         next_status = now + 15
                     with db.connect() as conn:
-                        commands = list(conn.execute('SELECT * FROM commands ORDER BY id'))
-                        conn.execute('DELETE FROM commands')
+                        commands = list(conn.execute("SELECT * FROM commands WHERE name IN ('run-now','test-print') ORDER BY id"))
+                        conn.execute("DELETE FROM commands WHERE name IN ('run-now','test-print')")
                     force = any(row['name'] == 'run-now' for row in commands)
                     for row in commands:
                         if row['name'] == 'test-print':
                             engine.test_print()
+                    if polling is not None and polling.done():
+                        finished, polling = polling, None
+                        try:
+                            found = finished.result()
+                            db.set('monitor_error', '')
+                            log.info('Inbox poll complete: %s new message(s)', found)
+                        except Exception as exc:
+                            db.set('gmail_state', 'ERROR')
+                            db.set('monitor_error', 'GMAIL CHECK FAILED: ' + type(exc).__name__)
+                            log.warning('Gmail check failed: %s', type(exc).__name__)
+                        next_poll = time.time() + cfg.poll_seconds
                     paused = db.get('paused', False)
                     if not cfg.email_enabled:
                         db.set('gmail_state', 'DISABLED')
                         db.set('next_check', None)
                     elif not paused or force:
-                        if now >= next_poll or force:
+                        if polling is None and (now >= next_poll or force):
                             db.set('last_check', now)
-                            try:
-                                found = gmail.poll()
-                                db.set('monitor_error', '')
-                                log.info('Inbox poll complete: %s new message(s)', found)
-                            except Exception as exc:
-                                # IMAP errors never terminate the worker or reveal login secrets.
-                                db.set('gmail_state', 'ERROR')
-                                db.set('monitor_error', 'GMAIL CHECK FAILED: ' + type(exc).__name__)
-                                log.warning('Gmail check failed: %s', type(exc).__name__)
-                            next_poll = time.time() + cfg.poll_seconds
-                            db.set('next_check', next_poll)
+                            polling = background.submit(gmail.poll)
+                        db.set('next_check', None if polling is not None else next_poll)
+                    else:
+                        db.set('next_check', None)
+                    if preparing is not None and preparing.done():
+                        finished, preparing = preparing, None
+                        finished.result()  # Durable work is retried by the next cycle on failure.
+                    if preparing is None:
+                        preparing = background.submit(engine.prepare_next)
                     engine.tick()
                     stop.wait(1)
                 except Exception:
@@ -326,6 +352,7 @@ def main():
                     stop.wait(5)
         finally:
             stop.set()
+            background.shutdown(wait=True, cancel_futures=True)
             thread.join(timeout=10)
             db.set('worker_heartbeat', 0)
             log.info('Printer worker stopped')

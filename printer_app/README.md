@@ -1,182 +1,147 @@
 # Independent Raspberry Pi printer automation
 
-A second application distributed in `matijepekovic/pi-sales-leaderboard` on
-`main`. It is not a Stats feature, blueprint, scheduler, database module, or
-shared runtime service.
+A second application in `matijepekovic/pi-sales-leaderboard`, delivered on `main`.
+It does not import or require the Stats app, routes, database, scheduler or service.
 
-## Install and update using the leaderboard button
+## Install or update
 
-Use **Stats Settings → Software → Check for Updates → Update**. Stats v134 and
-later treat `printer_app` as an independently deployable bundle. The same Update
-button performs first installation and later printer-only updates.
+**Leaderboard → Settings → Software → Check for Updates → Update**.
+Wait for printer installation to finish, then use **Open Print Control**. No
+terminal, separate clone or installer is needed. Stats v134 and later detect
+printer-only updates separately; these do not reinstall or restart Stats.
 
-No Git checkout, second repository, or separate printer install command is
-required for the normal appliance flow. Printer-only changes do not reinstall or
-restart Stats. Unchanged printer code does not reinstall dependencies or restart
-printer services.
+Open `http://<pi-ip>:5055/` or `/system/print-control`. Settings are at `/settings`.
+There is no printer login. Keep port 5055 on a trusted LAN: anyone who can access
+it can control printing, read previews and change settings. CSRF and same-origin
+checks protect writes; they are not user authentication. Stats authentication is
+not used. After updating, reopen Settings rather than resubmitting an old page.
 
-When installation is ready, the Software section exposes **Open Print Control**.
+## Keep collecting emails; print on selected days
 
-## Printer control UI
+Open **Print Control → Settings → When reports print**. Choose **Queue emails
+until my weekly schedule**, select any combination of Monday–Sunday, set the time,
+and **Save Settings**. That same time repeats on every selected day using the
+printer timezone shown in the form. Change the timezone under Printing and time.
+Keep **Enable automatic email printing** on to keep gathering emails.
 
-Open:
+The dashboard shows the saved schedule, next release time, waiting attachment
+count and collected files, with links to prepared previews. Reports and error
+sheets are held in the printer app's SQLite queue, not submitted to CUPS early.
+There is no per-job approval workflow.
 
-```text
-http://<pi-ip>:5055/system/print-control
-```
+Each occurrence releases a fixed batch: attachments collected by its scheduled
+timestamp. Later arrivals wait for the next selected day/time. Collected files
+still being prepared remain part of the batch and print when their PDF is ready.
+Email downloads and conversion run in separate bounded background tasks, so a
+slow download/conversion does not block release of already prepared reports.
+Only one email poll and one conversion run at a time. CUPS submission stays serial.
 
-or:
+**Check Email Now** collects email only, without bypassing print timing.
+**Pause Email / Resume Email** control collection only, not the print schedule.
+**Print queued now** releases attachments collected when clicked once, without
+changing the weekly schedule. **Test Print (now)** is explicitly immediate.
+**Collect emails only — hold the print queue** disables automatic releases without
+stopping collection. **Print as emails arrive** releases waiting work and restores
+immediate printing. Immediate is the default until a schedule is saved.
 
-```text
-http://<pi-ip>:5055/
-```
+A timing/timezone change governs not-yet-submitted work starting at the next future
+occurrence after the worker applies it. Unrelated saves do not reset that cursor.
+Already submitted jobs cannot be recalled by changing a schedule. A released
+batch keeps retrying after printer outages, even outside the scheduled minute.
+Queued files, releases, settings and schedule checkpoints survive updates/reboots.
+After worker downtime, missed occurrences of an already-active schedule coalesce
+into one overdue batch when the worker returns. Attachments collected after the
+last due time still wait for the next slot. Restarting does not repeat a batch.
 
-**There is no printer login page.** Print Control opens directly on the trusted
-local network. It does not use or depend on the Stats PIN or Stats authentication.
-State-changing buttons still use an independent session token to reject forged
-POST requests.
+Local clock handling: a repeated autumn time runs at its first occurrence only;
+a nonexistent spring time shifts forward by the clock gap (02:30 becomes 03:30).
+The Pi's clock/timezone database must be correct. A scheduled time starts a batch;
+it is not a guarantee that all paper has finished printing at that exact second.
 
-Because the UI is intentionally unauthenticated, keep port 5055 on a trusted LAN.
-Do not expose it directly to the public internet.
-
-Existing v134 installs may still contain the old `PRINTER_UI_USER` and
-`PRINTER_UI_PASSWORD_HASH` lines in their private environment file. They are
-ignored by the UI. The old password hash is read only for defensive log redaction
-and can remain in place without affecting behavior.
-
-## Operational independence
-
-`printer-app-web.service` hosts its own Flask/Waitress UI on port **5055**.
-`printer-app-worker.service` owns Gmail polling, conversion, and CUPS submission.
-Both run as **scoreboard**, start on boot, and restart on failure.
-
-Neither service imports, calls, starts, stops, or requires Stats. They share no
-Stats database, authentication, scheduler, environment, or process lifecycle.
-
-Each installed printer release has its own virtual environment under
-`~/.local/lib/printer-app/releases/`, selected by `current`. Persistent printer
-state and credentials live outside both source trees.
-
-The intentional coupling is distribution only: same repository, `main`, and the
-leaderboard update controls. `app/update_delivery.py` is the packaging boundary.
-It launches the printer's standalone installer in a detached systemd setup job.
-No printer runtime runs inside the Stats process.
-
-The v134 delivery adapter still passes the former `--initial-login-file` argument
-during an upgrade. The no-login printer installer accepts that argument only for
-v134 compatibility and deletes any stale handoff file. It never creates a new
-printer password.
-
-## Print policy
-
-| Input | Automatic action |
+| Setting | Values / default |
 |---|---|
-| Valid incoming PDF, any page count | Print the original unchanged using existing queue defaults. |
-| XLSX / XLS / XLSM | Find the main table and dynamically split by actual Sub Status values. |
-| Excel-generated PDF, exactly one page | Print on Tabloid 11x17 landscape. |
-| Excel-generated PDF, multiple pages | Retain preview; print only a one-page error sheet for that group. |
-| Oversized attachment | Download in full and process normally; size is only a warning. |
-| Unsupported/corrupt file, missing Sub Status, no data, conversion failure | Print a one-page error sheet. |
-| One group fails | Continue the other groups independently. |
-| CUPS unavailable | Keep durable pending jobs and retry; do not claim output while offline. |
+| `PRINT_SCHEDULE_MODE` | `immediate` (default), `weekly`, `hold` |
+| `PRINT_SCHEDULE_DAYS` | Comma-separated `mon,tue,wed,thu,fri,sat,sun`; default weekdays |
+| `PRINT_SCHEDULE_TIME` | Local `HH:MM`; default `09:00` |
+| `PRINTER_TIMEZONE` | Existing timezone setting; default `America/Los_Angeles` |
 
-There is no manual approval workflow. Incoming multi-page PDFs print normally;
-the one-page rule applies only to Excel-generated reports. Sub Status values are
-never hardcoded.
+## Gmail and print settings in the browser
 
-The parser preserves headers and column order and removes irrelevant blank area.
-XLS uses xlrd; XLSX/XLSM use openpyxl. Original Office files never enter
-LibreOffice. Generated workbooks are values-only and do not preserve macros,
-formulas, external links, or Office automation.
+In **Print Control → Settings**, enter the Gmail address and Google app password,
+mailbox/label, subject/sender filters, lookback days and poll interval. **Test Gmail**
+tests the entered values without saving, downloading attachments or printing.
+**Save Settings** persists values on the Pi and applies them without a manual restart.
+Passwords are write-only: a blank field keeps the saved password; removal is explicit.
+Changing accounts requires a new app password. Secrets are never stored in Stats.
 
-Excel output uses a bounded print area, repeating header, 11x17 landscape, one
-page wide, and unrestricted page height. The actual rendered PDF page count makes
-the print decision.
+The first successful scan collects matching emails from the lookback window.
+Empty subject/sender filters match everything. Sender matching is not sender
+verification. Disabling email monitoring stops new checks, including Check Email
+Now; collected work still follows its print schedule. An operation already in
+progress finishes with its existing configuration. The UI shows when the worker
+has applied the saved revision. The working printer queue is read-only in the UI.
 
-## Settings in the browser — no terminal
+**How reports print** controls paper, orientation, color, sides, copies, PDF
+scaling, Excel scaling/margins/sheets and Excel's multi-page policy. Print-layout
+options are captured per prepared job, so retries do not silently change layout.
+Print timing is separate and governs not-yet-submitted jobs, including prepared ones.
 
-Open **Print Control → Settings** at `http://<pi-ip>:5055/settings`.
-Enter the Gmail address and Google app password, mailbox/label, subject and sender
-filters, lookback window and polling interval. Use **Test Gmail** to test the
-entered credentials without saving, fetching emails or printing. Then use
-**Save Settings**. The password stays in the form during a connection test, but
-is never returned by the server, stored in a browser cookie or shown again.
-Leaving the password blank keeps the saved one; an explicit checkbox removes it.
-Changing Gmail accounts requires a new app password.
+## File policy
 
-Settings also include the email-monitoring switch, timezone, printer retry delay,
-Excel conversion timeout and oversized-attachment warning threshold. The existing
-CUPS queue is displayed read-only: the working Konica/Account Track configuration,
-server address, executable paths and storage locations cannot be changed via HTTP.
-PDF/Excel page rules are unchanged. Large attachments still download normally.
+The custom parser and Sub Status splitting are removed. XLS/XLSX/XLSM reports render
+from the original workbook layout with explicitly selected page settings; they are
+not rebuilt into a new table. Office macros and link updates are disabled in the
+isolated LibreOffice renderer. LibreOffice/fonts can differ from Microsoft Excel;
+the job's PDF preview shows the actual rendered layout.
 
-Saving with email printing enabled automatically processes qualifying emails in
-the lookback window. Empty subject/sender filters match everything. Test Gmail
-does not enable monitoring or modify saved values. Disabling email monitoring
-stops new checks (including Run Now); already downloaded print work continues.
-Pause/Resume on the dashboard remain temporary polling controls.
+Incoming PDFs retain their original bytes and all pages. Excel's one-page rule is
+the default; Settings can instead allow the entire multi-page workbook. Conversion
+or unsupported-file errors produce one error sheet. These outputs all follow the
+same email print schedule. Oversized attachments download in full; `MAX_ATTACHMENT_MB`
+is only a warning. CUPS completion is not an independent paper-exit sensor.
 
-`settings.py` owns validation and configuration workflows; `settings_repository.py`
-owns locked, atomic private-file writes and stale-form conflict checks. Secrets
-remain in `~/.config/printer-app/env`, mode 0600, outside either source tree and
-outside Stats. Existing noneditable settings and credentials are preserved.
-The web process has write access only to the printer data and configuration
-directories. The worker can only read the configuration directory.
+## Independence, storage and operations
 
-The worker re-reads saved settings between operations, even when systemd inherited
-older environment values. No terminal, sudo call or service restart is used when
-saving. An operation already in progress finishes with its previous settings;
-new settings take effect on the following cycle. The page reports whether the
-worker has applied the saved revision. Updates/restarts retain these settings.
+`printer-app-web.service` and `printer-app-worker.service` run as `scoreboard`,
+start at boot and restart on failure. Each installed release has its own virtual
+environment under `~/.local/lib/printer-app/releases/`, selected by `current`.
+Printer crashes/restarts do not affect Stats. Stats may be stopped or unavailable.
+Only repository/update distribution is shared through `app/update_delivery.py`.
+The detached `printer-app-install.service` owns setup, not either application's runtime.
 
-This page is intentionally unauthenticated, as requested. Anyone with network
-access to port 5055 can control printing, change settings and read report previews.
-Keep it on a trusted LAN; HTTPS alone does not restrict who may access it.
-State-changing requests require CSRF and same-origin checks. Gmail tests connect
-only to Gmail's fixed TLS endpoint; no arbitrary server/command/path can be supplied.
+`print_schedule.py` owns the pure timing contract/calendar arithmetic;
+`print_dispatch.py` owns release workflows; `print_queue_repository.py` owns SQL.
+The additive `print_queue_releases` table and `print_schedule_state` metadata are in
+the printer database only. Batch release and advancing its cursor commit atomically.
+The worker alone releases batches and owns CUPS submission; HTTP only queues commands.
 
-## Existing printer setup
-
-The application uses the existing CUPS queue:
-
-```text
-konicaa
-```
-
-It does not install or modify the Konica driver, `KMbeuEmpPS.pl`, Account Track,
-printer PIN, or queue configuration.
-
-## State and logs
-
-| Purpose | Default location |
+| Item | Location |
 |---|---|
-| Private environment | `~/.config/printer-app/env` |
+| Private settings/secrets | `~/.config/printer-app/env` (mode 0600) |
 | Printer database | `~/.local/share/printer-app/printer_app.db` |
-| Attachments | `~/.local/share/printer-app/attachments/` |
-| Generated jobs / PDFs | `~/.local/share/printer-app/jobs/` |
+| Collected attachments | `~/.local/share/printer-app/attachments/` |
+| PDFs and processing files | `~/.local/share/printer-app/jobs/` |
 | Migration backups | `~/.local/share/printer-app/backups/` |
-| Installed runtime | `~/.local/lib/printer-app/current/` |
+| Active runtime | `~/.local/lib/printer-app/current/` |
 | Distribution status | `~/.local/share/leaderboard-distribution/` |
 
-Logs:
+All environment keys/defaults are in `.env.example`. Existing credentials, noneditable
+settings and print receipts are preserved. Sources/previews are retained: monitor disk
+space and do not restore an old deduplication database. CUPS submissions are held until
+the request ID is saved, then automatically released. Restarts reconcile the original
+request rather than blindly reprinting; lost CUPS history is reported as ambiguous.
+
+The existing `konicaa` queue, Konica driver, `KMbeuEmpPS.pl`, Account Track and PIN
+configuration are not modified. No root privileges are needed for normal runtime.
 
 ```bash
 journalctl -u printer-app-web.service -u printer-app-worker.service -f
 journalctl -u printer-app-install.service -f
-```
-
-Health:
-
-```bash
 curl --fail http://127.0.0.1:5055/health
 ```
 
-Health returns only `web`, `database`, `worker_running`, and `cups_queue_known`.
-
-## Optional standalone administrator commands
-
-The normal install/update path is the leaderboard UI. These remain available for
-administration from a clean Git checkout on `main`:
+Health exposes only web/database/worker/known-CUPS-queue booleans, not secrets.
+Optional administrator commands from a `main` checkout remain independent of Stats:
 
 ```bash
 bash printer_app/install.sh
@@ -184,28 +149,15 @@ bash scripts/update-printer-app.sh
 python3 printer_app/deploy.py rollback
 ```
 
-Normal printer runtime is non-root. Setup uses sudo only for system packages and
-systemd service management. No printer driver or Account Track changes occur.
+Rollback to a version predating scheduling restores that version's immediate-print
+behavior. Stop the printer worker before such a rollback if waiting work must stay held.
+Rollback never restores an older print-receipt database.
 
-## Crash safety
+## Regression coverage
 
-The worker creates a held CUPS request, records the request ID durably, then
-releases the job automatically. After a crash it reconciles the existing request
-instead of blindly submitting the original again.
-
-CUPS completion is the available software acknowledgment, not a physical paper
-sensor. Ambiguous CUPS history is surfaced rather than causing automatic duplicate
-reports.
-
-## Testing
-
-CI covers browser configuration persistence/live reload, secret masking, validation,
-read-only Gmail connection tests, direct no-login UI access, CSRF protection, dynamic Sub Status grouping,
-PDF and Excel processing, oversized downloads, deduplication, real LibreOffice
-rendering, a disposable CUPS sink, restart recovery, printer/Gmail outages, v133
-old-ZIP upgrade compatibility, v134 printer delivery compatibility, and independent
-systemd lifecycle tests with Stats stopped.
-
-The architectural invariant remains: the printer module can be replaced without
-rewriting unrelated Stats code; only its distribution adapter knows how to deploy
-it.
+CI covers queue release/cutoffs, selected weekdays, DST, persistence, crash-atomic
+release/cursor recovery, no repeat on restart, late arrivals, manual releases, hold
+mode, printer retries, source-layout rendering, oversized downloads, Gmail deduplication,
+no-login forms/CSRF, real browser form saves, and independent systemd deployment
+through the leaderboard Update mechanism. Fixtures use disposable files/printer sinks;
+no real Gmail account or physical Konica printer is used by CI.

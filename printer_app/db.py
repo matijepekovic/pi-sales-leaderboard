@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS jobs (
  tabloid INTEGER NOT NULL DEFAULT 0, next_attempt REAL NOT NULL DEFAULT 0,
  created REAL NOT NULL, updated REAL NOT NULL, completed REAL,
  UNIQUE(attachment_id,group_key));
+CREATE TABLE IF NOT EXISTS print_queue_releases (
+ attachment_id INTEGER PRIMARY KEY REFERENCES attachments(id),
+ released_at REAL NOT NULL, reason TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS attachments_received ON attachments(created);
 CREATE TABLE IF NOT EXISTS outputs (
  id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL REFERENCES jobs(id),
  role TEXT NOT NULL, path TEXT NOT NULL, UNIQUE(job_id,path));
