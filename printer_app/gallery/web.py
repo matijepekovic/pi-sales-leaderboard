@@ -19,9 +19,23 @@ def blueprint(service):
     def page():
         return render_template('gallery.html')
 
+    @bp.get('/queue')
+    def queue_page():
+        state = request.args.get('state', '')
+        offset = int(request.args.get('offset', '0'))
+        return render_template('gallery_queue.html', queue=service.queue(state, offset), state_filter=state)
+
+    @bp.get('/jobs/<ident>')
+    def import_job_page(ident):
+        if not re.fullmatch(r'[a-f0-9]{64}', ident):
+            abort(404)
+        job = service.import_job(ident, int(request.args.get('offset', '0')))
+        if not job:
+            abort(404)
+        return render_template('gallery_job.html', job=job)
+
     @bp.get('/qr.svg')
     def qr():
-        # Local generation, no URL-shortener, cloud API or external image requests.
         from reportlab.graphics.barcode.qr import QrCodeWidget
         from reportlab.graphics.shapes import Drawing
         from reportlab.graphics import renderSVG
@@ -52,7 +66,6 @@ def blueprint(service):
 
     @bp.get('/api/items/<ident>')
     def detail(ident):
-        # Data for the in-gallery dialog, not a separate document page.
         return jsonify(existing(ident))
 
     @bp.get('/api/items/<ident>/related')
