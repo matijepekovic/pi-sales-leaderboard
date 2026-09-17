@@ -1,7 +1,9 @@
-"""Outer-edge starts identify forms, even when handwriting joins adjacent boxes.
+"""Page geometry for gallery work orders.
 
-No OCR, equal-height division, or configurable margins. Preserve page width and
-original pixels from a form's top border until the next form's top border.
+Rendered pages are normalized before form detection: long printed rules establish
+small scan/skew rotation, then the existing outer-edge cutter finds work orders.
+Dense full-page report grids are rejected here because page geometry owns the
+line-pattern distinction; OCR, repositories and UI do not.
 """
 import cv2
 import numpy as np
@@ -10,6 +12,111 @@ import numpy as np
 def _runs(mask):
     edges = np.flatnonzero(np.diff(np.r_[False, mask, False].astype(np.int8)))
     return list(zip(edges[::2], edges[1::2]))
+
+
+def _gray(image):
+    if image.ndim == 2:
+        return image
+    if image.shape[2] == 4:
+        return cv2.cvtColor(image, cv2.COLOR_RGBA2GRAY)
+    return cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+
+
+def _rotate_bound(image, angle):
+    """Rotate without clipping page corners; new space is white."""
+    if abs(angle) < .05:
+        return image
+    h, w = image.shape[:2]
+    center = (w / 2.0, h / 2.0)
+    matrix = cv2.getRotationMatrix2D(center, float(angle), 1.0)
+    cosine, sine = abs(matrix[0, 0]), abs(matrix[0, 1])
+    out_w = max(1, int(round(h * sine + w * cosine)))
+    out_h = max(1, int(round(h * cosine + w * sine)))
+    matrix[0, 2] += out_w / 2.0 - center[0]
+    matrix[1, 2] += out_h / 2.0 - center[1]
+    border = 255 if image.ndim == 2 else tuple([255] * image.shape[2])
+    return cv2.warpAffine(image, matrix, (out_w, out_h),
+                          flags=cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_CONSTANT,
+                          borderValue=border)
+
+
+def deskew_page(image):
+    """Align the dominant long printed rules to 0/90 degrees before cutting.
+
+    Text and handwriting are too short to vote.  Every long line votes only for
+    its deviation from the nearest horizontal/vertical axis, so both horizontal
+    and vertical form rules agree on the same page-skew correction.
+    """
+    h, w = image.shape[:2]
+    if min(h, w) < 120:
+        return image
+    gray = _gray(image)
+    edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+    min_length = max(100, int(min(h, w) * .24))
+    lines = cv2.HoughLinesP(
+        edges, 1, np.pi / 720, threshold=max(60, min_length // 3),
+        minLineLength=min_length, maxLineGap=max(12, int(min(h, w) * .012)))
+    if lines is None:
+        return image
+
+    angles, weights = [], []
+    for line in lines[:, 0]:
+        x1, y1, x2, y2 = map(float, line)
+        dx, dy = x2 - x1, y2 - y1
+        length = float(np.hypot(dx, dy))
+        if length < min_length:
+            continue
+        angle = np.degrees(np.arctan2(dy, dx))
+        skew = ((angle + 45.0) % 90.0) - 45.0
+        # A real scan skew is small. Large diagonal graphics/signatures do not
+        # get permission to rotate the whole source page.
+        if abs(skew) <= 15.0:
+            angles.append(skew)
+            weights.append(length)
+    if not angles:
+        return image
+
+    values = np.asarray(angles)
+    weight = np.asarray(weights)
+    order = np.argsort(values)
+    values, weight = values[order], weight[order]
+    cumulative = np.cumsum(weight)
+    skew = float(values[np.searchsorted(cumulative, cumulative[-1] / 2.0)])
+    return _rotate_bound(image, skew)
+
+
+def is_dense_grid_page(image):
+    """True for full-sheet reports/tables, not stacked work-order forms.
+
+    The unwanted report pages have many long vertical rules spanning much of the
+    page and crossing many long horizontal rules. Work orders have only a small
+    set of repeated vertical partitions even when several forms are stacked.
+    """
+    h, w = image.shape[:2]
+    if min(h, w) < 120:
+        return False
+    gray = _gray(image)
+    ink = cv2.threshold(gray, 0, 255,
+                        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+    vertical = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN,
+        np.ones((max(40, int(h * .18)), 1), np.uint8))
+    horizontal = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN,
+        np.ones((1, max(50, int(w * .18))), np.uint8))
+
+    vertical_rules = _runs((vertical > 0).mean(axis=0) > .42)
+    horizontal_rules = _runs((horizontal > 0).mean(axis=1) > .42)
+    if len(vertical_rules) < 14 or len(horizontal_rules) < 6:
+        return False
+
+    centers = np.array([(a + b) / 2 for a, b in vertical_rules], dtype=float)
+    if len(centers) < 2:
+        return False
+    span = (centers[-1] - centers[0]) / max(1, w)
+    median_gap = float(np.median(np.diff(centers))) / max(1, w)
+    return span > .55 and median_gap < .10
 
 
 def form_tops(image):
@@ -23,7 +130,7 @@ def form_tops(image):
     h, w = image.shape[:2]
     if w < 100 or h < 60:
         return []
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    gray = _gray(image)
     ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
     vertical = cv2.morphologyEx(ink, cv2.MORPH_OPEN,
         np.ones((max(12, w // 65), 1), np.uint8))
@@ -52,8 +159,7 @@ def form_tops(image):
             clusters.append([entry])
     tops = []
     for cluster in clusters:
-        # Trace the first long horizontal rule around this edge start. This
-        # follows a bowed/skewed border rather than cutting off its highest point.
+        # Trace the first long horizontal rule around this edge start.
         anchors = sorted((x, y) for y, x in cluster)
         xx = np.arange(left, right+1)
         expected = np.rint(np.interp(xx, [a[0] for a in anchors], [a[1] for a in anchors])).astype(int)
@@ -66,9 +172,7 @@ def form_tops(image):
         xs = xx[valid]
         ys = expected[valid] - radius + region[:, valid].argmax(axis=0)
         top = np.rint(np.interp(np.arange(w), xs, ys)).astype(int)
-        # Header rules must continue BELOW this border; a blank/footer frame or
-        # lone underline is not a work order. Evaluate relative to the traced top
-        # so skew does not make a real header disappear from a row histogram.
+        # Header rules must continue below this border.
         depth = min(round(.19 * w), h - int(top.max()) - 1)
         if depth < .08 * w:
             continue
@@ -78,8 +182,7 @@ def form_tops(image):
         internal = [(a, b) for a, b in _runs(rule_rows) if a > .008 * w]
         if len(internal) < 2:
             continue
-        # The header also contains actual internal vertical partitions. Reject
-        # blank space containing unrelated horizontal marks/page numbers.
+        # The header also contains actual internal vertical partitions.
         y0, y1 = int(np.median(top) + .01*w), int(np.median(top) + .08*w)
         support = (vertical[max(0,y0):min(h,y1), left+band:right-band] > 0).mean(axis=0)
         if not np.any(support > .55):
