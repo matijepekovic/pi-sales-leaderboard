@@ -1,19 +1,73 @@
-{% extends 'base.html' %}
-{% block title %}Work-order gallery{% endblock %}
-{% block content %}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f5f5f7">
+<title>Work-order gallery</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='gallery.css') }}">
-<div class="heading"><div><p class="eyebrow">PRINTER AUTOMATION</p><h1>Work-order gallery</h1></div><a class="button" href="{{ url_for('settings_page') }}#gallerySettings">Gallery settings</a></div>
-<p>Original cropped images. Search any recognized printed words, phrases, numbers or shared notes. Text recognition can miss unclear printing; handwriting is not guaranteed searchable.</p>
-<details><summary>Open this gallery on another device</summary><img class="gallery-qr" src="{{ url_for('gallery.qr') }}" alt="QR code for this gallery"><p>Scan on the same trusted network. Open this page using the Pi's LAN address, not localhost. Anyone who can reach this app can view documents and add notes.</p></details>
-<p id="galleryStatus" role="status">Loading gallery…</p>
-<form id="gallerySearch" role="search"><label>Search all images and notes<input id="query" type="search" maxlength="300" placeholder="Any printed word, name, work-order number, phone…"></label><button type="submit">Search</button></form>
-<div id="galleryCards" class="gallery-grid"></div>
-<div class="toolbar"><button id="galleryPrevious" type="button">Previous</button><span id="galleryCount"></span><button id="galleryNext" type="button">Next</button></div>
-<p class="muted">Images are loaded as needed, not all at once. New email imports are added automatically; search again to refresh results.</p>
-<details><summary>Storage and recent imports</summary><p id="galleryStorage"></p><div id="galleryImports"></div></details>
-<dialog id="galleryDialog"><button id="galleryClose" class="gallery-close" type="button">Close</button><h2 id="galleryTitle"></h2><img id="galleryFull" alt="Original work-order crop"><p id="galleryDateStatus"></p>
-<form id="galleryDate"><input type="hidden" name="csrf" value="{{ session.csrf }}"><label>Printed document date<input name="date" type="date" required></label><button type="submit">Confirm / correct date</button><p class="muted">Retention uses this date, not the email date. Correcting an old date can make the image and its notes eligible for deletion.</p></form>
-<h3>Shared notes</h3><div id="galleryNotes"></div><form id="galleryNote"><input type="hidden" name="csrf" value="{{ session.csrf }}"><label>Your name (not verified)<input name="author" maxlength="80"></label><label>New note<textarea name="body" maxlength="2000" rows="3" required></textarea></label><button type="submit">Save note</button></form><p id="galleryMessage" role="status"></p><details><summary>Search text (machine-read)</summary><p id="galleryText" class="gallery-text"></p></details></dialog>
+</head>
+<body>
+{% macro actions() %}
+<div class="gallery-actions" role="toolbar" aria-label="Gallery controls">
+<button type="button" data-action="related" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="14" height="14" rx="3"/><path d="M16 3H6a3 3 0 0 0-3 3v10"/></svg><span>Show related</span></button>
+<button type="button" data-action="notes" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span>Notes</span></button>
+<button type="button" data-action="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search</span></button>
+</div>
+{% endmacro %}
+<header class="gallery-header">
+<div class="gallery-nav"><a href="{{ url_for('control') }}">‹ Print Control</a><button id="galleryInfo" type="button" class="circle-button" aria-label="Gallery information and settings">i</button></div>
+<h1 id="galleryHeading">Gallery</h1>
+<p id="galleryCount">Full work orders · grouped by printed date</p>
+</header>
+<main id="galleryMain">
+<div id="galleryFilter" class="gallery-filter" hidden><div><strong id="galleryFilterTitle"></strong><p id="galleryFilterHint"></p></div><button id="galleryClear" type="button">All cards</button></div>
+<p id="galleryMessage" class="gallery-message" role="status"></p>
+<div id="galleryCards" aria-label="Work orders by date"></div>
+<p id="galleryEmpty" class="gallery-empty" hidden></p>
+<button id="galleryMore" class="load-more" type="button" hidden>Load more</button>
+<p class="gallery-hint">Tap a card to open it, show related work orders or add notes.</p>
+</main>
+<div class="gallery-dock">{{ actions() }}</div>
+
+<dialog id="galleryViewer" class="gallery-viewer" aria-labelledby="galleryTitle">
+<div class="viewer-header"><div><h2 id="galleryTitle">Work order</h2><p id="galleryViewerDate"></p></div><button type="button" class="circle-button" data-close="galleryViewer" aria-label="Close work order">×</button></div>
+<div class="viewer-content"><img id="galleryFull" alt="Complete work-order image"><p id="galleryViewerMessage" role="status"></p><p id="gallerySource" class="muted"></p></div>
+<div class="gallery-dock">{{ actions() }}</div>
+</dialog>
+
+<dialog id="galleryNotesSheet" class="gallery-sheet" aria-labelledby="galleryNotesTitle">
+<div class="sheet-handle" aria-hidden="true"></div>
+<div class="sheet-heading"><h2 id="galleryNotesTitle">Notes</h2><button type="button" class="circle-button" data-close="galleryNotesSheet" aria-label="Close notes">×</button></div>
+<p id="galleryNotesContext" class="sheet-context"></p>
+<div id="galleryNotes" aria-live="polite"></div>
+<form id="galleryNote">
+<input type="hidden" name="csrf" value="{{ session.csrf }}">
+<label>Your name <span class="muted">(not verified)</span><input name="author" maxlength="80" autocomplete="name"></label>
+<label>New note<textarea name="body" maxlength="2000" rows="3" placeholder="Add a note for this work order…" required></textarea></label>
+<button type="submit" class="primary">Save note</button>
+</form>
+<p id="galleryNoteMessage" class="gallery-message" role="status"></p>
+<details id="galleryCardDetails"><summary>Card details and search text</summary>
+<form id="galleryLead"><input type="hidden" name="csrf" value="{{ session.csrf }}"><label>Lead name<input name="lead_name" maxlength="160" required></label><button type="submit">Save lead name</button><p class="muted">Show related matches this name, ignoring case and extra spaces. Correct unclear machine-read names here. Matching names are not proof of the same person.</p></form>
+<form id="galleryDate"><input type="hidden" name="csrf" value="{{ session.csrf }}"><label>Printed document date<input name="date" type="date" required></label><button type="submit">Confirm / correct date</button><p class="muted">Retention uses this date, not the email date. An old date can make this image and its notes eligible for deletion.</p></form>
+<p id="galleryDateStatus" class="muted"></p><h3>Search text (machine-read)</h3><p id="galleryText" class="gallery-text"></p>
+</details>
+</dialog>
+
+<dialog id="gallerySearchSheet" class="gallery-sheet search-sheet" aria-labelledby="gallerySearchTitle">
+<div class="sheet-handle" aria-hidden="true"></div><div class="sheet-heading"><h2 id="gallerySearchTitle">Search</h2><button type="button" class="circle-button" data-close="gallerySearchSheet" aria-label="Close search">×</button></div>
+<form id="gallerySearch" role="search"><label for="query">Anything printed on a card or in shared notes</label><input id="query" type="search" maxlength="300" placeholder="Name, word, phrase, phone number…" enterkeyhint="search"><button type="submit" class="primary">Search all cards</button></form>
+<p class="muted">Search covers all recognized printed text. Unclear printing and handwriting may not be recognized.</p>
+</dialog>
+
+<dialog id="galleryInfoSheet" class="gallery-sheet" aria-labelledby="galleryInfoTitle">
+<div class="sheet-handle" aria-hidden="true"></div><div class="sheet-heading"><h2 id="galleryInfoTitle">Your gallery</h2><button type="button" class="circle-button" data-close="galleryInfoSheet" aria-label="Close gallery information">×</button></div>
+<p id="galleryStatus" role="status">Loading gallery status…</p><a class="button" href="{{ url_for('settings_page') }}#gallerySettings">Gallery settings</a><button id="galleryRefresh" type="button">Refresh cards</button>
+<h3>Open on another device</h3><img class="gallery-qr" src="{{ url_for('gallery.qr') }}" alt="QR code for this gallery"><p class="muted">Use the same trusted network. Anyone who can reach this app can view documents and add notes.</p>
+<h3>Storage and recent imports</h3><p id="galleryStorage"></p><div id="galleryImports"></div>
+</dialog>
 <noscript>Enable JavaScript for the searchable gallery and shared notes.</noscript>
 <script src="{{ url_for('static', filename='gallery.js') }}" defer></script>
-{% endblock %}
+</body>
+</html>
