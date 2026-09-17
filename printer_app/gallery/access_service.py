@@ -12,7 +12,7 @@ import time
 
 
 CAPABILITIES = {
-    'full': frozenset({'browse', 'notes', 'offline', 'share', 'manage'}),
+    'full': frozenset({'browse', 'notes', 'offline', 'share'}),
     'guest': frozenset({'browse', 'notes'}),
 }
 GUEST_SESSION_SECONDS = 86400
