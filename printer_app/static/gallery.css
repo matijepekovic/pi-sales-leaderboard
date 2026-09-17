@@ -116,3 +116,9 @@ body:has(dialog[open]){overflow:hidden}
 .gallery-back{flex:none;background:transparent;color:var(--accent);padding:8px 4px;min-height:44px}
 .gallery-date-nav[data-context=true] #galleryPreviousDate,.gallery-date-nav[data-context=true] #galleryNextDate{display:none}
 .gallery-date-nav[data-context=true] #galleryChooseDate{margin:auto}
+
+.gallery-offline-toggle{display:inline-flex!important;align-items:center;gap:8px;margin:0!important;padding:10px 14px;border-radius:12px;background:#e9e9ee;color:var(--accent);font-size:15px;cursor:pointer}
+.gallery-offline-toggle input{width:auto!important;margin:0!important;accent-color:var(--accent)}
+.gallery-offline-status{width:100%;margin:10px 0 0}
+.gallery-access-page{max-width:520px;margin:0 auto;padding:72px 24px}
+.gallery-access-page section{background:#fff;border:1px solid #dedee4;border-radius:20px;padding:24px}
