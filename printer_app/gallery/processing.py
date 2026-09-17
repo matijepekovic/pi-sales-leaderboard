@@ -37,6 +37,7 @@ def process(source, output, budget):
     manifest = {'items': [], 'skipped': [], 'warnings': []}
     used = 0
     pages = int(match[1])
+    pdf_date = None
     with tempfile.TemporaryDirectory(dir=output) as temp:
         work = Path(temp)
         for page in range(1, int(match[1]) + 1):
@@ -63,7 +64,12 @@ def process(source, output, budget):
                     raise OSError('Rendered crops exceed gallery storage budget')
                 report_progress(output, 'search', page, pages, len(manifest['items']))
                 try:
-                    reading = recognize(path, work)
+                    # A gallery PDF has one document date. Keep checking cards only
+                    # until one reliable printed date is found, then reuse it.
+                    reading = recognize(path, work, known_date=pdf_date)
+                    if (pdf_date is None and reading.get('date_status') == 'printed'
+                            and reading.get('document_date')):
+                        pdf_date = reading['document_date']
                 except (OSError, ValueError, subprocess.SubprocessError):
                     reading = dict(text='', lead_text='', document_date=None, date_status='needs-date')
                     manifest['warnings'].append(f'Page {page} crop {part}: search text unavailable')
@@ -76,6 +82,12 @@ def process(source, output, budget):
             report_progress(output, 'page-complete', page, pages, len(manifest['items']))
     if not manifest['items']:
         raise ValueError('No recognizable work-order boxes found; source discarded')
+    if pdf_date:
+        # Earlier crops may have been unreadable before a later crop established the
+        # PDF date. Normalize every card to the same source-document date.
+        for item in manifest['items']:
+            item['document_date'] = pdf_date
+            item['date_status'] = 'printed'
     report_progress(output, 'publish', pages, pages, len(manifest['items']))
     (output / 'manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
 
