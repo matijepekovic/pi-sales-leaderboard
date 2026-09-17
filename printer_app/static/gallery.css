@@ -118,7 +118,10 @@ body:has(dialog[open]){overflow:hidden}
 .gallery-date-nav[data-context=true] #galleryChooseDate{margin:auto}
 
 .gallery-offline-toggle{display:inline-flex!important;align-items:center;gap:8px;margin:0!important;padding:10px 14px;border-radius:12px;background:#e9e9ee;color:var(--accent);font-size:15px;cursor:pointer}
-.gallery-offline-toggle input{width:auto!important;margin:0!important;accent-color:var(--accent)}
+.gallery-offline-toggle input{-webkit-appearance:none;appearance:none;position:relative;width:42px!important;height:24px!important;margin:0!important;padding:0!important;border:0!important;border-radius:999px!important;background:#c7c7cc!important;box-shadow:none!important;transition:background .16s ease}
+.gallery-offline-toggle input::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0004;transition:transform .16s ease}
+.gallery-offline-toggle input:checked{background:var(--accent)!important}
+.gallery-offline-toggle input:checked::after{transform:translateX(18px)}
 .gallery-offline-status{width:100%;margin:10px 0 0}
 .gallery-access-page{max-width:520px;margin:0 auto;padding:72px 24px}
 .gallery-access-page section{background:#fff;border:1px solid #dedee4;border-radius:20px;padding:24px}
