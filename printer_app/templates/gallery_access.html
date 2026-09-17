@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f5f5f7">
+<title>Gallery access</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='gallery.css') }}">
+</head>
+<body>
+<main class="gallery-access-page">
+<section>
+<h1>Gallery access</h1>
+{% if expired %}
+<p>This access link has expired or was already used.</p>
+{% else %}
+<p>This device does not currently have gallery access.</p>
+{% endif %}
+<p class="muted">Ask someone with full gallery access to send a new 24-hour Share link. For full access, open the gallery from Print Control or scan its Full gallery access QR code.</p>
+</section>
+</main>
+</body>
+</html>
