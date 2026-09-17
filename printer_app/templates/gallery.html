@@ -57,7 +57,7 @@
 <div class="sheet-handle" aria-hidden="true"></div>
 <div class="sheet-heading"><h2 id="galleryLeadEditTitle">Change lead name</h2><button type="button" class="circle-button" data-close="galleryLeadSheet" aria-label="Close lead name editor">×</button></div>
 <p id="galleryLeadContext" class="sheet-context"></p>
-<p class="muted">This is a global Gallery update. Work orders related by a similar lead name or address will receive the new lead name.</p>
+<p class="muted">This is a global Gallery update. Work orders with a lead name within 1 character or the exact same address will receive the new lead name.</p>
 <form id="galleryLeadForm">
 <input type="hidden" name="csrf" value="{{ session.csrf }}">
 <label>Lead name<input name="lead_name" maxlength="160" autocomplete="off" required></label>
