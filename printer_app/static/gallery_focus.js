@@ -6,6 +6,7 @@ export class GalleryFocus {
     this.onChange = onChange;
     this.frame = null;
     this.current = null;
+    this.observed = new Set();
     this.schedule = () => {
       if (this.frame === null) this.frame = requestAnimationFrame(() => {
         this.frame = null; this.refresh();
@@ -18,6 +19,28 @@ export class GalleryFocus {
     container.addEventListener('load', this.schedule, true);
     this.observer = new ResizeObserver(this.schedule);
     this.observer.observe(container);
+    // Geometry changes caused by scrolling are browser-observed rather than assumed
+    // to emit a particular window event. This keeps programmatic/mobile scrolling
+    // and filter replacement on the same focus contract.
+    this.intersections = new IntersectionObserver(this.schedule, {
+      root: null,
+      threshold: [0, .01, .25, .5, .75, .99, 1],
+    });
+    this.mutations = new MutationObserver(() => {
+      this.syncObserved();
+      this.schedule();
+    });
+    this.mutations.observe(container, {childList:true, subtree:true});
+    this.syncObserved();
+  }
+  syncObserved() {
+    const cards = new Set(this.container.querySelectorAll('.gallery-card'));
+    for (const node of this.observed) {
+      if (!cards.has(node)) { this.intersections.unobserve(node); this.observed.delete(node); }
+    }
+    for (const node of cards) {
+      if (!this.observed.has(node)) { this.intersections.observe(node); this.observed.add(node); }
+    }
   }
   refresh() {
     if (this.blocked()) return this.current;
@@ -45,12 +68,12 @@ export class GalleryFocus {
       if (!score) continue;
       // Stable ties avoid flickering at the boundary between adjacent cards.
       const tie = Math.abs(score-area) <= Math.max(1,width*2);
-      if (score > area && !tie || tie && (node.dataset.id === this.current || id !== this.current && d < distance)) {
+      if ((score > area && !tie) || (tie && (node.dataset.id === this.current || (id !== this.current && d < distance)))) {
         area = score; distance = d; id = node.dataset.id;
       }
     }
     if (id !== this.current) { this.current = id; this.onChange(id); }
     return id;
   }
-  reset() { this.current = undefined; this.schedule(); }
+  reset() { this.current = undefined; this.syncObserved(); this.schedule(); }
 }
