@@ -134,6 +134,7 @@ import { GalleryOffline } from './gallery_offline.js';
     el('galleryOfflineWrap').hidden = !canOffline;
     el('galleryShare').hidden = !canShare;
     el('galleryOfflineToggle').checked = canOffline && offline.isEnabled();
+    if (!canOffline) el('galleryOfflineStatus').textContent = '';
     if (info?.csrf) {
       const csrf = el('galleryNote').elements.csrf;
       if (csrf) csrf.value = info.csrf;
@@ -283,6 +284,7 @@ import { GalleryOffline } from './gallery_offline.js';
   }
   function renderDetail(item, initial) {
     el('galleryTitle').textContent = cardName(item);
+    if (item._offline_image_url && el('galleryViewer').open) el('galleryFull').src = item._offline_image_url;
     el('galleryViewerDate').textContent = dateLabel(item.document_date);
     el('gallerySource').textContent = `${item.filename} · page ${item.page}, work order ${item.part}`;
     el('galleryNotesContext').textContent = `${cardName(item)} · ${dateLabel(item.document_date)}`;
@@ -480,6 +482,7 @@ import { GalleryOffline } from './gallery_offline.js';
   setInterval(() => { if (selected && !pendingDetails && !document.hidden && (el('galleryViewer').open || el('galleryNotesSheet').open)) detail().catch(() => {}); }, 5000);
   setInterval(() => { if (!document.hidden && el('galleryInfoSheet').open) summary(); }, 15000);
   setInterval(() => { if (!document.hidden && navigator.onLine && offline.isEnabled()) offline.sync().catch(() => {}); }, 60000);
+  setInterval(() => { if (!document.hidden && navigator.onLine) configureAccess().catch(() => {}); }, 15 * 60 * 1000);
   window.addEventListener('online', async () => {
     const wasOffline = offlineMode;
     try {
