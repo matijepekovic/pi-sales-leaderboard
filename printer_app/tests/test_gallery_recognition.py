@@ -71,8 +71,10 @@ def test_related_uses_one_character_name_or_exact_address_and_global_rename(tmp_
         text='Lead Name: Daryl Mitchel Address: 400 Other Rd, Aberdeen, WA 98520 Phone: 3')
     one_letter_address=seed(service,5,1,
         text='Lead Name: Another Person Address: 793 Park Ave NE, OCEAN SHORES, WA, 98569 Phone: 4')
-    unrelated=seed(service,6,1,
-        text='Lead Name: Other Person Address: 500 Main St, Olympia, WA 98501 Phone: 5')
+    expanded_address=seed(service,6,1,
+        text='Lead Name: Different Customer Address: 792 Park Avenue Northeast, OCEAN SHORES, WA, 98569 Phone: 5')
+    unrelated=seed(service,7,1,
+        text='Lead Name: Other Person Address: 500 Main St, Olympia, WA 98501 Phone: 6')
 
     related=service.related(anchor)
     ids={row['id'] for row in related['items']}
@@ -81,6 +83,7 @@ def test_related_uses_one_character_name_or_exact_address_and_global_rename(tmp_
     assert exact_address in ids
     assert two_letter_name not in ids
     assert one_letter_address not in ids
+    assert expanded_address not in ids
     assert unrelated not in ids
     assert related['address'].startswith('792 Park Ave')
 
@@ -91,6 +94,7 @@ def test_related_uses_one_character_name_or_exact_address_and_global_rename(tmp_
     assert service.item(exact_address)['lead_name']=='Darryl Mitchell'
     assert service.item(two_letter_name)['lead_name']=='Daryl Mitchel'
     assert service.item(one_letter_address)['lead_name']=='Another Person'
+    assert service.item(expanded_address)['lead_name']=='Different Customer'
     assert service.item(unrelated)['lead_name']=='Other Person'
 
 
