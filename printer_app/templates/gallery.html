@@ -51,11 +51,6 @@
 <button type="submit" class="primary">Save note</button>
 </form>
 <p id="galleryNoteMessage" class="gallery-message" role="status"></p>
-<details id="galleryCardDetails"><summary>Card details and search text</summary>
-<form id="galleryLead"><input type="hidden" name="csrf" value="{{ session.csrf }}"><label>Lead name<input name="lead_name" maxlength="160" required></label><button type="submit">Save lead name</button><p class="muted">Show related searches this printed name across all saved cards and notes. Correct unclear machine-read names here. Matching names are not proof of the same person.</p></form>
-<form id="galleryDate"><input type="hidden" name="csrf" value="{{ session.csrf }}"><label>Printed document date<input name="date" type="date" required></label><button type="submit">Confirm / correct date</button><p class="muted">Retention uses this date, not the email date. An old date can make this image and its notes eligible for deletion.</p></form>
-<p id="galleryDateStatus" class="muted"></p><h3>Search text (machine-read)</h3><p id="galleryText" class="gallery-text"></p>
-</details>
 </dialog>
 
 <dialog id="galleryDateSheet" class="gallery-sheet date-sheet" aria-labelledby="galleryDateTitle">
