@@ -270,11 +270,12 @@ stay held while disabled. A failed handoff retains a FETCHING receipt, protectin
 inbox source from cleanup until the gallery copy is durable. Newly discovered mail is visited before
 pending downloads so a blocked gallery does not starve new print mail.
 
-Open `/gallery/` on port 5055 for the single searchable image gallery. The QR code on
-Print Control and Settings links to that gallery using the address in your browser;
-use the Pi's LAN address, not localhost, before scanning on another device. This is
-not a public Internet link. The existing no-login/trusted-network access remains;
-anyone who can reach the app can read scans and add notes. POSTs retain CSRF/origin checks.
+Open the searchable image gallery from Print Control on port 5055. The Print Control
+link and Full gallery access QR enroll that browser with full gallery capability. A
+full-access device can create a single-use 24-hour guest link from Share in the date
+picker. Guests can browse and add notes but cannot use Offline, Share, Gallery Queue,
+reprocessing, or gallery administration. Gallery POSTs retain CSRF/origin checks.
+Print Control and Printer Settings keep their existing trusted-local-network boundary.
 
 Cropping is **border-only**, not OCR or equal thirds. Each PNG starts at a detected
 wide outer box's top border and continues to just before the next outer top border;
@@ -310,11 +311,12 @@ and temporary processing space, which are shown separately; scans vary in size. 
 configured budget and a 512 MB free-disk reserve limit new imports; queued source PDFs
 consume space until processed. Dates needing correction can persist longer than the estimate.
 
-Ownership: `gallery/policy.py` is the normalized settings/search contract;
-`gallery/service.py` owns gallery workflows; `gallery/repository.py` owns its SQLite
-schema, full-text search, notes and receipts; `gallery/files.py` owns confined filesystem
-access; `gallery/processing.py` and `cropper.py` own rendering/OCR and border detection;
-`gallery/web.py` owns HTTP. `gallery/bootstrap.py` is the feature's composition boundary.
+Ownership: gallery/policy.py is the normalized settings/search contract; gallery/service.py
+owns gallery workflows; gallery/repository.py owns gallery search/notes/import SQL;
+gallery/access_repository.py owns access SQL and gallery/access_service.py owns roles,
+capabilities, invitations and expiry; gallery/files.py owns confined filesystem access;
+gallery/processing.py and cropper.py own rendering/OCR and border detection; gallery/web.py
+owns HTTP/cookies. gallery/bootstrap.py remains the feature composition boundary.
 The email adapter hands off PDF bytes through the optional consumer contract.
 `attachment_routing.py` owns pure per-attachment routing from normalized headers and
 filenames; `attachment_routing_repository.py` persists frozen policies, attachment
