@@ -151,7 +151,7 @@ import { GalleryOffline } from './gallery_offline.js';
       });
       return true;
     } catch (error) {
-      if (await offline.resume()) {
+      if (!error.status && await offline.resume()) {
         access = null;
         offlineMode = true;
         accessControls(null, true);
