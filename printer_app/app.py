@@ -38,11 +38,17 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         SESSION_COOKIE_SECURE=cfg.secure_cookie, PERMANENT_SESSION_LIFETIME=8 * 3600,
         MAX_CONTENT_LENGTH=16384, MAX_FORM_MEMORY_SIZE=16384, MAX_FORM_PARTS=64)
     db = Database(cfg.db_path)
+
+    def request_command(name):
+        with db.connect() as conn:
+            if not conn.execute('SELECT 1 FROM commands WHERE name=?', (name,)).fetchone():
+                conn.execute('INSERT INTO commands(name,created) VALUES (?,?)', (name, time.time()))
+
     app.extensions['printer_db'] = db
     app.extensions['printer_settings'] = settings
     gallery = build_gallery(cfg.data_dir)
     intake = AttachmentRoutingRepository(db)
-    reprocess = GalleryReprocessService(gallery, intake)
+    reprocess = GalleryReprocessService(gallery, intake, lambda: request_command('run-now'))
     app.extensions['printer_gallery'] = gallery
     app.extensions['gallery_reprocess'] = reprocess
     app.register_blueprint(gallery_blueprint(gallery, intake.intake, reprocess))
@@ -193,9 +199,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         elif action in ('pause', 'resume'):
             db.set('paused', action == 'pause')
         elif action in ('run-now', 'test-print'):
-            with db.connect() as conn:
-                if not conn.execute('SELECT 1 FROM commands WHERE name=?', (action,)).fetchone():
-                    conn.execute('INSERT INTO commands(name,created) VALUES (?,?)', (action, time.time()))
+            request_command(action)
         else:
             abort(404)
         return redirect(url_for('control'))
