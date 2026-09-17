@@ -121,14 +121,33 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
             csrf=session.get('csrf', ''),
         )
 
+    def qr_svg(destination):
+        from reportlab.graphics.barcode.qr import QrCodeWidget
+        from reportlab.graphics.shapes import Drawing
+        from reportlab.graphics import renderSVG
+        code = QrCodeWidget(destination)
+        drawing = Drawing(180, 180)
+        drawing.add(code)
+        value = renderSVG.drawToString(drawing)
+        return value.decode('utf-8') if isinstance(value, bytes) else value
+
     @bp.post('/api/share')
     def share_access():
-        require('share')
-        token = access.issue_guest_invite(86400)
-        return jsonify(
-            url=url_for('gallery.redeem_access', token=token, _external=True),
-            expires_in=86400,
-        )
+        identity = require('share')
+        shared = access.create_guest_share(identity.subject, request.form.get('name', ''))
+        destination = url_for('gallery.redeem_access', token=shared.pop('token'), _external=True)
+        return jsonify(session=shared, qr_svg=qr_svg(destination))
+
+    @bp.get('/api/shares')
+    def active_shares():
+        identity = require('share')
+        return jsonify(sessions=access.active_shares(identity.subject))
+
+    @bp.post('/api/shares/<share_id>/revoke')
+    def revoke_share(share_id):
+        identity = require('share')
+        access.revoke_share(identity.subject, share_id)
+        return jsonify(ok=True)
 
     @bp.get('/api/offline/index')
     def offline_index():
@@ -208,19 +227,12 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
     def qr():
         # Control supplies a short-lived full-access enrollment token. The
         # generated SVG never calls an external QR service.
-        from reportlab.graphics.barcode.qr import QrCodeWidget
-        from reportlab.graphics.shapes import Drawing
-        from reportlab.graphics import renderSVG
-
         token = request.args.get('token', '')
         destination = (
             url_for('gallery.redeem_access', token=token, _external=True)
             if token else url_for('gallery.page', _external=True)
         )
-        code = QrCodeWidget(destination)
-        drawing = Drawing(100, 100)
-        drawing.add(code)
-        return Response(renderSVG.drawToString(drawing), mimetype='image/svg+xml')
+        return Response(qr_svg(destination), mimetype='image/svg+xml')
 
     @bp.get('/service-worker.js')
     def service_worker():
