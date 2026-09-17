@@ -131,6 +131,30 @@ class GalleryService:
             result['source_available'] = self.files.path('spool',ident).is_file()
         return result
 
+    def import_item(self, import_id, item_id):
+        """Administrative view of one retained card, including review-only cards."""
+        self.initialize()
+        return self.repository.import_item(import_id, item_id)
+
+    def approve_import_item(self, import_id, item_id):
+        """Publish one review-only generated card to the normal Gallery."""
+        self.initialize()
+        return self.repository.approve_import_item(import_id, item_id)
+
+    def delete_import_item(self, import_id, item_id):
+        """Delete exactly one generated card from this gallery job."""
+        self.initialize()
+        claimed = self.repository.claim_import_item_delete(import_id, item_id)
+        try:
+            with self.files.lock():
+                self.files.remove('crops', item_id)
+        except (OSError, ValueError):
+            self.repository.restore_import_item(import_id, item_id, claimed['state'])
+            raise
+        self.repository.finish_import_item_delete(
+            import_id, item_id, claimed['page'], claimed['part'])
+        return claimed
+
     def reprocess(self, ident):
         """Discard generated gallery data so the same original PDF can be offered again."""
         self.initialize()

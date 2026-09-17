@@ -99,6 +99,14 @@ class GalleryRepository:
                                   (name, lead_key(name), row['id']))
                 c.execute("INSERT INTO meta(key,value) VALUES('flattened_lead_backfill','true')")
 
+            # From this release forward, OCR is never allowed to publish an
+            # unnamed crop by itself. Move existing unnamed active cards behind
+            # the same manual-review gate exactly once; later manual approvals
+            # must remain ACTIVE even if the card still has no recognized name.
+            if not c.execute("SELECT 1 FROM meta WHERE key='unnamed_review_gate_v1'").fetchone():
+                c.execute("UPDATE items SET state='REVIEW' WHERE state='ACTIVE' AND lead_key=''")
+                c.execute("INSERT INTO meta(key,value) VALUES('unnamed_review_gate_v1','true')")
+
     def import_state(self, ident):
         with self.connect() as c:
             row = c.execute('SELECT state FROM imports WHERE id=?', (ident,)).fetchone()
@@ -140,14 +148,25 @@ class GalleryRepository:
         with self.connect() as c:
             for item in items:
                 name = printed_lead(item.get('lead_text') or item['text'])
-                c.execute('''INSERT OR IGNORE INTO items(id,import_id,page,part,filename,text,document_date,date_status,bytes,created,lead_name,lead_key,lead_status,recognition_revision)
-                    VALUES (:id,:import_id,:page,:part,:filename,:text,:document_date,:date_status,:bytes,:created,:lead_name,:lead_key,:lead_status,:recognition_revision)''',
-                    dict(item, lead_name=name, lead_key=lead_key(name), lead_status='printed' if name else 'needs-name',
+                state = 'ACTIVE' if name else 'REVIEW'
+                c.execute('''INSERT OR IGNORE INTO items(id,import_id,page,part,filename,text,document_date,date_status,bytes,created,state,lead_name,lead_key,lead_status,recognition_revision)
+                    VALUES (:id,:import_id,:page,:part,:filename,:text,:document_date,:date_status,:bytes,:created,:state,:lead_name,:lead_key,:lead_status,:recognition_revision)''',
+                    dict(item, state=state, lead_name=name, lead_key=lead_key(name),
+                         lead_status='printed' if name else 'needs-name',
                          recognition_revision=item.get('recognition_revision', 0)))
             now = time.time()
             c.execute("UPDATE imports SET state='COMPLETE',count=?,error=?,updated=?,completed=? WHERE id=?",
                       (len(items), warning[:1000], now, now, ident))
-            self._step(c, ident, now, f'Import completed: {len(items)} work-order image(s) saved.')
+            published = c.execute(
+                "SELECT count(*) FROM items WHERE import_id=? AND state='ACTIVE'", (ident,)
+            ).fetchone()[0]
+            review = c.execute(
+                "SELECT count(*) FROM items WHERE import_id=? AND state='REVIEW'", (ident,)
+            ).fetchone()[0]
+            message = f'Import completed: {len(items)} generated; {published} published to Gallery'
+            if review:
+                message += f'; {review} need manual approval because no lead name was recognized'
+            self._step(c, ident, now, message + '.')
             if warning:
                 self._step(c, ident, now, warning[:1000])
 
@@ -178,6 +197,57 @@ class GalleryRepository:
                 completed=NULL,updated=? WHERE id=?""", (message, now, ident))
             self._step(c, ident, now, message)
             return dict(id=ident, filename=row['filename'], item_ids=item_ids)
+
+    def import_item(self, import_id, item_id):
+        with self.connect() as c:
+            row = c.execute("""SELECT id,import_id,page,part,bytes,document_date,date_status,
+                    lead_name,lead_status,state FROM items
+                WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
+                (item_id, import_id)).fetchone()
+            return dict(row) if row else None
+
+    def approve_import_item(self, import_id, item_id):
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row = c.execute("""SELECT page,part,state FROM items
+                WHERE id=? AND import_id=?""", (item_id, import_id)).fetchone()
+            if not row or row['state'] not in ('ACTIVE','REVIEW'):
+                raise LookupError('This generated card is unavailable.')
+            if row['state'] == 'ACTIVE':
+                return False
+            c.execute("UPDATE items SET state='ACTIVE' WHERE id=? AND import_id=? AND state='REVIEW'",
+                      (item_id, import_id))
+            self._step(c, import_id, time.time(),
+                       f"Manual approval published page {row['page']} card {row['part']} to Gallery.")
+            return True
+
+    def claim_import_item_delete(self, import_id, item_id):
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row = c.execute("""SELECT page,part,state FROM items
+                WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
+                (item_id, import_id)).fetchone()
+            if not row:
+                raise LookupError('This generated card is unavailable.')
+            c.execute("UPDATE items SET state='DELETING' WHERE id=? AND import_id=?",
+                      (item_id, import_id))
+            return dict(row)
+
+    def restore_import_item(self, import_id, item_id, state):
+        if state not in ('ACTIVE','REVIEW'):
+            return
+        with self.connect() as c:
+            c.execute("UPDATE items SET state=? WHERE id=? AND import_id=? AND state='DELETING'",
+                      (state, item_id, import_id))
+
+    def finish_import_item_delete(self, import_id, item_id, page, part):
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            if not c.execute("DELETE FROM items WHERE id=? AND import_id=? AND state='DELETING'",
+                             (item_id, import_id)).rowcount:
+                raise LookupError('This generated card is unavailable.')
+            self._step(c, import_id, time.time(),
+                       f'Manually deleted page {page} card {part} from this gallery job.')
 
     def set_state(self, value):
         with self.connect() as c:
@@ -271,9 +341,17 @@ class GalleryRepository:
     def expiring(self, cutoff):
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
-            # Once claimed, date edits fail rather than racing a file deletion.
-            c.execute("UPDATE items SET state='DELETING' WHERE id IN (SELECT id FROM items WHERE state='ACTIVE' AND document_date<=? LIMIT 100)", (cutoff,))
-            return [r[0] for r in c.execute("SELECT id FROM items WHERE state='DELETING'")]
+            # Return only rows claimed by this retention pass. Manual per-card
+            # deletion uses the same DELETING state and must not be stolen by
+            # concurrent retention cleanup.
+            ids = [row['id'] for row in c.execute(
+                "SELECT id FROM items WHERE state IN ('ACTIVE','REVIEW') AND document_date<=? LIMIT 100",
+                (cutoff,))]
+            if ids:
+                c.executemany(
+                    "UPDATE items SET state='DELETING' WHERE id=? AND state IN ('ACTIVE','REVIEW')",
+                    [(ident,) for ident in ids])
+            return ids
 
     def forget(self, ident):
         with self.connect() as c:
@@ -324,10 +402,14 @@ class GalleryRepository:
             elif state:
                 where += ' AND state=?'; params.append(state)
             total = c.execute('SELECT count(*) FROM imports '+where, params).fetchone()[0]
-            rows = c.execute('SELECT * FROM imports '+where+
+            rows = c.execute("""SELECT imports.*,
+                    (SELECT count(*) FROM items WHERE import_id=imports.id AND state='REVIEW') AS pending_review
+                FROM imports """+where+
                 " ORDER BY CASE WHEN state IN ('PROCESSING','WAITING') THEN 0 ELSE 1 END,updated DESC,id LIMIT ? OFFSET ?",
                 (*params,limit,offset))
             result = dict(counts=counts,total=total,items=[self._import_row(row) for row in rows])
+            result['review_total'] = c.execute(
+                "SELECT count(*) FROM items WHERE state='REVIEW'").fetchone()[0]
             heartbeat = c.execute("SELECT value FROM meta WHERE key='state'").fetchone()
             result['worker'] = json.loads(heartbeat[0]) if heartbeat else {}
             return result
@@ -341,9 +423,17 @@ class GalleryRepository:
             result = self._import_row(row)
             result['steps'] = [dict(s) for s in c.execute(
                 'SELECT at,message FROM import_steps WHERE import_id=? ORDER BY id', (ident,))]
-            result['retained'] = c.execute("SELECT count(*) FROM items WHERE import_id=? AND state='ACTIVE'", (ident,)).fetchone()[0]
-            result['items'] = [dict(i) for i in c.execute("""SELECT id,page,part,bytes,document_date,date_status,lead_name
-                FROM items WHERE import_id=? AND state='ACTIVE' ORDER BY page,part,id LIMIT 24 OFFSET ?""", (ident,offset))]
+            result['published'] = c.execute(
+                "SELECT count(*) FROM items WHERE import_id=? AND state='ACTIVE'", (ident,)
+            ).fetchone()[0]
+            result['pending_review'] = c.execute(
+                "SELECT count(*) FROM items WHERE import_id=? AND state='REVIEW'", (ident,)
+            ).fetchone()[0]
+            result['retained'] = result['published'] + result['pending_review']
+            result['items'] = [dict(i) for i in c.execute("""SELECT id,page,part,bytes,document_date,date_status,lead_name,state
+                FROM items WHERE import_id=? AND state IN ('ACTIVE','REVIEW')
+                ORDER BY CASE state WHEN 'REVIEW' THEN 0 ELSE 1 END,page,part,id LIMIT 24 OFFSET ?""",
+                (ident,offset))]
             return result
 
 

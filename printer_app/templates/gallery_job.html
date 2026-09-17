@@ -1,11 +1,38 @@
 {% extends 'base.html' %}{% block title %}Gallery job — {{ job.filename }}{% endblock %}{% block content %}
 <p><a class="button" href="{{ url_for('gallery.queue_page') }}">Back to Gallery Queue</a> <a class="button" href="{{ url_for('gallery.import_job_page', ident=job.id, offset=offset) }}">Refresh</a></p>
 <h1>Gallery job</h1><h2>{{ job.filename }}</h2>
-<section><p class="status">{{ job.state }}</p><dl><dt>Received</dt><dd>{{ job.created|localtime }}</dd><dt>Started</dt><dd>{{ job.started|localtime }}</dd><dt>Last update</dt><dd>{{ job.updated|localtime }}</dd><dt>Completed</dt><dd>{{ job.completed|localtime }}</dd><dt>Images created</dt><dd>{{ job.count }}</dd><dt>Images retained</dt><dd>{{ job.retained }}</dd></dl>
+{% if request.args.get('action') == 'approved' %}<p class="notice good">Approved. That generated card is now in the work-order Gallery.</p>{% elif request.args.get('action') == 'deleted' %}<p class="notice">Deleted that generated card from this Gallery job.</p>{% endif %}
+<section><p class="status">{{ job.state }}</p><dl>
+<dt>Received</dt><dd>{{ job.created|localtime }}</dd>
+<dt>Started</dt><dd>{{ job.started|localtime }}</dd>
+<dt>Last update</dt><dd>{{ job.updated|localtime }}</dd>
+<dt>Completed</dt><dd>{{ job.completed|localtime }}</dd>
+<dt>Images created</dt><dd>{{ job.count }}</dd>
+<dt>In Gallery</dt><dd>{{ job.published }}</dd>
+<dt>Needs approval</dt><dd>{{ job.pending_review }}</dd>
+<dt>Images retained</dt><dd>{{ job.retained }}</dd>
+</dl>
 {% if job.progress %}<p>{{ job.progress.message }}</p>{% endif %}{% if job.error %}<p class="error">{{ job.error }}</p>{% endif %}
-<p class="muted">{% if job.source_available %}Temporary source PDF is waiting for processing.{% else %}Source PDF is not retained. Existing images and notes have not been rebuilt or deleted.{% endif %} This page does not send anything to the printer.</p></section>
+<p class="muted">{% if job.source_available %}Temporary source PDF is waiting for processing.{% else %}Source PDF is not retained.{% endif %} Unnamed generated cards stay here for manual approval and are not visible in the work-order Gallery. Deleting a generated card removes that server copy and its gallery notes; it does not affect printing or copies already downloaded to a phone.</p></section>
 <section><h2>Processing log</h2>{% for step in job.steps %}<p><time>{{ step.at|localtime }}</time> — {{ step.message }}</p>{% else %}<p>No detailed log was recorded for this older import.</p>{% endfor %}</section>
 <section><h2>Generated work orders</h2>
-{% for item in job['items'] %}<article><h3>{{ item.lead_name or 'Work order' }} · Page {{ item.page }} · Card {{ item.part }}</h3><p>{{ item.document_date or 'Date needs checking' }}</p><img class="gallery-job-image" loading="lazy" src="{{ url_for('gallery.image', ident=item.id) }}" alt="Complete work order, page {{ item.page }}, card {{ item.part }}"></article>{% else %}<p>No retained images for this import yet.</p>{% endfor %}
+{% for item in job['items'] %}
+<article id="item-{{ item.id }}">
+<h3>{{ item.lead_name or 'Name not recognized' }} · Page {{ item.page }} · Card {{ item.part }}</h3>
+<p>{{ item.document_date or 'Date needs checking' }}</p>
+{% if item.state == 'REVIEW' %}
+<p class="notice error"><strong>Needs approval.</strong> No lead name was recognized, so this card is not in the work-order Gallery.</p>
+{% else %}
+<p class="good"><strong>In Gallery</strong></p>
+{% endif %}
+<img class="gallery-job-image" loading="lazy" src="{{ url_for('gallery.import_item_image', ident=job.id, item_id=item.id) }}" alt="Generated work order, page {{ item.page }}, card {{ item.part }}">
+<div class="toolbar">
+{% if item.state == 'REVIEW' %}
+<form method="post" action="{{ url_for('gallery.approve_import_item', ident=job.id, item_id=item.id) }}"><input type="hidden" name="csrf" value="{{ session.csrf }}"><input type="hidden" name="offset" value="{{ offset }}"><button class="primary" type="submit">Approve to Gallery</button></form>
+{% endif %}
+<form method="post" action="{{ url_for('gallery.delete_import_item', ident=job.id, item_id=item.id) }}"><input type="hidden" name="csrf" value="{{ session.csrf }}"><input type="hidden" name="offset" value="{{ offset }}"><button class="danger" type="submit">Delete</button></form>
+</div>
+</article>
+{% else %}<p>No retained images for this import yet.</p>{% endfor %}
 <p>{% if offset %}<a class="button" href="{{ url_for('gallery.import_job_page', ident=job.id, offset=[0,offset-24]|max) }}">Previous images</a>{% endif %} {% if offset + job['items']|length < job.retained %}<a class="button" href="{{ url_for('gallery.import_job_page', ident=job.id, offset=offset+24) }}">More images</a>{% endif %}</p></section>
 {% endblock %}

@@ -140,3 +140,24 @@ invitations and expiry, and the gallery web layer owns cookie and HTTP enforceme
 gallery_offline.js alone owns browser persistence and queued-note sync. Offline relaunch
 uses a service worker when the gallery is served in a secure browser context (HTTPS);
 IndexedDB downloading still works while the page is open on ordinary LAN HTTP.
+
+
+## Manual review for unnamed generated cards
+
+OCR no longer has authority to publish an unnamed generated crop directly to the
+work-order Gallery. At import completion, a card with a recognized lead name is
+ACTIVE; a card without one is stored as REVIEW. Review cards remain visible only
+on the full-access Gallery Job page and are excluded from normal Gallery search,
+related results, date browsing and offline sync until a full-access user chooses
+**Approve to Gallery**.
+
+The Gallery Job page also owns per-card deletion. **Delete** removes that generated
+server image and its server-side notes without reprocessing the PDF, touching other
+cards, affecting printing, or removing phone-local offline copies. Existing unnamed
+active cards are moved behind the review gate once during the repository migration;
+a manual approval is durable and is not automatically undone on restart.
+
+The repository owns review state and transitions, the service coordinates the
+gallery-owned crop file deletion, and the web/template layer only exposes the
+full-access HTTP actions. Geometry/OCR remain advisory inputs rather than approval
+authority for unnamed cards.
