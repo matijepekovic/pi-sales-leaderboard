@@ -15,6 +15,7 @@ CAPABILITIES = {
     'full': frozenset({'browse', 'notes', 'offline', 'share', 'manage'}),
     'guest': frozenset({'browse', 'notes'}),
 }
+GUEST_SESSION_SECONDS = 86400
 
 
 @dataclass(frozen=True)
@@ -69,7 +70,9 @@ class GalleryAccessService:
         role = row['role']
         if role not in CAPABILITIES:
             return None
-        expires = float(row['expires']) if role == 'guest' else None
+        # The link may wait before the recipient opens it. Guest access lasts a
+        # full 24 hours from redemption, not from the sender creating the link.
+        expires = time.time() + GUEST_SESSION_SECONDS if role == 'guest' else None
         credential = secrets.token_urlsafe(32)
         subject = secrets.token_hex(16)
         self.repository.create_credential(
