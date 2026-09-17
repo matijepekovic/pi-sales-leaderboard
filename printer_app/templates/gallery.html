@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block title %}Work-order gallery{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='gallery.css') }}">
+<div class="heading"><div><p class="eyebrow">PRINTER AUTOMATION</p><h1>Work-order gallery</h1></div><a class="button" href="{{ url_for('settings_page') }}#gallerySettings">Gallery settings</a></div>
+<p>Original cropped images. Search any recognized printed words, phrases, numbers or shared notes. Text recognition can miss unclear printing; handwriting is not guaranteed searchable.</p>
+<details><summary>Open this gallery on another device</summary><img class="gallery-qr" src="{{ url_for('gallery.qr') }}" alt="QR code for this gallery"><p>Scan on the same trusted network. Open this page using the Pi's LAN address, not localhost. Anyone who can reach this app can view documents and add notes.</p></details>
+<p id="galleryStatus" role="status">Loading gallery…</p>
+<form id="gallerySearch" role="search"><label>Search all images and notes<input id="query" type="search" maxlength="300" placeholder="Any printed word, name, work-order number, phone…"></label><button type="submit">Search</button></form>
+<div id="galleryCards" class="gallery-grid"></div>
+<div class="toolbar"><button id="galleryPrevious" type="button">Previous</button><span id="galleryCount"></span><button id="galleryNext" type="button">Next</button></div>
+<p class="muted">Images are loaded as needed, not all at once. New email imports are added automatically; search again to refresh results.</p>
+<details><summary>Storage and recent imports</summary><p id="galleryStorage"></p><div id="galleryImports"></div></details>
+<dialog id="galleryDialog"><button id="galleryClose" class="gallery-close" type="button">Close</button><h2 id="galleryTitle"></h2><img id="galleryFull" alt="Original work-order crop"><p id="galleryDateStatus"></p>
+<form id="galleryDate"><input type="hidden" name="csrf" value="{{ session.csrf }}"><label>Printed document date<input name="date" type="date" required></label><button type="submit">Confirm / correct date</button><p class="muted">Retention uses this date, not the email date. Correcting an old date can make the image and its notes eligible for deletion.</p></form>
+<h3>Shared notes</h3><div id="galleryNotes"></div><form id="galleryNote"><input type="hidden" name="csrf" value="{{ session.csrf }}"><label>Your name (not verified)<input name="author" maxlength="80"></label><label>New note<textarea name="body" maxlength="2000" rows="3" required></textarea></label><button type="submit">Save note</button></form><p id="galleryMessage" role="status"></p><details><summary>Search text (machine-read)</summary><p id="galleryText" class="gallery-text"></p></details></dialog>
+<noscript>Enable JavaScript for the searchable gallery and shared notes.</noscript>
+<script src="{{ url_for('static', filename='gallery.js') }}" defer></script>
+{% endblock %}

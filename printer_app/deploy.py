@@ -18,6 +18,10 @@ import uuid
 from pathlib import Path
 
 UNITS = ['printer-app-web.service', 'printer-app-worker.service']
+OPTIONAL_UNITS = ['printer-app-gallery.service']
+
+def release_units(release):
+    return UNITS + [u for u in OPTIONAL_UNITS if (release / 'printer_app/systemd' / u).is_file()]
 SKIP = {'data', '.venv', '__pycache__', '.pytest_cache', '.git'}
 
 
@@ -61,7 +65,7 @@ def release_paths(release: Path):
 
 def install_units(release: Path, base: Path, paths: dict, *, unattended=False):
     with tempfile.TemporaryDirectory() as temp:
-        for unit in UNITS:
+        for unit in release_units(release):
             text = (release / 'printer_app/systemd' / unit).read_text()
             for key, value in {'BASE': str(base), 'ENV': paths['env'], 'CONFIG': str(Path(paths['env']).parent), 'DATA': paths['data']}.items():
                 if any(c.isspace() for c in value) or any(c in value for c in ('%', '\n', '"', '\\')):
@@ -71,7 +75,7 @@ def install_units(release: Path, base: Path, paths: dict, *, unattended=False):
             target.write_text(text)
             run(['sudo', 'install', '-m', '0644', str(target), '/etc/systemd/system/' + unit], unattended=unattended)
     run(['sudo', 'systemctl', 'daemon-reload'], unattended=unattended)
-    run(['sudo', 'systemctl', 'enable', *UNITS], unattended=unattended)
+    run(['sudo', 'systemctl', 'enable', *release_units(release)], unattended=unattended)
 
 
 def healthy(paths: dict) -> bool:
@@ -94,6 +98,10 @@ def activate(base: Path, release: Path, *, unattended=False):
     install_units(release, base, paths, unattended=unattended)
     if old and old != release:
         atomic_link(base / 'previous', old)
+    if old:
+        removed = set(release_units(old)) - set(release_units(release))
+        if removed:
+            run(['sudo', 'systemctl', 'disable', '--now', *sorted(removed)], unattended=unattended)
     atomic_link(current, release)
     try:
         run(['sudo', 'systemctl', 'restart', *UNITS], unattended=unattended)
@@ -102,10 +110,18 @@ def activate(base: Path, release: Path, *, unattended=False):
     except Exception:
         if old and old != release:
             atomic_link(current, old)
+            added = set(release_units(release)) - set(release_units(old))
+            if added:
+                run(['sudo', 'systemctl', 'disable', '--now', *sorted(added)], unattended=unattended)
             install_units(old, base, release_paths(old), unattended=unattended)
-            run(['sudo', 'systemctl', 'restart', *UNITS], unattended=unattended)
+            run(['sudo', 'systemctl', 'restart', *release_units(old)], unattended=unattended)
             print('Restored previous printer release. Database was NOT rolled back.', file=sys.stderr)
         raise
+    for unit in set(release_units(release)) - set(UNITS):
+        try:
+            run(['sudo', 'systemctl', 'restart', unit], unattended=unattended)
+        except subprocess.SubprocessError:
+            print('Optional gallery worker could not start; existing printing remains active.', file=sys.stderr)
     print('Printer release: ' + release.name)
     print(f'Web URL: http://<pi-ip>:{paths["port"]}/system/print-control')
     print('Database: ' + paths['data'] + '/printer_app.db')

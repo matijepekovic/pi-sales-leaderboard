@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-case "${1:-}" in web) MODULE=app ;; worker) MODULE=worker ;; *) exit 2 ;; esac
+case "${1:-}" in web) MODULE=app ;; worker) MODULE=worker ;; gallery) MODULE=gallery.worker ;; *) exit 2 ;; esac
 # Resolve the release before starting Python. A repository pull or symlink switch
 # cannot replace modules/templates/venv underneath a running process.
 HERE="$(dirname "$(readlink -f "$0")")"

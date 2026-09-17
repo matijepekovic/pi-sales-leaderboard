@@ -22,6 +22,7 @@ from .settings_repository import SettingsRepository, SettingsStorageError
 from .db import Database
 from .error_pages import error_page
 from .gmail_client import GmailClient
+from .gallery.bootstrap import GalleryInbox
 from .printer import MissingJob, Printer, PrinterError, SubmissionRejected
 from .retention import RetentionService
 from .retention_repository import RetentionRepository
@@ -268,7 +269,7 @@ def main():
     with (cfg.data_dir / 'worker.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         engine = Engine(cfg, db, stop=stop)
-        gmail = GmailClient(cfg, db, stop=stop)
+        gmail = GmailClient(cfg, db, stop=stop, gallery=GalleryInbox(cfg.data_dir, cfg.gallery))
 
         def make_retention(captured):
             def still_current():
@@ -318,7 +319,7 @@ def main():
                                 cfg = updated
                                 formatter.update(cfg)
                                 engine = Engine(cfg, db, stop=stop)
-                                gmail = GmailClient(cfg, db, stop=stop)
+                                gmail = GmailClient(cfg, db, stop=stop, gallery=GalleryInbox(cfg.data_dir, cfg.gallery))
                                 retention = make_retention(cfg)
                                 next_poll, next_status = 0, 0
                             active_revision = revision
