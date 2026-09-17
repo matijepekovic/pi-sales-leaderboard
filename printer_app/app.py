@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 
 from flask import g, Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
 
+from .admin_auth import AdminAuthService
+from .admin_auth_repository import AdminAuthRepository
 from .print_options import CHOICES as PRINT_CHOICES, NUMBERS as PRINT_NUMBERS
 from .config import Config, environment_file
 from .settings import SettingsService, SettingsError
@@ -38,6 +40,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         SESSION_COOKIE_SECURE=cfg.secure_cookie, PERMANENT_SESSION_LIFETIME=8 * 3600,
         MAX_CONTENT_LENGTH=16384, MAX_FORM_MEMORY_SIZE=16384, MAX_FORM_PARTS=64)
     db = Database(cfg.db_path)
+    admin_auth = AdminAuthService(AdminAuthRepository(db))
 
     def request_command(name):
         with db.connect() as conn:
@@ -46,6 +49,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
 
     app.extensions['printer_db'] = db
     app.extensions['printer_settings'] = settings
+    app.extensions['printer_admin_auth'] = admin_auth
     gallery = build_gallery(cfg.data_dir)
     gallery_access = build_gallery_access(cfg.data_dir)
     intake = AttachmentRoutingRepository(db)
@@ -59,8 +63,18 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     def localtime(value):
         return datetime.fromtimestamp(float(value), ZoneInfo(getattr(g, 'printer_config', cfg).timezone)).strftime('%Y-%m-%d %H:%M:%S %Z') if value else '—'
 
+    def safe_next(value):
+        value = str(value or '')
+        if not value.startswith('/') or value.startswith('//'):
+            return url_for('control')
+        return value
+
+    def login_redirect():
+        target = request.full_path if request.query_string else request.path
+        return redirect(url_for('admin_login', next=safe_next(target)))
+
     @app.before_request
-    def protect_writes():
+    def protect_writes_and_admin():
         if request.endpoint in ('health', 'static'):
             return None
         try:
@@ -79,6 +93,32 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             supplied = request.form.get('csrf', '')
             if not hmac.compare_digest(str(session['csrf']).encode(), supplied.encode()):
                 abort(400, 'Invalid CSRF token')
+
+        admin = admin_auth.session_state(session.get('printer_admin_revision'))
+        g.printer_admin = admin
+
+        # Work-order Gallery has its own full/temporary access system. Its admin
+        # subroutes perform an explicit printer-admin check inside gallery/web.py.
+        if request.blueprint == 'gallery':
+            return None
+
+        if request.endpoint == 'admin_login':
+            if admin and request.method == 'GET':
+                return redirect(url_for('admin_change_password') if admin.must_change else url_for('control'))
+            return None
+
+        if request.endpoint in ('admin_change_password', 'admin_logout'):
+            if not admin:
+                return login_redirect()
+            return None
+
+        if not admin:
+            if request.path.startswith('/api/'):
+                return jsonify(error='Printer admin login required.'), 401
+            return login_redirect()
+
+        if admin.must_change:
+            return redirect(url_for('admin_change_password', next=safe_next(request.path)))
         return None
 
     @app.after_request
@@ -144,6 +184,57 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         except Exception:
             result = dict(web=True, database=False, worker_running=False, cups_queue_known=False)
         return jsonify(result), 200 if all(result.values()) else 503
+
+    @app.route('/login', methods=['GET', 'POST'])
+    def admin_login():
+        error, code = '', 200
+        next_url = safe_next(request.values.get('next'))
+        if request.method == 'POST':
+            state, error = admin_auth.authenticate(
+                request.form.get('username', ''),
+                request.form.get('password', ''),
+                request.remote_addr or 'unknown',
+            )
+            if state:
+                session.clear()
+                session['csrf'] = secrets.token_urlsafe(32)
+                session['printer_admin_revision'] = state.revision
+                session.permanent = True
+                if state.must_change:
+                    return redirect(url_for('admin_change_password', next=next_url), code=303)
+                return redirect(next_url, code=303)
+            code = 429 if error.startswith('Too many') else 401
+        return render_template('admin_login.html', error=error, next_url=next_url), code
+
+    @app.route('/change-password', methods=['GET', 'POST'])
+    def admin_change_password():
+        admin = g.printer_admin
+        next_url = safe_next(request.values.get('next'))
+        error, code = '', 200
+        if request.method == 'POST':
+            try:
+                revision = admin_auth.change_password(
+                    request.form.get('current_password', ''),
+                    request.form.get('new_password', ''),
+                    request.form.get('confirmation', ''),
+                )
+                session['printer_admin_revision'] = revision
+                session['csrf'] = secrets.token_urlsafe(32)
+                return redirect(next_url, code=303)
+            except (ValueError, LookupError) as exc:
+                error, code = str(exc), 400
+        return render_template(
+            'admin_change_password.html',
+            forced=admin.must_change,
+            error=error,
+            next_url=next_url,
+        ), code
+
+    @app.post('/logout')
+    def admin_logout():
+        session.pop('printer_admin_revision', None)
+        session['csrf'] = secrets.token_urlsafe(32)
+        return redirect(url_for('admin_login'), code=303)
 
     @app.get('/')
     @app.get('/system/print-control')
