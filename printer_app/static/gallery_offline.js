@@ -5,36 +5,27 @@ const PAGE_SIZE = 24;
 const MODE_KEY = 'stats.gallery.accessMode';
 const SUBJECT_KEY = 'stats.gallery.offlineSubject';
 
-const identityKey = (value, address = false) => {
-  const aliases = address ? {
-    street:'st', avenue:'ave', road:'rd', boulevard:'blvd', drive:'dr', lane:'ln',
-    court:'ct', place:'pl', highway:'hwy', parkway:'pkwy', north:'n', south:'s',
-    east:'e', west:'w', northeast:'ne', northwest:'nw', southeast:'se', southwest:'sw',
-  } : {};
-  return String(value || '').normalize('NFKD').toLocaleLowerCase()
-    .replace(/[\u0300-\u036f]/g, '').match(/[a-z0-9]+/g)?.map(token => aliases[token] || token).join(' ') || '';
-};
-const bigramSimilarity = (left, right) => {
-  if (!left || !right) return 0;
-  if (left === right) return 1;
-  if (Math.min(left.length, right.length) < 2) return 0;
-  const counts = new Map();
-  for (let i=0;i<left.length-1;i++) {
-    const pair = left.slice(i,i+2); counts.set(pair,(counts.get(pair)||0)+1);
-  }
-  let common = 0;
-  for (let i=0;i<right.length-1;i++) {
-    const pair = right.slice(i,i+2), count = counts.get(pair)||0;
-    if (count) { common++; counts.set(pair,count-1); }
-  }
-  return 2*common / ((left.length-1)+(right.length-1));
-};
-const closeIdentity = (left, right, threshold) => {
+const identityKey = value =>
+  String(value || '').normalize('NFKD').toLocaleLowerCase()
+    .replace(/[\u0300-\u036f]/g, '').match(/[a-z0-9]+/g)?.join(' ') || '';
+
+const withinOneCharacter = (left, right) => {
   if (!left || !right) return false;
-  if (left === right || bigramSimilarity(left,right) >= threshold) return true;
-  const a = new Set(left.split(' ')), b = new Set(right.split(' '));
-  let common = 0; a.forEach(token => { if (b.has(token)) common++; });
-  return common >= 2 && common / Math.max(1,Math.min(a.size,b.size)) >= .8;
+  if (left === right) return true;
+  if (Math.abs(left.length-right.length) > 1) return false;
+  if (left.length > right.length) [left,right] = [right,left];
+  if (left.length === right.length) {
+    let differences = 0;
+    for (let i=0;i<left.length;i++) if (left[i] !== right[i] && ++differences > 1) return false;
+    return true;
+  }
+  let i=0,j=0,differences=0;
+  while (i<left.length && j<right.length) {
+    if (left[i] === right[j]) { i++; j++; continue; }
+    if (++differences > 1) return false;
+    j++;
+  }
+  return true;
 };
 
 const requestResult = request => new Promise((resolve, reject) => {
@@ -286,12 +277,12 @@ export class GalleryOffline {
       relatedName = target?.detail?.lead_name || target?.summary?.lead_name || '';
       relatedAddress = target?.detail?.address || target?.summary?.address || '';
       const name = identityKey(relatedName);
-      const address = identityKey(relatedAddress, true);
+      const address = identityKey(relatedAddress);
       cards = (name || address) ? cards.filter(card => {
         const candidateName = identityKey(card.detail?.lead_name || card.summary?.lead_name || '');
-        const candidateAddress = identityKey(card.detail?.address || card.summary?.address || '', true);
-        return closeIdentity(name, candidateName, .76) ||
-          closeIdentity(address, candidateAddress, .68);
+        const candidateAddress = identityKey(card.detail?.address || card.summary?.address || '');
+        return withinOneCharacter(name, candidateName) ||
+          (Boolean(address) && address === candidateAddress);
       }) : [];
     }
     if (q.trim()) {
