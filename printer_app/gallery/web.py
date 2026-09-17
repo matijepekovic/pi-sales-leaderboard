@@ -3,7 +3,7 @@ import re
 from flask import Blueprint, Response, abort, g, jsonify, render_template, request, send_file, url_for
 
 
-def blueprint(service):
+def blueprint(service, intake_reader=None):
     bp = Blueprint('gallery', __name__, url_prefix='/gallery')
 
     @bp.errorhandler(ValueError)
@@ -18,6 +18,25 @@ def blueprint(service):
     @bp.get('/')
     def page():
         return render_template('gallery.html')
+
+    @bp.get('/queue')
+    def queue_page():
+        state = request.args.get('state', '')
+        offset = max(0, min(int(request.args.get('offset', '0')), 1000000))
+        queue = service.queue(state, offset)
+        intake = intake_reader() if intake_reader else []
+        return render_template('gallery_queue.html', queue=queue, intake=intake,
+                               state_filter=state, offset=offset)
+
+    @bp.get('/jobs/<ident>')
+    def import_job_page(ident):
+        if not re.fullmatch(r'[a-f0-9]{64}', ident):
+            abort(404)
+        offset = max(0, min(int(request.args.get('offset', '0')), 1000000))
+        job = service.import_job(ident, offset)
+        if not job:
+            abort(404)
+        return render_template('gallery_job.html', job=job, offset=offset)
 
     @bp.get('/qr.svg')
     def qr():

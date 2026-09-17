@@ -37,9 +37,11 @@ class GalleryService:
         if not item:
             raise LookupError('This image has expired or is unavailable.')
         if not item['lead_key']:
-            raise ValueError('Confirm the lead name in card details to show related work orders.')
-        result = self.repository.list_items(offset=max(0, min(offset, 1000000)), same_lead=item['lead_key'],
-                                            document_date=checked_date_filter(document_date))
+            raise ValueError('The lead name could not be read on this card. Related results are unavailable.')
+        # Related is the printed name as a literal phrase, across the full index:
+        # printed text, saved lead names and shared notes, not only loaded cards.
+        result = self.repository.list_items(search_expression('"' + item['lead_name'] + '"'),
+            offset=max(0, min(offset, 1000000)), document_date=checked_date_filter(document_date))
         return dict(result, lead_name=item['lead_name'], selected_id=ident)
 
     def lead(self, ident, value):

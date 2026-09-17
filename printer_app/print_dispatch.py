@@ -57,13 +57,10 @@ class PrintDispatchService:
             waiting=self.repository.waiting())
 
     def describe_job(self, job: dict) -> dict:
-        info = self.repository.removal_info(job['attachment_id']) if job['attachment_id'] else None
+        info = self.removal_info(job['attachment_id']) if job['attachment_id'] else None
         cancelled = bool(info and info['cancelled_at'] is not None)
-        removable = bool(info and not cancelled and not info['has_attempts'] and not info['terminal_job']
-                         and info['state'] != 'DOWNLOADING'
-                         and (info['state'] in ('PENDING','PROCESSING') or info['unfinished']))
         waiting = not cancelled and job['status'] in ('PREPARING', 'READY') and not self.allow(job)
-        return dict(job, waiting_for_schedule=waiting, can_remove=removable,
+        return dict(job, waiting_for_schedule=waiting, can_remove=bool(info and info['can_remove']),
                     queue_status='CANCELLED' if cancelled else
                     'QUEUED' if waiting and job['status'] == 'READY' else job['status'])
 
@@ -71,6 +68,9 @@ class PrintDispatchService:
         item = self.repository.removal_info(attachment_id)
         if not item:
             raise LookupError('This attachment is no longer available.')
+        item['can_remove'] = bool(item['cancelled_at'] is None and not item['has_attempts']
+            and not item['terminal_job'] and item['state'] != 'DOWNLOADING'
+            and (item['state'] in ('PENDING', 'PROCESSING') or item['unfinished']))
         return item
 
     def remove(self, attachment_id):

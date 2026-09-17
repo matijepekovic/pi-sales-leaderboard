@@ -1,8 +1,10 @@
 {% extends 'base.html' %}{% block content %}
-<p><a class="button" href="{{ url_for('gallery.page') }}">Searchable work-order gallery</a> <a href="{{ url_for('settings_page') }}#gallerySettings">Gallery import settings</a></p>
+<p><a class="button" href="{{ url_for('gallery.page') }}">Searchable work-order gallery</a> <a href="{{ url_for('settings_page') }}#gallerySettings">Gallery import settings</a> <a class="button" href="{{ url_for('gallery.queue_page') }}">Gallery Queue</a></p>
 <details><summary>Gallery QR code</summary><img width="160" height="160" src="{{ url_for('gallery.qr') }}" alt="Open gallery on another device"></details>
 <div class="heading"><div><p class="eyebrow">AUTOMATION MONITOR</p><h1>Print Control</h1></div><a class="button" href="{{ url_for('control') }}">Refresh</a></div>
+{% if request.args.get('removed') == '1' %}<p class="notice">Removed from print queue. Other reports and gallery images were not changed.</p>{% endif %}
 {% include 'print_queue.html' %}
+{% include 'gallery_queue_status.html' %}
 <div class="cards"><section><h2>Printer</h2><p class="status {{ 'good' if state.printer.online else 'error' }}">{{ 'Online' if state.printer.online else 'Offline / unavailable' }}</p>
 <dl><dt>Queue</dt><dd>{{ state.queue }}</dd><dt>Last successful print</dt><dd>{{ state.last_success|localtime }}</dd><dt>Queue detail</dt><dd>{{ state.printer.detail or 'Ready' }}</dd><dt>Last printer error</dt><dd>{% if state.last_error %}{{ state.last_error.at|localtime }}<br>{{ state.last_error.message }}{% else %}—{% endif %}</dd></dl>
 <p class="muted">Online reflects CUPS status. Printed means CUPS reported completion, not independent verification of paper output.</p></section>
@@ -16,6 +18,6 @@
 {% include 'gallery_intake_status.html' %}
 <section><h2>Recent jobs</h2><p class="muted">Reports and error sheets follow your saved print timing. Excel page limits follow your print settings. Received PDFs keep their original pages.</p>
 <div class="table-wrap"><table><thead><tr><th>Time</th><th>Email / attachment</th><th>Sub Status</th><th>Pages</th><th>Result</th><th>Reason</th><th>Details</th></tr></thead><tbody>
-{% for job in jobs %}<tr><td>{{ job.created|localtime }}</td><td>{{ job.subject or 'Local test' }}<br><span class="muted">{{ job.filename or 'Test print' }}</span></td><td>{{ job.substatus or '—' }}</td><td>{{ job.page_count if job.page_count is not none else '—' }}</td><td><strong>{{ job.queue_status }}</strong>{% if job.failure_kind %}<br>{{ job.failure_kind }}{% endif %}</td><td>{{ job.error or '—' }}</td><td><a href="{{ url_for('job_detail', job_id=job.id) }}">Preview &amp; log</a></td></tr>
+{% for job in jobs %}<tr><td>{{ job.created|localtime }}</td><td>{{ job.subject or 'Local test' }}<br><span class="muted">{{ job.filename or 'Test print' }}</span></td><td>{{ job.substatus or '—' }}</td><td>{{ job.page_count if job.page_count is not none else '—' }}</td><td><strong>{{ job.queue_status }}</strong>{% if job.failure_kind %}<br>{{ job.failure_kind }}{% endif %}</td><td>{{ job.error or '—' }}</td><td><a href="{{ url_for('job_detail', job_id=job.id) }}">Preview &amp; log</a>{% if job.can_remove %}<br><a class="button" href="{{ url_for('remove_print_queue', attachment_id=job.attachment_id) }}">Remove from print queue</a>{% endif %}</td></tr>
 {% else %}<tr><td colspan="7">No jobs yet. <a href="{{ url_for('settings_page') }}">Set up Gmail in Settings</a> or use Test Print.</td></tr>{% endfor %}
 </tbody></table></div></section>{% endblock %}

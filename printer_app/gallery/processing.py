@@ -66,19 +66,28 @@ def recognize(path, work):
     return text, docdate, state
 
 
+def report_progress(output, stage, page=0, pages=0, crops=0):
+    temporary = output / '.progress.json'
+    temporary.write_text(json.dumps(dict(stage=stage, page=page, pages=pages, crops=crops)), encoding='utf-8')
+    temporary.replace(output / 'progress.json')
+
+
 def process(source, output, budget):
     output.mkdir(parents=True, exist_ok=True)
+    report_progress(output, 'inspect')
     info = subprocess.run(['pdfinfo', str(source)], check=True, capture_output=True, text=True, timeout=30)
     match = re.search(r'^Pages:\s+(\d+)', info.stdout, re.M)
     if not match or not 1 <= int(match[1]) <= 100:
         raise ValueError('PDF must contain 1–100 pages')
     manifest = {'items': [], 'skipped': [], 'warnings': []}
     used = 0
+    pages = int(match[1])
     with tempfile.TemporaryDirectory(dir=output) as temp:
         work = Path(temp)
         for page in range(1, int(match[1]) + 1):
             if shutil.disk_usage(output).free < 512 * 1048576 + 64 * 1048576:
                 raise OSError('Not enough gallery processing space')
+            report_progress(output, 'render', page, pages, len(manifest['items']))
             prefix = work / 'page'
             subprocess.run(['pdftoppm', '-f', str(page), '-l', str(page), '-singlefile',
                 '-scale-to', '3300', '-png', str(source), str(prefix)],
@@ -86,6 +95,7 @@ def process(source, output, budget):
             pagefile = prefix.with_suffix('.png')
             with Image.open(pagefile) as image:
                 raster = np.array(image.convert('RGB'))
+            report_progress(output, 'crop', page, pages, len(manifest['items']))
             count = 0
             for part, crop in cut_forms(raster):
                 count += 1
@@ -96,6 +106,7 @@ def process(source, output, budget):
                 used += size
                 if used > budget:
                     raise OSError('Rendered crops exceed gallery storage budget')
+                report_progress(output, 'search', page, pages, len(manifest['items']))
                 try:
                     text, docdate, state = recognize(path, work)
                 except (OSError, ValueError, subprocess.SubprocessError):
@@ -107,8 +118,10 @@ def process(source, output, budget):
                 manifest['skipped'].append(page)
             pagefile.unlink(missing_ok=True)
             del raster
+            report_progress(output, 'page-complete', page, pages, len(manifest['items']))
     if not manifest['items']:
         raise ValueError('No recognizable work-order boxes found; source discarded')
+    report_progress(output, 'publish', pages, pages, len(manifest['items']))
     (output / 'manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
 
 

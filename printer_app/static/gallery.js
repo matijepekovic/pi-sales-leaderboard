@@ -1,15 +1,31 @@
 import { GalleryDates } from './gallery_dates.js';
+import { GalleryFocus } from './gallery_focus.js';
 
 'use strict';
 (() => {
   const el = id => document.getElementById(id);
   const cards = new Map(), groups = new Map(), drafts = new Map(), saving = new Set();
   let query = '', relatedId = null, selected = null, offset = 0, total = 0, dateFilter = '';
-  let generation = 0, detailGeneration = 0, loading = false, galleryDirty = false, relatedAfterSave = false, notesVersion = '', pendingDetails = 0;
+  let generation = 0, detailGeneration = 0, loading = false, galleryDirty = false, actionPending = false, notesVersion = '', pendingDetails = 0;
   const dates = new GalleryDates({
     onSelect: chooseDate,
     blocked: () => loading || Boolean(document.querySelector('dialog[open]')),
   });
+  const focus = new GalleryFocus({
+    container: el('galleryCards'),
+    blocked: () => loading || actionPending || Boolean(document.querySelector('dialog[open]')),
+    onChange: id => {
+      selected = cards.get(id)?.item || null;
+      detailGeneration++;
+      actions();
+    },
+  });
+  function currentCard() {
+    // No tap or typed identifier: resolve the unobscured, fully visible card.
+    // While a dialog is open, its existing target stays pinned instead.
+    if (!document.querySelector('dialog[open]')) focus.refresh();
+    return selected;
+  }
   const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
   const mb = bytes => (bytes / 1048576).toFixed(1) + ' MB';
   const text = (tag, value, className = '') => { const n = document.createElement(tag); n.textContent = value; n.className = className; return n; };
@@ -23,7 +39,7 @@ import { GalleryDates } from './gallery_dates.js';
   }
   function actions() {
     document.querySelectorAll('[data-action]').forEach(button => {
-      button.disabled = button.dataset.action !== 'search' && !selected;
+      button.disabled = button.dataset.action !== 'search' && (!selected || actionPending);
     });
     cards.forEach(({node, item}) => node.setAttribute('aria-pressed', String(item.id === selected?.id)));
   }
@@ -66,7 +82,7 @@ import { GalleryDates } from './gallery_dates.js';
   }
   async function load(reset = true) {
     if (!reset && loading) return;
-    if (reset) { generation++; offset = 0; cards.clear(); groups.clear(); el('galleryCards').replaceChildren(); }
+    if (reset) { generation++; offset = 0; cards.clear(); groups.clear(); selected = null; detailGeneration++; el('galleryCards').replaceChildren(); focus.reset(); actions(); }
     el('galleryDateMessage').textContent = '';
     const token = generation, start = offset, related = relatedId;
     loading = true; dates.busy(true); el('galleryCards').setAttribute('aria-busy', 'true'); el('galleryMore').disabled = true; el('galleryMessage').textContent = reset ? 'Loading cards…' : '';
@@ -81,13 +97,13 @@ import { GalleryDates } from './gallery_dates.js';
       el('galleryCount').textContent = `${total} ${total === 1 ? 'work order' : 'work orders'} · ${dateFilter ? (dateFilter === 'undated' ? 'dates need checking' : dateLabel(dateFilter)) : 'newest dates first'}`;
       el('galleryFilter').hidden = !related && !query;
       el('galleryFilterTitle').textContent = related ? data.lead_name : query;
-      el('galleryFilterHint').textContent = related ? 'Same lead name · across all retained dates' : 'Matching printed text and shared notes';
+      el('galleryFilterHint').textContent = related ? 'Lead name in printed text or notes · all retained dates' : 'Matching printed text and shared notes';
       el('galleryMore').hidden = offset >= total;
       el('galleryEmpty').hidden = total !== 0;
-      el('galleryEmpty').textContent = dateFilter ? 'No work orders on this date. Choose another date or All dates.' : query || related ? 'No matching work orders.' : 'No work orders yet. Enable gallery email imports in Settings.';
+      el('galleryEmpty').textContent = dateFilter ? 'No work orders on this date. Choose another date or All dates.' : query || related ? 'No matching work orders.' : 'No work orders yet.';
       el('galleryMessage').textContent = ''; actions();
     } catch (error) { if (token === generation) el('galleryMessage').textContent = error.message; }
-    finally { if (token === generation) { loading = false; dates.busy(false); el('galleryCards').setAttribute('aria-busy', 'false'); el('galleryMore').disabled = false; } }
+    finally { if (token === generation) { loading = false; dates.busy(false); el('galleryCards').setAttribute('aria-busy', 'false'); el('galleryMore').disabled = false; focus.reset(); } }
   }
   function chooseDate(value) {
     // This is a read-only view filter, never a correction of a document's date.
@@ -114,7 +130,8 @@ import { GalleryDates } from './gallery_dates.js';
     drafts.set(id, value);
   }
   function noteControls() {
-    const busy = !selected || saving.has(selected.id);
+    const id = el('galleryNote').dataset.itemId;
+    const busy = !id || selected?.id !== id || saving.has(id);
     ['author', 'body'].forEach(name => { el('galleryNote').elements[name].disabled = busy; });
     el('galleryNote').querySelector('button').disabled = busy;
   }
@@ -165,34 +182,38 @@ import { GalleryDates } from './gallery_dates.js';
     el('galleryViewer').showModal(); el('galleryViewer').scrollTop = 0;
     detail().catch(() => {});
   }
-  async function openNotes(editLead = false) {
-    if (!selected) return;
+  async function openNotes() {
+    if (!currentCard()) return;
     const saved = drafts.get(selected.id) || {author:'', body:'', noteId:randomId()};
     drafts.set(selected.id, saved);
     el('galleryNote').dataset.itemId = selected.id;
     el('galleryNote').elements.author.value = saved.author; el('galleryNote').elements.body.value = saved.body;
     el('galleryNoteMessage').textContent = ''; el('galleryNotes').replaceChildren(text('p', 'Loading notes…', 'muted'));
     el('galleryNotesContext').textContent = `${cardName(selected)} · ${dateLabel(selected.document_date)}`;
-    el('galleryCardDetails').open = editLead; relatedAfterSave = editLead;
+    el('galleryCardDetails').open = false;
     noteControls(); el('galleryNotesSheet').showModal();
     try {
       await detail(true);
-      if (editLead && selected) {
-        el('galleryNoteMessage').textContent = 'Confirm the lead name below to show related work orders.';
-        el('galleryLead').elements.lead_name.focus();
-      }
     } catch (_) { /* The sheet keeps the error visible. */ }
   }
   function closeDialogs() { document.querySelectorAll('dialog[open]').forEach(d => d.close()); }
   async function related() {
-    if (!selected) return;
+    const target = currentCard();
+    if (!target || actionPending) return;
+    const id = target.id;
+    actionPending = true; actions();
     try {
       await detail();
-      if (!selected) return;
-      if (!selected.lead_name) { openNotes(true); return; }
-      relatedId = selected.id; query = ''; dateFilter = ''; dates.setFilter(''); closeDialogs();
+      if (selected?.id !== id) return;
+      if (!selected.lead_name) {
+        const message = 'The lead name could not be read on this card. Related results are unavailable.';
+        el(el('galleryViewer').open ? 'galleryViewerMessage' : 'galleryMessage').textContent = message;
+        return; // Never open a name-entry prompt or guess a different lead.
+      }
+      relatedId = id; query = ''; dateFilter = ''; dates.setFilter(''); closeDialogs();
       await load(); window.scrollTo({top:0});
     } catch (error) { el('galleryMessage').textContent = error.message; }
+    finally { actionPending = false; actions(); focus.reset(); }
   }
   function openSearch() {
     el('query').value = query; el('gallerySearchSheet').showModal(); el('query').focus();
@@ -208,9 +229,10 @@ import { GalleryDates } from './gallery_dates.js';
     }});
     dialog.addEventListener('close', () => {
       if (galleryDirty && !document.querySelector('dialog[open]')) { galleryDirty = false; load(); }
+      focus.reset();
     });
   });
-  el('galleryNotesSheet').addEventListener('close', () => { draft(); relatedAfterSave = false; });
+  el('galleryNotesSheet').addEventListener('close', () => { draft(); delete el('galleryNote').dataset.itemId; });
   el('galleryViewer').addEventListener('close', () => { el('galleryFull').removeAttribute('src'); });
   el('galleryInfo').onclick = () => { el('galleryInfoSheet').showModal(); summary(); };
   el('galleryViewerDate').onclick = () => dates.open(selected?.document_date || 'undated');
@@ -223,8 +245,10 @@ import { GalleryDates } from './gallery_dates.js';
   };
   el('galleryNote').addEventListener('input', draft);
   el('galleryNote').onsubmit = async event => {
-    event.preventDefault(); if (!selected || saving.has(selected.id)) return;
-    draft(); const form = event.currentTarget, id = selected.id;
+    event.preventDefault();
+    const form = event.currentTarget, id = form.dataset.itemId;
+    if (!id || selected?.id !== id || saving.has(id)) return;
+    draft();
     const data = new FormData(form); data.set('note_id', drafts.get(id).noteId);
     saving.add(id); noteControls(); el('galleryNoteMessage').textContent = 'Saving…';
     try {
@@ -239,12 +263,11 @@ import { GalleryDates } from './gallery_dates.js';
   };
   el('galleryLead').onsubmit = async event => {
     event.preventDefault(); if (!selected) return;
-    const id = selected.id, goRelated = relatedAfterSave, button = event.currentTarget.querySelector('button'); button.disabled = true;
+    const id = selected.id, button = event.currentTarget.querySelector('button'); button.disabled = true;
     try {
       await api(`/gallery/api/items/${id}/lead-name`, {method:'POST', body:new FormData(event.currentTarget)});
       if (selected?.id !== id) return;
       el('galleryNoteMessage').textContent = 'Lead name saved.'; await detail().catch(() => { el('galleryNoteMessage').textContent = 'Lead name saved. Reopen to refresh.'; });
-      if (goRelated) related();
     } catch (error) { el('galleryNoteMessage').textContent = 'Not saved: ' + error.message; }
     finally { button.disabled = false; }
   };

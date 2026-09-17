@@ -190,6 +190,7 @@ def test_related_and_search_reset_date_then_offer_scoped_calendar(phone):
     page.locator('body > .gallery-dock [data-action="search"]').click()
     page.locator('#query').fill('Jordan')
     page.locator('#gallerySearch button').click()
+    expect(page.locator('#galleryCards')).to_have_attribute('aria-busy', 'false')
     expect(page.locator('#galleryHeading')).to_have_text('Search results')
     expect(page.locator('.gallery-card')).to_have_count(2)
     expect(page.locator('#galleryChooseDate')).to_have_text('All dates ⌄')
