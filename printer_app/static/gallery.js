@@ -333,7 +333,7 @@ import { GalleryOffline } from './gallery_offline.js';
       el('galleryCount').textContent = `${total} ${total === 1 ? 'work order' : 'work orders'} · ${dateFilter ? (dateFilter === 'undated' ? 'dates need checking' : dateLabel(dateFilter)) : 'newest dates first'}`;
       el('galleryFilter').hidden = !related && !query;
       el('galleryFilterTitle').textContent = related ? (data.lead_name || data.address || 'Related work orders') : query;
-      el('galleryFilterHint').textContent = related ? 'Similar lead name or address · all retained dates' : 'Matching printed text and shared notes';
+      el('galleryFilterHint').textContent = related ? 'Name within 1 character or exact address · all retained dates' : 'Matching printed text and shared notes';
       el('galleryMore').hidden = offset >= total;
       el('galleryEmpty').hidden = total !== 0;
       el('galleryEmpty').textContent = dateFilter ? 'No work orders on this date. Choose another date.' : query || related ? 'No matching work orders.' : 'No work orders yet.';
