@@ -10,6 +10,10 @@ SCHEMA = '''
 CREATE TABLE IF NOT EXISTS imports (
  id TEXT PRIMARY KEY, filename TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'WAITING',
  created REAL NOT NULL, updated REAL NOT NULL, error TEXT NOT NULL DEFAULT '', count INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS import_steps (
+ id INTEGER PRIMARY KEY, import_id TEXT NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+ at REAL NOT NULL, message TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS gallery_import_steps ON import_steps(import_id,id);
 CREATE TABLE IF NOT EXISTS items (
  id TEXT PRIMARY KEY, import_id TEXT NOT NULL REFERENCES imports(id), page INTEGER NOT NULL,
  part INTEGER NOT NULL, filename TEXT NOT NULL, text TEXT NOT NULL DEFAULT '',
@@ -53,6 +57,10 @@ class GalleryRepository:
             c.execute('PRAGMA journal_mode=WAL')
             c.executescript(SCHEMA)
             c.execute('BEGIN IMMEDIATE')
+            import_columns = {row['name'] for row in c.execute('PRAGMA table_info(imports)')}
+            for name, definition in (('progress', "TEXT NOT NULL DEFAULT '{}'"), ('started', 'REAL'), ('completed', 'REAL')):
+                if name not in import_columns:
+                    c.execute(f'ALTER TABLE imports ADD COLUMN {name} {definition}')
             columns = {row['name'] for row in c.execute('PRAGMA table_info(items)')}
             if 'lead_name' not in columns:
                 c.execute("ALTER TABLE items ADD COLUMN lead_name TEXT NOT NULL DEFAULT ''")
@@ -91,12 +99,18 @@ class GalleryRepository:
     def enqueue(self, ident, filename):
         now = time.time()
         with self.connect() as c:
-            c.execute('''INSERT INTO imports(id,filename,created,updated) VALUES(?,?,?,?)
-              ON CONFLICT(id) DO UPDATE SET state='WAITING',updated=excluded.updated,error=''
-              WHERE imports.state='ERROR' ''', (ident, filename[:150], now, now))
+            changed = c.execute('''INSERT INTO imports(id,filename,created,updated) VALUES(?,?,?,?)
+              ON CONFLICT(id) DO UPDATE SET state='WAITING',updated=excluded.updated,error='',
+                filename=excluded.filename,progress='{}',started=NULL,completed=NULL
+              WHERE imports.state='ERROR' ''', (ident, filename[:150], now, now)).rowcount
+            if changed:
+                self._step(c, ident, now, 'PDF received. Waiting for gallery processing; not a print request.')
 
     def recover(self):
         with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            for row in list(c.execute("SELECT id FROM imports WHERE state='PROCESSING'")):
+                self._step(c, row['id'], time.time(), 'Interrupted processing returned to gallery queue after restart.')
             c.execute("UPDATE imports SET state='WAITING' WHERE state='PROCESSING'")
 
     def claim(self):
@@ -104,7 +118,9 @@ class GalleryRepository:
             c.execute('BEGIN IMMEDIATE')
             row = c.execute("SELECT * FROM imports WHERE state='WAITING' ORDER BY created LIMIT 1").fetchone()
             if row:
-                c.execute("UPDATE imports SET state='PROCESSING',updated=? WHERE id=?", (time.time(), row['id']))
+                now = time.time()
+                c.execute("UPDATE imports SET state='PROCESSING',started=coalesce(started,?),updated=? WHERE id=?", (now, now, row['id']))
+                self._step(c, row['id'], now, 'Gallery worker started processing the PDF.')
                 return dict(row)
 
     def finish(self, ident, items, warning=''):
@@ -114,13 +130,22 @@ class GalleryRepository:
                 c.execute('''INSERT OR IGNORE INTO items(id,import_id,page,part,filename,text,document_date,date_status,bytes,created,lead_name,lead_key,lead_status)
                     VALUES (:id,:import_id,:page,:part,:filename,:text,:document_date,:date_status,:bytes,:created,:lead_name,:lead_key,:lead_status)''',
                     dict(item, lead_name=name, lead_key=lead_key(name), lead_status='printed' if name else 'needs-name'))
-            c.execute("UPDATE imports SET state='COMPLETE',count=?,error=?,updated=? WHERE id=?",
-                      (len(items), warning[:1000], time.time(), ident))
+            now = time.time()
+            c.execute("UPDATE imports SET state='COMPLETE',count=?,error=?,updated=?,completed=? WHERE id=?",
+                      (len(items), warning[:1000], now, now, ident))
+            self._step(c, ident, now, f'Import completed: {len(items)} work-order image(s) saved.')
+            if warning:
+                self._step(c, ident, now, warning[:1000])
 
     def failed(self, ident, message, retry=False):
         with self.connect() as c:
-            c.execute('UPDATE imports SET state=?,error=?,updated=? WHERE id=?',
-                      ('WAITING' if retry else 'ERROR', message[:1000], time.time(), ident))
+            now = time.time()
+            previous = c.execute('SELECT state,error FROM imports WHERE id=?', (ident,)).fetchone()
+            state = 'WAITING' if retry else 'ERROR'
+            c.execute('UPDATE imports SET state=?,error=?,updated=?,completed=? WHERE id=?',
+                      (state, message[:1000], now, None if retry else now, ident))
+            if previous and (previous['state'], previous['error']) != (state, message[:1000]):
+                self._step(c, ident, now, message[:1000])
 
     def set_state(self, value):
         with self.connect() as c:
@@ -211,6 +236,66 @@ class GalleryRepository:
     def housekeeping(self, cutoff):
         with self.connect() as c:
             # Hash-only import receipts survive retention, not PDF bytes or history.
-            c.execute("UPDATE imports SET filename='',error='' WHERE updated<? AND state IN ('COMPLETE','ERROR') AND NOT EXISTS(SELECT 1 FROM items WHERE import_id=imports.id)", (cutoff,))
+            c.execute('''DELETE FROM import_steps WHERE import_id IN (SELECT id FROM imports
+                WHERE updated<? AND state IN ('COMPLETE','ERROR')
+                AND NOT EXISTS(SELECT 1 FROM items WHERE import_id=imports.id))''', (cutoff,))
+            c.execute("UPDATE imports SET filename='',error='',progress='{}' WHERE updated<? AND state IN ('COMPLETE','ERROR') AND NOT EXISTS(SELECT 1 FROM items WHERE import_id=imports.id)", (cutoff,))
         with self.connect() as c:
             c.execute('PRAGMA wal_checkpoint(PASSIVE)')
+
+    @staticmethod
+    def _step(c, ident, now, message):
+        c.execute('INSERT INTO import_steps(import_id,at,message) VALUES (?,?,?)', (ident,now,message))
+        # Bound diagnostics even if a source repeatedly fails or is retried.
+        c.execute("""DELETE FROM import_steps WHERE import_id=? AND id NOT IN
+            (SELECT id FROM import_steps WHERE import_id=? ORDER BY id DESC LIMIT 500)""", (ident,ident))
+
+    def progress(self, ident, value):
+        serialized = json.dumps(value, sort_keys=True)
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row = c.execute('SELECT state,progress FROM imports WHERE id=?', (ident,)).fetchone()
+            if not row or row['state'] != 'PROCESSING' or row['progress'] == serialized:
+                return
+            now = time.time()
+            c.execute('UPDATE imports SET progress=?,updated=? WHERE id=?', (serialized,now,ident))
+            self._step(c, ident, now, value['message'])
+
+    @staticmethod
+    def _import_row(row):
+        result = dict(row)
+        result['progress'] = json.loads(result['progress'])
+        return result
+
+    def import_queue(self, state='', offset=0, limit=25):
+        with self.connect() as c:
+            c.execute('BEGIN')
+            counts = {r['state']:r['n'] for r in c.execute(
+                "SELECT state,count(*) AS n FROM imports WHERE filename!='' GROUP BY state")}
+            where, params = "WHERE filename!=''", []
+            if state == 'pending':
+                where += " AND state IN ('WAITING','PROCESSING')"
+            elif state:
+                where += ' AND state=?'; params.append(state)
+            total = c.execute('SELECT count(*) FROM imports '+where, params).fetchone()[0]
+            rows = c.execute('SELECT * FROM imports '+where+
+                " ORDER BY CASE WHEN state IN ('PROCESSING','WAITING') THEN 0 ELSE 1 END,updated DESC,id LIMIT ? OFFSET ?",
+                (*params,limit,offset))
+            result = dict(counts=counts,total=total,items=[self._import_row(row) for row in rows])
+            heartbeat = c.execute("SELECT value FROM meta WHERE key='state'").fetchone()
+            result['worker'] = json.loads(heartbeat[0]) if heartbeat else {}
+            return result
+
+    def import_job(self, ident, offset=0):
+        with self.connect() as c:
+            c.execute('BEGIN')
+            row = c.execute("SELECT * FROM imports WHERE id=? AND filename!=''", (ident,)).fetchone()
+            if not row:
+                return None
+            result = self._import_row(row)
+            result['steps'] = [dict(s) for s in c.execute(
+                'SELECT at,message FROM import_steps WHERE import_id=? ORDER BY id', (ident,))]
+            result['retained'] = c.execute("SELECT count(*) FROM items WHERE import_id=? AND state='ACTIVE'", (ident,)).fetchone()[0]
+            result['items'] = [dict(i) for i in c.execute("""SELECT id,page,part,bytes,document_date,date_status,lead_name
+                FROM items WHERE import_id=? AND state='ACTIVE' ORDER BY page,part,id LIMIT 24 OFFSET ?""", (ident,offset))]
+            return result

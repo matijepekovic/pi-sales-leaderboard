@@ -104,21 +104,17 @@ def lead_key(value):
 
 
 def printed_lead(text):
-    """Index an explicit Lead Name header in existing OCR, never OCR/crop here.
+    """Read explicit labels in saved OCR, including legacy flattened TSV text.
 
-    Full-text search still covers every printed word. Related lookup uses only
-    this field so reps, notes and partial-name matches cannot mix unrelated cards.
-    Ambiguous or absent names remain empty and can be corrected in card details.
+    Do not derive a name from filenames, notes or assigned representatives.
+    Multiple different Lead Name headers indicate a bad combined crop, not one
+    person's identity. No interactive name prompt is needed for readable headers.
     """
     names = []
-    for line in text.splitlines():
-        match = re.match(r'^[\s|]*Lead\s+Name\s*[:;]\s*(.+)$', line, re.I)
-        if not match:
-            continue
-        value = re.split(r'\s+(?:Address|Phone|Power\s+Questions|Scheduled\s+Start|'
-                         r'Local\s+Scheduled\s+Start\s+Time|Canvass\s+Set\s+By)\s*:',
-                         match[1], maxsplit=1, flags=re.I)[0]
-        value = value.split('|', 1)[0].strip()
+    boundary = (r'(?=\s*(?:\||\n)|\s+(?:Address|Phone|Power\s+Questions|Scheduled\s+Start|'
+                r'Local\s+Scheduled\s+Start\s+Time|Canvass\s+Set\s+By)\s*:|$)')
+    for match in re.finditer(r'\bLead\s+Name\s*[:;]\s*([^\n|]+?)' + boundary, text, re.I):
+        value = match[1].strip()
         if not value or len(value) > 160 or not any(c.isalpha() for c in value):
             return ''
         if any(not (c.isalpha() or c.isspace() or c in ".'’‘‐‑-,") for c in value):

@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE TABLE IF NOT EXISTS print_queue_releases (
  attachment_id INTEGER PRIMARY KEY REFERENCES attachments(id),
  released_at REAL NOT NULL, reason TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS print_queue_cancellations (
+ attachment_id INTEGER PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE,
+ cancelled_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS attachments_received ON attachments(created);
 CREATE TABLE IF NOT EXISTS outputs (
  id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL REFERENCES jobs(id),
