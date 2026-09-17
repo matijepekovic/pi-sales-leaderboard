@@ -23,6 +23,7 @@ from .retention_repository import RetentionRepository
 from .attachment_routing_repository import AttachmentRoutingRepository
 from .gallery.bootstrap import build as build_gallery
 from .gallery.web import blueprint as gallery_blueprint
+from .gallery_reprocess import GalleryReprocessService
 
 
 def create_app(cfg: Config | None = None, settings_service: SettingsService | None = None) -> Flask:
@@ -41,8 +42,10 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.extensions['printer_settings'] = settings
     gallery = build_gallery(cfg.data_dir)
     intake = AttachmentRoutingRepository(db)
+    reprocess = GalleryReprocessService(gallery, intake)
     app.extensions['printer_gallery'] = gallery
-    app.register_blueprint(gallery_blueprint(gallery, intake.intake))
+    app.extensions['gallery_reprocess'] = reprocess
+    app.register_blueprint(gallery_blueprint(gallery, intake.intake, reprocess))
 
     @app.template_filter('localtime')
     def localtime(value):
