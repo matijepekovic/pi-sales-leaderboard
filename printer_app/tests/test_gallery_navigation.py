@@ -65,7 +65,7 @@ def test_compact_header_tall_first_card_related_back_and_pinned_notes(tmp_path,e
             expect(page.locator('#galleryViewer')).to_be_visible()
             expect(page.locator('#galleryFull')).to_have_attribute('src','/gallery/image/'+first)
             expect(page.locator('#galleryChooseDate')).to_have_text('September 16, 2026 ⌄')
-            page.wait_for_function('Math.abs(document.getElementById("galleryViewer").scrollTop-240)<3')
+            page.wait_for_function("() => Math.abs(document.getElementById('galleryViewer').scrollTop-240)<3")
             page.go_back();expect(page.locator('#galleryViewer')).not_to_be_visible()
             # Browser Back closes the sheet before leaving the gallery.
             page.locator('body > .gallery-dock [data-action="notes"]').click()
