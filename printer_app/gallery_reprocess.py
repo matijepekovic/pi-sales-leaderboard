@@ -2,9 +2,10 @@
 
 
 class GalleryReprocessService:
-    def __init__(self, gallery, routing):
+    def __init__(self, gallery, routing, request_email_check=None):
         self.gallery = gallery
         self.routing = routing
+        self.request_email_check = request_email_check
 
     def reprocess(self, ident):
         job = self.gallery.import_job(ident)
@@ -15,4 +16,6 @@ class GalleryReprocessService:
         source = self.routing.gallery_source(ident, job['filename'])
         reset = self.gallery.reprocess(ident)
         self.routing.requeue_gallery(source['message_id'], source['part'])
+        if self.request_email_check:
+            self.request_email_check()
         return reset
