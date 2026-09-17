@@ -39,7 +39,10 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     db = Database(cfg.db_path)
     app.extensions['printer_db'] = db
     app.extensions['printer_settings'] = settings
-    app.register_blueprint(gallery_blueprint(build_gallery(cfg.data_dir)))
+    gallery = build_gallery(cfg.data_dir)
+    intake = AttachmentRoutingRepository(db)
+    app.extensions['printer_gallery'] = gallery
+    app.register_blueprint(gallery_blueprint(gallery, intake.intake))
 
     @app.template_filter('localtime')
     def localtime(value):
@@ -72,6 +75,9 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+        # no-referrer makes native form POSTs send Origin: null, so our own
+        # Settings/Control forms fail the origin guard. Keep same-origin metadata
+        # while still withholding referrers from every external destination.
         response.headers['Referrer-Policy'] = 'same-origin'
         response.headers.setdefault('Content-Security-Policy',
             "default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; "
@@ -83,6 +89,8 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         return PrintDispatchService(PrintQueueRepository(db), current.print_schedule, current.timezone)
 
     def settings_form():
+        # Distinct checkbox names keep the duplicate-field protection intact;
+        # normalize only here, where browser form details belong.
         values = request.form.to_dict()
         if values.pop('gallery_present', '') == '1':
             values.setdefault('GALLERY_ENABLED', '0')
@@ -130,7 +138,14 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     @app.get('/system/print-control')
     def control():
         timing = dispatch()
-        return render_template('control.html', state=state(), jobs=[timing.describe_job(j) for j in db.recent()])
+        # Optional gallery monitoring must never take down Print Control.
+        try:
+            gallery_queue, gallery_intake, gallery_error = gallery.queue(limit=5), intake.intake(), ''
+        except Exception:
+            gallery_queue, gallery_intake = None, []
+            gallery_error = 'Gallery monitoring is unavailable. Printing is separate.'
+        return render_template('control.html', state=state(), jobs=[timing.describe_job(j) for j in db.recent()],
+            gallery_queue=gallery_queue, gallery_intake=gallery_intake, gallery_error=gallery_error)
 
     def settings_view(error='', code=200):
         try:
@@ -182,15 +197,20 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             abort(404)
         return redirect(url_for('control'))
 
-    @app.post('/print-queue/<int:attachment_id>/remove')
+    @app.route('/print-queue/<int:attachment_id>/remove', methods=['GET', 'POST'])
     def remove_print_queue(attachment_id):
         try:
-            dispatch().remove(attachment_id)
+            item = dispatch().removal_info(attachment_id)
+            if request.method == 'POST':
+                if request.form.get('confirm') != 'remove':
+                    abort(400, 'Confirm removal of this attachment.')
+                dispatch().remove(attachment_id)
+                return redirect(url_for('control', removed='1') + '#printQueue', code=303)
+            return render_template('remove_print.html', item=item, error='')
         except LookupError:
             abort(404)
         except ValueError as exc:
-            abort(409, str(exc))
-        return redirect(url_for('control') + '#printQueue', code=303)
+            return render_template('remove_print.html', item=item, error=str(exc)), 409
 
     @app.get('/jobs/<int:job_id>')
     def job_detail(job_id):

@@ -1,0 +1,7 @@
+<section id="galleryQueue"><div class="heading"><h2>Gallery Queue</h2><a class="button" href="{{ url_for('gallery.queue_page') }}">View gallery jobs</a></div>
+<p class="muted">Separate from the print queue. These PDFs become gallery cards, not print requests.</p>
+{% if gallery_error %}<p class="error">{{ gallery_error }}</p>{% endif %}
+{% if gallery_queue %}<p>{{ gallery_queue.counts.get('WAITING', 0) }} waiting · {{ gallery_queue.counts.get('PROCESSING', 0) }} processing · {{ gallery_queue.counts.get('COMPLETE', 0) }} completed · {{ gallery_queue.counts.get('ERROR', 0) }} failed</p>
+{% for item in gallery_queue['items'] %}<p><a href="{{ url_for('gallery.import_job_page', ident=item.id) }}">{{ item.filename }}</a> — <strong>{{ item.state }}</strong>{% if item.progress %}<br>{{ item.progress.message }}{% endif %}{% if item.error %}<br>{{ item.error }}{% endif %}</p>{% else %}<p>No gallery imports yet.</p>{% endfor %}{% endif %}
+{% if gallery_intake %}<p>{{ gallery_intake|length }} email handoff(s) waiting. <a href="{{ url_for('gallery.queue_page') }}">View download details</a></p>{% endif %}
+</section>

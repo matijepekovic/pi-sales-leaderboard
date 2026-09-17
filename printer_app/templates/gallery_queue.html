@@ -1,17 +1,14 @@
-{% extends 'base.html' %}{% block content %}
-<div class="heading"><div><p class="eyebrow">GALLERY</p><h1>Gallery Queue</h1></div><a class="button" href="{{ url_for('control') }}">Print Control</a></div>
-<p class="muted">Gallery imports are separate from printing. This page shows PDF intake and processing only.</p>
-<div class="toolbar">
-<a class="button" href="{{ url_for('gallery.queue_page') }}">All</a>
-<a class="button" href="{{ url_for('gallery.queue_page', state='pending') }}">Waiting / processing</a>
-<a class="button" href="{{ url_for('gallery.queue_page', state='COMPLETE') }}">Complete</a>
-<a class="button" href="{{ url_for('gallery.queue_page', state='ERROR') }}">Errors</a>
-</div>
-<section><h2>Imports</h2>
-<p class="muted">Waiting {{ queue.counts.get('WAITING',0) }} · Processing {{ queue.counts.get('PROCESSING',0) }} · Complete {{ queue.counts.get('COMPLETE',0) }} · Errors {{ queue.counts.get('ERROR',0) }}</p>
-<div class="table-wrap"><table><thead><tr><th>Updated</th><th>PDF</th><th>Status</th><th>Images</th><th>Progress / error</th><th>Details</th></tr></thead><tbody>
-{% for item in queue.items %}<tr><td>{{ item.updated|localtime }}</td><td>{{ item.filename }}</td><td><strong>{{ item.state }}</strong></td><td>{{ item.count }}</td><td>{% if item.progress and item.progress.message %}{{ item.progress.message }}{% elif item.error %}{{ item.error }}{% else %}—{% endif %}</td><td><a href="{{ url_for('gallery.import_job_page', ident=item.id) }}">Open job</a></td></tr>
-{% else %}<tr><td colspan="6">No gallery imports in this view.</td></tr>{% endfor %}
-</tbody></table></div></section>
-{% if queue.worker %}<p class="muted">Gallery worker: {{ queue.worker }}</p>{% endif %}
+{% extends 'base.html' %}{% block title %}Gallery Queue{% endblock %}{% block content %}
+<div class="heading"><div><p class="eyebrow">GALLERY PROCESSING</p><h1>Gallery Queue</h1></div><a class="button" href="{{ url_for('gallery.queue_page', state=state_filter, offset=offset) }}">Refresh</a></div>
+<p>PDF downloads and gallery imports are separate from the print queue. Click a filename for processing details and generated cards.</p>
+<p>{{ queue.counts.get('WAITING', 0) }} waiting · {{ queue.counts.get('PROCESSING', 0) }} processing · {{ queue.counts.get('COMPLETE', 0) }} completed · {{ queue.counts.get('ERROR', 0) }} failed</p>
+{% if queue.worker.error %}<p class="error">{{ queue.worker.error }}</p>{% endif %}
+<section><h2>Email downloads / handoffs</h2>
+{% for item in intake %}<p><strong>{{ item.filename }}</strong> — {{ item.subject }}<br>{{ item.state }} · {{ item.updated|localtime }}{% if item.error %}<br>{{ item.error }}{% endif %}</p>{% else %}<p>No PDFs waiting for download or handoff.</p>{% endfor %}
+<p class="muted">Up to 200 pending handoffs shown. A gallery job is created after the PDF is safely received.</p></section>
+<section><form method="get"><label>Show <select name="state">{% for value,label in [('', 'All gallery jobs'),('pending','Waiting / processing'),('COMPLETE','Completed'),('ERROR','Failed')] %}<option value="{{ value }}" {% if state_filter == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label><button>Filter</button></form>
+<div class="table-wrap"><table><thead><tr><th>Received</th><th>PDF</th><th>Status / progress</th><th>Images</th><th>Details</th></tr></thead><tbody>
+{% for item in queue['items'] %}<tr><td>{{ item.created|localtime }}</td><td><a href="{{ url_for('gallery.import_job_page', ident=item.id) }}">{{ item.filename }}</a></td><td><strong>{{ item.state }}</strong>{% if item.progress %}<br>{{ item.progress.message }}{% endif %}{% if item.error %}<br>{{ item.error }}{% endif %}</td><td>{{ item.count }}</td><td><a href="{{ url_for('gallery.import_job_page', ident=item.id) }}">Gallery job &amp; images</a></td></tr>{% else %}<tr><td colspan="5">No gallery jobs in this view.</td></tr>{% endfor %}
+</tbody></table></div>
+<p>{% if offset %}<a class="button" href="{{ url_for('gallery.queue_page', state=state_filter, offset=[0,offset-25]|max) }}">Previous</a>{% endif %} {% if offset + queue['items']|length < queue.total %}<a class="button" href="{{ url_for('gallery.queue_page', state=state_filter, offset=offset+25) }}">Next</a>{% endif %}</p></section>
 {% endblock %}

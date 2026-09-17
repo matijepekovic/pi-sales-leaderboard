@@ -38,15 +38,15 @@ def test_lead_is_only_an_explicit_header(value, expected):
     assert printed_lead(value) == expected
 
 
-def test_related_uses_exact_normalized_lead_not_notes_or_other_people(tmp_path):
+def test_related_searches_printed_name_across_all_indexed_text(tmp_path):
     service = build(tmp_path)
     older = add(service, 1, '2026-08-07', 'Jordan Example')
     newer = add(service, 2, '2026-08-10', 'JORDAN   EXAMPLE')
-    add(service, 3, '2026-08-11', 'Someone Else', 'Jordan Example called')
+    mentioned = add(service, 3, '2026-08-11', 'Someone Else', 'Jordan Example called')
     add(service, 4, '2026-08-12', 'Jordan Exampleton')
-    assert [i['id'] for i in service.related(older)['items']] == [newer, older]
+    assert [i['id'] for i in service.related(older)['items']] == [mentioned, newer, older]
     service.note(older, 'b'*32, 'Office', 'Unrelated names do not change grouping')
-    assert service.related(older)['total'] == 2
+    assert service.related(older)['total'] == 3
     assert lead_key(' Alex  O’Neil ') == lead_key("alex o'neil")
 
 
@@ -153,10 +153,10 @@ def test_phone_full_cards_related_and_shared_notes(web):
                 expect(page.locator('#galleryNoteMessage')).to_contain_text('Saved.')
                 second = browser.new_context(viewport={'width':390, 'height':844})
                 other = second.new_page(); other.goto(origin + '/gallery/')
-                other.locator(f'.gallery-card[data-id="{ids[0]}"]').click()
+                other.locator(f'.gallery-card[data-id="{ids[1]}"]').click()
                 other.locator('#galleryViewer [data-action="notes"]').click()
                 expect(other.locator('#galleryNotes')).to_contain_text('Shared follow-up note')
-                service.note(ids[0], 'd'*32, 'Other device', 'Live update')
+                service.note(ids[1], 'd'*32, 'Other device', 'Live update')
                 expect(other.locator('#galleryNotes')).to_contain_text('Live update', timeout=10000)
                 other.locator('[data-close="galleryNotesSheet"]').click()
                 other.locator('#galleryViewer [data-action="search"]').click()

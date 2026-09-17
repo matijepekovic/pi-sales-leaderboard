@@ -1,0 +1,10 @@
+{% extends 'base.html' %}{% block title %}Remove waiting print{% endblock %}{% block content %}
+<h1>Remove from print queue?</h1>
+<section><h2>{{ item.filename }}</h2><p>{{ item.subject }}</p>
+<p>This cancels only this attachment's pending prints, including any error sheet. Other print jobs, gallery images and notes are unchanged.</p>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+{% if item.cancelled_at is not none %}<p>Already removed from the print queue.</p>
+{% elif item.can_remove %}<form method="post"><input type="hidden" name="csrf" value="{{ session.csrf }}"><input type="hidden" name="confirm" value="remove"><button type="submit">Remove from print queue</button></form>
+{% else %}<p>This is no longer a removable waiting print. Submission may have started, or the attachment is still downloading.</p>{% endif %}
+<p><a class="button" href="{{ url_for('control') }}#printQueue">Back to print queue</a></p></section>
+{% endblock %}

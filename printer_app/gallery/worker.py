@@ -71,11 +71,13 @@ def main():
                                     child.kill()
                                 break
                             gallery.repository.set_state(dict(heartbeat=time.time(), processing=True, error=''))
+                            gallery.report_progress(job['id'])
                         if stop.is_set():
                             gallery.repository.failed(job['id'], 'Interrupted; will resume after restart.', retry=True)
                             break
                         if child.wait() != 0:
                             raise ValueError('Import failed: unreadable PDF, unsupported layout, missing local tools, or storage limit. Resend after correcting it.')
+                    gallery.report_progress(job['id'])
                     manifest = json.loads((directory / 'manifest.json').read_text())
                     gallery.publish(job, manifest, directory)
                     # Newly imported old documents follow the printed-date policy too.

@@ -7,21 +7,22 @@ aspect ratio: no thumbnail grid, square crops, cover scaling, or new image files
 Opening a card shows the same full image. Retention and the border cutter are not
 changed by this presentation update.
 
-The floating controls are **Show related**, **Notes**, and **Search**. Tap a card
-first to select it. Show related lists that lead's retained work orders across all
-dates, vertically, newest first (including the selected card). It matches only the
-explicit Lead Name header, not mentions in reps/notes, partial names or filenames.
-Case and extra whitespace are ignored; different spellings are not silently merged.
-No name is guessed when the header is unreadable. Confirm/correct it under Notes →
-Card details; a Show related request without a name opens that field. Matching a
-name alone is not proof that two records represent the same person.
+The floating controls are **Show related**, **Notes**, and **Search**. Notes and
+Related automatically target the complete, unobscured card in view; opening a card
+pins that record while its viewer is open. Related takes the explicit printed
+Lead Name automatically and searches that phrase across all retained printed text,
+corrected names and notes, newest dates first. It clears the current search/date
+filter and never opens a name-entry prompt. Unreadable or ambiguous names show a
+clear message, not a guessed match. Optional corrections remain in Card details.
+A matching name alone is not proof that two records represent the same person.
 
 Notes opens a bottom sheet for the selected card to read or add centrally saved
-notes. Other open viewers refresh within five seconds. Notes remain per document,
+notes. That target remains pinned while editing. Other open viewers refresh within five seconds. Notes remain per document,
 not merged across related cards. Search opens a floating sheet and searches all
 recognized printed text, corrected lead names, and shared notes. All cards restores
 the date-grouped feed. Load more extends the same feed in bounded 24-card batches.
-The information button contains storage, QR access, refresh and gallery settings.
+The information button contains storage, QR access and refresh, with no exit to
+Settings or Print Control. Administrative URLs remain directly accessible.
 
 The gallery repository performs an additive, transactional lead-name/index upgrade
 using already-saved search text. Existing images, notes, dates and import receipts
@@ -83,3 +84,31 @@ in gallery settings; processing failures remain in the gallery information panel
 Classification lives at the ingestion boundary, not in the gallery worker or print
 engine. The optional PDF consumer receives bytes only after the decision is durable.
 No PDF reimport, recropping, notes/date migration or frontend gallery changes required.
+
+## Queue controls and gallery actions
+
+Print Control includes **Gallery Queue**, which lists pending email handoffs and
+separate gallery imports. **View gallery jobs** opens processing status; each PDF
+links to its own log, timestamps, progress, and retained full-card images.
+
+**Remove from print queue** opens a confirmation for one waiting attachment. The
+POST uses existing same-origin/CSRF protection and the dispatch service's durable
+cancellation boundary. Once submission is reserved, removal is rejected; this is
+not a CUPS cancellation button. Other reports and gallery data are unchanged.
+
+In the sales gallery, **Notes** and **Show related** automatically use the fully
+visible, unobscured card. Notes remain pinned to that record while the panel is
+open, including keyboard/viewport changes. Related uses its automatically read
+lead name as a phrase search across all saved printed text, lead names and notes;
+it starts across all dates, not just the current date or loaded page. It never
+opens a name-entry prompt. Unreadable/ambiguous names show an error instead of
+inventing a match. Missing names in legacy flattened OCR are backfilled once;
+user-confirmed names and existing images/notes are preserved.
+
+The gallery's links back to Print Control and Settings are removed. This is a
+navigation-only change, **not access control**: direct administrative URLs still
+work. No login, browser-history manipulation, Stats or permission changes.
+
+PR #117 shipped backend helpers but omitted their web/template/action connections.
+This completes those connections. The updater uses the existing installation
+mechanism; already-stored incorrect crops are not silently deleted or rebuilt.

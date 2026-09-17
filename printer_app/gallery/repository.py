@@ -86,6 +86,14 @@ class GalleryRepository:
                     c.execute(f'CREATE TRIGGER gallery_{event} AFTER {event} ON items BEGIN {statement} END')
                 c.execute("INSERT INTO search(search) VALUES('rebuild')")
 
+            if not c.execute("SELECT 1 FROM meta WHERE key='flattened_lead_backfill'").fetchone():
+                for row in list(c.execute("SELECT id,text FROM items WHERE lead_key='' AND lead_status!='confirmed'")):
+                    name = printed_lead(row['text'])
+                    if name:
+                        c.execute("UPDATE items SET lead_name=?,lead_key=?,lead_status='printed' WHERE id=?",
+                                  (name, lead_key(name), row['id']))
+                c.execute("INSERT INTO meta(key,value) VALUES('flattened_lead_backfill','true')")
+
     def import_state(self, ident):
         with self.connect() as c:
             row = c.execute('SELECT state FROM imports WHERE id=?', (ident,)).fetchone()
