@@ -52,3 +52,9 @@ class AttachmentRoutingRepository:
             JOIN processed_messages m ON m.id=r.message_id
             WHERE r.error!='' AND r.import_document=1 AND r.gallery_delivered=0
             ORDER BY r.updated DESC LIMIT 8""")
+
+    def intake(self):
+        return self.db.rows("""SELECT r.filename,r.error,r.updated,m.subject,
+            CASE WHEN r.error='' THEN 'WAITING FOR DOWNLOAD' ELSE 'DOWNLOAD / HANDOFF PENDING' END AS state
+            FROM email_attachment_routes r JOIN processed_messages m ON m.id=r.message_id
+            WHERE r.import_document=1 AND r.gallery_delivered=0 ORDER BY r.updated LIMIT 200""")
