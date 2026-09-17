@@ -124,7 +124,7 @@ Print Control does not replace an existing full identity, so the phone keeps the
 account-scoped offline store.
 
 The date picker shows **Offline** and **Share** only to full access. Share creates a
-single-use link whose guest access expires 24 hours after link creation. Guest access
+single-use link whose guest access expires 24 hours after the recipient opens it. Guest access
 is checked server-side on every gallery request and cannot use Offline, Share, Gallery
 Queue, reprocessing, or gallery administration. A new link is required after expiry.
 
