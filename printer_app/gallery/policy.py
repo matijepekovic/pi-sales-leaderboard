@@ -107,14 +107,14 @@ ADDRESS_BOUNDARY = (
     r'(?=\s*(?:\||\n)|\s+(?:Phone|Power\s+Questions|Scheduled\s+Start|'
     r'Assigned\s+Service\s+Resource|Set\s+By|Work\s+Type|Product\s+Interest|'
     r'Source|Sub\s+Source|Hover\s*/\s*Flir|Lead\s+Description|Start\s+Price|'
-    r'Final\s+Price|Deposit\s*/\s*Payment)\s*:|$)'
+    r'Final\s+Price|Deposit\s*/\s*Payment)\s*:?[ \t]*|$)'
 )
 
 
 def printed_address(text):
     """Read the explicit Address field from normalized OCR text."""
     readings = []
-    for match in re.finditer(r'\bAddress\s*[:;]\s*([^\n|]+?)' + ADDRESS_BOUNDARY,
+    for match in re.finditer(r'\bAddress\s*[:;]?[ \t]*([^\n|]+?)' + ADDRESS_BOUNDARY,
                              str(text or ''), re.I):
         value = ' '.join(match[1].split())
         if not value or len(value) > 240 or not any(c.isalnum() for c in value):
