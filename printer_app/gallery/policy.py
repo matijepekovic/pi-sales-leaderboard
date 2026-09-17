@@ -1,6 +1,7 @@
 """Gallery settings and normalized search/date rules, without IO or vendor data."""
 from dataclasses import dataclass, replace
 from datetime import date
+from difflib import SequenceMatcher
 import re
 import unicodedata
 
@@ -101,6 +102,62 @@ def lead_key(value):
     value = unicodedata.normalize('NFKC', checked_lead_name(value))
     value = value.translate(str.maketrans({'’': "'", '‘': "'", '‐': '-', '‑': '-'}))
     return ' '.join(value.casefold().split())
+
+
+ADDRESS_BOUNDARY = (
+    r'(?=\s*(?:\||\n)|\s+(?:Phone|Power\s+Questions|Scheduled\s+Start|'
+    r'Assigned\s+Service\s+Resource|Set\s+By|Work\s+Type|Product\s+Interest|'
+    r'Source|Sub\s+Source|Hover\s*/\s*Flir|Lead\s+Description|Start\s+Price|'
+    r'Final\s+Price|Deposit\s*/\s*Payment)\s*:|$)'
+)
+
+
+def printed_address(text):
+    """Read the explicit Address field from normalized OCR text."""
+    readings = []
+    for match in re.finditer(r'\bAddress\s*[:;]\s*([^\n|]+?)' + ADDRESS_BOUNDARY,
+                             str(text or ''), re.I):
+        value = ' '.join(match[1].split())
+        if not value or len(value) > 240 or not any(c.isalnum() for c in value):
+            continue
+        readings.append(value)
+    if not readings:
+        return ''
+    keys = {address_key(value) for value in readings}
+    return readings[0] if len(keys) == 1 else ''
+
+
+def address_key(value):
+    value = unicodedata.normalize('NFKC', str(value or '')).casefold()
+    tokens = re.findall(r'[a-z0-9]+', value)
+    aliases = {
+        'street':'st','avenue':'ave','road':'rd','boulevard':'blvd','drive':'dr',
+        'lane':'ln','court':'ct','place':'pl','highway':'hwy','parkway':'pkwy',
+        'north':'n','south':'s','east':'e','west':'w','northeast':'ne',
+        'northwest':'nw','southeast':'se','southwest':'sw',
+    }
+    return ' '.join(aliases.get(token, token) for token in tokens)
+
+
+def _fuzzy_identity(left, right, threshold):
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    if min(len(left), len(right)) < 4:
+        return False
+    if SequenceMatcher(None, left, right).ratio() >= threshold:
+        return True
+    a, b = set(left.split()), set(right.split())
+    common = a & b
+    return len(common) >= 2 and len(common) / max(1, min(len(a), len(b))) >= .8
+
+
+def related_identity(reference_name, reference_address, candidate_name, candidate_address):
+    """Related if either normalized name or address is a close match."""
+    name_match = _fuzzy_identity(lead_key(reference_name), lead_key(candidate_name), .80)
+    address_match = _fuzzy_identity(address_key(reference_address), address_key(candidate_address), .72)
+    return name_match or address_match
 
 
 def printed_lead(text):
