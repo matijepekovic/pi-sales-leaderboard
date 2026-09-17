@@ -57,7 +57,14 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.extensions['printer_gallery'] = gallery
     app.extensions['gallery_access'] = gallery_access
     app.extensions['gallery_reprocess'] = reprocess
-    app.register_blueprint(gallery_blueprint(gallery, gallery_access, intake.intake, reprocess))
+
+    def current_admin_session():
+        return admin_auth.session_state(session.get('printer_admin_revision'))
+
+    app.register_blueprint(gallery_blueprint(
+        gallery, gallery_access, intake.intake, reprocess,
+        admin_session=current_admin_session,
+    ))
 
     @app.template_filter('localtime')
     def localtime(value):
@@ -94,13 +101,14 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             if not hmac.compare_digest(str(session['csrf']).encode(), supplied.encode()):
                 abort(400, 'Invalid CSRF token')
 
-        admin = admin_auth.session_state(session.get('printer_admin_revision'))
-        g.printer_admin = admin
-
-        # Work-order Gallery has its own full/temporary access system. Its admin
-        # subroutes perform an explicit printer-admin check inside gallery/web.py.
+        # Work-order Gallery has its own full/temporary access system. Normal
+        # Gallery requests must not depend on the printer-admin database. Its
+        # administrative subroutes resolve the injected admin session lazily.
         if request.blueprint == 'gallery':
             return None
+
+        admin = current_admin_session()
+        g.printer_admin = admin
 
         if request.endpoint == 'admin_login':
             if admin and request.method == 'GET':
