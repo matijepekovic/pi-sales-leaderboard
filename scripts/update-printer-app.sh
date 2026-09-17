@@ -13,4 +13,7 @@ flock 9
 git pull --ff-only origin main
 # The installer owns system dependencies as well as the private runtime.
 # --unattended selects update semantics; an unchanged release is not restarted.
-bash "$REPO/printer_app/install.sh" --unattended
+LOGIN_FILE="$HOME/.local/share/leaderboard-distribution/initial-login.json"
+mkdir -p "$(dirname "$LOGIN_FILE")"
+chmod 700 "$(dirname "$LOGIN_FILE")"
+bash "$REPO/printer_app/install.sh" --unattended --initial-login-file "$LOGIN_FILE"
