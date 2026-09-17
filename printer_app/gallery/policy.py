@@ -159,9 +159,9 @@ def _within_one_character(left, right):
 
 
 def related_identity(reference_name, reference_address, candidate_name, candidate_address):
-    """Related when name differs by <=1 character OR address is exactly equal."""
-    reference_name = lead_key(reference_name)
-    candidate_name = lead_key(candidate_name)
+    """Related when name differs by <=1 letter/number OR address is exactly equal."""
+    reference_name = ''.join(re.findall(r'[a-z0-9]+', lead_key(reference_name)))
+    candidate_name = ''.join(re.findall(r'[a-z0-9]+', lead_key(candidate_name)))
     reference_address = address_key(reference_address)
     candidate_address = address_key(candidate_address)
     name_match = _within_one_character(reference_name, candidate_name)
