@@ -4,7 +4,8 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .policy import checked_date, checked_date_filter, checked_lead_name, search_expression, printed_lead, lead_key
+from .policy import (address_key, checked_date, checked_date_filter, checked_lead_name,
+                     search_expression, printed_address, printed_lead, lead_key, related_identity)
 
 
 class GalleryService:
@@ -37,25 +38,68 @@ class GalleryService:
         self.initialize()
         return dict(items=self.repository.offline_items(), generated=time.time())
 
+    def _identity_matches(self, item):
+        if not item.get('lead_name') and not item.get('address'):
+            raise ValueError('Neither the lead name nor address could be read on this card.')
+        return [
+            row for row in self.repository.related_candidates()
+            if related_identity(
+                item.get('lead_name', ''), item.get('address', ''),
+                row.get('lead_name', ''), row.get('address', ''),
+            )
+        ]
+
+    @staticmethod
+    def _public_related_row(row):
+        return {key: row[key] for key in (
+            'id','filename','page','part','document_date','date_status','bytes',
+            'lead_name','lead_status','address','notes_count'
+        )}
+
     def related(self, ident, offset=0, document_date=''):
         self.initialize()
         item = self.repository.item(ident)
         if not item:
             raise LookupError('This image has expired or is unavailable.')
-        if not item['lead_key']:
-            raise ValueError('The lead name could not be read on this card. Related results are unavailable.')
-        # Related is the printed name as a literal phrase, across the full index:
-        # printed text, saved lead names and shared notes, not only loaded cards.
-        result = self.repository.list_items(search_expression('"' + item['lead_name'] + '"'),
-            offset=max(0, min(offset, 1000000)), document_date=checked_date_filter(document_date))
-        return dict(result, lead_name=item['lead_name'], selected_id=ident)
+        rows = self._identity_matches(item)
+        buckets = {}
+        for row in rows:
+            key = row['document_date']
+            buckets[key] = buckets.get(key, 0) + 1
+        dates = [dict(date=value, count=buckets[value])
+                 for value in sorted((key for key in buckets if key), reverse=True)]
+        if None in buckets:
+            dates.append(dict(date=None, count=buckets[None]))
+
+        date_filter = checked_date_filter(document_date)
+        if date_filter == 'undated':
+            rows = [row for row in rows if not row['document_date']]
+        elif date_filter:
+            rows = [row for row in rows if row['document_date'] == date_filter]
+
+        start = max(0, min(offset, 1000000))
+        page = rows[start:start + 24]
+        return dict(
+            total=len(rows),
+            items=[self._public_related_row(row) for row in page],
+            dates=dates,
+            lead_name=item.get('lead_name', ''),
+            address=item.get('address', ''),
+            selected_id=ident,
+        )
 
     def lead(self, ident, value):
         self.initialize()
         name = checked_lead_name(value)
         if not name or not any(c.isalpha() for c in name):
             raise ValueError('Enter the lead name printed on this card.')
-        self.repository.correct_lead(ident, name)
+        item = self.repository.item(ident)
+        if not item:
+            raise LookupError('This image has expired or is unavailable.')
+        matches = self._identity_matches(item)
+        return self.repository.rename_leads(
+            [row['id'] for row in matches], name, lead_key(name)
+        )
 
     def item(self, ident):
         self.initialize()
@@ -202,7 +246,10 @@ class GalleryService:
             if not isinstance(header, str):
                 raise ValueError('Invalid header text')
             name = printed_lead(header) or printed_lead(text)
-            self.repository.repair_recognition(item['id'], text, name, lead_key(name))
+            address = printed_address(text)
+            self.repository.repair_recognition(
+                item['id'], text, name, lead_key(name), address, address_key(address)
+            )
         except (OSError, ValueError):
             self.repository.defer_recognition(item['id'], time.time())
         return True
