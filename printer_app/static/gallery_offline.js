@@ -276,10 +276,10 @@ export class GalleryOffline {
       const target = cards.find(card => card.id === relatedId);
       relatedName = target?.detail?.lead_name || target?.summary?.lead_name || '';
       relatedAddress = target?.detail?.address || target?.summary?.address || '';
-      const name = identityKey(relatedName);
+      const name = identityKey(relatedName).replace(/ /g, '');
       const address = identityKey(relatedAddress);
       cards = (name || address) ? cards.filter(card => {
-        const candidateName = identityKey(card.detail?.lead_name || card.summary?.lead_name || '');
+        const candidateName = identityKey(card.detail?.lead_name || card.summary?.lead_name || '').replace(/ /g, '');
         const candidateAddress = identityKey(card.detail?.address || card.summary?.address || '');
         return withinOneCharacter(name, candidateName) ||
           (Boolean(address) && address === candidateAddress);
