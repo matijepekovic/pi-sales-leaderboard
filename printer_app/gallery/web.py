@@ -49,12 +49,17 @@ def blueprint(service, access, intake_reader=None, reprocessor=None):
 
     @bp.get('/access/<token>')
     def redeem_access(token):
-        grant = access.redeem(token)
-        if grant is None:
-            return render_template('gallery_access.html', expired=True), 410
         target = request.args.get('next') or url_for('gallery.page')
         if not (target == '/gallery' or target.startswith('/gallery/')):
             target = url_for('gallery.page')
+        # Opening Gallery from Print Control again must not silently create a new
+        # full identity and orphan this device's existing offline store.
+        existing = access.resolve(request.cookies.get(ACCESS_COOKIE, ''))
+        if existing is not None and existing.role == 'full':
+            return redirect(target, code=303)
+        grant = access.redeem(token)
+        if grant is None:
+            return render_template('gallery_access.html', expired=True), 410
         response = redirect(target, code=303)
         if grant.identity.expires is None:
             max_age = 365 * 86400
