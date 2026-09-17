@@ -105,10 +105,10 @@ inventing a match. Missing names in legacy flattened OCR are backfilled once;
 user-confirmed names and existing images/notes are preserved.
 
 The gallery's links back to Print Control and Settings are removed. Gallery access
-is capability-based: full-access devices can browse, add notes, keep an offline copy,
-share temporary access, and use gallery administration. Temporary guests can browse
-and add notes only. Printer Settings and Print Control keep their existing trusted
-local-network behavior.
+is capability-based: full-access devices can browse, add notes, keep an offline copy
+and share temporary access; temporary guests can browse and add notes only. Neither
+Gallery role grants printer administration. Gallery Queue, reprocessing, approval,
+deletion, Print Control and Settings require the separate printer-admin password.
 
 PR #117 shipped backend helpers but omitted their web/template/action connections.
 This completes those connections. The updater uses the existing installation
@@ -117,8 +117,9 @@ mechanism; already-stored incorrect crops are not silently deleted or rebuilt.
 
 ## Full access, temporary sharing and Offline
 
-Print Control is the enrollment boundary for a full-access gallery device. Opening
-the gallery from Print Control, or scanning its Full gallery access QR code, exchanges
+Password-protected Print Control is the enrollment boundary for a full-access gallery
+device. Opening the gallery from Print Control, or scanning its Full gallery access QR
+code, exchanges
 a short-lived enrollment token for a long-lived gallery credential. Reopening from
 Print Control does not replace an existing full identity, so the phone keeps the same
 account-scoped offline store.
@@ -147,8 +148,8 @@ IndexedDB downloading still works while the page is open on ordinary LAN HTTP.
 OCR no longer has authority to publish an unnamed generated crop directly to the
 work-order Gallery. At import completion, a card with a recognized lead name is
 ACTIVE; a card without one is stored as REVIEW. Review cards remain visible only
-on the full-access Gallery Job page and are excluded from normal Gallery search,
-related results, date browsing and offline sync until a full-access user chooses
+on the admin-only Gallery Job page and are excluded from normal Gallery search,
+related results, date browsing and offline sync until a printer admin chooses
 **Approve to Gallery**.
 
 The Gallery Job page also owns per-card deletion. **Delete** removes that generated
@@ -158,6 +159,6 @@ active cards are moved behind the review gate once during the repository migrati
 a manual approval is durable and is not automatically undone on restart.
 
 The repository owns review state and transitions, the service coordinates the
-gallery-owned crop file deletion, and the web/template layer only exposes the
-full-access HTTP actions. Geometry/OCR remain advisory inputs rather than approval
+gallery-owned crop file deletion, and the web/template layer only exposes those
+actions behind printer-admin authentication. Geometry/OCR remain advisory inputs rather than approval
 authority for unnamed cards.
