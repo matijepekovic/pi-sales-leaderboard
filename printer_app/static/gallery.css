@@ -125,3 +125,16 @@ body:has(dialog[open]){overflow:hidden}
 .gallery-offline-status{width:100%;margin:10px 0 0}
 .gallery-access-page{max-width:520px;margin:0 auto;padding:72px 24px}
 .gallery-access-page section{background:#fff;border:1px solid #dedee4;border-radius:20px;padding:24px}
+
+.share-sheet{max-width:480px}
+#galleryShareForm button{width:100%}
+.gallery-share-qr{text-align:center;border-top:1px solid #e5e5ea;margin-top:20px;padding-top:6px}
+.gallery-share-qr h3{margin-bottom:8px}
+#galleryShareQrCode{display:flex;justify-content:center;align-items:center;background:#fff;border-radius:18px;padding:14px;margin:8px auto;width:min(280px,100%)}
+#galleryShareQrCode svg{display:block;width:100%;height:auto;max-width:240px}
+.gallery-active-shares{display:flex;flex-direction:column;gap:9px}
+.gallery-share-session{display:flex;align-items:center;justify-content:space-between;gap:12px;background:#f3f3f7;border-radius:14px;padding:12px 13px}
+.gallery-share-session>span{min-width:0;display:flex;flex-direction:column;gap:4px;text-align:left}
+.gallery-share-session strong{font-size:14px;overflow-wrap:anywhere}
+.gallery-share-session small{font-size:11px;color:var(--muted);line-height:1.35}
+.gallery-share-revoke{flex:none;color:#ae3030;background:#fff1f1;padding:9px 12px}
