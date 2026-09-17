@@ -1,4 +1,6 @@
 {% extends 'base.html' %}{% block content %}
+<p><a class="button" href="{{ url_for('gallery.page') }}">Searchable work-order gallery</a> <a href="{{ url_for('settings_page') }}#gallerySettings">Gallery import settings</a></p>
+<details><summary>Gallery QR code</summary><img width="160" height="160" src="{{ url_for('gallery.qr') }}" alt="Open gallery on another device"></details>
 <div class="heading"><div><p class="eyebrow">AUTOMATION MONITOR</p><h1>Print Control</h1></div><a class="button" href="{{ url_for('control') }}">Refresh</a></div>
 {% include 'print_queue.html' %}
 <div class="cards"><section><h2>Printer</h2><p class="status {{ 'good' if state.printer.online else 'error' }}">{{ 'Online' if state.printer.online else 'Offline / unavailable' }}</p>

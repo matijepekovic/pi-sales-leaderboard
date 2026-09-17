@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from .print_options import PrintOptions, FIELDS as PRINT_FIELDS
 from .print_schedule import PrintSchedule, FIELDS as SCHEDULE_FIELDS
 from .retention_policy import RetentionPolicy, FIELDS as RETENTION_FIELDS
+from .gallery.policy import GalleryOptions, FIELDS as GALLERY_FIELDS
 
 
 def clean_text(value: object, limit: int = 1000) -> str:
@@ -74,6 +75,7 @@ class Config:
     print_schedule: PrintSchedule = field(default_factory=PrintSchedule)
 
     retention: RetentionPolicy = field(default_factory=RetentionPolicy)
+    gallery: GalleryOptions = field(default_factory=GalleryOptions)
 
     @property
     def db_path(self) -> Path:
@@ -92,6 +94,7 @@ class Config:
             print_schedule=PrintSchedule().apply({k: v for k, v in e.items() if k in SCHEDULE_FIELDS}),
             retention=RetentionPolicy(email_scope=e.get('CLEANUP_EMAIL_SCOPE', '')).apply(
                 {k: v for k, v in e.items() if k in RETENTION_FIELDS}),
+            gallery=GalleryOptions().apply({k: v for k, v in e.items() if k in GALLERY_FIELDS}),
             email_enabled=e.get('EMAIL_ENABLED', '1') == '1',
             email_user=e.get('EMAIL_USER', '').strip(),
             email_password=e.get('EMAIL_APP_PASSWORD', '').replace(' ', ''),

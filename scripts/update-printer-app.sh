@@ -11,5 +11,6 @@ cd "$REPO"
 exec 9>"$(git rev-parse --git-common-dir)/printer-app-update.lock"
 flock 9
 git pull --ff-only origin main
-# Content-addressed deploy is a no-op if printer_app has not changed. No Stats restart.
-python3 "$REPO/printer_app/deploy.py" update
+# The installer owns system dependencies as well as the private runtime.
+# --unattended selects update semantics; an unchanged release is not restarted.
+bash "$REPO/printer_app/install.sh" --unattended

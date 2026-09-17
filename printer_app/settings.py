@@ -6,6 +6,7 @@ import threading
 from typing import Callable, Mapping
 
 from .config import Config
+from .gallery.policy import FIELDS as GALLERY_FIELDS
 from .print_options import FIELDS as PRINT_FIELDS
 from .print_schedule import FIELDS as SCHEDULE_FIELDS
 from .settings_repository import SettingsRepository
@@ -25,7 +26,7 @@ NUMBER_FIELDS = {
     'CONVERSION_TIMEOUT_SECONDS': ('conversion_timeout', 10, 600),
     'PRINTER_RETRY_SECONDS': ('retry_seconds', 10, 3600),
 }
-EDITABLE = set(TEXT_FIELDS) | set(NUMBER_FIELDS) | PRINT_FIELDS | SCHEDULE_FIELDS | RETENTION_FIELDS | {'EMAIL_APP_PASSWORD', 'EMAIL_ENABLED'}
+EDITABLE = set(TEXT_FIELDS) | set(NUMBER_FIELDS) | PRINT_FIELDS | SCHEDULE_FIELDS | RETENTION_FIELDS | GALLERY_FIELDS | {'EMAIL_APP_PASSWORD', 'EMAIL_ENABLED'}
 
 
 class SettingsError(ValueError):
@@ -43,6 +44,7 @@ class SettingsService:
         printing = {}
         schedule = {}
         retention = {}
+        gallery = {}
         for key, value in patch.items():
             if key not in EDITABLE:
                 raise SettingsError('This setting cannot be changed from the printer webpage.')
@@ -54,6 +56,8 @@ class SettingsService:
                 schedule[key] = value
             elif key in RETENTION_FIELDS:
                 retention[key] = value
+            elif key in GALLERY_FIELDS:
+                gallery[key] = value
             elif key in TEXT_FIELDS:
                 values[TEXT_FIELDS[key]] = value.strip()
             elif key in NUMBER_FIELDS:
@@ -71,6 +75,7 @@ class SettingsService:
             values['print_options'] = current.print_options.apply(printing)
             values['print_schedule'] = current.print_schedule.apply(schedule)
             values['retention'] = current.retention.apply(retention)
+            values['gallery'] = current.gallery.apply(gallery)
         except ValueError as exc:
             raise SettingsError(str(exc)) from None
         cfg = replace(current, **values)
@@ -97,6 +102,7 @@ class SettingsService:
         result.update(cfg.print_options.environment())
         result.update(cfg.print_schedule.environment())
         result.update(cfg.retention.environment())
+        result.update(cfg.gallery.environment())
         if cfg.retention.email_scope != mailbox_scope(cfg.email_user, cfg.mailbox):
             result['CLEANUP_EMAILS'] = '0'
         return result

@@ -1,0 +1,17 @@
+<section id="gallerySettings"><h2>Searchable work-order gallery</h2>
+<input type="hidden" name="gallery_present" value="1">
+<label class="check"><input type="checkbox" name="GALLERY_ENABLED" value="1" {% if values.GALLERY_ENABLED == '1' %}checked{% endif %}> Import matching email PDFs into the gallery</label>
+<div class="form-grid">
+<label>Gallery email subject contains<input name="GALLERY_SUBJECT_CONTAINS" maxlength="200" value="{{ values.GALLERY_SUBJECT_CONTAINS }}" placeholder="redlines"></label>
+<label>Gallery email sender contains (optional)<input name="GALLERY_FROM_CONTAINS" maxlength="200" value="{{ values.GALLERY_FROM_CONTAINS }}"></label>
+<label>Keep images for (days from printed date)<input name="GALLERY_KEEP_DAYS" type="number" min="1" max="3650" required value="{{ values.GALLERY_KEEP_DAYS }}"></label>
+<label>Gallery disk budget (MB)<input name="GALLERY_MAX_MB" type="number" min="64" max="1048576" required value="{{ values.GALLERY_MAX_MB }}"></label>
+<label>Expected images per day (0 = observed rate)<input name="GALLERY_CROPS_PER_DAY" type="number" min="0" max="100000" required value="{{ values.GALLERY_CROPS_PER_DAY }}"></label>
+</div>
+<p>Uses the same Gmail account, mailbox and email-check interval. Leave email collection enabled. The gallery keyword is separate from print filters: existing printing still happens whenever its own filters match. Gallery imports neither add prints nor cancel them.</p>
+<p>One PNG starts at each form's top border and ends just before the next form's top border. The last runs to the page bottom; full side margins stay. No equal thirds, adjustable margins or OCR for cutting. Text recognition is used afterward for search and the printed date.</p>
+<p class="notice">Retention removes expired images and their notes. Uncertain dates remain until corrected in the gallery. PDFs and full-page renders are temporary and discarded after processing; unrecognized pages are listed in import status, not stored as full images. This does not remove files needed by a print job. Imports stop accepting more files before the gallery budget or 512 MB free-disk reserve is exhausted.</p>
+<p><a class="button" href="{{ url_for('gallery.page') }}">Open gallery / storage estimate</a></p>
+<img class="gallery-settings-qr" width="128" height="128" src="{{ url_for('gallery.qr') }}" alt="QR code for the searchable gallery">
+<p class="muted">Free local tools only. Gallery imports apply to newly collected matching emails after enabling; emails already processed are not replayed. Resend an older PDF in a new email to import it.</p>
+</section>

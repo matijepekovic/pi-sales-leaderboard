@@ -154,8 +154,9 @@ def attachment_parts(tree, prefix='', *, related_resource=False):
 
 
 class GmailClient:
-    def __init__(self, cfg: Config, db: Database, stop=None):
+    def __init__(self, cfg: Config, db: Database, stop=None, gallery=None):
         self.cfg, self.db, self.stop = cfg, db, stop
+        self.gallery = gallery  # Optional normalized PDF consumer; not a print dependency.
 
     def _fetch(self, client, uid: str, query: str):
         status, result = client.uid('fetch', uid, query)
@@ -215,7 +216,9 @@ class GmailClient:
                 AND uidvalidity=? AND state='FETCHING' ''', (cfg.email_user, cfg.mailbox, validity))
             uids = {item.decode() for item in (result[0] or b'').split()} | {r['uid'] for r in pending}
             examined = 0
-            for uid in sorted(uids, key=int):
+            pending_uids = {r['uid'] for r in pending}
+            # New mail gets a turn before deferred handoffs/downloads.
+            for uid in sorted(uids, key=lambda value: (value in pending_uids, int(value))):
                 if self.stop is not None and self.stop.is_set():
                     return count
                 known = self.db.one('''SELECT state FROM processed_messages WHERE account=? AND mailbox=?
@@ -233,7 +236,10 @@ class GmailClient:
                 identity = message_identity(cfg.email_user, cfg.mailbox, validity, uid, message_id)
                 if RetentionRepository(self.db).seen(identity):
                     continue  # Expired history must not turn into another print.
-                qualifies = cfg.subject_contains.casefold() in subject.casefold() and cfg.from_contains.casefold() in sender.casefold()
+                print_qualifies = cfg.subject_contains.casefold() in subject.casefold() and cfg.from_contains.casefold() in sender.casefold()
+                gallery_qualifies = self.gallery is not None and self.gallery.matches(subject, sender)
+                qualifies = print_qualifies or gallery_qualifies
+                gallery_complete = True
                 self.db.execute('''INSERT OR IGNORE INTO processed_messages
                     (identity,account,mailbox,uidvalidity,uid,message_id,subject,sender,state,created)
                     VALUES (?,?,?,?,?,?,?,?,?,?)''',
@@ -252,13 +258,19 @@ class GmailClient:
                         raise ValueError('EMAIL MIME STRUCTURE MISSING')
                     parts = list(attachment_parts(sexpr(raw[match.end():])))
                 except ValueError as exc:
-                    self._store(record['id'], 'mime-error', 'email-structure', error=clean_text(exc))
+                    if print_qualifies:
+                        self._store(record['id'], 'mime-error', 'email-structure', error=clean_text(exc))
+                    if gallery_qualifies:
+                        log.warning('Gallery message has unreadable MIME; uid=%s', uid)
                     parts = []
                 for part in parts:
                     if self.stop is not None and self.stop.is_set():
                         return count
+                    to_gallery = gallery_qualifies and Path(part['filename']).suffix.lower() == '.pdf'
+                    if not print_qualifies and not to_gallery:
+                        continue
                     saved = self.db.one('SELECT state FROM attachments WHERE message_id=? AND part=?', (record['id'], part['part']))
-                    if saved and saved['state'] != 'DOWNLOADING':
+                    if saved and saved['state'] != 'DOWNLOADING' and not to_gallery:
                         continue
                     # Fetch the entire attachment, not a prefix capped by its size.
                     # MAX_ATTACHMENT_MB is retained as a warning threshold only.
@@ -276,10 +288,23 @@ class GmailClient:
                         if len(payload) > cfg.attachment_limit:
                             log.warning('Oversized attachment downloaded: uid=%s part=%s bytes=%s; continuing normally',
                                         uid, part['part'], len(payload))
-                        self._store(record['id'], part['part'], part['filename'], payload)
+                        if print_qualifies:
+                            self._store(record['id'], part['part'], part['filename'], payload)
+                        if to_gallery:
+                            try:
+                                self.gallery.offer(part['filename'], payload)
+                            except Exception as exc:
+                                # Printing continues. FETCHING protects the inbox source
+                                # from cleanup until a gallery-owned copy is durable.
+                                gallery_complete = False
+                                log.warning('Gallery handoff pending: uid=%s (%s)', uid, type(exc).__name__)
                     except ValueError as exc:
-                        self._store(record['id'], part['part'], part['filename'], error=clean_text(exc))
-                self.db.execute("UPDATE processed_messages SET state='COMPLETE' WHERE id=?", (record['id'],))
+                        if print_qualifies:
+                            self._store(record['id'], part['part'], part['filename'], error=clean_text(exc))
+                        if to_gallery:
+                            log.warning('Gallery attachment encoding failed: uid=%s', uid)
+                if gallery_complete:
+                    self.db.execute("UPDATE processed_messages SET state='COMPLETE' WHERE id=?", (record['id'],))
                 count += 1
             self.db.set('gmail_state', 'CONNECTED')
         return count

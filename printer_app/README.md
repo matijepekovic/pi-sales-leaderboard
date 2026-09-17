@@ -236,3 +236,93 @@ minimal receipts. Stop the printer worker before rolling back to those releases;
 recollecting old emails with them can replay history that was intentionally purged.
 Cleanup relies on the Pi clock being correct. Shared operating-system/CUPS logs
 and accumulated runtime release environments are not covered by file retention.
+
+## Searchable work-order gallery
+
+Update as usual, then open **Print Control → Settings → Searchable work-order gallery**.
+Enable imports and set a distinct email subject keyword (default suggestion: `redlines`)
+and optional sender filter. Existing Gmail credentials/mailbox/check interval are used;
+leave email collection enabled. Gallery import is off by default. It only sees newly
+collected mail after enabling; resend an already processed PDF in a new email to import it.
+
+**Print rules are not changed.** If the email also matches existing printing filters,
+it still prints under those existing rules. A gallery-only match never creates a print
+job. A failed handoff retains a FETCHING receipt, protecting that inbox source from
+cleanup until the gallery copy is durable. Newly discovered mail is visited before
+pending downloads so a blocked gallery does not starve new print mail.
+
+Open `/gallery/` on port 5055 for the single searchable image gallery. The QR code on
+Print Control and Settings links to that gallery using the address in your browser;
+use the Pi's LAN address, not localhost, before scanning on another device. This is
+not a public Internet link. The existing no-login/trusted-network access remains;
+anyone who can reach the app can read scans and add notes. POSTs retain CSRF/origin checks.
+
+Cropping is **border-only**, not OCR or equal thirds. Each PNG starts at a detected
+wide outer box's top border and continues to just before the next outer top border;
+the last reaches the page bottom. Existing side margins and between-box handwriting
+remain. Skewed borders are followed without rotating/restyling the content. There are
+no margin controls. Layouts without recognizable form rectangles (including summary
+sheets) are reported as skipped, never blindly split. Damaged/connected borders may
+need a clearer scan. This is not a guarantee of detecting every possible form layout.
+
+Local Poppler renders temporary pages. OpenCV detects rules. Tesseract indexes all
+recognized printed text and attempts the printed header dates **after cropping**;
+no paid service/API is involved. Blurry printing and handwriting can be misread.
+Search includes arbitrary recognized words, phrases, numbers, filenames and added notes.
+Open an image in the gallery to enlarge it and add a note; other open devices fetch
+saved notes within five seconds. Note authors are user-entered, not verified identities.
+Separate notes are append-only with retry-safe IDs, so simultaneous additions do not
+silently overwrite each other. Images are loaded in batches rather than all into RAM.
+
+**Keep images for** is a separate gallery policy based on the printed document date,
+not download/email age. The two repeated printed header dates must agree with sufficient
+OCR confidence; otherwise the crop is marked **needs-date** and will not expire until
+corrected in the gallery. Dates can always be corrected. Expiry deletes the image, its
+search entry and its notes. Old documents can expire immediately after import. Settings
+apply live; cleanup runs hourly. Exact-PDF hash receipts remain to prevent reimport after
+expiry. The original PDF and full-page renders are temporary, not part of the archive.
+After successful publication they are discarded; failed imports discard their temporary
+source and require resending. Existing PDF files still needed by print jobs are untouched.
+
+The gallery shows actual storage, free space and its disk budget, average PNG size,
+and estimated retained image storage: **average PNG bytes × images/day × retention days**.
+Enter expected images/day or use the observed rate. The estimate excludes database/notes
+and temporary processing space, which are shown separately; scans vary in size. The
+configured budget and a 512 MB free-disk reserve limit new imports; queued source PDFs
+consume space until processed. Dates needing correction can persist longer than the estimate.
+
+Ownership: `gallery/policy.py` is the normalized settings/search contract;
+`gallery/service.py` owns gallery workflows; `gallery/repository.py` owns its SQLite
+schema, full-text search, notes and receipts; `gallery/files.py` owns confined filesystem
+access; `gallery/processing.py` and `cropper.py` own rendering/OCR and border detection;
+`gallery/web.py` owns HTTP. `gallery/bootstrap.py` is the feature's composition boundary.
+The email adapter only hands off PDF bytes through the optional consumer contract.
+All gallery data is under `PRINTER_DATA_DIR/gallery/`, including its own `gallery.db`.
+Printer retention never traverses those image records or directories.
+
+`printer-app-gallery.service` runs independently of the print worker, with low CPU/IO
+priority, CPU quota, memory limits, no network and no Gmail/CUPS access in its processing
+subprocess. The printer health endpoint intentionally does not depend on gallery health.
+System gallery tools use distro Python, not the printer venv. Installer failures for
+optional gallery tools are reported without preventing the print runtime update.
+
+Terminal update through the **existing installed distribution helper** (as scoreboard):
+
+```bash
+cd "$HOME/pi-tableau-leaderboard"
+python3 -c "from app.update_delivery import request_install; print(request_install()['message'])"
+journalctl -u printer-app-install.service -f
+```
+
+Ctrl+C exits log viewing, not the detached installer. This uses the same verified Git
+bundle as the Update button and does not reinstall/restart Stats. Wait for completion
+before opening Settings. The optional Git-checkout update script also installs the new
+system dependencies. To restart only processing or view gallery logs:
+
+```bash
+sudo systemctl restart printer-app-gallery.service
+journalctl -u printer-app-gallery.service -f
+```
+
+No customer PDF, crop or extracted customer text is shipped in the repository. Gallery
+regressions use synthetic forms and fake mail, not live customer data or a physical printer.

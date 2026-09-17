@@ -20,6 +20,8 @@ from .print_schedule import DAYS as SCHEDULE_DAYS, MODES as SCHEDULE_MODES
 from .print_dispatch import PrintDispatchService
 from .print_queue_repository import PrintQueueRepository
 from .retention_repository import RetentionRepository
+from .gallery.bootstrap import build as build_gallery
+from .gallery.web import blueprint as gallery_blueprint
 
 
 def create_app(cfg: Config | None = None, settings_service: SettingsService | None = None) -> Flask:
@@ -32,10 +34,11 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.config.update(SECRET_KEY=cfg.secret_key, SESSION_COOKIE_NAME='printer_app_session',
         SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
         SESSION_COOKIE_SECURE=cfg.secure_cookie, PERMANENT_SESSION_LIFETIME=8 * 3600,
-        MAX_CONTENT_LENGTH=8192, MAX_FORM_MEMORY_SIZE=8192, MAX_FORM_PARTS=64)
+        MAX_CONTENT_LENGTH=16384, MAX_FORM_MEMORY_SIZE=16384, MAX_FORM_PARTS=64)
     db = Database(cfg.db_path)
     app.extensions['printer_db'] = db
     app.extensions['printer_settings'] = settings
+    app.register_blueprint(gallery_blueprint(build_gallery(cfg.data_dir)))
 
     @app.template_filter('localtime')
     def localtime(value):
@@ -85,6 +88,8 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         # Distinct checkbox names keep the duplicate-field protection intact;
         # normalize only here, where browser form details belong.
         values = request.form.to_dict()
+        if values.pop('gallery_present', '') == '1':
+            values.setdefault('GALLERY_ENABLED', '0')
         if values.pop('cleanup_present', '') == '1':
             for key in ('CLEANUP_ENABLED', 'CLEANUP_EMAILS'):
                 values.setdefault(key, '0')
@@ -226,7 +231,7 @@ def main():
     from waitress import serve
     cfg = Config.from_env()
     serve(create_app(cfg), host=cfg.host, port=cfg.port, threads=4,
-          max_request_body_size=8192, channel_timeout=30, ident='printer-app')
+          max_request_body_size=16384, channel_timeout=30, ident='printer-app')
 
 
 if __name__ == '__main__':
