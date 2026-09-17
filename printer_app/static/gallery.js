@@ -338,10 +338,10 @@ import { GalleryNavigation } from './gallery_navigation.js';
   });
   el('galleryNotesSheet').addEventListener('close', () => { if (!el('galleryNotesSheet').open) { draft(); delete el('galleryNote').dataset.itemId; } });
   el('galleryViewer').addEventListener('close', () => { if (!el('galleryViewer').open) el('galleryFull').removeAttribute('src'); });
-  el('galleryInfo').onclick = () => { showDialog('galleryInfoSheet'); summary(); };
   el('galleryViewerDate').onclick = () => dates.open(selected?.document_date || 'undated');
   el('galleryMore').onclick = () => load(false);
   el('galleryBack').onclick = () => navigation.back();
+  el('galleryDateRefresh').onclick = () => { galleryDirty = true; requestClose('galleryDateSheet'); };
   el('galleryRefresh').onclick = () => { galleryDirty = true; requestClose('galleryInfoSheet'); };
   el('gallerySearch').onsubmit = async event => {
     event.preventDefault(); navigation.save(); chooseLatest = false; query = el('query').value.trim(); relatedId = null; selected = null; dateFilter = ''; dates.setFilter('');
