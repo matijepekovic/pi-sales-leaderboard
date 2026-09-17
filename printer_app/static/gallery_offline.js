@@ -53,7 +53,7 @@ export class GalleryOffline {
     }
     this.subject = access.subject;
     localStorage.setItem(SUBJECT_KEY, this.subject);
-    await this.open();
+    if (this.isEnabled()) await this.open();
     return this.isEnabled();
   }
 
