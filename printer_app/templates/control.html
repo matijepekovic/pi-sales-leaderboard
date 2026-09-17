@@ -1,6 +1,6 @@
 {% extends 'base.html' %}{% block content %}
-<p><a class="button" href="{{ url_for('gallery.page') }}">Searchable work-order gallery</a> <a href="{{ url_for('settings_page') }}#gallerySettings">Gallery import settings</a> <a class="button" href="{{ url_for('gallery.queue_page') }}">Gallery Queue</a></p>
-<details><summary>Gallery QR code</summary><img width="160" height="160" src="{{ url_for('gallery.qr') }}" alt="Open gallery on another device"></details>
+<p><a class="button" href="{{ gallery_full_url }}">Searchable work-order gallery</a> <a href="{{ url_for('settings_page') }}#gallerySettings">Gallery import settings</a> {% if gallery_full_token %}<a class="button" href="{{ url_for('gallery.redeem_access', token=gallery_full_token, next=url_for('gallery.queue_page')) }}">Gallery Queue</a>{% else %}<a class="button" href="{{ url_for('gallery.queue_page') }}">Gallery Queue</a>{% endif %}</p>
+{% if gallery_full_token %}<details><summary>Full gallery access QR code</summary><img width="160" height="160" src="{{ url_for('gallery.qr', token=gallery_full_token) }}" alt="Give this device full gallery access"><p class="muted">This QR grants full gallery access for enrollment. Temporary guest links are created from Share inside the gallery.</p></details>{% endif %}
 <div class="heading"><div><p class="eyebrow">AUTOMATION MONITOR</p><h1>Print Control</h1></div><a class="button" href="{{ url_for('control') }}">Refresh</a></div>
 {% if request.args.get('removed') == '1' %}<p class="notice">Removed from print queue. Other reports and gallery images were not changed.</p>{% endif %}
 {% include 'print_queue.html' %}

@@ -32,6 +32,11 @@ class GalleryService:
         return self.repository.list_items(search_expression(query), max(0, min(offset, 1000000)),
                                           document_date=checked_date_filter(document_date))
 
+    def offline_index(self):
+        """Normalized active-card index; image bytes remain behind the image endpoint."""
+        self.initialize()
+        return dict(items=self.repository.offline_items(), generated=time.time())
+
     def related(self, ident, offset=0, document_date=''):
         self.initialize()
         item = self.repository.item(ident)

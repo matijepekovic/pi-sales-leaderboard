@@ -16,13 +16,12 @@ filter and never opens a name-entry prompt. Unreadable or ambiguous names show a
 clear message, not a guessed match. Optional corrections remain in Card details.
 A matching name alone is not proof that two records represent the same person.
 
-Notes opens a bottom sheet for the selected card to read or add centrally saved
-notes. That target remains pinned while editing. Other open viewers refresh within five seconds. Notes remain per document,
-not merged across related cards. Search opens a floating sheet and searches all
-recognized printed text, corrected lead names, and shared notes. All cards restores
-the date-grouped feed. Load more extends the same feed in bounded 24-card batches.
-The information button contains storage, QR access and refresh, with no exit to
-Settings or Print Control. Administrative URLs remain directly accessible.
+Notes opens a bottom sheet only to add a note for the selected card. Existing
+notes are shown underneath the document when that work order is opened. The target
+remains pinned while editing, and other open viewers refresh within five seconds.
+Notes remain per document, not merged across related cards. Search opens a floating
+sheet and searches recognized printed text, lead names, and shared notes. Load more
+extends the same feed in bounded 24-card batches.
 
 The gallery repository performs an additive, transactional lead-name/index upgrade
 using already-saved search text. Existing images, notes, dates and import receipts
@@ -38,10 +37,10 @@ leaderboard Update button; reopen the gallery afterward.
 Tap a printed date heading, the date at the top, or the date in an open image to
 choose a day in the calendar sheet. Only days with matching retained work orders
 are selectable; the month selector jumps between months that contain records.
-Choosing a date filters the feed to that day. **All dates** restores the grouped
-feed without clearing the current search or related-lead filter. **Dates need
-checking** shows undated images separately; it never invents a date for them.
-This is a browsing filter, not a change to a document's saved date or retention.
+Choosing a date filters the feed to that day. The date sheet contains the calendar
+and Refresh cards. Full-access devices also see **Offline** and **Share** beside each
+other. Temporary guests do not see those controls. This is browsing state, not a
+change to a document's saved date or retention.
 
 Swipe **left for the next newer date**, **right for the previous older date** on
 the card feed, or use the arrow buttons next to the date. Empty days are skipped.
@@ -105,10 +104,39 @@ opens a name-entry prompt. Unreadable/ambiguous names show an error instead of
 inventing a match. Missing names in legacy flattened OCR are backfilled once;
 user-confirmed names and existing images/notes are preserved.
 
-The gallery's links back to Print Control and Settings are removed. This is a
-navigation-only change, **not access control**: direct administrative URLs still
-work. No login, browser-history manipulation, Stats or permission changes.
+The gallery's links back to Print Control and Settings are removed. Gallery access
+is capability-based: full-access devices can browse, add notes, keep an offline copy,
+share temporary access, and use gallery administration. Temporary guests can browse
+and add notes only. Printer Settings and Print Control keep their existing trusted
+local-network behavior.
 
 PR #117 shipped backend helpers but omitted their web/template/action connections.
 This completes those connections. The updater uses the existing installation
 mechanism; already-stored incorrect crops are not silently deleted or rebuilt.
+
+
+## Full access, temporary sharing and Offline
+
+Print Control is the enrollment boundary for a full-access gallery device. Opening
+the gallery from Print Control, or scanning its Full gallery access QR code, exchanges
+a short-lived enrollment token for a long-lived gallery credential. Reopening from
+Print Control does not replace an existing full identity, so the phone keeps the same
+account-scoped offline store.
+
+The date picker shows **Offline** and **Share** only to full access. Share creates a
+single-use link whose guest access expires 24 hours after the recipient opens it. Guest access
+is checked server-side on every gallery request and cannot use Offline, Share, Gallery
+Queue, reprocessing, or gallery administration. A new link is required after expiry.
+
+Offline is phone-local. While enabled and Stats is reachable, the browser downloads
+new active card images plus current details and notes into IndexedDB and uploads queued
+offline notes. Server retention never deletes that browser store, so a previously
+downloaded image remains on the phone after its server copy expires. Turning Offline
+off stops automatic downloads but does not erase downloaded cards. The local database
+is scoped to the full-access identity, so a temporary guest cannot inherit it.
+
+The access repository owns access SQL, the access service owns roles, capabilities,
+invitations and expiry, and the gallery web layer owns cookie and HTTP enforcement.
+gallery_offline.js alone owns browser persistence and queued-note sync. Offline relaunch
+uses a service worker when the gallery is served in a secure browser context (HTTPS);
+IndexedDB downloading still works while the page is open on ordinary LAN HTTP.

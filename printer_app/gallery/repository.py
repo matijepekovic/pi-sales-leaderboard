@@ -222,6 +222,20 @@ class GalleryRepository:
                ' ORDER BY i.document_date IS NULL,i.document_date DESC,source.created,source.id,i.page,i.part,i.id LIMIT 24 OFFSET ?', [*params, offset])
             return dict(total=total, items=[dict(r) for r in rows], dates=buckets)
 
+    def offline_items(self):
+        """Return the complete active-card index for an authorized offline sync."""
+        with self.connect() as c:
+            rows = c.execute(
+                """SELECT i.id,i.filename,i.page,i.part,i.document_date,i.date_status,
+                          i.bytes,i.lead_name,i.lead_status,
+                          (SELECT count(*) FROM notes n WHERE n.item_id=i.id) AS notes_count
+                   FROM items i JOIN imports source ON source.id=i.import_id
+                   WHERE i.state='ACTIVE'
+                   ORDER BY i.document_date IS NULL,i.document_date DESC,
+                            source.created,source.id,i.page,i.part,i.id"""
+            )
+            return [dict(row) for row in rows]
+
     def item(self, ident):
         with self.connect() as c:
             r = c.execute("SELECT * FROM items WHERE id=? AND state='ACTIVE'", (ident,)).fetchone()

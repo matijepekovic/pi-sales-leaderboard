@@ -1,0 +1,9 @@
+{
+  "name": "Stats Work-order Gallery",
+  "short_name": "Stats Gallery",
+  "start_url": "/gallery/",
+  "scope": "/gallery/",
+  "display": "standalone",
+  "background_color": "#f5f5f7",
+  "theme_color": "#f5f5f7"
+}

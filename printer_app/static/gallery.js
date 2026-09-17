@@ -1,6 +1,7 @@
 import { GalleryDates } from './gallery_dates.js';
 import { GalleryFocus } from './gallery_focus.js';
 import { GalleryNavigation } from './gallery_navigation.js';
+import { GalleryOffline } from './gallery_offline.js';
 
 'use strict';
 (() => {
@@ -11,6 +12,10 @@ import { GalleryNavigation } from './gallery_navigation.js';
   const cards = new Map(), groups = new Map(), drafts = new Map(), saving = new Set();
   let query = '', relatedId = null, selected = null, offset = 0, total = 0, dateFilter = '';
   let generation = 0, detailGeneration = 0, loading = false, galleryDirty = false, actionPending = false, notesVersion = '', pendingDetails = 0;
+  let access = null, offlineMode = false;
+  const offline = new GalleryOffline({
+    onStatus: message => { el('galleryOfflineStatus').textContent = message; },
+  });
   const dates = new GalleryDates({
     onSelect: chooseDate, openDialog: id => showDialog(id),
     blocked: () => loading || navigation.restoring || Boolean(document.querySelector('dialog[open]')),
@@ -82,7 +87,10 @@ import { GalleryNavigation } from './gallery_navigation.js';
     const dialogs = view.dialogs || [];
     if (view.selected && !selected && dialogs.length) {
       try { selected = await api('/gallery/api/items/' + view.selected); }
-      catch (_) { el('galleryMessage').textContent = 'That work order is no longer available.'; }
+      catch (_) {
+        selected = await offline.detail(view.selected);
+        if (!selected) el('galleryMessage').textContent = 'That work order is no longer available.';
+      }
     }
     for (const id of dialogs) {
       if (id === 'galleryViewer' && selected) {
@@ -120,6 +128,39 @@ import { GalleryNavigation } from './gallery_navigation.js';
     if (!response.ok) { const error = new Error(data.error || 'Request failed'); error.status = response.status; throw error; }
     return data;
   }
+  function accessControls(info, resumed = false) {
+    const canOffline = resumed || Boolean(info?.capabilities?.includes('offline'));
+    const canShare = !resumed && Boolean(info?.capabilities?.includes('share'));
+    el('galleryOfflineWrap').hidden = !canOffline;
+    el('galleryShare').hidden = !canShare;
+    el('galleryOfflineToggle').checked = canOffline && offline.isEnabled();
+    if (!canOffline) el('galleryOfflineStatus').textContent = '';
+    if (info?.csrf) {
+      const csrf = el('galleryNote').elements.csrf;
+      if (csrf) csrf.value = info.csrf;
+    }
+  }
+  async function configureAccess() {
+    try {
+      access = await api('/gallery/api/access');
+      await offline.configure(access);
+      offlineMode = false;
+      accessControls(access);
+      if (offline.isEnabled()) offline.sync().catch(error => {
+        el('galleryOfflineStatus').textContent = 'Offline update paused: ' + error.message;
+      });
+      return true;
+    } catch (error) {
+      if (!error.status && await offline.resume()) {
+        access = null;
+        offlineMode = true;
+        accessControls(null, true);
+        el('galleryOfflineStatus').textContent = 'Offline · showing cards stored on this phone';
+        return false;
+      }
+      throw error;
+    }
+  }
   function actions() {
     document.querySelectorAll('[data-action]').forEach(button => {
       button.disabled = button.dataset.action !== 'search' && (!selected || actionPending);
@@ -153,7 +194,7 @@ import { GalleryNavigation } from './gallery_navigation.js';
     const node = text('button', '', 'gallery-card'); node.type = 'button'; node.dataset.id = item.id;
     const image = document.createElement('img'); image.loading = 'lazy'; image.decoding = 'async';
     // Always use the full stored image. Never crop/cover it or request thumbnails.
-    image.src = '/gallery/image/' + item.id;
+    image.src = item._offline_image_url || '/gallery/image/' + item.id;
     image.alt = `${cardName(item)} — complete work order, ${dateLabel(item.document_date)}`;
     const meta = text('span', '', 'gallery-card-meta');
     const caption = text('span', ''); const name = text('span', cardName(item), 'gallery-card-name');
@@ -172,7 +213,16 @@ import { GalleryNavigation } from './gallery_navigation.js';
     const suffix = `&date=${encodeURIComponent(dateFilter)}`;
     const url = (related ? `/gallery/api/items/${related}/related?offset=${start}` : `/gallery/api/items?q=${encodeURIComponent(query)}&offset=${start}`) + suffix;
     try {
-      const data = await api(url);
+      let data;
+      try {
+        data = await api(url);
+        offlineMode = false;
+      } catch (networkError) {
+        data = await offline.list({q:query, relatedId:related, date:dateFilter, offset:start});
+        if (!data) throw networkError;
+        offlineMode = true;
+        el('galleryOfflineStatus').textContent = 'Offline · showing cards stored on this phone';
+      }
       if (token !== generation) return;
       if (chooseLatest) {
         chooseLatest = false;
@@ -191,7 +241,7 @@ import { GalleryNavigation } from './gallery_navigation.js';
       el('galleryFilterHint').textContent = related ? 'Lead name in printed text or notes · all retained dates' : 'Matching printed text and shared notes';
       el('galleryMore').hidden = offset >= total;
       el('galleryEmpty').hidden = total !== 0;
-      el('galleryEmpty').textContent = dateFilter ? 'No work orders on this date. Choose another date or All dates.' : query || related ? 'No matching work orders.' : 'No work orders yet.';
+      el('galleryEmpty').textContent = dateFilter ? 'No work orders on this date. Choose another date.' : query || related ? 'No matching work orders.' : 'No work orders yet.';
       el('galleryMessage').textContent = ''; updateNavigation(); actions();
     } catch (error) { if (token === generation) el('galleryMessage').textContent = error.message; }
     finally { if (token === generation) { loading = false; dates.busy(false); el('galleryCards').setAttribute('aria-busy', 'false'); el('galleryMore').disabled = false; focus.reset(); } }
@@ -234,6 +284,7 @@ import { GalleryNavigation } from './gallery_navigation.js';
   }
   function renderDetail(item, initial) {
     el('galleryTitle').textContent = cardName(item);
+    if (item._offline_image_url && el('galleryViewer').open) el('galleryFull').src = item._offline_image_url;
     el('galleryViewerDate').textContent = dateLabel(item.document_date);
     el('gallerySource').textContent = `${item.filename} · page ${item.page}, work order ${item.part}`;
     el('galleryNotesContext').textContent = `${cardName(item)} · ${dateLabel(item.document_date)}`;
@@ -255,7 +306,15 @@ import { GalleryNavigation } from './gallery_navigation.js';
     const id = selected.id, token = ++detailGeneration;
     pendingDetails++;
     try {
-      const item = await api('/gallery/api/items/' + id);
+      let item;
+      try {
+        item = await api('/gallery/api/items/' + id);
+        offlineMode = false;
+      } catch (networkError) {
+        item = await offline.detail(id);
+        if (!item) throw networkError;
+        offlineMode = true;
+      }
       if (selected?.id !== id || token !== detailGeneration) return;
       selected = item; renderDetail(item, initial); actions();
     } catch (error) {
@@ -271,7 +330,7 @@ import { GalleryNavigation } from './gallery_navigation.js';
     selected = item; actions(); el('galleryViewerMessage').textContent = '';
     el('galleryTitle').textContent = cardName(item); el('galleryViewerDate').textContent = dateLabel(item.document_date);
     el('gallerySource').textContent = `${item.filename} · page ${item.page}, work order ${item.part}`;
-    el('galleryFull').src = '/gallery/image/' + item.id;
+    el('galleryFull').src = item._offline_image_url || '/gallery/image/' + item.id;
     showDialog('galleryViewer', false); el('galleryViewer').scrollTop = 0;
     el('galleryViewer').querySelector('[data-close]').focus({preventScroll:true});
     if (record) navigation.push();
@@ -335,7 +394,45 @@ import { GalleryNavigation } from './gallery_navigation.js';
   el('galleryViewerDate').onclick = () => dates.open(selected?.document_date || 'undated');
   el('galleryMore').onclick = () => load(false);
   el('galleryBack').onclick = () => navigation.back();
-  el('galleryDateRefresh').onclick = () => { galleryDirty = true; requestClose('galleryDateSheet'); };
+  el('galleryDateRefresh').onclick = () => {
+    galleryDirty = true;
+    if (offline.isEnabled() && navigator.onLine) offline.sync().catch(() => {});
+    requestClose('galleryDateSheet');
+  };
+  el('galleryOfflineToggle').onchange = async event => {
+    const toggle = event.currentTarget;
+    toggle.disabled = true;
+    try {
+      await offline.setEnabled(toggle.checked);
+    } catch (error) {
+      toggle.checked = offline.isEnabled();
+      el('galleryOfflineStatus').textContent = error.message;
+    } finally {
+      toggle.disabled = false;
+    }
+  };
+  el('galleryShare').onclick = async () => {
+    const button = el('galleryShare');
+    button.disabled = true;
+    try {
+      const form = new FormData();
+      form.set('csrf', el('galleryNote').elements.csrf.value);
+      const shared = await api('/gallery/api/share', {method:'POST', body:form});
+      if (navigator.share) {
+        await navigator.share({title:'Stats Gallery', text:'24-hour gallery access', url:shared.url});
+        el('galleryOfflineStatus').textContent = '24-hour access link shared.';
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shared.url);
+        el('galleryOfflineStatus').textContent = '24-hour access link copied.';
+      } else {
+        el('galleryOfflineStatus').textContent = '24-hour access link: ' + shared.url;
+      }
+    } catch (error) {
+      if (error.name !== 'AbortError') el('galleryOfflineStatus').textContent = 'Could not share: ' + error.message;
+    } finally {
+      button.disabled = false;
+    }
+  };
   el('galleryRefresh').onclick = () => { galleryDirty = true; requestClose('galleryInfoSheet'); };
   el('gallerySearch').onsubmit = async event => {
     event.preventDefault(); navigation.save(); chooseLatest = false; query = el('query').value.trim(); relatedId = null; selected = null; dateFilter = ''; dates.setFilter('');
@@ -356,14 +453,56 @@ import { GalleryNavigation } from './gallery_navigation.js';
         form.elements.body.value = ''; el('galleryNoteMessage').textContent = 'Saved. Other open devices update within five seconds.';
         await detail().catch(() => { el('galleryNoteMessage').textContent = 'Saved. Reopen notes to refresh the list.'; });
       }
-    } catch (error) { if (selected?.id === id) el('galleryNoteMessage').textContent = 'Not saved: ' + error.message; }
+    } catch (error) {
+      if (selected?.id === id && offline.isEnabled() && !error.status) {
+        try {
+          const note = {
+            id:String(data.get('note_id')),
+            author:String(data.get('author') || '').trim() || 'Anonymous',
+            body:String(data.get('body') || '').trim(),
+            created:Date.now()/1000,
+          };
+          await offline.queueNote(id, note);
+          drafts.set(id, {author:note.author === 'Anonymous' ? '' : note.author, body:'', noteId:randomId()});
+          form.elements.body.value = '';
+          const cached = await offline.detail(id);
+          if (cached && selected?.id === id) {
+            selected = cached; renderDetail(cached, true); actions();
+          }
+          el('galleryNoteMessage').textContent = 'Saved offline. It will sync when Stats is reachable again.';
+        } catch (offlineError) {
+          el('galleryNoteMessage').textContent = 'Not saved: ' + offlineError.message;
+        }
+      } else if (selected?.id === id) {
+        el('galleryNoteMessage').textContent = 'Not saved: ' + error.message;
+      }
+    }
     finally { saving.delete(id); noteControls(); }
   };
   setInterval(() => { if (selected && !pendingDetails && !document.hidden && (el('galleryViewer').open || el('galleryNotesSheet').open)) detail().catch(() => {}); }, 5000);
   setInterval(() => { if (!document.hidden && el('galleryInfoSheet').open) summary(); }, 15000);
-  actions();
-  if (initialView) {
-    navigation.restoring = true;
-    restoreView(initialView).finally(() => { navigation.restoring = false; updateNavigation(); focus.reset(); });
-  } else load().then(() => navigation.save());
+  setInterval(() => { if (!document.hidden && navigator.onLine && offline.isEnabled()) offline.sync().catch(() => {}); }, 60000);
+  setInterval(() => { if (!document.hidden && navigator.onLine) configureAccess().catch(() => {}); }, 15 * 60 * 1000);
+  window.addEventListener('online', async () => {
+    const wasOffline = offlineMode;
+    try {
+      await configureAccess();
+      if (offline.isEnabled()) await offline.sync();
+      if (wasOffline) await load();
+    } catch (_) { /* The cached gallery remains available. */ }
+  });
+  async function start() {
+    try {
+      await configureAccess();
+    } catch (error) {
+      el('galleryMessage').textContent = error.message;
+      return;
+    }
+    actions();
+    if (initialView) {
+      navigation.restoring = true;
+      restoreView(initialView).finally(() => { navigation.restoring = false; updateNavigation(); focus.reset(); });
+    } else load().then(() => navigation.save());
+  }
+  start();
 })();

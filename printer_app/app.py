@@ -21,7 +21,7 @@ from .print_dispatch import PrintDispatchService
 from .print_queue_repository import PrintQueueRepository
 from .retention_repository import RetentionRepository
 from .attachment_routing_repository import AttachmentRoutingRepository
-from .gallery.bootstrap import build as build_gallery
+from .gallery.bootstrap import build as build_gallery, build_access as build_gallery_access
 from .gallery.web import blueprint as gallery_blueprint
 from .gallery_reprocess import GalleryReprocessService
 
@@ -47,11 +47,13 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.extensions['printer_db'] = db
     app.extensions['printer_settings'] = settings
     gallery = build_gallery(cfg.data_dir)
+    gallery_access = build_gallery_access(cfg.data_dir)
     intake = AttachmentRoutingRepository(db)
     reprocess = GalleryReprocessService(gallery, intake, lambda: request_command('run-now'))
     app.extensions['printer_gallery'] = gallery
+    app.extensions['gallery_access'] = gallery_access
     app.extensions['gallery_reprocess'] = reprocess
-    app.register_blueprint(gallery_blueprint(gallery, intake.intake, reprocess))
+    app.register_blueprint(gallery_blueprint(gallery, gallery_access, intake.intake, reprocess))
 
     @app.template_filter('localtime')
     def localtime(value):
@@ -153,8 +155,17 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         except Exception:
             gallery_queue, gallery_intake = None, []
             gallery_error = 'Gallery monitoring is unavailable. Printing is separate.'
+        try:
+            full_invite = gallery_access.issue_full_invite()
+            full_url = url_for('gallery.redeem_access', token=full_invite,
+                               next=url_for('gallery.page'))
+        except Exception:
+            # Gallery access must never become a dependency of printer control.
+            full_invite, full_url = '', url_for('gallery.page')
+            gallery_error = gallery_error or 'Gallery access is unavailable. Printing is separate.'
         return render_template('control.html', state=state(), jobs=[timing.describe_job(j) for j in db.recent()],
-            gallery_queue=gallery_queue, gallery_intake=gallery_intake, gallery_error=gallery_error)
+            gallery_queue=gallery_queue, gallery_intake=gallery_intake, gallery_error=gallery_error,
+            gallery_full_token=full_invite, gallery_full_url=full_url)
 
     def settings_view(error='', code=200):
         try:
