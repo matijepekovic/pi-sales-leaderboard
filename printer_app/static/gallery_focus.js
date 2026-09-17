@@ -1,4 +1,4 @@
-/** Owns visible-card selection. Tall documents do not have to fit the viewport. */
+/** Owns visible-card selection. The topmost card below the sticky UI is active. */
 export class GalleryFocus {
   constructor({container, blocked, onChange}) {
     this.container = container;
@@ -57,26 +57,18 @@ export class GalleryFocus {
     if (dock && dock.top < bottom && dock.bottom > top) bottom = dock.top - 6;
     const left = viewport?.offsetLeft || 0;
     const right = left + (viewport?.width || window.innerWidth);
-    const middle = (top + bottom) / 2;
-    const singleDate = document.getElementById('galleryMain')?.dataset.singleDate === 'true';
-    let id = null, fraction = -1, distance = Infinity;
+    let id = null;
+    // Reading order owns focus: keep the earlier card active for as long as any of
+    // it remains visible below the sticky header. Once it has actually scrolled
+    // past that boundary, the next visible card becomes active. This is reversible
+    // in both scroll directions and works for cards taller than the viewport.
     for (const node of this.container.querySelectorAll('.gallery-card')) {
-      const rect = node.getBoundingClientRect(), image = node.querySelector('img');
-      if (!image?.complete || !image.naturalWidth) continue;
-      const visible = Math.max(0, Math.min(bottom, rect.bottom) - Math.max(top, rect.top));
-      const width = Math.max(0, Math.min(right, rect.right) - Math.max(left, rect.left));
-      if (!visible || !width) continue;
-      const total = Math.max(1, rect.width * rect.height);
-      const share = (visible * width) / total;
-      const d = Math.abs((rect.top + rect.bottom) / 2 - middle);
-      const tie = Math.abs(share - fraction) <= .02;
-      // A single-date gallery is read top-to-bottom: when two cards are essentially
-      // equally visible, the earlier card wins. That lets the first card become
-      // active again when the user scrolls back up instead of sticking to card 2.
-      // Search/related views can span dates, so equal visibility is resolved by
-      // whichever card is closest to the usable viewport center.
-      if (share > fraction + .02 || (tie && !singleDate && d < distance)) {
-        fraction = share; distance = d; id = node.dataset.id;
+      const rect = node.getBoundingClientRect();
+      const horizontal = Math.max(0, Math.min(right, rect.right) - Math.max(left, rect.left));
+      if (!horizontal) continue;
+      if (rect.bottom > top + 1 && rect.top < bottom - 1) {
+        id = node.dataset.id;
+        break;
       }
     }
     if (id !== this.current) { this.current = id; this.onChange(id); }
