@@ -41,7 +41,12 @@ class GalleryGrant:
 class GalleryAccessService:
     def __init__(self, repository):
         self.repository = repository
-        self.repository.initialize()
+        self.initialized = False
+
+    def initialize(self):
+        if not self.initialized:
+            self.repository.initialize()
+            self.initialized = True
 
     @staticmethod
     def _hash(token):
@@ -54,6 +59,7 @@ class GalleryAccessService:
         return self._issue_invite('guest', ttl, one_time=True)
 
     def _issue_invite(self, role, ttl, one_time):
+        self.initialize()
         if role not in CAPABILITIES:
             raise ValueError('Invalid gallery access role')
         ttl = max(60, min(int(ttl), 7 * 86400))
@@ -62,6 +68,7 @@ class GalleryAccessService:
         return token
 
     def redeem(self, invite_token):
+        self.initialize()
         if not invite_token or len(invite_token) > 200:
             return None
         row = self.repository.redeem_invite(self._hash(invite_token))
@@ -81,6 +88,7 @@ class GalleryAccessService:
         return GalleryGrant(credential, GalleryIdentity(subject, role, expires))
 
     def resolve(self, credential_token):
+        self.initialize()
         if not credential_token or len(credential_token) > 200:
             return None
         row = self.repository.credential(self._hash(credential_token))
