@@ -1,7 +1,6 @@
 """Gallery settings and normalized search/date rules, without IO or vendor data."""
 from dataclasses import dataclass, replace
 from datetime import date
-from difflib import SequenceMatcher
 import re
 import unicodedata
 
@@ -128,35 +127,45 @@ def printed_address(text):
 
 
 def address_key(value):
+    """Case/punctuation/spacing normalization only; no address synonym expansion."""
     value = unicodedata.normalize('NFKC', str(value or '')).casefold()
-    tokens = re.findall(r'[a-z0-9]+', value)
-    aliases = {
-        'street':'st','avenue':'ave','road':'rd','boulevard':'blvd','drive':'dr',
-        'lane':'ln','court':'ct','place':'pl','highway':'hwy','parkway':'pkwy',
-        'north':'n','south':'s','east':'e','west':'w','northeast':'ne',
-        'northwest':'nw','southeast':'se','southwest':'sw',
-    }
-    return ' '.join(aliases.get(token, token) for token in tokens)
+    return ' '.join(re.findall(r'[a-z0-9]+', value))
 
 
-def _fuzzy_identity(left, right, threshold):
+def _within_one_character(left, right):
+    """True only for exact equality or one insertion/deletion/substitution."""
     if not left or not right:
         return False
     if left == right:
         return True
-    if min(len(left), len(right)) < 4:
+    if abs(len(left) - len(right)) > 1:
         return False
-    if SequenceMatcher(None, left, right).ratio() >= threshold:
-        return True
-    a, b = set(left.split()), set(right.split())
-    common = a & b
-    return len(common) >= 2 and len(common) / max(1, min(len(a), len(b))) >= .8
+    if len(left) > len(right):
+        left, right = right, left
+    if len(left) == len(right):
+        return sum(a != b for a, b in zip(left, right)) <= 1
+    # right is exactly one character longer.
+    i = j = differences = 0
+    while i < len(left) and j < len(right):
+        if left[i] == right[j]:
+            i += 1
+            j += 1
+            continue
+        differences += 1
+        if differences > 1:
+            return False
+        j += 1
+    return True
 
 
 def related_identity(reference_name, reference_address, candidate_name, candidate_address):
-    """Related if either normalized name or address is a close match."""
-    name_match = _fuzzy_identity(lead_key(reference_name), lead_key(candidate_name), .80)
-    address_match = _fuzzy_identity(address_key(reference_address), address_key(candidate_address), .72)
+    """Related when name differs by <=1 character OR address is exactly equal."""
+    reference_name = lead_key(reference_name)
+    candidate_name = lead_key(candidate_name)
+    reference_address = address_key(reference_address)
+    candidate_address = address_key(candidate_address)
+    name_match = _within_one_character(reference_name, candidate_name)
+    address_match = bool(reference_address) and reference_address == candidate_address
     return name_match or address_match
 
 
