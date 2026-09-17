@@ -341,9 +341,17 @@ class GalleryRepository:
     def expiring(self, cutoff):
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
-            # Once claimed, date edits fail rather than racing a file deletion.
-            c.execute("UPDATE items SET state='DELETING' WHERE id IN (SELECT id FROM items WHERE state IN ('ACTIVE','REVIEW') AND document_date<=? LIMIT 100)", (cutoff,))
-            return [r[0] for r in c.execute("SELECT id FROM items WHERE state='DELETING'")]
+            # Return only rows claimed by this retention pass. Manual per-card
+            # deletion uses the same DELETING state and must not be stolen by
+            # concurrent retention cleanup.
+            ids = [row['id'] for row in c.execute(
+                "SELECT id FROM items WHERE state IN ('ACTIVE','REVIEW') AND document_date<=? LIMIT 100",
+                (cutoff,))]
+            if ids:
+                c.executemany(
+                    "UPDATE items SET state='DELETING' WHERE id=? AND state IN ('ACTIVE','REVIEW')",
+                    [(ident,) for ident in ids])
+            return ids
 
     def forget(self, ident):
         with self.connect() as c:
