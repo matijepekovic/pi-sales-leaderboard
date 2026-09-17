@@ -1,0 +1,17 @@
+{% extends 'base.html' %}{% block content %}
+<div class="heading"><div><p class="eyebrow">GALLERY</p><h1>Gallery Queue</h1></div><a class="button" href="{{ url_for('control') }}">Print Control</a></div>
+<p class="muted">Gallery imports are separate from printing. This page shows PDF intake and processing only.</p>
+<div class="toolbar">
+<a class="button" href="{{ url_for('gallery.queue_page') }}">All</a>
+<a class="button" href="{{ url_for('gallery.queue_page', state='pending') }}">Waiting / processing</a>
+<a class="button" href="{{ url_for('gallery.queue_page', state='COMPLETE') }}">Complete</a>
+<a class="button" href="{{ url_for('gallery.queue_page', state='ERROR') }}">Errors</a>
+</div>
+<section><h2>Imports</h2>
+<p class="muted">Waiting {{ queue.counts.get('WAITING',0) }} · Processing {{ queue.counts.get('PROCESSING',0) }} · Complete {{ queue.counts.get('COMPLETE',0) }} · Errors {{ queue.counts.get('ERROR',0) }}</p>
+<div class="table-wrap"><table><thead><tr><th>Updated</th><th>PDF</th><th>Status</th><th>Images</th><th>Progress / error</th><th>Details</th></tr></thead><tbody>
+{% for item in queue.items %}<tr><td>{{ item.updated|localtime }}</td><td>{{ item.filename }}</td><td><strong>{{ item.state }}</strong></td><td>{{ item.count }}</td><td>{% if item.progress and item.progress.message %}{{ item.progress.message }}{% elif item.error %}{{ item.error }}{% else %}—{% endif %}</td><td><a href="{{ url_for('gallery.import_job_page', ident=item.id) }}">Open job</a></td></tr>
+{% else %}<tr><td colspan="6">No gallery imports in this view.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% if queue.worker %}<p class="muted">Gallery worker: {{ queue.worker }}</p>{% endif %}
+{% endblock %}
