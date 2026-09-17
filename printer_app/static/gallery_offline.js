@@ -5,6 +5,29 @@ const PAGE_SIZE = 24;
 const MODE_KEY = 'stats.gallery.accessMode';
 const SUBJECT_KEY = 'stats.gallery.offlineSubject';
 
+const identityKey = value =>
+  String(value || '').normalize('NFKD').toLocaleLowerCase()
+    .replace(/[\u0300-\u036f]/g, '').match(/[a-z0-9]+/g)?.join(' ') || '';
+
+const withinOneCharacter = (left, right) => {
+  if (!left || !right) return false;
+  if (left === right) return true;
+  if (Math.abs(left.length-right.length) > 1) return false;
+  if (left.length > right.length) [left,right] = [right,left];
+  if (left.length === right.length) {
+    let differences = 0;
+    for (let i=0;i<left.length;i++) if (left[i] !== right[i] && ++differences > 1) return false;
+    return true;
+  }
+  let i=0,j=0,differences=0;
+  while (i<left.length && j<right.length) {
+    if (left[i] === right[j]) { i++; j++; continue; }
+    if (++differences > 1) return false;
+    j++;
+  }
+  return true;
+};
+
 const requestResult = request => new Promise((resolve, reject) => {
   request.onsuccess = () => resolve(request.result);
   request.onerror = () => reject(request.error);
@@ -248,12 +271,19 @@ export class GalleryOffline {
     let cards = await this.allCards();
     if (!cards.length) return null;
     const normalized = value => String(value || '').trim().toLocaleLowerCase();
-    let relatedName = '';
+    let relatedName = '', relatedAddress = '';
     if (relatedId) {
       const target = cards.find(card => card.id === relatedId);
       relatedName = target?.detail?.lead_name || target?.summary?.lead_name || '';
-      const name = normalized(relatedName);
-      cards = name ? cards.filter(card => normalized(card.detail?.lead_name || card.summary?.lead_name) === name) : [];
+      relatedAddress = target?.detail?.address || target?.summary?.address || '';
+      const name = identityKey(relatedName).replace(/ /g, '');
+      const address = identityKey(relatedAddress);
+      cards = (name || address) ? cards.filter(card => {
+        const candidateName = identityKey(card.detail?.lead_name || card.summary?.lead_name || '').replace(/ /g, '');
+        const candidateAddress = identityKey(card.detail?.address || card.summary?.address || '');
+        return withinOneCharacter(name, candidateName) ||
+          (Boolean(address) && address === candidateAddress);
+      }) : [];
     }
     if (q.trim()) {
       const needle = normalized(q);
@@ -285,6 +315,6 @@ export class GalleryOffline {
     for (const card of page) {
       items.push({...card.summary, _offline_image_url:await this.imageUrl(card.id)});
     }
-    return {total, items, dates, offline:true, lead_name:relatedName};
+    return {total, items, dates, offline:true, lead_name:relatedName, address:relatedAddress};
   }
 }

@@ -59,6 +59,45 @@ def test_new_normalized_header_is_used_without_address_or_number_guessing(tmp_pa
     assert service.repository.recognition_candidate(10**12) is None
 
 
+def test_related_uses_one_character_name_or_exact_address_and_global_rename(tmp_path):
+    service=build(tmp_path)
+    anchor=seed(service,1,1,
+        text='Lead Name: Darryll Mitchell Address: 792 Park Ave NE, OCEAN SHORES, WA, 98569 Phone: 3609829374')
+    one_letter_name=seed(service,2,1,
+        text='Lead Name: Darryl Mitchell Address: 10 Different Rd, Aberdeen, WA 98520 Phone: 1')
+    exact_address=seed(service,3,1,
+        text='Lead Name: Completely Different Address: 792 PARK AVE NE, ocean shores, WA 98569 Phone: 2')
+    two_letter_name=seed(service,4,1,
+        text='Lead Name: Daryl Mitchel Address: 400 Other Rd, Aberdeen, WA 98520 Phone: 3')
+    one_letter_address=seed(service,5,1,
+        text='Lead Name: Another Person Address: 793 Park Ave NE, OCEAN SHORES, WA, 98569 Phone: 4')
+    expanded_address=seed(service,6,1,
+        text='Lead Name: Different Customer Address: 792 Park Avenue Northeast, OCEAN SHORES, WA, 98569 Phone: 5')
+    unrelated=seed(service,7,1,
+        text='Lead Name: Other Person Address: 500 Main St, Olympia, WA 98501 Phone: 6')
+
+    related=service.related(anchor)
+    ids={row['id'] for row in related['items']}
+    assert anchor in ids
+    assert one_letter_name in ids
+    assert exact_address in ids
+    assert two_letter_name not in ids
+    assert one_letter_address not in ids
+    assert expanded_address not in ids
+    assert unrelated not in ids
+    assert related['address'].startswith('792 Park Ave')
+
+    changed=service.lead(anchor,'Darryl Mitchell')
+    assert changed==3
+    assert service.item(anchor)['lead_name']=='Darryl Mitchell'
+    assert service.item(one_letter_name)['lead_name']=='Darryl Mitchell'
+    assert service.item(exact_address)['lead_name']=='Darryl Mitchell'
+    assert service.item(two_letter_name)['lead_name']=='Daryl Mitchel'
+    assert service.item(one_letter_address)['lead_name']=='Another Person'
+    assert service.item(expanded_address)['lead_name']=='Different Customer'
+    assert service.item(unrelated)['lead_name']=='Other Person'
+
+
 def test_existing_repair_preserves_ids_images_notes_dates_and_confirmation(tmp_path):
     service=build(tmp_path)
     ident=seed(service,text='Lead Name: JORDAN EXAMPLE eet 6311 Street Phone: 123\n4 1 1 1 16 0 1152')
@@ -146,5 +185,7 @@ def test_recognition_and_navigation_have_explicit_owners():
     offline_runtime=(root/'static/gallery_offline.js').read_text()
     assert 'sqlite3' not in access_service and 'flask' not in access_service
     assert 'flask' not in access_repository
+    assert "'edit_identity'" in access_service
+    assert "require('edit_identity')" in (root/'gallery/web.py').read_text()
     assert 'indexedDB' not in gallery_ui and 'localStorage' not in gallery_ui
     assert 'indexedDB' in offline_runtime and '/gallery/api/offline/index' in offline_runtime

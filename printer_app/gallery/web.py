@@ -28,7 +28,6 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         'gallery.delete_import_item',
         'gallery.reprocess_job',
         'gallery.summary',
-        'gallery.lead_name',
         'gallery.document_date',
     }
 
@@ -283,10 +282,10 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
 
     @bp.post('/api/items/<ident>/lead-name')
     def lead_name(ident):
-        require_admin()
+        require('edit_identity')
         existing(ident)
-        service.lead(ident, request.form.get('lead_name', ''))
-        return jsonify(ok=True)
+        updated = service.lead(ident, request.form.get('lead_name', ''))
+        return jsonify(ok=True, updated=updated)
 
     @bp.get('/image/<ident>')
     def image(ident):

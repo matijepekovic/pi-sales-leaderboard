@@ -103,6 +103,72 @@ def lead_key(value):
     return ' '.join(value.casefold().split())
 
 
+ADDRESS_BOUNDARY = (
+    r'(?=\s*(?:\||\n)|\s+(?:Phone|Power\s+Questions|Scheduled\s+Start|'
+    r'Assigned\s+Service\s+Resource|Set\s+By|Work\s+Type|Product\s+Interest|'
+    r'Source|Sub\s+Source|Hover\s*/\s*Flir|Lead\s+Description|Start\s+Price|'
+    r'Final\s+Price|Deposit\s*/\s*Payment)\s*:?[ \t]*|$)'
+)
+
+
+def printed_address(text):
+    """Read the explicit Address field from normalized OCR text."""
+    readings = []
+    for match in re.finditer(r'\bAddress\s*[:;]?[ \t]*([^\n|]+?)' + ADDRESS_BOUNDARY,
+                             str(text or ''), re.I):
+        value = ' '.join(match[1].split())
+        if not value or len(value) > 240 or not any(c.isalnum() for c in value):
+            continue
+        readings.append(value)
+    if not readings:
+        return ''
+    keys = {address_key(value) for value in readings}
+    return readings[0] if len(keys) == 1 else ''
+
+
+def address_key(value):
+    """Case/punctuation/spacing normalization only; no address synonym expansion."""
+    value = unicodedata.normalize('NFKC', str(value or '')).casefold()
+    return ' '.join(re.findall(r'[a-z0-9]+', value))
+
+
+def _within_one_character(left, right):
+    """True only for exact equality or one insertion/deletion/substitution."""
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    if abs(len(left) - len(right)) > 1:
+        return False
+    if len(left) > len(right):
+        left, right = right, left
+    if len(left) == len(right):
+        return sum(a != b for a, b in zip(left, right)) <= 1
+    # right is exactly one character longer.
+    i = j = differences = 0
+    while i < len(left) and j < len(right):
+        if left[i] == right[j]:
+            i += 1
+            j += 1
+            continue
+        differences += 1
+        if differences > 1:
+            return False
+        j += 1
+    return True
+
+
+def related_identity(reference_name, reference_address, candidate_name, candidate_address):
+    """Related when name differs by <=1 letter/number OR address is exactly equal."""
+    reference_name = ''.join(re.findall(r'[a-z0-9]+', lead_key(reference_name)))
+    candidate_name = ''.join(re.findall(r'[a-z0-9]+', lead_key(candidate_name)))
+    reference_address = address_key(reference_address)
+    candidate_address = address_key(candidate_address)
+    name_match = _within_one_character(reference_name, candidate_name)
+    address_match = bool(reference_address) and reference_address == candidate_address
+    return name_match or address_match
+
+
 def printed_lead(text):
     """Read explicit labels in saved OCR, including legacy flattened TSV text.
 

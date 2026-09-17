@@ -9,12 +9,11 @@ changed by this presentation update.
 
 The floating controls are **Show related**, **Notes**, and **Search**. Notes and
 Related automatically target the complete, unobscured card in view; opening a card
-pins that record while its viewer is open. Related takes the explicit printed
-Lead Name automatically and searches that phrase across all retained printed text,
-corrected names and notes, newest dates first. It clears the current search/date
-filter and never opens a name-entry prompt. Unreadable or ambiguous names show a
-clear message, not a guessed match. Optional corrections remain in Card details.
-A matching name alone is not proof that two records represent the same person.
+pins that record while its viewer is open. Related compares the explicit Lead Name
+and Address extracted from each work order. A card is related when **either** its
+normalized lead name differs by at most one character **or** its normalized
+address is exactly equal. Address matching has zero character tolerance and does
+not expand abbreviations such as Ave/Avenue. Results span all retained dates.
 
 Notes opens a bottom sheet only to add a note for the selected card. Existing
 notes are shown underneath the document when that work order is opened. The target
@@ -97,12 +96,10 @@ not a CUPS cancellation button. Other reports and gallery data are unchanged.
 
 In the sales gallery, **Notes** and **Show related** automatically use the fully
 visible, unobscured card. Notes remain pinned to that record while the panel is
-open, including keyboard/viewport changes. Related uses its automatically read
-lead name as a phrase search across all saved printed text, lead names and notes;
-it starts across all dates, not just the current date or loaded page. It never
-opens a name-entry prompt. Unreadable/ambiguous names show an error instead of
-inventing a match. Missing names in legacy flattened OCR are backfilled once;
-user-confirmed names and existing images/notes are preserved.
+open, including keyboard/viewport changes. Related uses the strict identity rule:
+lead name within one character **or** exact normalized address. It starts across
+all dates, not just the current date or loaded page. Existing images and notes are
+unchanged; address metadata is backfilled from already-saved OCR text.
 
 The gallery's links back to Print Control and Settings are removed. Gallery access
 is capability-based: full-access devices can browse, add notes, keep an offline copy
@@ -172,3 +169,20 @@ The repository owns review state and transitions, the service coordinates the
 gallery-owned crop file deletion, and the web/template layer only exposes those
 actions behind printer-admin authentication. Geometry/OCR remain advisory inputs rather than approval
 authority for unnamed cards.
+
+
+## Full-access global lead-name correction
+
+On an opened work order, a full-access Gallery device can long-press the lead name
+in the viewer header to open **Change lead name**. Temporary guests cannot open the
+editor and the server rejects the edit capability for them.
+
+Saving is intentionally global within the current related identity: every active
+work order whose current lead name is within one character of the selected card's
+name **or** whose normalized address exactly matches the selected card receives the
+new confirmed lead name. The matching set is calculated before the rename. This
+does not rewrite OCR text, images, addresses, notes, dates, source files, or print
+history. `gallery/policy.py` owns the strict identity contract,
+`gallery/repository.py` owns address persistence and the bulk SQL update, the Gallery
+service owns the global workflow, and the web layer enforces the full-access
+`edit_identity` capability.
