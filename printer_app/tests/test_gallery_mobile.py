@@ -119,7 +119,7 @@ def test_web_related_and_name_edits_keep_write_protection(web):
 @pytest.mark.skipif(os.environ.get('PRINTER_BROWSER_TESTS') != '1', reason='CI-only browser dependencies')
 def test_phone_full_cards_related_and_shared_notes(web):
     from PIL import Image
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import sync_playwright, expect
     from werkzeug.serving import make_server
     app, service, ids = web
     for ident in ids:
@@ -143,26 +143,26 @@ def test_phone_full_cards_related_and_shared_notes(web):
                 assert page.locator('.gallery-day').first.get_attribute('data-date') == '2026-08-11'
                 page.locator(f'.gallery-card[data-id="{ids[0]}"]').click()
                 page.locator('#galleryViewer [data-action="related"]').click()
-                page.wait_for_function("document.getElementById('galleryHeading').textContent === 'Related cards'")
+                expect(page.locator('#galleryHeading')).to_have_text('Related cards')
                 assert page.locator('.gallery-card').count() == 2
                 assert page.locator('.gallery-card').first.get_attribute('data-id') == ids[1]
                 assert page.locator('.gallery-card').all()[0].bounding_box()['x'] == page.locator('.gallery-card').all()[1].bounding_box()['x']
                 page.locator('body > .gallery-dock [data-action="notes"]').click()
                 page.locator('#galleryNote [name="body"]').fill('Shared follow-up note')
                 page.locator('#galleryNote button').click()
-                page.wait_for_function("document.getElementById('galleryNoteMessage').textContent.startsWith('Saved.')")
+                expect(page.locator('#galleryNoteMessage')).to_contain_text('Saved.')
                 second = browser.new_context(viewport={'width':390, 'height':844})
                 other = second.new_page(); other.goto(origin + '/gallery/')
                 other.locator(f'.gallery-card[data-id="{ids[0]}"]').click()
                 other.locator('#galleryViewer [data-action="notes"]').click()
-                other.wait_for_function("document.getElementById('galleryNotes').textContent.includes('Shared follow-up note')")
+                expect(other.locator('#galleryNotes')).to_contain_text('Shared follow-up note')
                 service.note(ids[0], 'd'*32, 'Other device', 'Live update')
-                other.wait_for_function("document.getElementById('galleryNotes').textContent.includes('Live update')", timeout=10000)
+                expect(other.locator('#galleryNotes')).to_contain_text('Live update', timeout=10000)
                 other.locator('[data-close="galleryNotesSheet"]').click()
                 other.locator('#galleryViewer [data-action="search"]').click()
                 other.locator('#query').fill('follow-up')
                 other.locator('#gallerySearch button').click()
-                other.wait_for_function("document.getElementById('galleryHeading').textContent === 'Search results'")
+                expect(other.locator('#galleryHeading')).to_have_text('Search results')
                 assert other.locator('.gallery-card').count() == 1
                 assert app.extensions['printer_db'].rows('SELECT * FROM jobs') == []
                 second.close(); context.close()

@@ -63,6 +63,15 @@ def checked_date(value):
     return parsed.isoformat()
 
 
+def checked_date_filter(value):
+    """Browsing only: empty means all dates; undated is never today's date."""
+    if value in ('', 'undated'):
+        return value
+    if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+        raise ValueError('Choose a date in YYYY-MM-DD format.')
+    return checked_date(value)
+
+
 def checked_lead_name(value):
     """Literal, user-confirmable name; never infer identity from notes or filenames."""
     if not isinstance(value, str) or len(value) > 160 or any(not c.isprintable() for c in value):

@@ -32,7 +32,8 @@ def blueprint(service):
 
     @bp.get('/api/items')
     def items():
-        return jsonify(service.search(request.args.get('q', ''), int(request.args.get('offset', '0'))))
+        return jsonify(service.search(request.args.get('q', ''), int(request.args.get('offset', '0')),
+                                      request.args.get('date', '')))
 
     @bp.get('/api/summary')
     def summary():
@@ -57,7 +58,8 @@ def blueprint(service):
     @bp.get('/api/items/<ident>/related')
     def related(ident):
         existing(ident)
-        return jsonify(service.related(ident, int(request.args.get('offset', '0'))))
+        return jsonify(service.related(ident, int(request.args.get('offset', '0')),
+                                       request.args.get('date', '')))
 
     @bp.post('/api/items/<ident>/lead-name')
     def lead_name(ident):
