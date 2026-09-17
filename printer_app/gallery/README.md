@@ -125,9 +125,14 @@ Print Control does not replace an existing full identity, so the phone keeps the
 account-scoped offline store.
 
 The date picker shows **Offline** and **Share** only to full access. Share creates a
-single-use link whose guest access expires 24 hours after the recipient opens it. Guest access
-is checked server-side on every gallery request and cannot use Offline, Share, Gallery
-Queue, reprocessing, or gallery administration. A new link is required after expiry.
+single-use link whose guest access expires 24 hours after the recipient opens it. The
+link is prepared when the date picker opens so the Share tap can immediately copy the
+link to the phone clipboard and invoke the browser's native Web Share sheet from the
+same user gesture. If Web Share is unavailable, the link is still copied. Browsers
+normally require a secure HTTPS context for the native share sheet; ordinary LAN HTTP
+therefore falls back to clipboard sharing. Guest access is checked server-side on
+every gallery request and cannot use Offline, Share, Gallery Queue, reprocessing, or
+gallery administration. A new link is required after expiry.
 
 Offline is phone-local. While enabled and Stats is reachable, the browser downloads
 new active card images plus current details and notes into IndexedDB and uploads queued
