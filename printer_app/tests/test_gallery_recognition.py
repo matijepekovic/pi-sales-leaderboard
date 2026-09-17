@@ -139,3 +139,12 @@ def test_recognition_and_navigation_have_explicit_owners():
     s=(root/'gallery/recognition.py').read_text()
     assert 'printer_app' not in s and 'gmail' not in s.lower()
     assert 'csv.QUOTE_NONE' in s
+
+    access_service=(root/'gallery/access_service.py').read_text()
+    access_repository=(root/'gallery/access_repository.py').read_text()
+    gallery_ui=(root/'static/gallery.js').read_text()
+    offline_runtime=(root/'static/gallery_offline.js').read_text()
+    assert 'sqlite3' not in access_service and 'flask' not in access_service
+    assert 'flask' not in access_repository
+    assert 'indexedDB' not in gallery_ui and 'localStorage' not in gallery_ui
+    assert 'indexedDB' in offline_runtime and '/gallery/api/offline/index' in offline_runtime
