@@ -53,6 +53,19 @@
 <p id="galleryNoteMessage" class="gallery-message" role="status"></p>
 </dialog>
 
+<dialog id="galleryLeadSheet" class="gallery-sheet" aria-labelledby="galleryLeadEditTitle">
+<div class="sheet-handle" aria-hidden="true"></div>
+<div class="sheet-heading"><h2 id="galleryLeadEditTitle">Change lead name</h2><button type="button" class="circle-button" data-close="galleryLeadSheet" aria-label="Close lead name editor">×</button></div>
+<p id="galleryLeadContext" class="sheet-context"></p>
+<p class="muted">This is a global Gallery update. Work orders related by a similar lead name or address will receive the new lead name.</p>
+<form id="galleryLeadForm">
+<input type="hidden" name="csrf" value="{{ session.csrf }}">
+<label>Lead name<input name="lead_name" maxlength="160" autocomplete="off" required></label>
+<button type="submit" class="primary">Update lead name everywhere</button>
+</form>
+<p id="galleryLeadMessage" class="gallery-message" role="status"></p>
+</dialog>
+
 <dialog id="galleryDateSheet" class="gallery-sheet date-sheet" aria-labelledby="galleryDateTitle">
 <div class="sheet-handle" aria-hidden="true"></div>
 <div class="sheet-heading"><h2 id="galleryDateTitle">Choose a date</h2><button type="button" class="circle-button" data-close="galleryDateSheet" aria-label="Close date picker">×</button></div>
