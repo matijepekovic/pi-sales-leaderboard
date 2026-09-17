@@ -72,9 +72,6 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-        # no-referrer makes native form POSTs send Origin: null, so our own
-        # Settings/Control forms fail the origin guard. Keep same-origin metadata
-        # while still withholding referrers from every external destination.
         response.headers['Referrer-Policy'] = 'same-origin'
         response.headers.setdefault('Content-Security-Policy',
             "default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; "
@@ -86,8 +83,6 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         return PrintDispatchService(PrintQueueRepository(db), current.print_schedule, current.timezone)
 
     def settings_form():
-        # Distinct checkbox names keep the duplicate-field protection intact;
-        # normalize only here, where browser form details belong.
         values = request.form.to_dict()
         if values.pop('gallery_present', '') == '1':
             values.setdefault('GALLERY_ENABLED', '0')
@@ -186,6 +181,16 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         else:
             abort(404)
         return redirect(url_for('control'))
+
+    @app.post('/print-queue/<int:attachment_id>/remove')
+    def remove_print_queue(attachment_id):
+        try:
+            dispatch().remove(attachment_id)
+        except LookupError:
+            abort(404)
+        except ValueError as exc:
+            abort(409, str(exc))
+        return redirect(url_for('control') + '#printQueue', code=303)
 
     @app.get('/jobs/<int:job_id>')
     def job_detail(job_id):
