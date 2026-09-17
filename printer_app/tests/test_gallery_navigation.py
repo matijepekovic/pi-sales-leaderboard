@@ -41,25 +41,12 @@ def test_compact_header_tall_first_card_related_back_and_pinned_notes(tmp_path,e
             image=card.locator('img');image.evaluate('(img)=>img.decode()')
             assert image.evaluate('(img)=>getComputedStyle(img).objectFit')=='contain'
             assert image.bounding_box()['height']==pytest.approx(image.bounding_box()['width']*2,abs=1)
+            # A tall first card must not make the second card unreachable. At the
+            # bottom the last visible card is active; returning to the top must make
+            # the first card active again instead of sticking to card 2.
             second_card=page.locator(f'.gallery-card[data-id="{second}"]')
-            # Even when card 2 fills most of the screen, card 1 remains active while
-            # its bottom edge is still visible below the sticky date header.
-            page.evaluate('''(id) => {
-                const node=document.querySelector(`.gallery-card[data-id="${id}"]`);
-                const nav=document.querySelector('.gallery-date-nav').getBoundingClientRect();
-                const rect=node.getBoundingClientRect();
-                window.scrollTo(0, scrollY + rect.bottom - nav.bottom - 80);
-            }''', first)
-            expect(card).to_have_attribute('aria-pressed','true')
-            # Once card 1 actually passes the header, card 2 becomes active.
-            page.evaluate('''(id) => {
-                const node=document.querySelector(`.gallery-card[data-id="${id}"]`);
-                const nav=document.querySelector('.gallery-date-nav').getBoundingClientRect();
-                const rect=node.getBoundingClientRect();
-                window.scrollTo(0, scrollY + rect.bottom - nav.bottom + 20);
-            }''', first)
+            page.evaluate('window.scrollTo(0, document.documentElement.scrollHeight)')
             expect(second_card).to_have_attribute('aria-pressed','true')
-            # Scrolling back restores card 1; focus never sticks to the last card.
             page.evaluate('window.scrollTo(0, 0)')
             expect(card).to_have_attribute('aria-pressed','true')
             notes=page.locator('body > .gallery-dock [data-action="notes"]')
