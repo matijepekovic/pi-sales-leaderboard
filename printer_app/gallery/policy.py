@@ -108,16 +108,18 @@ def printed_lead(text):
 
     Do not derive a name from filenames, notes or assigned representatives.
     Multiple different Lead Name headers indicate a bad combined crop, not one
-    person's identity. No interactive name prompt is needed for readable headers.
+    person's identity. Names may contain digits and printable symbols; the next
+    known field label, especially Address, owns the boundary instead of a symbol
+    whitelist. No interactive name prompt is needed for readable headers.
     """
     names = []
-    boundary = (r'(?=\s*(?:\||\n)|\s+(?:Address|Phone|Power\s+Questions|Scheduled\s+Start|'
+    boundary = (r'(?=\s*(?:\||\n)|\s+Address\b|\s+(?:Phone|Power\s+Questions|Scheduled\s+Start|'
                 r'Local\s+Scheduled\s+Start\s+Time|Canvass\s+Set\s+By)\s*:|$)')
     for match in re.finditer(r'\bLead\s+Name\s*[:;]\s*([^\n|]+?)' + boundary, text, re.I):
-        value = match[1].strip()
-        if not value or len(value) > 160 or not any(c.isalpha() for c in value):
+        value = ' '.join(match[1].split())
+        if not value or len(value) > 160 or not any(c.isalnum() for c in value):
             return ''
-        if any(not (c.isalpha() or c.isspace() or c in ".'’‘‐‑-,") for c in value):
+        if any(not c.isprintable() for c in value):
             return ''
-        names.append(' '.join(value.split()))
+        names.append(value)
     return names[0] if names and len({lead_key(n) for n in names}) == 1 else ''
