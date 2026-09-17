@@ -35,7 +35,7 @@
 
 <dialog id="galleryViewer" class="gallery-viewer" aria-labelledby="galleryTitle">
 <div class="viewer-header"><div><h2 id="galleryTitle">Work order</h2><button id="galleryViewerDate" type="button" class="gallery-date-trigger" aria-haspopup="dialog" aria-controls="galleryDateSheet"></button></div><button type="button" class="circle-button" data-close="galleryViewer" aria-label="Close work order" autofocus>×</button></div>
-<div class="viewer-content"><img id="galleryFull" alt="Complete work-order image"><p id="galleryViewerMessage" role="status"></p><p id="gallerySource" class="muted"></p></div>
+<div class="viewer-content"><img id="galleryFull" alt="Complete work-order image"><p id="galleryViewerMessage" role="status"></p><p id="gallerySource" class="muted"></p><section id="galleryViewerNotesSection" class="viewer-notes" hidden><h3>Notes</h3><div id="galleryNotes" aria-live="polite"></div></section></div>
 <div class="gallery-dock">{{ actions() }}</div>
 </dialog>
 
@@ -43,7 +43,6 @@
 <div class="sheet-handle" aria-hidden="true"></div>
 <div class="sheet-heading"><h2 id="galleryNotesTitle">Notes</h2><button type="button" class="circle-button" data-close="galleryNotesSheet" aria-label="Close notes">×</button></div>
 <p id="galleryNotesContext" class="sheet-context"></p>
-<div id="galleryNotes" aria-live="polite"></div>
 <form id="galleryNote">
 <input type="hidden" name="csrf" value="{{ session.csrf }}">
 <label>Your name <span class="muted">(not verified)</span><input name="author" maxlength="80" autocomplete="name"></label>
