@@ -77,9 +77,14 @@ class GalleryRepository:
                     c.execute('UPDATE items SET lead_name=?,lead_key=?,lead_status=? WHERE id=?',
                               (name, lead_key(name), 'printed' if name else 'needs-name', row['id']))
             columns = {row['name'] for row in c.execute('PRAGMA table_info(items)')}
+            address_added = False
             if 'address' not in columns:
                 c.execute("ALTER TABLE items ADD COLUMN address TEXT NOT NULL DEFAULT ''")
+                address_added = True
+            if 'address_key' not in columns:
                 c.execute("ALTER TABLE items ADD COLUMN address_key TEXT NOT NULL DEFAULT ''")
+                address_added = True
+            if address_added:
                 for row in c.execute('SELECT id,text FROM items'):
                     address = printed_address(row['text'])
                     c.execute('UPDATE items SET address=?,address_key=? WHERE id=?',
