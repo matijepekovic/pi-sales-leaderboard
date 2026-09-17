@@ -20,10 +20,31 @@ def blueprint(service, access, intake_reader=None, reprocessor=None):
         'gallery.service_worker',
         'gallery.manifest',
     }
+    admin_endpoints = {
+        'gallery.queue_page',
+        'gallery.import_job_page',
+        'gallery.import_item_image',
+        'gallery.approve_import_item',
+        'gallery.delete_import_item',
+        'gallery.reprocess_job',
+        'gallery.summary',
+        'gallery.lead_name',
+        'gallery.document_date',
+    }
 
     @bp.before_request
     def authorize_gallery():
         if request.endpoint in public_endpoints:
+            return None
+        if request.endpoint in admin_endpoints:
+            admin = getattr(g, 'printer_admin', None)
+            if admin is None:
+                if request.path.startswith('/gallery/api/') or request.method != 'GET':
+                    return jsonify(error='Printer admin login required.'), 401
+                target = request.full_path if request.query_string else request.path
+                return redirect(url_for('admin_login', next=target))
+            if admin.must_change:
+                return redirect(url_for('admin_change_password', next=request.path))
             return None
         identity = access.resolve(request.cookies.get(ACCESS_COOKIE, ''))
         if identity is None:
@@ -38,6 +59,12 @@ def blueprint(service, access, intake_reader=None, reprocessor=None):
         if identity is None or not identity.allows(capability):
             abort(403)
         return identity
+
+    def require_admin():
+        admin = getattr(g, 'printer_admin', None)
+        if admin is None or admin.must_change:
+            abort(403)
+        return admin
 
     @bp.errorhandler(ValueError)
     def bad_value(exc):
@@ -109,7 +136,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None):
 
     @bp.get('/queue')
     def queue_page():
-        require('manage')
+        require_admin()
         state = request.args.get('state', '')
         offset = max(0, min(int(request.args.get('offset', '0')), 1000000))
         queue = service.queue(state, offset)
@@ -119,7 +146,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None):
 
     @bp.get('/jobs/<ident>')
     def import_job_page(ident):
-        require('manage')
+        require_admin()
         if not re.fullmatch(r'[a-f0-9]{64}', ident):
             abort(404)
         offset = max(0, min(int(request.args.get('offset', '0')), 1000000))
@@ -141,7 +168,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None):
 
     @bp.get('/jobs/<ident>/items/<item_id>/image')
     def import_item_image(ident, item_id):
-        require('manage')
+        require_admin()
         retained_job_item(ident, item_id)
         path = service.files.path('crops', item_id)
         if not path.is_file():
@@ -150,7 +177,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None):
 
     @bp.post('/jobs/<ident>/items/<item_id>/approve')
     def approve_import_item(ident, item_id):
-        require('manage')
+        require_admin()
         retained_job_item(ident, item_id)
         service.approve_import_item(ident, item_id)
         return redirect(url_for('gallery.import_job_page', ident=ident, offset=action_offset(),
@@ -158,7 +185,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None):
 
     @bp.post('/jobs/<ident>/items/<item_id>/delete')
     def delete_import_item(ident, item_id):
-        require('manage')
+        require_admin()
         retained_job_item(ident, item_id)
         service.delete_import_item(ident, item_id)
         return redirect(url_for('gallery.import_job_page', ident=ident, offset=action_offset(),
@@ -166,7 +193,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None):
 
     @bp.post('/jobs/<ident>/reprocess')
     def reprocess_job(ident):
-        require('manage')
+        require_admin()
         if not re.fullmatch(r'[a-f0-9]{64}', ident):
             abort(404)
         if reprocessor is None:
@@ -215,7 +242,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None):
 
     @bp.get('/api/summary')
     def summary():
-        require('manage')
+        require_admin()
         try:
             return jsonify(service.summary(g.printer_config.gallery))
         except Exception:
@@ -243,7 +270,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None):
 
     @bp.post('/api/items/<ident>/lead-name')
     def lead_name(ident):
-        require('manage')
+        require_admin()
         existing(ident)
         service.lead(ident, request.form.get('lead_name', ''))
         return jsonify(ok=True)
@@ -266,7 +293,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None):
 
     @bp.post('/api/items/<ident>/date')
     def document_date(ident):
-        require('manage')
+        require_admin()
         existing(ident)
         service.date(ident, request.form.get('date', ''))
         return jsonify(ok=True)
