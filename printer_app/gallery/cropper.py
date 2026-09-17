@@ -2,8 +2,8 @@
 
 Rendered pages are normalized before form detection: long printed rules establish
 small scan/skew rotation, then the existing outer-edge cutter finds work orders.
-Dense full-page report grids are rejected here because page geometry owns the
-line-pattern distinction; OCR, repositories and UI do not.
+Dense report grids are rejected here at both page and candidate-form level because
+page geometry owns the line-pattern distinction; OCR, repositories and UI do not.
 """
 import cv2
 import numpy as np
@@ -119,6 +119,75 @@ def is_dense_grid_page(image):
     return span > .55 and median_gap < .10
 
 
+def _rule_centers(runs):
+    return np.asarray([(start + end) / 2.0 for start, end in runs], dtype=float)
+
+
+def is_work_order_form(image):
+    """Reject table/report rectangles that only happen to have an outer border.
+
+    Work-order forms have a comparatively sparse structural grid and at least one
+    substantial vertical gap between long horizontal rules for the larger notes/
+    checklist areas. Reports like commission/NRA sheets repeat many narrow rows
+    and columns with many intersections across most of the rectangle.
+    """
+    h, w = image.shape[:2]
+    if min(h, w) < 120:
+        return False
+
+    gray = _gray(image)
+    ink = cv2.threshold(gray, 0, 255,
+                        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+
+    # Shorter kernels than the page-level rejector intentionally see segmented
+    # table rules too. This catches reports whose lines stop at section breaks.
+    vertical = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN,
+        np.ones((max(28, int(h * .10)), 1), np.uint8))
+    horizontal = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN,
+        np.ones((1, max(40, int(w * .16))), np.uint8))
+
+    horizontal_rules = _runs((horizontal > 0).mean(axis=1) > .22)
+    vertical_rules = _runs((vertical > 0).mean(axis=0) > .16)
+    h_centers = _rule_centers(horizontal_rules)
+    v_centers = _rule_centers(vertical_rules)
+
+    # The existing top-border detector already proved this is a plausible form.
+    # Only reject here when the candidate has strong report/table evidence.
+    if len(h_centers) < 4 or len(v_centers) < 4:
+        return True
+
+    h_gaps = np.diff(h_centers)
+    v_gaps = np.diff(v_centers)
+    tight_rows = int(np.count_nonzero(h_gaps < max(5, h * .055)))
+    tight_cols = int(np.count_nonzero(v_gaps < max(5, w * .055)))
+    largest_row_gap = float(h_gaps.max()) / max(1, h) if len(h_gaps) else 1.0
+
+    # Count actual crossings rather than merely counting detected rule bands.
+    # A report grid produces far more crossings than the irregular work-order
+    # layout, even when its rules are broken into several sections.
+    h_cross = cv2.dilate(horizontal, np.ones((3, 1), np.uint8))
+    v_cross = cv2.dilate(vertical, np.ones((1, 3), np.uint8))
+    intersections = cv2.bitwise_and(h_cross, v_cross)
+    labels, _ = cv2.connectedComponents((intersections > 0).astype(np.uint8))
+    crossing_count = max(0, int(labels) - 1)
+
+    dense_repetition = (
+        len(h_centers) >= 16 and len(v_centers) >= 12 and
+        tight_rows >= 10 and tight_cols >= 7 and crossing_count >= 70
+    )
+    no_large_work_area = (
+        len(h_centers) >= 14 and len(v_centers) >= 12 and
+        largest_row_gap < .11 and crossing_count >= 70
+    )
+    sideways_dense_report = (
+        w < h * 1.05 and len(h_centers) >= 12 and len(v_centers) >= 12 and
+        crossing_count >= 60
+    )
+    return not (dense_repetition or no_large_work_area or sideways_dense_report)
+
+
 def form_tops(image):
     """Return per-column top-border coordinates, excluding footer/empty frames.
 
@@ -203,4 +272,6 @@ def cut_forms(image):
         crop = image[y0:y1].copy()
         rows = np.arange(y0, y1)[:, None]
         crop[(rows < top[None, :]) | (rows >= bottom[None, :])] = 255
+        if not is_work_order_form(crop):
+            continue
         yield index+1, crop
