@@ -126,7 +126,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         from reportlab.graphics.shapes import Drawing
         from reportlab.graphics import renderSVG
         code = QrCodeWidget(destination)
-        drawing = Drawing(180, 180)
+        drawing = Drawing(100, 100)
         drawing.add(code)
         value = renderSVG.drawToString(drawing)
         return value.decode('utf-8') if isinstance(value, bytes) else value
