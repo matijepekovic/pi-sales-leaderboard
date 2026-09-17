@@ -1,9 +1,9 @@
 """Gallery HTTP boundary. Shares only the printer web host and write protection."""
 import re
-from flask import Blueprint, Response, abort, g, jsonify, render_template, request, send_file, url_for
+from flask import Blueprint, Response, abort, g, jsonify, redirect, render_template, request, send_file, url_for
 
 
-def blueprint(service, intake_reader=None):
+def blueprint(service, intake_reader=None, reprocessor=None):
     bp = Blueprint('gallery', __name__, url_prefix='/gallery')
 
     @bp.errorhandler(ValueError)
@@ -37,6 +37,17 @@ def blueprint(service, intake_reader=None):
         if not job:
             abort(404)
         return render_template('gallery_job.html', job=job, offset=offset)
+
+    @bp.post('/jobs/<ident>/reprocess')
+    def reprocess_job(ident):
+        if not re.fullmatch(r'[a-f0-9]{64}', ident):
+            abort(404)
+        if reprocessor is None:
+            abort(503)
+        reprocessor.reprocess(ident)
+        state = request.args.get('state', '')
+        offset = max(0, min(int(request.args.get('offset', '0')), 1000000))
+        return redirect(url_for('gallery.queue_page', state=state, offset=offset, reprocess='1'), code=303)
 
     @bp.get('/qr.svg')
     def qr():

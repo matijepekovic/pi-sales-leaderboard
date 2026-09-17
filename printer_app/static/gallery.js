@@ -86,8 +86,14 @@ import { GalleryNavigation } from './gallery_navigation.js';
     }
     for (const id of dialogs) {
       if (id === 'galleryViewer' && selected) {
-        openViewer(selected, false);
-        await el('galleryFull').decode().catch(() => {});
+        const details = openViewer(selected, false);
+        await Promise.all([el('galleryFull').decode().catch(() => {}), details]);
+        // Detail rendering and native history settling can both happen after showModal.
+        // Reapply the nested viewer position after those layout changes so Back returns
+        // to the exact place inside the work order instead of snapping to the top.
+        await nextFrame();
+        el(id).scrollTop = view.viewerScroll || 0;
+        await nextFrame();
         el(id).scrollTop = view.viewerScroll || 0;
       }
       else if (id === 'galleryNotesSheet' && selected) await openNotes(false);
@@ -274,7 +280,7 @@ import { GalleryNavigation } from './gallery_navigation.js';
     showDialog('galleryViewer', false); el('galleryViewer').scrollTop = 0;
     el('galleryViewer').querySelector('[data-close]').focus({preventScroll:true});
     if (record) navigation.push();
-    detail().catch(() => {});
+    return detail().catch(() => {});
   }
   async function openNotes(record = true) {
     if (!currentCard()) return;

@@ -164,7 +164,7 @@ def test_browser_one_click_related_and_notes_target_visible_card(tmp_path):
             expect(page.locator('#galleryFilterTitle')).to_have_text('Jordan Example')
             expect(page.locator('.gallery-card')).to_have_count(3)
             expect(page.locator('#galleryNotesSheet')).not_to_be_visible()
-            # Scroll without tapping a card; actions follow the complete visible card.
+            # Scroll without tapping a card; actions follow the topmost visible card.
             target = page.locator(f'.gallery-card[data-id="{older}"]')
             target.evaluate('''(node) => {
                 const rect = node.getBoundingClientRect();
@@ -181,6 +181,10 @@ def test_browser_one_click_related_and_notes_target_visible_card(tmp_path):
             assert service.item(older)['notes'][0]['body'] == 'Visible-card note'
             second = browser.new_page(viewport={'width':390,'height':844})
             second.goto(origin + '/gallery/')
+            # A fresh gallery opens the latest date. The older card is deliberately
+            # reached through All dates before checking that its shared note persisted.
+            second.locator('#galleryChooseDate').click()
+            second.locator('#galleryAllDates').click()
             second.locator(f'.gallery-card[data-id="{older}"]').click()
             second.locator('#galleryViewer [data-action="notes"]').click()
             expect(second.locator('#galleryNotes')).to_contain_text('Visible-card note')

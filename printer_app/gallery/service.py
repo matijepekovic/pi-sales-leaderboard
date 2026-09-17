@@ -25,6 +25,7 @@ class GalleryService:
             if not self.repository.imported(ident):
                 self.files.stage(ident, payload, options.max_mb)
                 self.repository.enqueue(ident, filename)
+        return ident
 
     def search(self, query, offset, document_date=''):
         self.initialize()
@@ -124,6 +125,17 @@ class GalleryService:
         if result:
             result['source_available'] = self.files.path('spool',ident).is_file()
         return result
+
+    def reprocess(self, ident):
+        """Discard generated gallery data so the same original PDF can be offered again."""
+        self.initialize()
+        reset = self.repository.reset_for_reprocess(ident)
+        with self.files.lock():
+            for item_id in reset['item_ids']:
+                self.files.remove('crops', item_id)
+            self.files.remove('spool', ident)
+            self.files.remove('work', ident)
+        return reset
 
     def report_progress(self, ident):
         value = self.files.read_progress(ident)

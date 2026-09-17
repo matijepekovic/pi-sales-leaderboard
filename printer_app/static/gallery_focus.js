@@ -1,4 +1,4 @@
-/** Owns visible-card selection. Tall documents do not have to fit the viewport. */
+/** Owns visible-card selection. The card crossing the usable viewport focus line is active. */
 export class GalleryFocus {
   constructor({container, blocked, onChange}) {
     this.container = container;
@@ -57,19 +57,37 @@ export class GalleryFocus {
     if (dock && dock.top < bottom && dock.bottom > top) bottom = dock.top - 6;
     const left = viewport?.offsetLeft || 0;
     const right = left + (viewport?.width || window.innerWidth);
-    const middle = (top + bottom) / 2;
-    let id = null, area = 0, distance = Infinity;
+    const focusY = top + Math.max(0, bottom - top) / 2;
+    const cards = [];
     for (const node of this.container.querySelectorAll('.gallery-card')) {
-      const rect = node.getBoundingClientRect(), image = node.querySelector('img');
-      if (!image?.complete || !image.naturalWidth) continue;
-      const visible = Math.max(0, Math.min(bottom, rect.bottom) - Math.max(top, rect.top));
-      const width = Math.max(0, Math.min(right, rect.right) - Math.max(left, rect.left));
-      const score = visible * width, d = Math.abs((rect.top + rect.bottom)/2 - middle);
-      if (!score) continue;
-      // Stable ties avoid flickering at the boundary between adjacent cards.
-      const tie = Math.abs(score-area) <= Math.max(1,width*2);
-      if ((score > area && !tie) || (tie && (node.dataset.id === this.current || (id !== this.current && d < distance)))) {
-        area = score; distance = d; id = node.dataset.id;
+      const rect = node.getBoundingClientRect();
+      const horizontal = Math.max(0, Math.min(right, rect.right) - Math.max(left, rect.left));
+      if (!horizontal || rect.bottom <= top + 1 || rect.top >= bottom - 1) continue;
+      cards.push({node, rect});
+    }
+
+    let id = null;
+    const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+    const viewportHeight = viewport?.height || window.innerHeight;
+    const pageHeight = document.documentElement.scrollHeight;
+    const atTop = scrollTop <= 2;
+    const atBottom = scrollTop + viewportHeight >= pageHeight - 2;
+
+    // At the ends of the document the first/last visible card must remain reachable,
+    // even when a very tall neighboring card still crosses the center focus line.
+    if (cards.length && atTop) id = cards[0].node.dataset.id;
+    else if (cards.length && atBottom) id = cards[cards.length - 1].node.dataset.id;
+    else {
+      let nearest = Infinity;
+      // In normal scrolling, a fixed focus line makes selection reversible and
+      // independent of stale state. A sliver of the previous card cannot keep focus.
+      for (const {node, rect} of cards) {
+        if (rect.top <= focusY && rect.bottom >= focusY) {
+          id = node.dataset.id;
+          break;
+        }
+        const distance = focusY < rect.top ? rect.top - focusY : focusY - rect.bottom;
+        if (distance < nearest) { nearest = distance; id = node.dataset.id; }
       }
     }
     if (id !== this.current) { this.current = id; this.onChange(id); }
