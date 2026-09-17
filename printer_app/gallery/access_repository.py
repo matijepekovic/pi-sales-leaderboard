@@ -67,6 +67,12 @@ class GalleryAccessRepository:
                 conn.execute('ALTER TABLE access_credentials ADD COLUMN invite_hash TEXT')
             conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS gallery_access_share_id
                 ON access_invites(share_id) WHERE share_id IS NOT NULL""")
+            # Legacy temporary access had no issuer/revocation contract and could
+            # live for 24 hours. Invalidate those grants when this schema lands so
+            # every surviving guest session follows the six-hour revocable model.
+            conn.execute("DELETE FROM access_invites WHERE role='guest' AND share_id IS NULL")
+            conn.execute("""UPDATE access_credentials SET revoked=coalesce(revoked,?)
+                WHERE role='guest' AND invite_hash IS NULL""", (time.time(),))
 
     def create_invite(self, token_hash, role, expires, one_time, *,
                       share_id=None, issuer_subject='', label=''):
