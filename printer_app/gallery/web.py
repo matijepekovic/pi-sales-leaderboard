@@ -128,6 +128,42 @@ def blueprint(service, access, intake_reader=None, reprocessor=None):
             abort(404)
         return render_template('gallery_job.html', job=job, offset=offset)
 
+    def retained_job_item(import_id, item_id):
+        if not re.fullmatch(r'[a-f0-9]{64}', import_id) or not re.fullmatch(r'[a-f0-9]{64}', item_id):
+            abort(404)
+        item = service.import_item(import_id, item_id)
+        if not item:
+            abort(404)
+        return item
+
+    def action_offset():
+        return max(0, min(int(request.form.get('offset', '0')), 1000000))
+
+    @bp.get('/jobs/<ident>/items/<item_id>/image')
+    def import_item_image(ident, item_id):
+        require('manage')
+        retained_job_item(ident, item_id)
+        path = service.files.path('crops', item_id)
+        if not path.is_file():
+            abort(404)
+        return send_file(path, mimetype='image/png', conditional=True)
+
+    @bp.post('/jobs/<ident>/items/<item_id>/approve')
+    def approve_import_item(ident, item_id):
+        require('manage')
+        retained_job_item(ident, item_id)
+        service.approve_import_item(ident, item_id)
+        return redirect(url_for('gallery.import_job_page', ident=ident, offset=action_offset(),
+                                action='approved'), code=303)
+
+    @bp.post('/jobs/<ident>/items/<item_id>/delete')
+    def delete_import_item(ident, item_id):
+        require('manage')
+        retained_job_item(ident, item_id)
+        service.delete_import_item(ident, item_id)
+        return redirect(url_for('gallery.import_job_page', ident=ident, offset=action_offset(),
+                                action='deleted'), code=303)
+
     @bp.post('/jobs/<ident>/reprocess')
     def reprocess_job(ident):
         require('manage')
