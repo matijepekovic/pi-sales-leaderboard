@@ -1,4 +1,4 @@
-/** Owns visible-card selection. The topmost card below the sticky UI is active. */
+/** Owns visible-card selection. The card crossing the usable viewport focus line is active. */
 export class GalleryFocus {
   constructor({container, blocked, onChange}) {
     this.container = container;
@@ -57,19 +57,24 @@ export class GalleryFocus {
     if (dock && dock.top < bottom && dock.bottom > top) bottom = dock.top - 6;
     const left = viewport?.offsetLeft || 0;
     const right = left + (viewport?.width || window.innerWidth);
+    const focusY = top + Math.max(0, bottom - top) / 2;
     let id = null;
-    // Reading order owns focus: keep the earlier card active for as long as any of
-    // it remains visible below the sticky header. Once it has actually scrolled
-    // past that boundary, the next visible card becomes active. This is reversible
-    // in both scroll directions and works for cards taller than the viewport.
+    let nearest = Infinity;
+
+    // A fixed focus line makes selection reversible and independent of stale state.
+    // The card the user is actually looking at wins even if a sliver of the previous
+    // card is still visible. Tall cards remain active while the focus line is inside
+    // them. In the small gap between cards, choose whichever visible card is nearest.
     for (const node of this.container.querySelectorAll('.gallery-card')) {
       const rect = node.getBoundingClientRect();
       const horizontal = Math.max(0, Math.min(right, rect.right) - Math.max(left, rect.left));
-      if (!horizontal) continue;
-      if (rect.bottom > top + 1 && rect.top < bottom - 1) {
+      if (!horizontal || rect.bottom <= top + 1 || rect.top >= bottom - 1) continue;
+      if (rect.top <= focusY && rect.bottom >= focusY) {
         id = node.dataset.id;
         break;
       }
+      const distance = focusY < rect.top ? rect.top - focusY : focusY - rect.bottom;
+      if (distance < nearest) { nearest = distance; id = node.dataset.id; }
     }
     if (id !== this.current) { this.current = id; this.onChange(id); }
     return id;
