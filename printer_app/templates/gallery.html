@@ -69,6 +69,25 @@
 <p id="galleryOfflineStatus" class="muted gallery-offline-status" role="status"></p>
 </dialog>
 
+<dialog id="galleryShareSheet" class="gallery-sheet share-sheet" aria-labelledby="galleryShareTitle">
+<div class="sheet-handle" aria-hidden="true"></div>
+<div class="sheet-heading"><h2 id="galleryShareTitle">Share Gallery access</h2><button type="button" class="circle-button" data-close="galleryShareSheet" aria-label="Close sharing">×</button></div>
+<p class="muted">Name this session, then show the QR code to the person you want to give access to. Access expires 6 hours after you create it.</p>
+<form id="galleryShareForm">
+<input type="hidden" name="csrf" value="{{ session.csrf }}">
+<label>Session name<input name="name" maxlength="80" placeholder="For example: John · Installer" autocomplete="off" required></label>
+<button type="submit" class="primary">Create 6-hour access</button>
+</form>
+<p id="galleryShareMessage" class="gallery-message" role="status"></p>
+<section id="galleryShareQrSection" class="gallery-share-qr" hidden>
+<h3 id="galleryShareQrName"></h3>
+<div id="galleryShareQrCode" aria-label="Temporary Gallery access QR code"></div>
+<p id="galleryShareQrExpiry" class="muted"></p>
+</section>
+<h3>Active sessions</h3>
+<div id="galleryActiveShares" class="gallery-active-shares" aria-live="polite"></div>
+</dialog>
+
 <dialog id="gallerySearchSheet" class="gallery-sheet search-sheet" aria-labelledby="gallerySearchTitle">
 <div class="sheet-handle" aria-hidden="true"></div><div class="sheet-heading"><h2 id="gallerySearchTitle">Search</h2><button type="button" class="circle-button" data-close="gallerySearchSheet" aria-label="Close search">×</button></div>
 <form id="gallerySearch" role="search"><label for="query">Anything printed on a card or in shared notes</label><input id="query" type="search" maxlength="300" placeholder="Name, word, phrase, phone number…" enterkeyhint="search"><button type="submit" class="primary">Search all cards</button></form>

@@ -124,15 +124,20 @@ a short-lived enrollment token for a long-lived gallery credential. Reopening fr
 Print Control does not replace an existing full identity, so the phone keeps the same
 account-scoped offline store.
 
-The date picker shows **Offline** and **Share** only to full access. Share creates a
-single-use link whose guest access expires 24 hours after the recipient opens it. The
-link is prepared when the date picker opens so the Share tap can immediately copy the
-link to the phone clipboard and invoke the browser's native Web Share sheet from the
-same user gesture. If Web Share is unavailable, the link is still copied. Browsers
-normally require a secure HTTPS context for the native share sheet; ordinary LAN HTTP
-therefore falls back to clipboard sharing. Guest access is checked server-side on
-every gallery request and cannot use Offline, Share, Gallery Queue, reprocessing, or
-gallery administration. A new link is required after expiry.
+The date picker shows **Offline** and **Share** only to full access. Share opens a
+Gallery sheet where the full-access user first names the session, then creates a QR
+code. The bearer URL is never printed in the UI. Each session lasts **6 hours from
+creation**. Active sessions created by that full-access Gallery identity are listed
+under the QR with their name, whether the QR has been opened, expiry time, and a
+**Revoke** button. Revocation immediately invalidates both an unused QR and an
+already-redeemed guest credential. A different full-access identity cannot revoke or
+list sessions it did not create.
+
+Guest access is checked server-side on every Gallery request and cannot use Offline,
+Share, Gallery Queue, reprocessing, or gallery administration. The access repository
+keeps each guest credential tied to its issuing share grant so expiry/revocation
+cannot be bypassed by keeping an old cookie. Legacy temporary grants from the older
+24-hour, non-revocable flow are invalidated when this schema is installed.
 
 Offline is phone-local. While enabled and Stats is reachable, the browser downloads
 new active card images plus current details and notes into IndexedDB and uploads queued

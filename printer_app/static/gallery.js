@@ -13,18 +13,12 @@ import { GalleryOffline } from './gallery_offline.js';
   let query = '', relatedId = null, selected = null, offset = 0, total = 0, dateFilter = '';
   let generation = 0, detailGeneration = 0, loading = false, galleryDirty = false, actionPending = false, notesVersion = '', pendingDetails = 0;
   let access = null, offlineMode = false;
-  let preparedShare = null, sharePreparing = null;
+  let shareQrSessionId = '';
   const offline = new GalleryOffline({
     onStatus: message => { el('galleryOfflineStatus').textContent = message; },
   });
   const dates = new GalleryDates({
-    onSelect: chooseDate,
-    openDialog: id => {
-      showDialog(id);
-      if (id === 'galleryDateSheet') prepareShare().catch(error => {
-        el('galleryOfflineStatus').textContent = 'Could not prepare sharing: ' + error.message;
-      });
-    },
+    onSelect: chooseDate, openDialog: id => showDialog(id),
     blocked: () => loading || navigation.restoring || Boolean(document.querySelector('dialog[open]')),
   });
   const focus = new GalleryFocus({
@@ -113,6 +107,7 @@ import { GalleryOffline } from './gallery_offline.js';
       }
       else if (id === 'galleryNotesSheet' && selected) await openNotes(false);
       else if (id === 'galleryDateSheet') dates.open();
+      else if (id === 'galleryShareSheet' && shareCapability()) await openShare(false);
       else if (id === 'gallerySearchSheet') { el('query').value = view.searchDraft || ''; showDialog(id, false); }
       else if (id === 'galleryInfoSheet') { showDialog(id, false); summary(); }
     }
@@ -135,57 +130,82 @@ import { GalleryOffline } from './gallery_offline.js';
     if (!response.ok) { const error = new Error(data.error || 'Request failed'); error.status = response.status; throw error; }
     return data;
   }
-  function fallbackCopy(value) {
-    const field = document.createElement('textarea');
-    field.value = value;
-    field.setAttribute('readonly', '');
-    field.style.position = 'fixed';
-    field.style.opacity = '0';
-    field.style.pointerEvents = 'none';
-    document.body.append(field);
-    field.select();
-    field.setSelectionRange(0, field.value.length);
-    let copied = false;
-    try { copied = document.execCommand('copy'); } catch (_) { copied = false; }
-    field.remove();
-    return copied;
-  }
-  function copyShareLink(value) {
-    if (navigator.clipboard?.writeText && window.isSecureContext) {
-      return navigator.clipboard.writeText(value).then(() => true).catch(() => fallbackCopy(value));
-    }
-    return Promise.resolve(fallbackCopy(value));
-  }
   function shareCapability() {
     return Boolean(access?.capabilities?.includes('share'));
   }
-  async function prepareShare(force = false) {
-    const button = el('galleryShare');
-    if (!shareCapability()) {
-      preparedShare = null;
-      button.disabled = false;
-      return null;
+  function shareExpiry(value) {
+    return new Date(Number(value) * 1000).toLocaleString([], {
+      month:'short', day:'numeric', hour:'numeric', minute:'2-digit'
+    });
+  }
+  function clearShareQr() {
+    shareQrSessionId = '';
+    el('galleryShareQrSection').hidden = true;
+    el('galleryShareQrCode').replaceChildren();
+    el('galleryShareQrName').textContent = '';
+    el('galleryShareQrExpiry').textContent = '';
+  }
+  function renderShareQr(svgText, sessionInfo) {
+    const parsed = new DOMParser().parseFromString(String(svgText), 'image/svg+xml');
+    const root = parsed.documentElement;
+    if (!root || root.localName !== 'svg' || parsed.querySelector('parsererror,script')) {
+      throw new Error('Could not render the access QR code.');
     }
-    const fresh = preparedShare && preparedShare.expiresAt - Date.now() > 5 * 60 * 1000;
-    if (!force && fresh) return preparedShare;
-    if (sharePreparing) return sharePreparing;
-    button.disabled = true;
-    sharePreparing = (async () => {
-      const form = new FormData();
-      form.set('csrf', el('galleryNote').elements.csrf.value);
-      const shared = await api('/gallery/api/share', {method:'POST', body:form});
-      preparedShare = {
-        url: shared.url,
-        expiresAt: Date.now() + Math.max(60, Number(shared.expires_in) || 86400) * 1000,
+    shareQrSessionId = sessionInfo.id;
+    el('galleryShareQrCode').replaceChildren(document.importNode(root, true));
+    el('galleryShareQrName').textContent = sessionInfo.name;
+    el('galleryShareQrExpiry').textContent = 'Access expires ' + shareExpiry(sessionInfo.expires) + '.';
+    el('galleryShareQrSection').hidden = false;
+  }
+  function renderActiveShares(sessions) {
+    const host = el('galleryActiveShares');
+    host.replaceChildren();
+    if (!sessions.length) {
+      host.append(text('p', 'No active access sessions.', 'muted'));
+      return;
+    }
+    sessions.forEach(item => {
+      const article = text('article', '', 'gallery-share-session');
+      const copy = document.createElement('span');
+      copy.append(
+        text('strong', item.name),
+        text('small', (item.opened ? 'Opened · ' : 'Waiting for scan · ') + 'expires ' + shareExpiry(item.expires))
+      );
+      const revoke = text('button', 'Revoke');
+      revoke.type = 'button';
+      revoke.className = 'gallery-share-revoke';
+      revoke.onclick = async () => {
+        revoke.disabled = true;
+        const form = new FormData();
+        form.set('csrf', el('galleryShareForm').elements.csrf.value);
+        try {
+          await api('/gallery/api/shares/' + item.id + '/revoke', {method:'POST', body:form});
+          if (shareQrSessionId === item.id) clearShareQr();
+          el('galleryShareMessage').textContent = item.name + ' access revoked.';
+          await loadActiveShares();
+        } catch (error) {
+          el('galleryShareMessage').textContent = 'Could not revoke access: ' + error.message;
+          revoke.disabled = false;
+        }
       };
-      return preparedShare;
-    })();
-    try {
-      return await sharePreparing;
-    } finally {
-      sharePreparing = null;
-      button.disabled = false;
-    }
+      article.append(copy, revoke);
+      host.append(article);
+    });
+  }
+  async function loadActiveShares() {
+    const data = await api('/gallery/api/shares');
+    const sessions = data.sessions || [];
+    if (shareQrSessionId && !sessions.some(item => item.id === shareQrSessionId)) clearShareQr();
+    renderActiveShares(sessions);
+  }
+  async function openShare(record = true) {
+    if (!shareCapability()) return;
+    el('galleryShareMessage').textContent = '';
+    if (record) showDialog('galleryShareSheet');
+    else showDialog('galleryShareSheet', false);
+    el('galleryShareForm').elements.name.focus();
+    try { await loadActiveShares(); }
+    catch (error) { el('galleryShareMessage').textContent = 'Could not load active access: ' + error.message; }
   }
   function accessControls(info, resumed = false) {
     const canOffline = resumed || Boolean(info?.capabilities?.includes('offline'));
@@ -193,15 +213,16 @@ import { GalleryOffline } from './gallery_offline.js';
     el('galleryOfflineWrap').hidden = !canOffline;
     el('galleryShare').hidden = !canShare;
     if (!canShare) {
-      preparedShare = null;
-      sharePreparing = null;
-      el('galleryShare').disabled = false;
+      if (el('galleryShareSheet').open) el('galleryShareSheet').close();
+      clearShareQr();
     }
     el('galleryOfflineToggle').checked = canOffline && offline.isEnabled();
     if (!canOffline) el('galleryOfflineStatus').textContent = '';
     if (info?.csrf) {
       const csrf = el('galleryNote').elements.csrf;
       if (csrf) csrf.value = info.csrf;
+      const shareCsrf = el('galleryShareForm').elements.csrf;
+      if (shareCsrf) shareCsrf.value = info.csrf;
     }
   }
   async function configureAccess() {
@@ -475,67 +496,25 @@ import { GalleryOffline } from './gallery_offline.js';
       toggle.disabled = false;
     }
   };
-  el('galleryShare').onclick = async () => {
-    const button = el('galleryShare');
-    if (!preparedShare) {
-      el('galleryOfflineStatus').textContent = 'Preparing share link…';
-      try { await prepareShare(); }
-      catch (error) {
-        el('galleryOfflineStatus').textContent = 'Could not share: ' + error.message;
-        return;
-      }
-    }
-    const shared = preparedShare;
-    preparedShare = null;
+  el('galleryShare').onclick = () => openShare();
+  el('galleryShareForm').onsubmit = async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
     button.disabled = true;
-
-    // Invoke both native operations before awaiting either one. With a prepared
-    // URL this keeps the phone's user gesture intact for the Web Share API.
-    const copyPromise = copyShareLink(shared.url);
-    let nativeShare = null;
-    if (navigator.share) {
-      try {
-        nativeShare = navigator.share({
-          title:'Stats Gallery',
-          text:'24-hour gallery access',
-          url:shared.url,
-        });
-      } catch (error) {
-        nativeShare = Promise.reject(error);
-      }
+    el('galleryShareMessage').textContent = 'Creating access…';
+    try {
+      const data = new FormData(form);
+      const result = await api('/gallery/api/share', {method:'POST', body:data});
+      renderShareQr(result.qr_svg, result.session);
+      form.elements.name.value = '';
+      el('galleryShareMessage').textContent = '6-hour access ready. Show this QR code to ' + result.session.name + '.';
+      await loadActiveShares();
+    } catch (error) {
+      el('galleryShareMessage').textContent = 'Could not create access: ' + error.message;
+    } finally {
+      button.disabled = false;
     }
-
-    // Prepare the next one-time link in the background for the next tap.
-    prepareShare(true).catch(() => {});
-
-    let copied = false;
-    try { copied = await copyPromise; } catch (_) { copied = false; }
-
-    if (nativeShare) {
-      try {
-        await nativeShare;
-        el('galleryOfflineStatus').textContent = copied
-          ? '24-hour access link copied and shared.'
-          : '24-hour access link shared.';
-      } catch (error) {
-        if (error.name === 'AbortError') {
-          el('galleryOfflineStatus').textContent = copied
-            ? '24-hour access link copied.'
-            : 'Sharing canceled.';
-        } else {
-          el('galleryOfflineStatus').textContent = copied
-            ? 'Link copied. The phone share menu could not open.'
-            : 'Could not share: ' + error.message;
-        }
-      }
-    } else if (copied) {
-      el('galleryOfflineStatus').textContent = window.isSecureContext
-        ? '24-hour access link copied. Native share menu is unavailable in this browser.'
-        : '24-hour access link copied. The phone share menu requires HTTPS.';
-    } else {
-      el('galleryOfflineStatus').textContent = '24-hour access link: ' + shared.url;
-    }
-    button.disabled = Boolean(sharePreparing);
   };
   el('galleryRefresh').onclick = () => { galleryDirty = true; requestClose('galleryInfoSheet'); };
   el('gallerySearch').onsubmit = async event => {
@@ -586,7 +565,27 @@ import { GalleryOffline } from './gallery_offline.js';
   setInterval(() => { if (selected && !pendingDetails && !document.hidden && (el('galleryViewer').open || el('galleryNotesSheet').open)) detail().catch(() => {}); }, 5000);
   setInterval(() => { if (!document.hidden && el('galleryInfoSheet').open) summary(); }, 15000);
   setInterval(() => { if (!document.hidden && navigator.onLine && offline.isEnabled()) offline.sync().catch(() => {}); }, 60000);
-  setInterval(() => { if (!document.hidden && navigator.onLine) configureAccess().catch(() => {}); }, 15 * 60 * 1000);
+  setInterval(() => {
+    if (!document.hidden && navigator.onLine && el('galleryShareSheet').open) {
+      loadActiveShares().catch(() => {});
+    }
+  }, 30000);
+  async function checkGuestAccess() {
+    if (document.hidden || !navigator.onLine || access?.role !== 'guest') return;
+    try {
+      await configureAccess();
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) {
+        location.replace('/gallery/');
+      }
+    }
+  }
+  setInterval(checkGuestAccess, 15000);
+  setInterval(() => {
+    if (!document.hidden && navigator.onLine && access?.role === 'full') configureAccess().catch(() => {});
+  }, 15 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkGuestAccess(); });
+  window.addEventListener('focus', checkGuestAccess);
   window.addEventListener('online', async () => {
     const wasOffline = offlineMode;
     try {

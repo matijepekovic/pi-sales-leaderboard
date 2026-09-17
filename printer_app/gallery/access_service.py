@@ -1,7 +1,7 @@
-"""Gallery authorization and invitation workflow.
+"""Gallery authorization and temporary-sharing workflow.
 
-HTTP owns cookies/redirects. This service owns roles, capabilities, token issuance,
-expiry and redemption through the access repository.
+HTTP owns cookies/QR rendering. This service owns roles, capabilities, named shares,
+expiry, redemption and revocation through the access repository.
 """
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ CAPABILITIES = {
     'full': frozenset({'browse', 'notes', 'offline', 'share'}),
     'guest': frozenset({'browse', 'notes'}),
 }
-GUEST_SESSION_SECONDS = 86400
+GUEST_SESSION_SECONDS = 6 * 3600
+MAX_SHARE_NAME = 80
 
 
 @dataclass(frozen=True)
@@ -55,9 +56,6 @@ class GalleryAccessService:
     def issue_full_invite(self, ttl=600):
         return self._issue_invite('full', ttl, one_time=False)
 
-    def issue_guest_invite(self, ttl=86400):
-        return self._issue_invite('guest', ttl, one_time=True)
-
     def _issue_invite(self, role, ttl, one_time):
         self.initialize()
         if role not in CAPABILITIES:
@@ -67,23 +65,67 @@ class GalleryAccessService:
         self.repository.create_invite(self._hash(token), role, time.time() + ttl, one_time)
         return token
 
+    @staticmethod
+    def checked_share_name(value):
+        name = ' '.join(str(value or '').split())
+        if not name or len(name) > MAX_SHARE_NAME or not all(c.isprintable() for c in name):
+            raise ValueError(f'Name this access session using up to {MAX_SHARE_NAME} characters.')
+        return name
+
+    def create_guest_share(self, issuer_subject, name):
+        self.initialize()
+        if not issuer_subject:
+            raise ValueError('Full Gallery access is required to share.')
+        label = self.checked_share_name(name)
+        token = secrets.token_urlsafe(32)
+        share_id = secrets.token_hex(16)
+        expires = time.time() + GUEST_SESSION_SECONDS
+        self.repository.create_invite(
+            self._hash(token),
+            'guest',
+            expires,
+            True,
+            share_id=share_id,
+            issuer_subject=issuer_subject,
+            label=label,
+        )
+        return dict(id=share_id, name=label, expires=expires, token=token)
+
+    def active_shares(self, issuer_subject):
+        self.initialize()
+        return [
+            dict(id=row['share_id'], name=row['label'], created=row['created'],
+                 expires=row['expires'], opened=row['used'] is not None)
+            for row in self.repository.active_shares(issuer_subject)
+        ]
+
+    def revoke_share(self, issuer_subject, share_id):
+        self.initialize()
+        if not isinstance(share_id, str) or len(share_id) != 32:
+            raise LookupError('This access session is unavailable.')
+        int(share_id, 16)
+        self.repository.revoke_share(issuer_subject, share_id)
+
     def redeem(self, invite_token):
         self.initialize()
         if not invite_token or len(invite_token) > 200:
             return None
-        row = self.repository.redeem_invite(self._hash(invite_token))
+        invite_hash = self._hash(invite_token)
+        row = self.repository.redeem_invite(invite_hash)
         if not row:
             return None
         role = row['role']
         if role not in CAPABILITIES:
             return None
-        # The link may wait before the recipient opens it. Guest access lasts a
-        # full 24 hours from redemption, not from the sender creating the link.
-        expires = time.time() + GUEST_SESSION_SECONDS if role == 'guest' else None
+        expires = float(row['expires']) if role == 'guest' else None
         credential = secrets.token_urlsafe(32)
         subject = secrets.token_hex(16)
         self.repository.create_credential(
-            self._hash(credential), subject, role, expires=expires
+            self._hash(credential),
+            subject,
+            role,
+            expires=expires,
+            invite_hash=invite_hash if role == 'guest' else None,
         )
         return GalleryGrant(credential, GalleryIdentity(subject, role, expires))
 
