@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 
 # Executed as a script, deliberately without loading the printer package/runtime.
-from cropper import cut_forms
+from cropper import cut_forms, deskew_page, is_dense_grid_page
 from recognition import recognize
 
 
@@ -51,7 +51,16 @@ def process(source, output, budget):
             pagefile = prefix.with_suffix('.png')
             with Image.open(pagefile) as image:
                 raster = np.array(image.convert('RGB'))
+            # Normalize the printed rule geometry before any form detection.
+            # The cutter then receives the same straight page shape it was built for.
+            raster = deskew_page(raster)
             report_progress(output, 'crop', page, pages, len(manifest['items']))
+            if is_dense_grid_page(raster):
+                manifest['skipped'].append(page)
+                pagefile.unlink(missing_ok=True)
+                del raster
+                report_progress(output, 'page-complete', page, pages, len(manifest['items']))
+                continue
             count = 0
             for part, crop in cut_forms(raster):
                 count += 1
