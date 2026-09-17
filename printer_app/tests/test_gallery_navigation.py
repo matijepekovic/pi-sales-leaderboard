@@ -41,6 +41,14 @@ def test_compact_header_tall_first_card_related_back_and_pinned_notes(tmp_path,e
             image=card.locator('img');image.evaluate('(img)=>img.decode()')
             assert image.evaluate('(img)=>getComputedStyle(img).objectFit')=='contain'
             assert image.bounding_box()['height']==pytest.approx(image.bounding_box()['width']*2,abs=1)
+            # Scrolling down may activate another card, but returning to the top must
+            # make the first card active again. Focus must come from current geometry,
+            # never from the last card that happened to be active.
+            second_card=page.locator(f'.gallery-card[data-id="{second}"]')
+            page.evaluate('window.scrollTo(0, document.documentElement.scrollHeight)')
+            expect(second_card).to_have_attribute('aria-pressed','true')
+            page.evaluate('window.scrollTo(0, 0)')
+            expect(card).to_have_attribute('aria-pressed','true')
             notes=page.locator('body > .gallery-dock [data-action="notes"]')
             expect(notes).to_be_enabled();notes.click()
             expect(page.locator('#galleryNote')).to_have_attribute('data-item-id',first)
