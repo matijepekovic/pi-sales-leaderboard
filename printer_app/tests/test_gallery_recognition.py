@@ -59,30 +59,38 @@ def test_new_normalized_header_is_used_without_address_or_number_guessing(tmp_pa
     assert service.repository.recognition_candidate(10**12) is None
 
 
-def test_related_uses_similar_name_or_address_and_global_rename(tmp_path):
+def test_related_uses_one_character_name_or_exact_address_and_global_rename(tmp_path):
     service=build(tmp_path)
     anchor=seed(service,1,1,
         text='Lead Name: Darryll Mitchell Address: 792 Park Ave NE, OCEAN SHORES, WA, 98569 Phone: 3609829374')
-    name_match=seed(service,2,1,
+    one_letter_name=seed(service,2,1,
         text='Lead Name: Darryl Mitchell Address: 10 Different Rd, Aberdeen, WA 98520 Phone: 1')
-    address_match=seed(service,3,1,
-        text='Lead Name: Completely Different Address: 792 Park Avenue Northeast, Ocean Shores, WA 98569 Phone: 2')
-    unrelated=seed(service,4,1,
-        text='Lead Name: Other Person Address: 500 Main St, Olympia, WA 98501 Phone: 3')
+    exact_address=seed(service,3,1,
+        text='Lead Name: Completely Different Address: 792 PARK AVE NE, ocean shores, WA 98569 Phone: 2')
+    two_letter_name=seed(service,4,1,
+        text='Lead Name: Daryl Mitchel Address: 400 Other Rd, Aberdeen, WA 98520 Phone: 3')
+    one_letter_address=seed(service,5,1,
+        text='Lead Name: Another Person Address: 793 Park Ave NE, OCEAN SHORES, WA, 98569 Phone: 4')
+    unrelated=seed(service,6,1,
+        text='Lead Name: Other Person Address: 500 Main St, Olympia, WA 98501 Phone: 5')
 
     related=service.related(anchor)
     ids={row['id'] for row in related['items']}
     assert anchor in ids
-    assert name_match in ids
-    assert address_match in ids
+    assert one_letter_name in ids
+    assert exact_address in ids
+    assert two_letter_name not in ids
+    assert one_letter_address not in ids
     assert unrelated not in ids
     assert related['address'].startswith('792 Park Ave')
 
     changed=service.lead(anchor,'Darryl Mitchell')
     assert changed==3
     assert service.item(anchor)['lead_name']=='Darryl Mitchell'
-    assert service.item(name_match)['lead_name']=='Darryl Mitchell'
-    assert service.item(address_match)['lead_name']=='Darryl Mitchell'
+    assert service.item(one_letter_name)['lead_name']=='Darryl Mitchell'
+    assert service.item(exact_address)['lead_name']=='Darryl Mitchell'
+    assert service.item(two_letter_name)['lead_name']=='Daryl Mitchel'
+    assert service.item(one_letter_address)['lead_name']=='Another Person'
     assert service.item(unrelated)['lead_name']=='Other Person'
 
 
