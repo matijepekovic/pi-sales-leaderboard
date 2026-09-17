@@ -17,6 +17,44 @@ from .bootstrap import build
 log = logging.getLogger(__name__)
 
 
+def saved_image_reader(gallery, stop):
+    """Isolated, bounded OCR adapter used only by the gallery worker."""
+    def read(path):
+        if stop.is_set() or not path.is_file():
+            raise ValueError('Image unavailable for recognition')
+        if gallery.files.usage()['free'] < 576 * 1048576:
+            raise ValueError('Waiting for recognition workspace')
+        directory = gallery.files.path('work', path.stem)
+        gallery.files.remove('work', path.stem)
+        directory.mkdir()
+        try:
+            env = {'PATH':'/usr/bin:/bin', 'LANG':'C.UTF-8', 'OMP_THREAD_LIMIT':'1',
+                   'OPENBLAS_NUM_THREADS':'1', 'PYTHONDONTWRITEBYTECODE':'1'}
+            script = Path(__file__).with_name('recognition.py')
+            with subprocess.Popen(['/usr/bin/python3',str(script),str(path),str(directory)],
+                    env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as child:
+                deadline = time.monotonic()+150
+                while child.poll() is None:
+                    if stop.wait(2) or time.monotonic() > deadline:
+                        child.terminate()
+                        try:
+                            child.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            child.kill()
+                        break
+                    gallery.repository.set_state(dict(heartbeat=time.time(),processing=False,
+                        repairing=True,error=''))
+                if child.wait() != 0 or stop.is_set():
+                    raise ValueError('Recognition will retry later')
+            result = directory / 'recognition.json'
+            if result.stat().st_size > 1000000:
+                raise ValueError('Recognition response too large')
+            return json.loads(result.read_text(encoding='utf-8'))
+        finally:
+            gallery.files.remove('work', path.stem)
+    return read
+
+
 def main():
     logging.basicConfig(level=logging.INFO)
     os.umask(0o077)
@@ -32,6 +70,7 @@ def main():
         gallery.repository.recover()
         gallery.clear_temporary()
         next_cleanup = 0
+        read_saved = saved_image_reader(gallery, stop)
         while not stop.is_set():
             job = None
             try:
@@ -83,7 +122,10 @@ def main():
                     # Newly imported old documents follow the printed-date policy too.
                     gallery.expire(cfg.gallery.days, cfg.timezone)
                     log.info('Gallery import complete: %s crop(s)', len(manifest['items']))
-                else:
+                # One repair per iteration, after any new import. Printing has a
+                # different service; neither imports nor repairs run in web requests.
+                repaired = False if stop.is_set() else gallery.repair_one(read_saved)
+                if not job and not repaired:
                     stop.wait(5)
             except Exception as exc:
                 log.warning('Gallery task failed: %s', type(exc).__name__)

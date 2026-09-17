@@ -98,6 +98,10 @@ def phone(web):
                 context = browser.new_context(viewport={'width':390, 'height':844}, is_mobile=True, has_touch=True)
                 page = context.new_page()
                 page.goto(f'http://127.0.0.1:{server.server_port}/gallery/')
+                from playwright.sync_api import expect
+                expect(page.locator('#galleryCards')).to_have_attribute('aria-busy', 'false')
+                page.locator('#galleryChooseDate').click(); page.locator('#galleryAllDates').click()
+                expect(page.locator('.gallery-day')).to_have_count(3)
                 yield page, context, service, ids
             finally:
                 browser.close()
