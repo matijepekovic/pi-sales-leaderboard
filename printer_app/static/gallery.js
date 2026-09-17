@@ -481,10 +481,11 @@ import { GalleryOffline } from './gallery_offline.js';
   setInterval(() => { if (!document.hidden && el('galleryInfoSheet').open) summary(); }, 15000);
   setInterval(() => { if (!document.hidden && navigator.onLine && offline.isEnabled()) offline.sync().catch(() => {}); }, 60000);
   window.addEventListener('online', async () => {
+    const wasOffline = offlineMode;
     try {
       await configureAccess();
       if (offline.isEnabled()) await offline.sync();
-      if (offlineMode) await load();
+      if (wasOffline) await load();
     } catch (_) { /* The cached gallery remains available. */ }
   });
   async function start() {
