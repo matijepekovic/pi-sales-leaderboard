@@ -13,11 +13,18 @@ import { GalleryOffline } from './gallery_offline.js';
   let query = '', relatedId = null, selected = null, offset = 0, total = 0, dateFilter = '';
   let generation = 0, detailGeneration = 0, loading = false, galleryDirty = false, actionPending = false, notesVersion = '', pendingDetails = 0;
   let access = null, offlineMode = false;
+  let preparedShare = null, sharePreparing = null;
   const offline = new GalleryOffline({
     onStatus: message => { el('galleryOfflineStatus').textContent = message; },
   });
   const dates = new GalleryDates({
-    onSelect: chooseDate, openDialog: id => showDialog(id),
+    onSelect: chooseDate,
+    openDialog: id => {
+      showDialog(id);
+      if (id === 'galleryDateSheet') prepareShare().catch(error => {
+        el('galleryOfflineStatus').textContent = 'Could not prepare sharing: ' + error.message;
+      });
+    },
     blocked: () => loading || navigation.restoring || Boolean(document.querySelector('dialog[open]')),
   });
   const focus = new GalleryFocus({
@@ -128,11 +135,68 @@ import { GalleryOffline } from './gallery_offline.js';
     if (!response.ok) { const error = new Error(data.error || 'Request failed'); error.status = response.status; throw error; }
     return data;
   }
+  function fallbackCopy(value) {
+    const field = document.createElement('textarea');
+    field.value = value;
+    field.setAttribute('readonly', '');
+    field.style.position = 'fixed';
+    field.style.opacity = '0';
+    field.style.pointerEvents = 'none';
+    document.body.append(field);
+    field.select();
+    field.setSelectionRange(0, field.value.length);
+    let copied = false;
+    try { copied = document.execCommand('copy'); } catch (_) { copied = false; }
+    field.remove();
+    return copied;
+  }
+  function copyShareLink(value) {
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      return navigator.clipboard.writeText(value).then(() => true).catch(() => fallbackCopy(value));
+    }
+    return Promise.resolve(fallbackCopy(value));
+  }
+  function shareCapability() {
+    return Boolean(access?.capabilities?.includes('share'));
+  }
+  async function prepareShare(force = false) {
+    const button = el('galleryShare');
+    if (!shareCapability()) {
+      preparedShare = null;
+      button.disabled = false;
+      return null;
+    }
+    const fresh = preparedShare && preparedShare.expiresAt - Date.now() > 5 * 60 * 1000;
+    if (!force && fresh) return preparedShare;
+    if (sharePreparing) return sharePreparing;
+    button.disabled = true;
+    sharePreparing = (async () => {
+      const form = new FormData();
+      form.set('csrf', el('galleryNote').elements.csrf.value);
+      const shared = await api('/gallery/api/share', {method:'POST', body:form});
+      preparedShare = {
+        url: shared.url,
+        expiresAt: Date.now() + Math.max(60, Number(shared.expires_in) || 86400) * 1000,
+      };
+      return preparedShare;
+    })();
+    try {
+      return await sharePreparing;
+    } finally {
+      sharePreparing = null;
+      button.disabled = false;
+    }
+  }
   function accessControls(info, resumed = false) {
     const canOffline = resumed || Boolean(info?.capabilities?.includes('offline'));
     const canShare = !resumed && Boolean(info?.capabilities?.includes('share'));
     el('galleryOfflineWrap').hidden = !canOffline;
     el('galleryShare').hidden = !canShare;
+    if (!canShare) {
+      preparedShare = null;
+      sharePreparing = null;
+      el('galleryShare').disabled = false;
+    }
     el('galleryOfflineToggle').checked = canOffline && offline.isEnabled();
     if (!canOffline) el('galleryOfflineStatus').textContent = '';
     if (info?.csrf) {
@@ -413,25 +477,65 @@ import { GalleryOffline } from './gallery_offline.js';
   };
   el('galleryShare').onclick = async () => {
     const button = el('galleryShare');
-    button.disabled = true;
-    try {
-      const form = new FormData();
-      form.set('csrf', el('galleryNote').elements.csrf.value);
-      const shared = await api('/gallery/api/share', {method:'POST', body:form});
-      if (navigator.share) {
-        await navigator.share({title:'Stats Gallery', text:'24-hour gallery access', url:shared.url});
-        el('galleryOfflineStatus').textContent = '24-hour access link shared.';
-      } else if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(shared.url);
-        el('galleryOfflineStatus').textContent = '24-hour access link copied.';
-      } else {
-        el('galleryOfflineStatus').textContent = '24-hour access link: ' + shared.url;
+    if (!preparedShare) {
+      el('galleryOfflineStatus').textContent = 'Preparing share link…';
+      try { await prepareShare(); }
+      catch (error) {
+        el('galleryOfflineStatus').textContent = 'Could not share: ' + error.message;
+        return;
       }
-    } catch (error) {
-      if (error.name !== 'AbortError') el('galleryOfflineStatus').textContent = 'Could not share: ' + error.message;
-    } finally {
-      button.disabled = false;
     }
+    const shared = preparedShare;
+    preparedShare = null;
+    button.disabled = true;
+
+    // Invoke both native operations before awaiting either one. With a prepared
+    // URL this keeps the phone's user gesture intact for the Web Share API.
+    const copyPromise = copyShareLink(shared.url);
+    let nativeShare = null;
+    if (navigator.share) {
+      try {
+        nativeShare = navigator.share({
+          title:'Stats Gallery',
+          text:'24-hour gallery access',
+          url:shared.url,
+        });
+      } catch (error) {
+        nativeShare = Promise.reject(error);
+      }
+    }
+
+    // Prepare the next one-time link in the background for the next tap.
+    prepareShare(true).catch(() => {});
+
+    let copied = false;
+    try { copied = await copyPromise; } catch (_) { copied = false; }
+
+    if (nativeShare) {
+      try {
+        await nativeShare;
+        el('galleryOfflineStatus').textContent = copied
+          ? '24-hour access link copied and shared.'
+          : '24-hour access link shared.';
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          el('galleryOfflineStatus').textContent = copied
+            ? '24-hour access link copied.'
+            : 'Sharing canceled.';
+        } else {
+          el('galleryOfflineStatus').textContent = copied
+            ? 'Link copied. The phone share menu could not open.'
+            : 'Could not share: ' + error.message;
+        }
+      }
+    } else if (copied) {
+      el('galleryOfflineStatus').textContent = window.isSecureContext
+        ? '24-hour access link copied. Native share menu is unavailable in this browser.'
+        : '24-hour access link copied. The phone share menu requires HTTPS.';
+    } else {
+      el('galleryOfflineStatus').textContent = '24-hour access link: ' + shared.url;
+    }
+    button.disabled = Boolean(sharePreparing);
   };
   el('galleryRefresh').onclick = () => { galleryDirty = true; requestClose('galleryInfoSheet'); };
   el('gallerySearch').onsubmit = async event => {
