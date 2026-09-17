@@ -105,7 +105,14 @@ def printed_date(words, height):
     return (readings[0], 'printed') if len(readings) >= 2 and len(set(readings)) == 1 else (None, 'needs-date')
 
 
-def recognize(path, work):
+def document_date(words, height, known_date=None):
+    """Use the PDF-level date when processing already established one."""
+    if known_date:
+        return known_date, 'printed'
+    return printed_date(words, height)
+
+
+def recognize(path, work, known_date=None):
     import cv2
     import numpy as np
     source = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
@@ -123,7 +130,7 @@ def recognize(path, work):
         result = subprocess.run(['tesseract', str(ocr_copy), 'stdout', '-l', 'eng', '--psm', '6', 'tsv'],
                                 check=True, capture_output=True, text=True, timeout=120)
         words = tsv_words(result.stdout)
-        docdate, state = printed_date(words, h)
+        docdate, state = document_date(words, h, known_date)
         return dict(text=search_text(words), lead_text=lead_cell_text(words, source),
                     document_date=docdate, date_status=state)
     finally:
