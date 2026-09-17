@@ -20,8 +20,6 @@ CREATE TABLE IF NOT EXISTS access_invites (
  revoked REAL
 );
 CREATE INDEX IF NOT EXISTS gallery_access_invites_expiry ON access_invites(expires);
-CREATE UNIQUE INDEX IF NOT EXISTS gallery_access_share_id
- ON access_invites(share_id) WHERE share_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS access_credentials (
  token_hash TEXT PRIMARY KEY,
  subject TEXT NOT NULL,
@@ -135,16 +133,16 @@ class GalleryAccessRepository:
     def active_shares(self, issuer_subject, now=None):
         now = time.time() if now is None else now
         with self.connect() as conn:
-            rows = conn.execute(
+            rows = [dict(row) for row in conn.execute(
                 """SELECT share_id,label,created,expires,used
                    FROM access_invites
                    WHERE role='guest' AND issuer_subject=? AND share_id IS NOT NULL
                      AND revoked IS NULL AND expires>?
                    ORDER BY created DESC,share_id""",
                 (issuer_subject, now),
-            )
+            )]
             self._prune(conn, now)
-            return [dict(row) for row in rows]
+            return rows
 
     def revoke_share(self, issuer_subject, share_id, now=None):
         now = time.time() if now is None else now
