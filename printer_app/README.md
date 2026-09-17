@@ -278,9 +278,12 @@ pending downloads so a blocked gallery does not starve new print mail.
 
 Open the searchable image gallery from Print Control on port 5055. The Print Control
 link and Full gallery access QR enroll that browser with full gallery capability. A
-full-access device can create a single-use 24-hour guest link from Share in the date
-picker. Guests can browse and add notes but cannot use Offline, Share, Gallery Queue,
-reprocessing, or gallery administration. Gallery POSTs retain CSRF/origin checks.
+full-access device can open Share in the date picker, name a session, and create a
+single-use QR grant that expires 6 hours after creation. Active sessions are shown by
+name under the QR and can be revoked by the full-access identity that created them;
+revocation also terminates an already-open guest session. Guests can browse and add
+notes but cannot use Offline, Share, Gallery Queue, reprocessing, or gallery
+administration. Gallery POSTs retain CSRF/origin checks.
 Print Control, Printer Settings, Gallery Queue and reprocessing require the separate
 printer-admin password. Gallery full/guest credentials never grant those privileges.
 
