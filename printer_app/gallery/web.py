@@ -11,7 +11,7 @@ from flask import (
 ACCESS_COOKIE = 'gallery_access'
 
 
-def blueprint(service, access, intake_reader=None, reprocessor=None):
+def blueprint(service, access, intake_reader=None, reprocessor=None, admin_session=None):
     bp = Blueprint('gallery', __name__, url_prefix='/gallery')
 
     public_endpoints = {
@@ -37,7 +37,8 @@ def blueprint(service, access, intake_reader=None, reprocessor=None):
         if request.endpoint in public_endpoints:
             return None
         if request.endpoint in admin_endpoints:
-            admin = getattr(g, 'printer_admin', None)
+            admin = admin_session() if admin_session else None
+            g.printer_admin = admin
             if admin is None:
                 if request.path.startswith('/gallery/api/') or request.method != 'GET':
                     return jsonify(error='Printer admin login required.'), 401
