@@ -402,10 +402,14 @@ class GalleryRepository:
             elif state:
                 where += ' AND state=?'; params.append(state)
             total = c.execute('SELECT count(*) FROM imports '+where, params).fetchone()[0]
-            rows = c.execute('SELECT * FROM imports '+where+
+            rows = c.execute("""SELECT imports.*,
+                    (SELECT count(*) FROM items WHERE import_id=imports.id AND state='REVIEW') AS pending_review
+                FROM imports """+where+
                 " ORDER BY CASE WHEN state IN ('PROCESSING','WAITING') THEN 0 ELSE 1 END,updated DESC,id LIMIT ? OFFSET ?",
                 (*params,limit,offset))
             result = dict(counts=counts,total=total,items=[self._import_row(row) for row in rows])
+            result['review_total'] = c.execute(
+                "SELECT count(*) FROM items WHERE state='REVIEW'").fetchone()[0]
             heartbeat = c.execute("SELECT value FROM meta WHERE key='state'").fetchone()
             result['worker'] = json.loads(heartbeat[0]) if heartbeat else {}
             return result
