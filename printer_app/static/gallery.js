@@ -529,7 +529,9 @@ import { GalleryOffline } from './gallery_offline.js';
         }
       }
     } else if (copied) {
-      el('galleryOfflineStatus').textContent = '24-hour access link copied.';
+      el('galleryOfflineStatus').textContent = window.isSecureContext
+        ? '24-hour access link copied. Native share menu is unavailable in this browser.'
+        : '24-hour access link copied. The phone share menu requires HTTPS.';
     } else {
       el('galleryOfflineStatus').textContent = '24-hour access link: ' + shared.url;
     }
