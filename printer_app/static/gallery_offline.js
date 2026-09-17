@@ -40,9 +40,16 @@ export class GalleryOffline {
     localStorage.setItem(MODE_KEY, access?.role || 'guest');
     this.allowed = Boolean(full);
     if (!full) {
+      if (this.db) this.db.close();
+      this.releaseUrls();
       this.subject = '';
       this.db = null;
       return false;
+    }
+    if (this.subject && this.subject !== access.subject) {
+      if (this.db) this.db.close();
+      this.releaseUrls();
+      this.db = null;
     }
     this.subject = access.subject;
     localStorage.setItem(SUBJECT_KEY, this.subject);
@@ -80,8 +87,11 @@ export class GalleryOffline {
     localStorage.setItem(this.enabledKey(), value ? '1' : '0');
     if (value) {
       if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
-      await this.registerShell();
+      const shellReady = await this.registerShell();
       await this.sync();
+      if (!shellReady && !window.isSecureContext) {
+        this.onStatus('Cards are downloaded. Reopening the gallery with no network requires a secure (HTTPS) connection.');
+      }
     } else {
       this.onStatus('Offline automatic downloads are off. Existing downloaded cards stay on this phone.');
     }
@@ -227,18 +237,22 @@ export class GalleryOffline {
   }
 
   async detail(id) {
+    if (!this.isEnabled()) return null;
     const card = await this.card(id);
     if (!card?.detail) return null;
     return {...card.detail, _offline_image_url:await this.imageUrl(id)};
   }
 
   async list({q='', relatedId=null, date='', offset=0} = {}) {
+    if (!this.isEnabled()) return null;
     let cards = await this.allCards();
     if (!cards.length) return null;
     const normalized = value => String(value || '').trim().toLocaleLowerCase();
+    let relatedName = '';
     if (relatedId) {
       const target = cards.find(card => card.id === relatedId);
-      const name = normalized(target?.detail?.lead_name || target?.summary?.lead_name);
+      relatedName = target?.detail?.lead_name || target?.summary?.lead_name || '';
+      const name = normalized(relatedName);
       cards = name ? cards.filter(card => normalized(card.detail?.lead_name || card.summary?.lead_name) === name) : [];
     }
     if (q.trim()) {
@@ -271,6 +285,6 @@ export class GalleryOffline {
     for (const card of page) {
       items.push({...card.summary, _offline_image_url:await this.imageUrl(card.id)});
     }
-    return {total, items, dates, offline:true};
+    return {total, items, dates, offline:true, lead_name:relatedName};
   }
 }
