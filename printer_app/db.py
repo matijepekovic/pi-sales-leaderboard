@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS steps (
  at REAL NOT NULL, message TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS commands (
  id INTEGER PRIMARY KEY, name TEXT NOT NULL, created REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS admin_auth (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ password_hash TEXT NOT NULL,
+ must_change INTEGER NOT NULL DEFAULT 1,
+ revision INTEGER NOT NULL DEFAULT 1,
+ updated REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS login_limits (
  address TEXT PRIMARY KEY, attempts INTEGER NOT NULL, reset_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS jobs_due ON jobs(status,next_attempt);

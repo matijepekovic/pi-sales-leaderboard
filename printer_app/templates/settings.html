@@ -2,7 +2,7 @@
 {% block title %}Printer Settings{% endblock %}
 {% block content %}
 <div class="heading"><div><p class="eyebrow">PRINTER AUTOMATION</p><h1>Settings</h1></div><a class="button" href="{{ url_for('control') }}">Back to Print Control</a></div>
-<p class="notice">No login is required. Anyone who can reach this page can change settings and view reports. Keep this app on your trusted local network.</p>
+<p class="notice">Printer administration requires the admin password. Work-order Gallery full/temporary access is separate and does not grant access to these settings.</p>
 {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
 {% if saved %}<p class="notice good" role="status">Settings saved on the Pi. No terminal commands or restart needed.</p>{% endif %}
 <p id="settingsApplied" class="muted" role="status">{{ state.settings_error or ('Settings applied by worker.' if state.settings_applied else 'The worker applies saved settings after its current operation. Refresh to check.') }}</p>

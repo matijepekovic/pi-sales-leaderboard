@@ -10,11 +10,17 @@ Wait for printer installation to finish, then use **Open Print Control**. No
 terminal, separate clone or installer is needed. Stats v134 and later detect
 printer-only updates separately; these do not reinstall or restart Stats.
 
-Open `http://<pi-ip>:5055/` or `/system/print-control`. Settings are at `/settings`.
-There is no printer login. Keep port 5055 on a trusted LAN: anyone who can access
-it can control printing, read previews and change settings. CSRF and same-origin
-checks protect writes; they are not user authentication. Stats authentication is
-not used. After updating, reopen Settings rather than resubmitting an old page.
+Open `http://<pi-ip>:5055/` or `/system/print-control`. Both now require the
+separate **printer admin** login; Settings, print previews/attachments, queues and
+administrative APIs are protected by the same session. The first update that enables
+this creates a random temporary password. In Stats Settings → Software, use
+**Show printer login**, sign in as `admin`, then choose your own password before
+Print Control opens. Only a password hash is retained by the printer app.
+
+The work-order Gallery has its own full/temporary access tokens and does not inherit
+printer administration. A Gallery link cannot unlock Print Control by changing its
+URL. CSRF/same-origin checks remain in addition to authentication. After updating,
+reopen Settings rather than resubmitting an old page.
 
 ## Keep collecting emails; print on selected days
 
@@ -163,16 +169,16 @@ bash scripts/update-printer-app.sh
 python3 printer_app/deploy.py rollback
 ```
 
-Rollback to a version predating scheduling restores that version's immediate-print
-behavior. Stop the printer worker before such a rollback if waiting work must stay held.
-Rollback never restores an older print-receipt database.
+Rollback never restores an older print-receipt database. Releases predating required
+printer-admin authentication are refused as rollback targets so a rollback cannot
+silently reopen port 5055 without a password.
 
 ## Regression coverage
 
 CI covers queue release/cutoffs, selected weekdays, DST, persistence, crash-atomic
 release/cursor recovery, no repeat on restart, late arrivals, manual releases, hold
 mode, printer retries, source-layout rendering, oversized downloads, Gmail deduplication,
-no-login forms/CSRF, real browser form saves, and independent systemd deployment
+admin authentication/CSRF, real browser form saves, and independent systemd deployment
 through the leaderboard Update mechanism. Fixtures use disposable files/printer sinks;
 no real Gmail account or physical Konica printer is used by CI.
 
@@ -275,7 +281,8 @@ link and Full gallery access QR enroll that browser with full gallery capability
 full-access device can create a single-use 24-hour guest link from Share in the date
 picker. Guests can browse and add notes but cannot use Offline, Share, Gallery Queue,
 reprocessing, or gallery administration. Gallery POSTs retain CSRF/origin checks.
-Print Control and Printer Settings keep their existing trusted-local-network boundary.
+Print Control, Printer Settings, Gallery Queue and reprocessing require the separate
+printer-admin password. Gallery full/guest credentials never grant those privileges.
 
 Cropping is **border-only**, not OCR or equal thirds. Each PNG starts at a detected
 wide outer box's top border and continues to just before the next outer top border;

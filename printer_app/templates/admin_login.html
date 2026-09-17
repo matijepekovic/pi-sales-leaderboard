@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Printer Admin Login</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body><main class="login">
+<section>
+<p class="eyebrow">PRINTER ADMIN</p><h1>Sign in</h1>
+<p class="muted">Work-order Gallery access is separate. This login protects Print Control, Settings, queues and administrative pages.</p>
+{% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
+<form method="post" action="{{ url_for('admin_login') }}" autocomplete="on">
+<input type="hidden" name="csrf" value="{{ session.csrf }}">
+<input type="hidden" name="next" value="{{ next_url }}">
+<label>Username<input name="username" value="admin" maxlength="40" autocomplete="username" required></label>
+<label>Password<input type="password" name="password" maxlength="256" autocomplete="current-password" required autofocus></label>
+<button class="primary" type="submit">Sign in</button>
+</form>
+</section>
+</main></body></html>

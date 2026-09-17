@@ -139,8 +139,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['install', 'update', 'rollback'])
     parser.add_argument('--unattended', action='store_true')
-    # Accepted only so the already-installed v134 delivery runner can update to
-    # v135. Printer authentication no longer exists; the file is removed.
+    # Private handoff used by the Stats Update UI to display a newly-created
+    # temporary printer-admin credential exactly once.
     parser.add_argument('--initial-login-file', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--result-file', type=Path)
     args = parser.parse_args()
@@ -149,8 +149,6 @@ def main():
     if getpass.getuser() != 'scoreboard' or os.geteuid() == 0:
         raise SystemExit('Run as scoreboard, not root. sudo is used only for system setup/service management.')
     os.umask(0o077)
-    if args.initial_login_file:
-        args.initial_login_file.expanduser().unlink(missing_ok=True)
     base = Path.home() / '.local/lib/printer-app'
     releases = base / 'releases'
     releases.mkdir(parents=True, exist_ok=True)
@@ -161,6 +159,8 @@ def main():
             if not previous.is_symlink() or not (previous.resolve() / '.ready').exists():
                 raise SystemExit('No previous printer release is available')
             release = previous.resolve()
+            if not (release / 'printer_app/admin_auth.py').is_file():
+                raise SystemExit('Rollback blocked: that release predates required printer-admin authentication.')
             run([str(release / '.venv/bin/python'), '-m', 'printer_app.bootstrap', 'migrate'], cwd=release)
             activate(base, release, unattended=args.unattended)
             return
@@ -192,6 +192,10 @@ def main():
         python = str(release / '.venv/bin/python')
         run([python, '-m', 'printer_app.bootstrap', 'init'], cwd=release)
         run([python, '-m', 'printer_app.bootstrap', 'migrate'], cwd=release)
+        admin_command = [python, '-m', 'printer_app.bootstrap', 'ensure-admin']
+        if args.initial_login_file:
+            admin_command.extend(['--initial-login-file', str(args.initial_login_file.expanduser())])
+        run(admin_command, cwd=release)
         activate(base, release, unattended=args.unattended)
         save_result(args.result_file, release, changed=True)
 
