@@ -194,7 +194,9 @@ import { GalleryOffline } from './gallery_offline.js';
   }
   async function loadActiveShares() {
     const data = await api('/gallery/api/shares');
-    renderActiveShares(data.sessions || []);
+    const sessions = data.sessions || [];
+    if (shareQrSessionId && !sessions.some(item => item.id === shareQrSessionId)) clearShareQr();
+    renderActiveShares(sessions);
   }
   async function openShare(record = true) {
     if (!shareCapability()) return;
