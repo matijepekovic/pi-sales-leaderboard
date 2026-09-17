@@ -20,6 +20,7 @@ from .print_schedule import DAYS as SCHEDULE_DAYS, MODES as SCHEDULE_MODES
 from .print_dispatch import PrintDispatchService
 from .print_queue_repository import PrintQueueRepository
 from .retention_repository import RetentionRepository
+from .attachment_routing_repository import AttachmentRoutingRepository
 from .gallery.bootstrap import build as build_gallery
 from .gallery.web import blueprint as gallery_blueprint
 
@@ -116,7 +117,8 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             last_check=db.get('last_check'), next_check=db.get('next_check'),
             gmail=db.get('gmail_state', 'STARTING'), monitor_error=db.get('monitor_error', ''),
             last_success=db.get('last_successful_print'), last_error=db.get('last_printer_error'),
-            print_schedule=dispatch().summary(), cleanup=RetentionRepository(db).state())
+            print_schedule=dispatch().summary(), cleanup=RetentionRepository(db).state(),
+            gallery_intake_errors=AttachmentRoutingRepository(db).failures())
 
     @app.get('/health')
     def health():

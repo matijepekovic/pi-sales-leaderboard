@@ -15,6 +15,15 @@ CREATE TABLE IF NOT EXISTS processed_messages (
  message_id TEXT NOT NULL, subject TEXT NOT NULL, sender TEXT NOT NULL,
  state TEXT NOT NULL DEFAULT 'FETCHING', created REAL NOT NULL,
  UNIQUE(account,mailbox,uidvalidity,uid));
+CREATE TABLE IF NOT EXISTS email_routing_policies (
+ message_id INTEGER PRIMARY KEY REFERENCES processed_messages(id) ON DELETE CASCADE,
+ policy TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS email_attachment_routes (
+ message_id INTEGER NOT NULL REFERENCES processed_messages(id) ON DELETE CASCADE,
+ part TEXT NOT NULL, filename TEXT NOT NULL, print_document INTEGER NOT NULL,
+ import_document INTEGER NOT NULL, gallery_delivered INTEGER NOT NULL DEFAULT 0,
+ error TEXT NOT NULL DEFAULT '', updated REAL NOT NULL,
+ PRIMARY KEY(message_id,part)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS retained_message_receipts (
  identity TEXT PRIMARY KEY) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS mail_cleanup_outbox (

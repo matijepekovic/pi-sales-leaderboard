@@ -2,13 +2,21 @@
 <input type="hidden" name="gallery_present" value="1">
 <label class="check"><input type="checkbox" name="GALLERY_ENABLED" value="1" {% if values.GALLERY_ENABLED == '1' %}checked{% endif %}> Import matching email PDFs into the gallery</label>
 <div class="form-grid">
-<label>Gallery email subject contains<input name="GALLERY_SUBJECT_CONTAINS" maxlength="200" value="{{ values.GALLERY_SUBJECT_CONTAINS }}" placeholder="redlines"></label>
+<label>Gallery email subject contains (optional with filename rule)<input name="GALLERY_SUBJECT_CONTAINS" maxlength="200" value="{{ values.GALLERY_SUBJECT_CONTAINS }}" placeholder="redlines"></label>
 <label>Gallery email sender contains (optional)<input name="GALLERY_FROM_CONTAINS" maxlength="200" value="{{ values.GALLERY_FROM_CONTAINS }}"></label>
+<label>Gallery PDF filename contains (optional)<input name="GALLERY_FILENAME_CONTAINS" maxlength="200" value="{{ values.GALLERY_FILENAME_CONTAINS }}" placeholder="redlines"></label>
+<label>Matching gallery PDFs<select name="GALLERY_PRINT_MODE">
+<option value="gallery-only" {% if values.GALLERY_PRINT_MODE == 'gallery-only' %}selected{% endif %}>Gallery only — do not print matching PDFs</option>
+<option value="also-print" {% if values.GALLERY_PRINT_MODE == 'also-print' %}selected{% endif %}>Import and also use normal print rules</option>
+</select></label>
 <label>Keep images for (days from printed date)<input name="GALLERY_KEEP_DAYS" type="number" min="1" max="3650" required value="{{ values.GALLERY_KEEP_DAYS }}"></label>
 <label>Gallery disk budget (MB)<input name="GALLERY_MAX_MB" type="number" min="64" max="1048576" required value="{{ values.GALLERY_MAX_MB }}"></label>
 <label>Expected images per day (0 = observed rate)<input name="GALLERY_CROPS_PER_DAY" type="number" min="0" max="100000" required value="{{ values.GALLERY_CROPS_PER_DAY }}"></label>
 </div>
-<p>Uses the same Gmail account, mailbox and email-check interval. Leave email collection enabled. The gallery keyword is separate from print filters: existing printing still happens whenever its own filters match. Gallery imports neither add prints nor cancel them.</p>
+<p>Uses the same Gmail account, mailbox and email-check interval. Leave email collection enabled. Every filled gallery rule must match; at least a subject or PDF filename keyword is required. To separate PDFs in the same email, set a filename keyword (such as redlines); clear the subject field to use filenames alone. Sender is an optional additional restriction.</p>
+<p class="notice"><strong>Gallery only is the default, including after this update.</strong> Matching PDFs never enter the print queue, even when print filters also match. Download, decoding or gallery failures do not fall back to printing a PDF or error sheet. Nonmatching reports keep the existing print rules and schedule. Choose the second option only to intentionally allow both routes.</p>
+<p>Decisions are saved before downloading. Changes affect newly detected emails, not existing queued jobs or failed handoffs. Those jobs must be cancelled separately. Disabling imports pauses new gallery matching; new mail then follows normal print filters. Pending gallery-only handoffs stay held until imports resume, never becoming prints.</p>
+{% include 'gallery_intake_status.html' %}
 <p>One PNG starts at each form's top border and ends just before the next form's top border. The last runs to the page bottom; full side margins stay. No equal thirds, adjustable margins or OCR for cutting. Text recognition is used afterward for search and the printed date.</p>
 <p class="notice">Retention removes expired images and their notes. Uncertain dates remain until corrected in the gallery. PDFs and full-page renders are temporary and discarded after processing; unrecognized pages are listed in import status, not stored as full images. This does not remove files needed by a print job. Imports stop accepting more files before the gallery budget or 512 MB free-disk reserve is exhausted.</p>
 <p><a class="button" href="{{ url_for('gallery.page') }}">Open gallery / storage estimate</a></p>

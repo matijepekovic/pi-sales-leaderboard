@@ -15,8 +15,5 @@ class GalleryInbox:
         self.options = options
         self.service = build(data_dir)
 
-    def matches(self, subject, sender):
-        return self.options.matches(subject, sender)
-
     def offer(self, filename, payload):
         self.service.offer(filename, payload, self.options)

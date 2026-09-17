@@ -17,6 +17,8 @@ from email.parser import BytesParser
 from pathlib import Path
 
 from .config import Config, clean_text, safe_name
+from .attachment_routing import AttachmentRouter, PdfConsumer
+from .attachment_routing_repository import AttachmentRoutingRepository
 from .db import Database
 from .retention_repository import RetentionRepository
 
@@ -154,9 +156,11 @@ def attachment_parts(tree, prefix='', *, related_resource=False):
 
 
 class GmailClient:
-    def __init__(self, cfg: Config, db: Database, stop=None, gallery=None):
+    def __init__(self, cfg: Config, db: Database, stop=None, gallery: PdfConsumer | None = None):
         self.cfg, self.db, self.stop = cfg, db, stop
-        self.gallery = gallery  # Optional normalized PDF consumer; not a print dependency.
+        self.gallery = gallery  # Delivery only. Availability must never choose print routing.
+        self.routing = AttachmentRouter(cfg.subject_contains, cfg.from_contains, cfg.gallery)
+        self.routes = AttachmentRoutingRepository(db)
 
     def _fetch(self, client, uid: str, query: str):
         status, result = client.uid('fetch', uid, query)
@@ -236,8 +240,8 @@ class GmailClient:
                 identity = message_identity(cfg.email_user, cfg.mailbox, validity, uid, message_id)
                 if RetentionRepository(self.db).seen(identity):
                     continue  # Expired history must not turn into another print.
-                print_qualifies = cfg.subject_contains.casefold() in subject.casefold() and cfg.from_contains.casefold() in sender.casefold()
-                gallery_qualifies = self.gallery is not None and self.gallery.matches(subject, sender)
+                print_qualifies = self.routing.print_matches(subject, sender)
+                gallery_qualifies = self.routing.gallery_candidate(subject, sender)
                 qualifies = print_qualifies or gallery_qualifies
                 gallery_complete = True
                 self.db.execute('''INSERT OR IGNORE INTO processed_messages
@@ -248,6 +252,7 @@ class GmailClient:
                 record = self.db.one('SELECT * FROM processed_messages WHERE identity=?', (identity,))
                 if record['state'] == 'COMPLETE':
                     continue
+                routing = self.routes.for_message(record['id'], self.routing)
                 examined += 1
                 log.info('Email detected: uid=%s subject=%r', uid, subject)
                 try:
@@ -257,25 +262,47 @@ class GmailClient:
                     if not match:
                         raise ValueError('EMAIL MIME STRUCTURE MISSING')
                     parts = list(attachment_parts(sexpr(raw[match.end():])))
-                except ValueError as exc:
-                    if print_qualifies:
+                    self.routes.resolved_structure(record['id'])
+                except (ValueError, OSError, imaplib.IMAP4.error) as exc:
+                    route = self.routes.remember(record['id'], 'mime-error', 'email-structure',
+                                                  routing.unreadable_message(subject, sender))
+                    if route['print_document']:
                         self._store(record['id'], 'mime-error', 'email-structure', error=clean_text(exc))
-                    if gallery_qualifies:
-                        log.warning('Gallery message has unreadable MIME; uid=%s', uid)
+                    if route['import_document']:
+                        self.routes.failed(record['id'], 'mime-error',
+                                           'Email structure unavailable. Gallery routing will retry; no print fallback.')
+                        gallery_complete = False
+                        log.warning('Gallery MIME inspection pending: uid=%s', uid)
                     parts = []
                 for part in parts:
                     if self.stop is not None and self.stop.is_set():
                         return count
-                    to_gallery = gallery_qualifies and Path(part['filename']).suffix.lower() == '.pdf'
-                    if not print_qualifies and not to_gallery:
-                        continue
+                    route = self.routes.remember(record['id'], part['part'], part['filename'],
+                        routing.attachment(subject, sender, part['filename']))
+                    to_gallery = bool(route['import_document']) and not route['gallery_delivered']
                     saved = self.db.one('SELECT state FROM attachments WHERE message_id=? AND part=?', (record['id'], part['part']))
-                    if saved and saved['state'] != 'DOWNLOADING' and not to_gallery:
+                    to_print = bool(route['print_document']) and (not saved or saved['state'] == 'DOWNLOADING')
+                    if to_gallery and (not cfg.gallery.enabled or self.gallery is None):
+                        self.routes.failed(record['id'], part['part'],
+                                           'Gallery handoff paused or unavailable. Kept pending; no print fallback.')
+                        gallery_complete = False
+                        to_gallery = False
+                    if not to_print and not to_gallery:
                         continue
-                    # Fetch the entire attachment, not a prefix capped by its size.
-                    # MAX_ATTACHMENT_MB is retained as a warning threshold only.
-                    result = self._fetch(client, uid, f'(BODY.PEEK[{part["part"]}])')
-                    encoded = self._literal(result)
+                    log.info('Attachment route: uid=%s part=%s print=%s gallery=%s',
+                             uid, part['part'], bool(route['print_document']), bool(route['import_document']))
+                    # Fetch whole attachments; MAX_ATTACHMENT_MB remains a warning.
+                    try:
+                        result = self._fetch(client, uid, f'(BODY.PEEK[{part["part"]}])')
+                        encoded = self._literal(result)
+                    except (OSError, imaplib.IMAP4.error):
+                        if to_gallery:
+                            self.routes.failed(record['id'], part['part'],
+                                               'Gallery PDF download failed. Will retry; no print fallback.')
+                            gallery_complete = False
+                            log.warning('Gallery download pending: uid=%s part=%s', uid, part['part'])
+                            continue
+                        raise
                     try:
                         if part['encoding'] == 'BASE64':
                             payload = base64.b64decode(re.sub(rb'\s+', b'', encoded), validate=True)
@@ -285,25 +312,31 @@ class GmailClient:
                             payload = encoded
                         else:
                             raise ValueError('UNSUPPORTED ATTACHMENT ENCODING')
-                        if len(payload) > cfg.attachment_limit:
-                            log.warning('Oversized attachment downloaded: uid=%s part=%s bytes=%s; continuing normally',
-                                        uid, part['part'], len(payload))
-                        if print_qualifies:
-                            self._store(record['id'], part['part'], part['filename'], payload)
-                        if to_gallery:
-                            try:
-                                self.gallery.offer(part['filename'], payload)
-                            except Exception as exc:
-                                # Printing continues. FETCHING protects the inbox source
-                                # from cleanup until a gallery-owned copy is durable.
-                                gallery_complete = False
-                                log.warning('Gallery handoff pending: uid=%s (%s)', uid, type(exc).__name__)
                     except ValueError as exc:
-                        if print_qualifies:
+                        if to_print:
                             self._store(record['id'], part['part'], part['filename'], error=clean_text(exc))
                         if to_gallery:
-                            log.warning('Gallery attachment encoding failed: uid=%s', uid)
-                if gallery_complete:
+                            self.routes.failed(record['id'], part['part'],
+                                               'Gallery PDF encoding failed. Will retry; no print fallback.')
+                            gallery_complete = False
+                        continue
+                    if len(payload) > cfg.attachment_limit:
+                        log.warning('Oversized attachment downloaded: uid=%s part=%s bytes=%s; continuing normally',
+                                    uid, part['part'], len(payload))
+                    if to_print:
+                        self._store(record['id'], part['part'], part['filename'], payload)
+                    if to_gallery:
+                        try:
+                            self.gallery.offer(part['filename'], payload)
+                            self.routes.delivered(record['id'], part['part'])
+                        except Exception as exc:
+                            # The routing receipt is immutable. Never submit this PDF
+                            # or a diagnostic to CUPS because the gallery is unavailable.
+                            self.routes.failed(record['id'], part['part'],
+                                               'Gallery handoff failed. Check gallery tools/storage; will retry without print fallback.')
+                            gallery_complete = False
+                            log.warning('Gallery handoff pending: uid=%s (%s)', uid, type(exc).__name__)
+                if gallery_complete and not self.routes.pending(record['id']):
                     self.db.execute("UPDATE processed_messages SET state='COMPLETE' WHERE id=?", (record['id'],))
                 count += 1
             self.db.set('gmail_state', 'CONNECTED')
