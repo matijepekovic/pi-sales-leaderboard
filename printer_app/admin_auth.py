@@ -27,12 +27,23 @@ class AdminAuthService:
     def _hash(password):
         return generate_password_hash(password, method='scrypt')
 
+    def has_credential(self):
+        return bool(self.repository.state())
+
+    @staticmethod
+    def generate_temporary_password():
+        return secrets.token_urlsafe(15)
+
+    def install_temporary_password(self, password):
+        """Persist a generated temporary password after its private handoff exists."""
+        return self.repository.create(self._hash(password), must_change=True)
+
     def ensure_temporary_password(self):
-        """Create the first admin credential once and return its cleartext password."""
-        if self.repository.state():
+        """Convenience for tests/local callers that do not need a handoff file."""
+        if self.has_credential():
             return None
-        password = secrets.token_urlsafe(15)
-        if self.repository.create(self._hash(password), must_change=True):
+        password = self.generate_temporary_password()
+        if self.install_temporary_password(password):
             return password
         return None
 
