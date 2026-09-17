@@ -64,23 +64,19 @@ class Engine:
         if converter.page_count(target) != 1:
             raise RuntimeError('Error sheet must contain exactly one page')
         self.db.output(job_id, 'Physical error sheet', target)
-        self.db.execute('''UPDATE jobs SET printable=?,is_error=1,tabloid=0,failure_kind=?,error=?,
-          status='READY',next_attempt=0,updated=? WHERE id=?''', (str(target), kind, reason, time.time(), job_id))
+        self.queue.prepared(job_id, target, None, False, time.time(), failure_kind=kind, error=reason)
         self.db.step(job_id, f'{kind}: {reason}; one-page error sheet prepared')
         log.warning('Job %s: %s: %s', job_id, kind, reason)
 
     def ready(self, job_id: int, pdf: Path, pages: int, tabloid: bool) -> None:
         self.db.output(job_id, 'Report PDF', pdf)
-        self.db.execute('''UPDATE jobs SET printable=?,page_count=?,tabloid=?,status='READY',updated=?
-            WHERE id=?''', (str(pdf), pages, int(tabloid), time.time(), job_id))
+        self.queue.prepared(job_id, pdf, pages, tabloid, time.time())
         self.db.step(job_id, f'PDF preflight: {pages} page(s); prepared for the print queue')
 
     def process_attachment(self, attachment: dict) -> None:
         aid = attachment['id']
-        current = self.db.one('SELECT state FROM attachments WHERE id=?', (aid,))
-        if not current or current['state'] == 'DONE':
+        if not self.queue.start_preparation(aid):
             return
-        self.db.execute("UPDATE attachments SET state='PROCESSING' WHERE id=?", (aid,))
         source = Path(attachment['path']) if attachment['path'] else None
         suffix = Path(attachment['filename']).suffix.lower()
         existing = self.db.rows('SELECT * FROM jobs WHERE attachment_id=?', (aid,))
@@ -119,7 +115,7 @@ class Engine:
                         raise converter.ConversionError('UNSUPPORTED ATTACHMENT TYPE')
                 except Exception as exc:
                     self.fail(job['id'], 'CONVERSION ERROR', str(exc) or type(exc).__name__)
-        self.db.execute("UPDATE attachments SET state='DONE' WHERE id=?", (aid,))
+        self.queue.finish_preparation(aid, time.time())
 
     def printer_problem(self, job_id: int, reason: str) -> None:
         reason = clean_text(reason, 2000)
@@ -133,13 +129,9 @@ class Engine:
         if not self.dispatch.allow(job):
             return  # No CUPS submission (including error sheets) before release.
         jid = job['id']
-        attempt = self.db.one('SELECT * FROM print_attempts WHERE job_id=? ORDER BY id DESC LIMIT 1', (jid,))
-        if not attempt or attempt['state'] in ('FAILED', 'UNKNOWN'):
-            token = 'printer-app-' + uuid.uuid4().hex
-            now = time.time()
-            aid = self.db.execute('INSERT INTO print_attempts(job_id,token,created,updated) VALUES (?,?,?,?)',
-                                  (jid, token, now, now))
-            attempt = self.db.one('SELECT * FROM print_attempts WHERE id=?', (aid,))
+        attempt = self.queue.reserve_attempt(jid, 'printer-app-' + uuid.uuid4().hex, time.time())
+        if attempt is None:
+            return  # A removal won the transaction before submission started.
         if attempt['state'] == 'COMPLETE':
             return
         aid = attempt['id']
@@ -226,7 +218,11 @@ class Engine:
     def prepare_next(self) -> None:
         attachment = self.queue.next_attachment()
         if attachment and not self.stop.is_set():
-            self.process_attachment(attachment)
+            try:
+                self.process_attachment(attachment)
+            finally:
+                if self.queue.cancelled(attachment['id']):
+                    self.queue.finish_preparation(attachment['id'], time.time())
 
     def tick(self) -> None:
         # Scheduling/submission does not wait for email downloads or conversion.
@@ -268,6 +264,7 @@ def main():
     # Kernel lock survives until process exit; a second worker cannot double-print.
     with (cfg.data_dir / 'worker.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        PrintQueueRepository(db).recover_cancellations(time.time())
         engine = Engine(cfg, db, stop=stop)
         gmail = GmailClient(cfg, db, stop=stop, gallery=GalleryInbox(cfg.data_dir, cfg.gallery))
 

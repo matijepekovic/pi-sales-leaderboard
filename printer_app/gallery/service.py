@@ -108,3 +108,30 @@ class GalleryService:
         self.repository.finish(job['id'], items, '; '.join(warnings))
         self.files.remove('spool', job['id'])
         self.files.remove('work', job['id'])
+
+    def queue(self, state='', offset=0, limit=25):
+        self.initialize()
+        if state not in ('','pending','WAITING','PROCESSING','COMPLETE','ERROR'):
+            raise ValueError('Choose a valid gallery job state.')
+        return self.repository.import_queue(state, max(0,min(offset,1000000)), max(1,min(limit,25)))
+
+    def import_job(self, ident, offset=0):
+        self.initialize()
+        result = self.repository.import_job(ident, max(0,min(offset,1000000)))
+        if result:
+            result['source_available'] = self.files.path('spool',ident).is_file()
+        return result
+
+    def report_progress(self, ident):
+        value = self.files.read_progress(ident)
+        stages = {'inspect':'Inspecting PDF','render':'Rendering page','crop':'Detecting form borders',
+                  'search':'Reading text for search','page-complete':'Page processed','publish':'Saving gallery images'}
+        if not isinstance(value,dict) or value.get('stage') not in stages:
+            return
+        if any(type(value.get(k)) is not int or not 0<=value[k]<=100000 for k in ('page','pages','crops')):
+            return
+        clean = {k:value[k] for k in ('stage','page','pages','crops')}
+        clean['message'] = stages[value['stage']]
+        if value['pages']:
+            clean['message'] += f" — page {value['page']} of {value['pages']}, {value['crops']} image(s) prepared"
+        self.repository.progress(ident, clean)

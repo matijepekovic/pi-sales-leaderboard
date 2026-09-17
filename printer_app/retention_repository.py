@@ -3,7 +3,7 @@ from .db import Database
 from .retention_policy import ExpiredEmail
 
 # Never expire waiting, retrying, interrupted, or ambiguous print outcomes.
-DONE = "('PRINTED','ERROR PRINTED')"
+DONE = "('PRINTED','ERROR PRINTED','CANCELLED')"
 
 
 class RetentionRepository:
@@ -23,10 +23,12 @@ class RetentionRepository:
         return self.db.rows(f'''SELECT m.id,m.identity FROM processed_messages m
             WHERE m.state='COMPLETE' AND m.created<? AND NOT EXISTS (
                 SELECT 1 FROM attachments a WHERE a.message_id=m.id AND
-                (a.state!='DONE' OR a.created>=? OR EXISTS (SELECT 1 FROM jobs j
+                (a.state NOT IN ('DONE','CANCELLED') OR a.created>=? OR EXISTS (
+                 SELECT 1 FROM print_queue_cancellations x WHERE x.attachment_id=a.id AND x.cancelled_at>=?)
+                 OR EXISTS (SELECT 1 FROM jobs j
                  WHERE j.attachment_id=a.id AND (j.status NOT IN {DONE}
                  OR j.completed IS NULL OR j.completed>=?)))) ORDER BY m.id LIMIT ?''',
-            (cutoff, cutoff, cutoff, limit))
+            (cutoff, cutoff, cutoff, cutoff, limit))
 
     def message_files(self, mid):
         attachments = self.db.rows('SELECT id FROM attachments WHERE message_id=?', (mid,))

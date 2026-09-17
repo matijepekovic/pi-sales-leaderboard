@@ -57,6 +57,24 @@ class PrintDispatchService:
             waiting=self.repository.waiting())
 
     def describe_job(self, job: dict) -> dict:
-        waiting = job['status'] in ('PREPARING', 'READY') and not self.allow(job)
-        return dict(job, waiting_for_schedule=waiting,
-                    queue_status='QUEUED' if waiting and job['status'] == 'READY' else job['status'])
+        info = self.repository.removal_info(job['attachment_id']) if job['attachment_id'] else None
+        cancelled = bool(info and info['cancelled_at'] is not None)
+        removable = bool(info and not cancelled and not info['has_attempts'] and not info['terminal_job']
+                         and info['state'] != 'DOWNLOADING'
+                         and (info['state'] in ('PENDING','PROCESSING') or info['unfinished']))
+        waiting = not cancelled and job['status'] in ('PREPARING', 'READY') and not self.allow(job)
+        return dict(job, waiting_for_schedule=waiting, can_remove=removable,
+                    queue_status='CANCELLED' if cancelled else
+                    'QUEUED' if waiting and job['status'] == 'READY' else job['status'])
+
+    def removal_info(self, attachment_id):
+        item = self.repository.removal_info(attachment_id)
+        if not item:
+            raise LookupError('This attachment is no longer available.')
+        return item
+
+    def remove(self, attachment_id):
+        changed = self.repository.cancel_attachment(attachment_id, self.clock())
+        if changed:
+            log.info('User removed print attachment %s; no gallery data changed', attachment_id)
+        return changed

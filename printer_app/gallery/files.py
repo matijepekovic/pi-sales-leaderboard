@@ -99,3 +99,14 @@ class GalleryFiles:
         with source.open('rb') as stream:
             os.fsync(stream.fileno())
         source.replace(self.path('crops', ident))
+
+    def read_progress(self, ident):
+        # Only a small gallery-owned progress file, never arbitrary filesystem browsing.
+        import json
+        path = self.path('work', ident) / 'progress.json'
+        try:
+            if path.is_symlink() or path.stat().st_size > 8192:
+                return None
+            return json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return None
