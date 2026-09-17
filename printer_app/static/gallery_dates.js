@@ -16,8 +16,6 @@ export class GalleryDates {
     el('galleryPreviousDate').onclick = () => this.move(-1);
     el('galleryNextDate').onclick = () => this.move(1);
     el('galleryCalendarMonth').onchange = event => { this.month = event.target.value; this.calendar(); };
-    el('galleryAllDates').onclick = () => this.onSelect('');
-    el('galleryUndated').onclick = () => this.onSelect('undated');
     let pending = false;
     window.addEventListener('scroll', () => {
       if (pending || this.filter) return;
@@ -76,8 +74,6 @@ export class GalleryDates {
     }));
     el('galleryCalendarMonth').value = this.month;
     el('galleryCalendarMonth').disabled = !months.length;
-    el('galleryUndated').hidden = !this.undated;
-    el('galleryUndated').textContent = `Dates need checking (${this.undated})`;
     this.calendar(); this.openDialog('galleryDateSheet');
   }
   calendar() {
