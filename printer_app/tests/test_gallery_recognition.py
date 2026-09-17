@@ -59,6 +59,33 @@ def test_new_normalized_header_is_used_without_address_or_number_guessing(tmp_pa
     assert service.repository.recognition_candidate(10**12) is None
 
 
+def test_related_uses_similar_name_or_address_and_global_rename(tmp_path):
+    service=build(tmp_path)
+    anchor=seed(service,1,1,
+        text='Lead Name: Darryll Mitchell Address: 792 Park Ave NE, OCEAN SHORES, WA, 98569 Phone: 3609829374')
+    name_match=seed(service,2,1,
+        text='Lead Name: Darryl Mitchell Address: 10 Different Rd, Aberdeen, WA 98520 Phone: 1')
+    address_match=seed(service,3,1,
+        text='Lead Name: Completely Different Address: 792 Park Avenue Northeast, Ocean Shores, WA 98569 Phone: 2')
+    unrelated=seed(service,4,1,
+        text='Lead Name: Other Person Address: 500 Main St, Olympia, WA 98501 Phone: 3')
+
+    related=service.related(anchor)
+    ids={row['id'] for row in related['items']}
+    assert anchor in ids
+    assert name_match in ids
+    assert address_match in ids
+    assert unrelated not in ids
+    assert related['address'].startswith('792 Park Ave')
+
+    changed=service.lead(anchor,'Darryl Mitchell')
+    assert changed==3
+    assert service.item(anchor)['lead_name']=='Darryl Mitchell'
+    assert service.item(name_match)['lead_name']=='Darryl Mitchell'
+    assert service.item(address_match)['lead_name']=='Darryl Mitchell'
+    assert service.item(unrelated)['lead_name']=='Other Person'
+
+
 def test_existing_repair_preserves_ids_images_notes_dates_and_confirmation(tmp_path):
     service=build(tmp_path)
     ident=seed(service,text='Lead Name: JORDAN EXAMPLE eet 6311 Street Phone: 123\n4 1 1 1 16 0 1152')
@@ -146,5 +173,7 @@ def test_recognition_and_navigation_have_explicit_owners():
     offline_runtime=(root/'static/gallery_offline.js').read_text()
     assert 'sqlite3' not in access_service and 'flask' not in access_service
     assert 'flask' not in access_repository
+    assert "'edit_identity'" in access_service
+    assert "require('edit_identity')" in (root/'gallery/web.py').read_text()
     assert 'indexedDB' not in gallery_ui and 'localStorage' not in gallery_ui
     assert 'indexedDB' in offline_runtime and '/gallery/api/offline/index' in offline_runtime
