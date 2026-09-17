@@ -15,30 +15,26 @@
 <button type="button" data-action="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search</span></button>
 </div>
 {% endmacro %}
-<header class="gallery-header">
-<div class="gallery-nav"><button id="galleryInfo" type="button" class="circle-button" aria-label="Gallery information">i</button></div>
-<h1 id="galleryHeading">Gallery</h1>
-<p id="galleryCount">Full work orders · grouped by printed date</p>
-</header>
+<h1 id="galleryHeading" class="sr-only">Gallery</h1>
+<p id="galleryCount" class="sr-only"></p>
 <main id="galleryMain">
-<div id="galleryFilter" class="gallery-filter" hidden><div><strong id="galleryFilterTitle"></strong><p id="galleryFilterHint"></p></div><button id="galleryClear" type="button">All cards</button></div>
+<div id="galleryFilter" class="sr-only" hidden><strong id="galleryFilterTitle"></strong><p id="galleryFilterHint"></p></div>
 <nav class="gallery-date-nav" aria-label="Browse document dates">
+<button id="galleryBack" type="button" class="gallery-back" hidden>‹ Back</button>
 <button id="galleryPreviousDate" type="button" class="circle-button" aria-label="Previous date with work orders" title="Previous date" disabled>‹</button>
 <button id="galleryChooseDate" type="button" class="gallery-date-trigger" aria-haspopup="dialog" aria-controls="galleryDateSheet">All dates <span aria-hidden="true">⌄</span></button>
 <button id="galleryNextDate" type="button" class="circle-button" aria-label="Next date with work orders" title="Next date" disabled>›</button>
 </nav>
-<p id="galleryDateHint" class="gallery-date-hint">Tap a date to choose · swipe left for newer, right for older</p>
 <p id="galleryDateMessage" class="gallery-message" role="status"></p>
 <p id="galleryMessage" class="gallery-message" role="status"></p>
 <div id="galleryCards" aria-label="Work orders by date"></div>
 <p id="galleryEmpty" class="gallery-empty" hidden></p>
 <button id="galleryMore" class="load-more" type="button" hidden>Load more</button>
-<p class="gallery-hint">Notes and Show related use the complete card in view. Tap a card to enlarge it.</p>
 </main>
 <div class="gallery-dock">{{ actions() }}</div>
 
 <dialog id="galleryViewer" class="gallery-viewer" aria-labelledby="galleryTitle">
-<div class="viewer-header"><div><h2 id="galleryTitle">Work order</h2><button id="galleryViewerDate" type="button" class="gallery-date-trigger" aria-haspopup="dialog" aria-controls="galleryDateSheet"></button></div><button type="button" class="circle-button" data-close="galleryViewer" aria-label="Close work order">×</button></div>
+<div class="viewer-header"><div><h2 id="galleryTitle">Work order</h2><button id="galleryViewerDate" type="button" class="gallery-date-trigger" aria-haspopup="dialog" aria-controls="galleryDateSheet"></button></div><button type="button" class="circle-button" data-close="galleryViewer" aria-label="Close work order" autofocus>×</button></div>
 <div class="viewer-content"><img id="galleryFull" alt="Complete work-order image"><p id="galleryViewerMessage" role="status"></p><p id="gallerySource" class="muted"></p></div>
 <div class="gallery-dock">{{ actions() }}</div>
 </dialog>
@@ -70,7 +66,7 @@
 <div class="gallery-calendar-week" aria-hidden="true"><span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span></div>
 <div id="galleryCalendarDays" class="gallery-calendar-days" role="group" aria-label="Days with work orders"></div>
 <p id="galleryCalendarEmpty" class="muted" hidden>No dated work orders in this view.</p>
-<div class="gallery-date-options"><button id="galleryAllDates" type="button">All dates</button><button id="galleryUndated" type="button" hidden>Dates need checking</button></div>
+<div class="gallery-date-options"><button id="galleryInfo" type="button">Gallery information</button><button id="galleryAllDates" type="button">All dates</button><button id="galleryUndated" type="button" hidden>Dates need checking</button></div>
 </dialog>
 
 <dialog id="gallerySearchSheet" class="gallery-sheet search-sheet" aria-labelledby="gallerySearchTitle">
@@ -81,6 +77,7 @@
 
 <dialog id="galleryInfoSheet" class="gallery-sheet" aria-labelledby="galleryInfoTitle">
 <div class="sheet-handle" aria-hidden="true"></div><div class="sheet-heading"><h2 id="galleryInfoTitle">Your gallery</h2><button type="button" class="circle-button" data-close="galleryInfoSheet" aria-label="Close gallery information">×</button></div>
+<p class="muted">Tap the date to choose a day. Swipe left for newer dates, right for older. Notes and Show related use the card most in view. Tap any card to enlarge it.</p>
 <p id="galleryStatus" role="status">Loading gallery status…</p><button id="galleryRefresh" type="button">Refresh cards</button>
 <h3>Open on another device</h3><img class="gallery-qr" src="{{ url_for('gallery.qr') }}" alt="QR code for this gallery"><p class="muted">Use the same trusted network. Anyone who can reach this app can view documents and add notes.</p>
 <h3>Storage and recent imports</h3><p id="galleryStorage"></p><div id="galleryImports"></div>

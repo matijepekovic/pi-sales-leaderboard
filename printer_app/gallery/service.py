@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .policy import checked_date, checked_date_filter, checked_lead_name, search_expression
+from .policy import checked_date, checked_date_filter, checked_lead_name, search_expression, printed_lead, lead_key
 
 
 class GalleryService:
@@ -103,7 +103,8 @@ class GalleryService:
             self.files.publish(directory / entry['file'], ident)
             items.append(dict(id=ident, import_id=job['id'], filename=job['filename'],
                 page=entry['page'], part=entry['part'], bytes=entry['bytes'], text=entry['text'],
-                document_date=entry['document_date'], date_status=entry['date_status'], created=time.time()))
+                document_date=entry['document_date'], date_status=entry['date_status'], created=time.time(),
+                lead_text=entry.get('lead_text', ''), recognition_revision=1 if 'lead_text' in entry and entry['text'].strip() else 0))
         warnings = manifest.get('warnings', [])
         if manifest.get('skipped'):
             warnings.append('No recognized form boxes on pages: ' + ', '.join(map(str, manifest['skipped'])))
@@ -137,3 +138,30 @@ class GalleryService:
         if value['pages']:
             clean['message'] += f" — page {value['page']} of {value['pages']}, {value['crops']} image(s) prepared"
         self.repository.progress(ident, clean)
+
+
+    def repair_one(self, reader):
+        """Low-priority worker operation; reader returns normalized OCR values.
+
+        Re-read existing PNGs so lost word geometry and TSV contamination can be
+        corrected without PDFs or any destructive document reimport.
+        """
+        self.initialize()
+        item = self.repository.recognition_candidate(time.time())
+        if not item:
+            return False
+        try:
+            result = reader(self.files.path('crops', item['id']))
+            if not isinstance(result, dict) or not isinstance(result.get('text'), str):
+                raise ValueError('Invalid recognition result')
+            text = result['text'][:100000]
+            if not text.strip():
+                raise ValueError('No readable text; preserve the existing search index')
+            header = result.get('lead_text', '')
+            if not isinstance(header, str):
+                raise ValueError('Invalid header text')
+            name = printed_lead(header) or printed_lead(text)
+            self.repository.repair_recognition(item['id'], text, name, lead_key(name))
+        except (OSError, ValueError):
+            self.repository.defer_recognition(item['id'], time.time())
+        return True

@@ -1,29 +1,106 @@
 import { GalleryDates } from './gallery_dates.js';
 import { GalleryFocus } from './gallery_focus.js';
+import { GalleryNavigation } from './gallery_navigation.js';
 
 'use strict';
 (() => {
   const el = id => document.getElementById(id);
+  const initialView = history.state?.gallery?.view;
+  let chooseLatest = !initialView;
+  const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
   const cards = new Map(), groups = new Map(), drafts = new Map(), saving = new Set();
   let query = '', relatedId = null, selected = null, offset = 0, total = 0, dateFilter = '';
   let generation = 0, detailGeneration = 0, loading = false, galleryDirty = false, actionPending = false, notesVersion = '', pendingDetails = 0;
   const dates = new GalleryDates({
-    onSelect: chooseDate,
-    blocked: () => loading || Boolean(document.querySelector('dialog[open]')),
+    onSelect: chooseDate, openDialog: id => showDialog(id),
+    blocked: () => loading || navigation.restoring || Boolean(document.querySelector('dialog[open]')),
   });
   const focus = new GalleryFocus({
     container: el('galleryCards'),
-    blocked: () => loading || actionPending || Boolean(document.querySelector('dialog[open]')),
+    blocked: () => loading || actionPending || navigation.restoring || Boolean(document.querySelector('dialog[open]')),
     onChange: id => {
       selected = cards.get(id)?.item || null;
       detailGeneration++;
       actions();
     },
   });
+  const navigation = new GalleryNavigation({
+    capture: captureView, restore: restoreView,
+    changed: () => { updateNavigation(); focus.reset(); },
+  });
+  function updateNavigation() {
+    const context = Boolean(relatedId || query);
+    document.querySelector('.gallery-date-nav').dataset.context = String(context);
+    el('galleryMain').dataset.singleDate = String(Boolean(dateFilter));
+    el('galleryBack').hidden = !context || navigation.depth === 0;
+  }
+  function captureView() {
+    const navBottom = document.querySelector('.gallery-date-nav').getBoundingClientRect().bottom;
+    const anchor = [...el('galleryCards').querySelectorAll('.gallery-card')]
+      .find(node => node.getBoundingClientRect().bottom > navBottom);
+    return {query, relatedId, dateFilter, count:cards.size, scroll:window.scrollY,
+      anchor:anchor?.dataset.id, anchorTop:anchor?.getBoundingClientRect().top,
+      selected:selected?.id, viewerScroll:el('galleryViewer').scrollTop,
+      dialogs:[...document.querySelectorAll('dialog[open]')].map(node => node.id),
+      searchDraft:el('query').value};
+  }
+  function showDialog(id, record = true) {
+    if (record) navigation.save();
+    el(id).showModal();
+    if (record) navigation.push();
+  }
+  function requestClose(id) {
+    if (navigation.depth > 0) navigation.back();
+    else el(id).close();
+  }
+  async function restoreView(view) {
+    if (!view) return;
+    chooseLatest = false;
+    const reload = galleryDirty || query !== view.query || relatedId !== view.relatedId ||
+      dateFilter !== view.dateFilter || !cards.size;
+    galleryDirty = false; detailGeneration++;
+    closeDialogs();
+    // Native close events must finish saving the old draft before opening a new sheet.
+    await nextFrame();
+    query = view.query || ''; relatedId = view.relatedId || null; dateFilter = view.dateFilter || '';
+    dates.setFilter(dateFilter);
+    if (reload) await load();
+    while (cards.size < (view.count || 0) && offset < total) {
+      const before = offset; await load(false); if (offset === before) break;
+    }
+    updateNavigation();
+    const nodes = [...el('galleryCards').querySelectorAll('.gallery-card')];
+    const anchorIndex = nodes.findIndex(node => node.dataset.id === view.anchor);
+    await Promise.all(nodes.slice(0, Math.max(1,anchorIndex+1)).map(node => {
+      const image = node.querySelector('img'); image.loading = 'eager';
+      return image.decode().catch(() => {});
+    }));
+    await nextFrame();
+    const anchor = cards.get(view.anchor)?.node;
+    window.scrollTo(0, anchor ? window.scrollY + anchor.getBoundingClientRect().top - view.anchorTop : view.scroll || 0);
+    selected = cards.get(view.selected)?.item || null;
+    const dialogs = view.dialogs || [];
+    if (view.selected && !selected && dialogs.length) {
+      try { selected = await api('/gallery/api/items/' + view.selected); }
+      catch (_) { el('galleryMessage').textContent = 'That work order is no longer available.'; }
+    }
+    for (const id of dialogs) {
+      if (id === 'galleryViewer' && selected) {
+        openViewer(selected, false);
+        await el('galleryFull').decode().catch(() => {});
+        el(id).scrollTop = view.viewerScroll || 0;
+      }
+      else if (id === 'galleryNotesSheet' && selected) await openNotes(false);
+      else if (id === 'galleryDateSheet') dates.open();
+      else if (id === 'gallerySearchSheet') { el('query').value = view.searchDraft || ''; showDialog(id, false); }
+      else if (id === 'galleryInfoSheet') { showDialog(id, false); summary(); }
+    }
+    actions();
+  }
   function currentCard() {
-    // No tap or typed identifier: resolve the unobscured, fully visible card.
+    // Resolve the dominant visible card, including documents taller than the screen.
     // While a dialog is open, its existing target stays pinned instead.
-    if (!document.querySelector('dialog[open]')) focus.refresh();
+    if (!navigation.restoring && !document.querySelector('dialog[open]')) focus.refresh();
     return selected;
   }
   const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
@@ -91,6 +168,14 @@ import { GalleryFocus } from './gallery_focus.js';
     try {
       const data = await api(url);
       if (token !== generation) return;
+      if (chooseLatest) {
+        chooseLatest = false;
+        const latest = (data.dates || []).find(bucket => bucket.date)?.date;
+        if (latest && !query && !relatedId) {
+          dateFilter = latest; dates.setFilter(latest); loading = false;
+          return await load();
+        }
+      }
       dates.update(data.dates, dateFilter);
       data.items.forEach(addCard); total = data.total; offset = start + data.items.length;
       el('galleryHeading').textContent = related ? 'Related cards' : query ? 'Search results' : 'Gallery';
@@ -101,14 +186,20 @@ import { GalleryFocus } from './gallery_focus.js';
       el('galleryMore').hidden = offset >= total;
       el('galleryEmpty').hidden = total !== 0;
       el('galleryEmpty').textContent = dateFilter ? 'No work orders on this date. Choose another date or All dates.' : query || related ? 'No matching work orders.' : 'No work orders yet.';
-      el('galleryMessage').textContent = ''; actions();
+      el('galleryMessage').textContent = ''; updateNavigation(); actions();
     } catch (error) { if (token === generation) el('galleryMessage').textContent = error.message; }
     finally { if (token === generation) { loading = false; dates.busy(false); el('galleryCards').setAttribute('aria-busy', 'false'); el('galleryMore').disabled = false; focus.reset(); } }
   }
-  function chooseDate(value) {
-    // This is a read-only view filter, never a correction of a document's date.
+  async function chooseDate(value) {
+    if (navigation.restoring) return;
+    const fromSheet = el('galleryDateSheet').open;
+    navigation.save(); chooseLatest = false;
     dateFilter = value; selected = null; detailGeneration++; galleryDirty = false;
-    dates.setFilter(value); closeDialogs(); actions(); load(); window.scrollTo({top:0});
+    dates.setFilter(value); closeDialogs(); actions();
+    await load(); window.scrollTo({top:0});
+    // Selecting from the picker replaces it; Back does not reopen a stale picker.
+    if (fromSheet) navigation.save(); else navigation.push();
+    updateNavigation();
   }
   async function summary() {
     try {
@@ -174,16 +265,20 @@ import { GalleryFocus } from './gallery_focus.js';
       throw error;
     } finally { pendingDetails--; }
   }
-  function openViewer(item) {
+  function openViewer(item, record = true) {
+    if (record) navigation.save();
     selected = item; actions(); el('galleryViewerMessage').textContent = '';
     el('galleryTitle').textContent = cardName(item); el('galleryViewerDate').textContent = dateLabel(item.document_date);
     el('gallerySource').textContent = `${item.filename} · page ${item.page}, work order ${item.part}`;
     el('galleryFull').src = '/gallery/image/' + item.id;
-    el('galleryViewer').showModal(); el('galleryViewer').scrollTop = 0;
+    showDialog('galleryViewer', false); el('galleryViewer').scrollTop = 0;
+    el('galleryViewer').querySelector('[data-close]').focus({preventScroll:true});
+    if (record) navigation.push();
     detail().catch(() => {});
   }
-  async function openNotes() {
+  async function openNotes(record = true) {
     if (!currentCard()) return;
+    if (record) navigation.save();
     const saved = drafts.get(selected.id) || {author:'', body:'', noteId:randomId()};
     drafts.set(selected.id, saved);
     el('galleryNote').dataset.itemId = selected.id;
@@ -191,7 +286,8 @@ import { GalleryFocus } from './gallery_focus.js';
     el('galleryNoteMessage').textContent = ''; el('galleryNotes').replaceChildren(text('p', 'Loading notes…', 'muted'));
     el('galleryNotesContext').textContent = `${cardName(selected)} · ${dateLabel(selected.document_date)}`;
     el('galleryCardDetails').open = false;
-    noteControls(); el('galleryNotesSheet').showModal();
+    noteControls(); showDialog('galleryNotesSheet', false);
+    if (record) navigation.push();
     try {
       await detail(true);
     } catch (_) { /* The sheet keeps the error visible. */ }
@@ -210,38 +306,40 @@ import { GalleryFocus } from './gallery_focus.js';
         el(el('galleryViewer').open ? 'galleryViewerMessage' : 'galleryMessage').textContent = message;
         return; // Never open a name-entry prompt or guess a different lead.
       }
+      navigation.save(); chooseLatest = false;
       relatedId = id; query = ''; dateFilter = ''; dates.setFilter(''); closeDialogs();
-      await load(); window.scrollTo({top:0});
+      await load(); window.scrollTo({top:0}); navigation.push();
     } catch (error) { el('galleryMessage').textContent = error.message; }
     finally { actionPending = false; actions(); focus.reset(); }
   }
   function openSearch() {
-    el('query').value = query; el('gallerySearchSheet').showModal(); el('query').focus();
+    el('query').value = query; showDialog('gallerySearchSheet'); el('query').focus();
   }
   document.querySelectorAll('[data-action]').forEach(button => {
     button.addEventListener('click', () => ({related, notes:openNotes, search:openSearch})[button.dataset.action]());
   });
-  document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => el(button.dataset.close).close()));
+  document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => requestClose(button.dataset.close)));
   document.querySelectorAll('dialog').forEach(dialog => {
     dialog.addEventListener('click', event => { if (event.target === dialog) {
       const box = dialog.getBoundingClientRect();
-      if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dialog.close();
+      if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) requestClose(dialog.id);
     }});
+    dialog.addEventListener('cancel', event => { event.preventDefault(); requestClose(dialog.id); });
     dialog.addEventListener('close', () => {
-      if (galleryDirty && !document.querySelector('dialog[open]')) { galleryDirty = false; load(); }
+      if (galleryDirty && !navigation.restoring && !document.querySelector('dialog[open]')) { galleryDirty = false; load(); }
       focus.reset();
     });
   });
-  el('galleryNotesSheet').addEventListener('close', () => { draft(); delete el('galleryNote').dataset.itemId; });
-  el('galleryViewer').addEventListener('close', () => { el('galleryFull').removeAttribute('src'); });
-  el('galleryInfo').onclick = () => { el('galleryInfoSheet').showModal(); summary(); };
+  el('galleryNotesSheet').addEventListener('close', () => { if (!el('galleryNotesSheet').open) { draft(); delete el('galleryNote').dataset.itemId; } });
+  el('galleryViewer').addEventListener('close', () => { if (!el('galleryViewer').open) el('galleryFull').removeAttribute('src'); });
+  el('galleryInfo').onclick = () => { showDialog('galleryInfoSheet'); summary(); };
   el('galleryViewerDate').onclick = () => dates.open(selected?.document_date || 'undated');
   el('galleryMore').onclick = () => load(false);
-  el('galleryClear').onclick = () => { relatedId = null; query = ''; chooseDate(''); };
-  el('galleryRefresh').onclick = () => { el('galleryInfoSheet').close(); load(); summary(); };
-  el('gallerySearch').onsubmit = event => {
-    event.preventDefault(); query = el('query').value.trim(); relatedId = null; selected = null; dateFilter = ''; dates.setFilter('');
-    closeDialogs(); actions(); load(); window.scrollTo({top:0});
+  el('galleryBack').onclick = () => navigation.back();
+  el('galleryRefresh').onclick = () => { galleryDirty = true; requestClose('galleryInfoSheet'); };
+  el('gallerySearch').onsubmit = async event => {
+    event.preventDefault(); navigation.save(); chooseLatest = false; query = el('query').value.trim(); relatedId = null; selected = null; dateFilter = ''; dates.setFilter('');
+    closeDialogs(); actions(); await load(); window.scrollTo({top:0}); navigation.save(); updateNavigation();
   };
   el('galleryNote').addEventListener('input', draft);
   el('galleryNote').onsubmit = async event => {
@@ -283,5 +381,9 @@ import { GalleryFocus } from './gallery_focus.js';
   };
   setInterval(() => { if (selected && !pendingDetails && !document.hidden && (el('galleryViewer').open || el('galleryNotesSheet').open)) detail().catch(() => {}); }, 5000);
   setInterval(() => { if (!document.hidden && el('galleryInfoSheet').open) summary(); }, 15000);
-  actions(); load();
+  actions();
+  if (initialView) {
+    navigation.restoring = true;
+    restoreView(initialView).finally(() => { navigation.restoring = false; updateNavigation(); focus.reset(); });
+  } else load().then(() => navigation.save());
 })();

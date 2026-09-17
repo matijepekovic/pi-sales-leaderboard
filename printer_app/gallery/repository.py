@@ -62,6 +62,11 @@ class GalleryRepository:
                 if name not in import_columns:
                     c.execute(f'ALTER TABLE imports ADD COLUMN {name} {definition}')
             columns = {row['name'] for row in c.execute('PRAGMA table_info(items)')}
+            for name, definition in (('recognition_revision', 'INTEGER NOT NULL DEFAULT 0'),
+                                     ('recognition_attempts', 'INTEGER NOT NULL DEFAULT 0'),
+                                     ('recognition_retry_at', 'REAL NOT NULL DEFAULT 0')):
+                if name not in columns:
+                    c.execute(f'ALTER TABLE items ADD COLUMN {name} {definition}')
             if 'lead_name' not in columns:
                 c.execute("ALTER TABLE items ADD COLUMN lead_name TEXT NOT NULL DEFAULT ''")
                 c.execute("ALTER TABLE items ADD COLUMN lead_key TEXT NOT NULL DEFAULT ''")
@@ -134,10 +139,11 @@ class GalleryRepository:
     def finish(self, ident, items, warning=''):
         with self.connect() as c:
             for item in items:
-                name = printed_lead(item['text'])
-                c.execute('''INSERT OR IGNORE INTO items(id,import_id,page,part,filename,text,document_date,date_status,bytes,created,lead_name,lead_key,lead_status)
-                    VALUES (:id,:import_id,:page,:part,:filename,:text,:document_date,:date_status,:bytes,:created,:lead_name,:lead_key,:lead_status)''',
-                    dict(item, lead_name=name, lead_key=lead_key(name), lead_status='printed' if name else 'needs-name'))
+                name = printed_lead(item.get('lead_text') or item['text'])
+                c.execute('''INSERT OR IGNORE INTO items(id,import_id,page,part,filename,text,document_date,date_status,bytes,created,lead_name,lead_key,lead_status,recognition_revision)
+                    VALUES (:id,:import_id,:page,:part,:filename,:text,:document_date,:date_status,:bytes,:created,:lead_name,:lead_key,:lead_status,:recognition_revision)''',
+                    dict(item, lead_name=name, lead_key=lead_key(name), lead_status='printed' if name else 'needs-name',
+                         recognition_revision=item.get('recognition_revision', 0)))
             now = time.time()
             c.execute("UPDATE imports SET state='COMPLETE',count=?,error=?,updated=?,completed=? WHERE id=?",
                       (len(items), warning[:1000], now, now, ident))
@@ -194,8 +200,8 @@ class GalleryRepository:
                 params.append(document_date)
             total = c.execute('SELECT count(*) FROM items i ' + clause, params).fetchone()[0]
             rows = c.execute('''SELECT i.id,i.filename,i.page,i.part,i.document_date,i.date_status,i.bytes,i.lead_name,i.lead_status,
-               (SELECT count(*) FROM notes n WHERE n.item_id=i.id) AS notes_count FROM items i ''' + clause +
-               ' ORDER BY i.document_date IS NULL,i.document_date DESC,i.created DESC,i.id LIMIT 24 OFFSET ?', [*params, offset])
+               (SELECT count(*) FROM notes n WHERE n.item_id=i.id) AS notes_count FROM items i JOIN imports source ON source.id=i.import_id ''' + clause +
+               ' ORDER BY i.document_date IS NULL,i.document_date DESC,source.created,source.id,i.page,i.part,i.id LIMIT 24 OFFSET ?', [*params, offset])
             return dict(total=total, items=[dict(r) for r in rows], dates=buckets)
 
     def item(self, ident):
@@ -307,3 +313,29 @@ class GalleryRepository:
             result['items'] = [dict(i) for i in c.execute("""SELECT id,page,part,bytes,document_date,date_status,lead_name
                 FROM items WHERE import_id=? AND state='ACTIVE' ORDER BY page,part,id LIMIT 24 OFFSET ?""", (ident,offset))]
             return result
+
+
+    def recognition_candidate(self, now):
+        with self.connect() as c:
+            row = c.execute("""SELECT id,text,lead_status FROM items WHERE state='ACTIVE'
+                AND recognition_revision<1 AND recognition_attempts<3 AND recognition_retry_at<=?
+                ORDER BY (lead_key!=''),created,id LIMIT 1""", (now,)).fetchone()
+            return dict(row) if row else None
+
+    def repair_recognition(self, ident, text, name, key):
+        with self.connect() as c:
+            # An edit/expiry during OCR wins. Notes, IDs, images, dates and print
+            # receipts are not modified. The existing FTS trigger reindexes text.
+            c.execute("""UPDATE items SET text=?,recognition_revision=1,
+                recognition_attempts=0,recognition_retry_at=0,
+                lead_name=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_name ELSE ? END,
+                lead_key=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_key ELSE ? END,
+                lead_status=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_status ELSE 'printed' END
+                WHERE id=? AND state='ACTIVE' AND recognition_revision<1""",
+                (text,name,name,name,key,name,ident))
+
+    def defer_recognition(self, ident, now):
+        with self.connect() as c:
+            c.execute("""UPDATE items SET recognition_attempts=recognition_attempts+1,
+                recognition_retry_at=? WHERE id=? AND state='ACTIVE' AND recognition_revision<1""",
+                (now+300,ident))

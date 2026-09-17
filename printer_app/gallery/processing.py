@@ -3,9 +3,6 @@
 Runs under system Python with distro OpenCV/Pillow; never imports printer runtime.
 Only finished crops and a manifest leave the temporary workspace. No cloud APIs.
 """
-import csv
-from datetime import date
-import io
 import json
 import os
 from pathlib import Path
@@ -21,49 +18,7 @@ import numpy as np
 
 # Executed as a script, deliberately without loading the printer package/runtime.
 from cropper import cut_forms
-
-
-def printed_date(words, height):
-    # Dates are for retention, not cutting. Only unambiguous dates in the printed
-    # header are considered. Repeated matching dates provide corroboration.
-    header = ' '.join(w['text'] for w in words if int(w['top']) < height * .27)
-    readings = []
-    for m in re.finditer(r'\b(20\d{2})[.\-/](\d{1,2})[.\-/](\d{1,2})\b', header):
-        try:
-            readings.append(date(*map(int, m.groups())).isoformat())
-        except ValueError:
-            pass
-    months = 'jan feb mar apr may jun jul aug sep oct nov dec'.split()
-    for m in re.finditer(r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s+(20\d{2})\b', header, re.I):
-        try:
-            readings.append(date(int(m[3]), months.index(m[1].lower()) + 1, int(m[2])).isoformat())
-        except ValueError:
-            pass
-    if len(readings) >= 2 and len(set(readings)) == 1:
-        return readings[0], 'printed'
-    return None, 'needs-date'
-
-
-def recognize(path, work):
-    # Only a disposable OCR copy loses rules; the saved gallery image is untouched.
-    source = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-    h, w = source.shape
-    ink = cv2.threshold(source, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
-    rules = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((1, max(30, w // 25)), np.uint8))
-    rules |= cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((max(30, h // 12), 1), np.uint8))
-    source[cv2.dilate(rules, np.ones((3, 3), np.uint8)) > 0] = 255
-    ocr_copy = work / 'ocr.png'
-    cv2.imwrite(str(ocr_copy), source)
-    result = subprocess.run(['tesseract', str(ocr_copy), 'stdout', '-l', 'eng', '--psm', '6', 'tsv'],
-        check=True, capture_output=True, text=True, timeout=120)
-    words = [r for r in csv.DictReader(io.StringIO(result.stdout), delimiter='\t')
-             if r.get('text', '').strip() and float(r.get('conf', '-1')) >= 0]
-    text = ' '.join(r['text'] for r in words)[:100000]
-    # Low-confidence words can assist search, but never authorize date expiry.
-    confident = [r for r in words if float(r['conf']) >= 70]
-    docdate, state = printed_date(confident, h)
-    ocr_copy.unlink(missing_ok=True)
-    return text, docdate, state
+from recognition import recognize
 
 
 def report_progress(output, stage, page=0, pages=0, crops=0):
@@ -108,12 +63,12 @@ def process(source, output, budget):
                     raise OSError('Rendered crops exceed gallery storage budget')
                 report_progress(output, 'search', page, pages, len(manifest['items']))
                 try:
-                    text, docdate, state = recognize(path, work)
+                    reading = recognize(path, work)
                 except (OSError, ValueError, subprocess.SubprocessError):
-                    text, docdate, state = '', None, 'needs-date'
+                    reading = dict(text='', lead_text='', document_date=None, date_status='needs-date')
                     manifest['warnings'].append(f'Page {page} crop {part}: search text unavailable')
                 manifest['items'].append(dict(file=filename, page=page, part=part, bytes=size,
-                    text=text, document_date=docdate, date_status=state))
+                    **reading))
             if not count:
                 manifest['skipped'].append(page)
             pagefile.unlink(missing_ok=True)

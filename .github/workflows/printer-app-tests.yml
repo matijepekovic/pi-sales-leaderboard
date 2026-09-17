@@ -22,7 +22,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libcups2-dev cups-client cups-daemon libreoffice-calc fonts-liberation fonts-dejavu-core python3-opencv python3-pil python3-pytest poppler-utils tesseract-ocr tesseract-ocr-eng
           python -m pip install -r printer_app/requirements.txt pytest xlwt 'playwright>=1.55,<2'
-          python -m playwright install --with-deps chromium
+          python -m playwright install --with-deps chromium webkit
       - name: Isolated CI-only CUPS sink (never a physical printer)
         run: |
           echo 'FileDevice Yes' | sudo tee -a /etc/cups/cups-files.conf
@@ -36,7 +36,7 @@ jobs:
           python -m compileall -q printer_app
           bash -n printer_app/install.sh printer_app/launch.sh scripts/update-printer-app.sh
           python -m pytest printer_app/tests -v
-          /usr/bin/python3 -m pytest printer_app/tests/test_gallery_borders.py -v
+          /usr/bin/python3 -m pytest printer_app/tests/test_gallery_borders.py printer_app/tests/test_gallery_recognition.py -v
       - name: Standalone systemd deployment smoke test (no Stats service)
         run: |
           sudo useradd --create-home --shell /bin/bash scoreboard

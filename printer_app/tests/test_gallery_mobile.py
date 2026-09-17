@@ -133,6 +133,9 @@ def test_phone_full_cards_related_and_shared_notes(web):
             try:
                 context = browser.new_context(viewport={'width':390, 'height':844}, is_mobile=True, has_touch=True)
                 page = context.new_page(); page.goto(origin + '/gallery/')
+                expect(page.locator('#galleryChooseDate')).to_have_text('August 11, 2026 ⌄')
+                page.locator('#galleryChooseDate').click(); page.locator('#galleryAllDates').click()
+                expect(page.locator('.gallery-day')).to_have_count(3)
                 page.wait_for_selector('.gallery-card img')
                 image = page.locator('.gallery-card img').first
                 image.evaluate('(img) => img.decode()')
@@ -147,12 +150,17 @@ def test_phone_full_cards_related_and_shared_notes(web):
                 assert page.locator('.gallery-card').count() == 2
                 assert page.locator('.gallery-card').first.get_attribute('data-id') == ids[1]
                 assert page.locator('.gallery-card').all()[0].bounding_box()['x'] == page.locator('.gallery-card').all()[1].bounding_box()['x']
+                page.locator('.gallery-card').first.evaluate('(node)=>window.scrollTo(0,scrollY+node.getBoundingClientRect().top-100)')
+                expect(page.locator('.gallery-card').first).to_have_attribute('aria-pressed','true')
                 page.locator('body > .gallery-dock [data-action="notes"]').click()
                 page.locator('#galleryNote [name="body"]').fill('Shared follow-up note')
                 page.locator('#galleryNote button').click()
                 expect(page.locator('#galleryNoteMessage')).to_contain_text('Saved.')
                 second = browser.new_context(viewport={'width':390, 'height':844})
                 other = second.new_page(); other.goto(origin + '/gallery/')
+                expect(other.locator('#galleryChooseDate')).to_have_text('August 11, 2026 ⌄')
+                other.locator('#galleryChooseDate').click(); other.locator('#galleryAllDates').click()
+                expect(other.locator('.gallery-day')).to_have_count(3)
                 other.locator(f'.gallery-card[data-id="{ids[1]}"]').click()
                 other.locator('#galleryViewer [data-action="notes"]').click()
                 expect(other.locator('#galleryNotes')).to_contain_text('Shared follow-up note')

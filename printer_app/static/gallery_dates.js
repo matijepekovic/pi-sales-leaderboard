@@ -7,8 +7,8 @@ const monthLabel = month => new Date(month + '-01T12:00:00').toLocaleDateString(
   {month:'long', year:'numeric'});
 
 export class GalleryDates {
-  constructor({onSelect, blocked}) {
-    this.onSelect = onSelect; this.blocked = blocked;
+  constructor({onSelect, blocked, openDialog}) {
+    this.onSelect = onSelect; this.blocked = blocked; this.openDialog = openDialog;
     this.filter = ''; this.counts = new Map(); this.dates = []; this.undated = 0;
     this.loading = true; this.month = ''; this.gesture = null; this.touches = new Set();
     this.suppressClickUntil = 0;
@@ -78,7 +78,7 @@ export class GalleryDates {
     el('galleryCalendarMonth').disabled = !months.length;
     el('galleryUndated').hidden = !this.undated;
     el('galleryUndated').textContent = `Dates need checking (${this.undated})`;
-    this.calendar(); el('galleryDateSheet').showModal();
+    this.calendar(); this.openDialog('galleryDateSheet');
   }
   calendar() {
     const days = el('galleryCalendarDays'); days.replaceChildren();
