@@ -247,12 +247,6 @@ import { GalleryNavigation } from './gallery_navigation.js';
       el('galleryNotes').replaceChildren(...(notes.length ? notes : [text('p', 'No notes yet. Add the first note below.', 'muted')]));
       notesVersion = version;
     }
-    el('galleryText').textContent = item.text || 'No readable text. Typed notes are searchable.';
-    el('galleryDateStatus').textContent = item.document_date ? `Document date: ${item.document_date} (${item.date_status}).` : 'Uncertain date — protected from expiry until confirmed.';
-    if (initial) {
-      el('galleryLead').elements.lead_name.value = item.lead_name || '';
-      el('galleryDate').elements.date.value = item.document_date || '';
-    }
     updateCard(item);
   }
   async function detail(initial = false) {
@@ -291,7 +285,6 @@ import { GalleryNavigation } from './gallery_navigation.js';
     el('galleryNote').elements.author.value = saved.author; el('galleryNote').elements.body.value = saved.body;
     el('galleryNoteMessage').textContent = ''; el('galleryNotes').replaceChildren(text('p', 'Loading notes…', 'muted'));
     el('galleryNotesContext').textContent = `${cardName(selected)} · ${dateLabel(selected.document_date)}`;
-    el('galleryCardDetails').open = false;
     noteControls(); showDialog('galleryNotesSheet', false);
     if (record) navigation.push();
     try {
@@ -364,26 +357,6 @@ import { GalleryNavigation } from './gallery_navigation.js';
       }
     } catch (error) { if (selected?.id === id) el('galleryNoteMessage').textContent = 'Not saved: ' + error.message; }
     finally { saving.delete(id); noteControls(); }
-  };
-  el('galleryLead').onsubmit = async event => {
-    event.preventDefault(); if (!selected) return;
-    const id = selected.id, button = event.currentTarget.querySelector('button'); button.disabled = true;
-    try {
-      await api(`/gallery/api/items/${id}/lead-name`, {method:'POST', body:new FormData(event.currentTarget)});
-      if (selected?.id !== id) return;
-      el('galleryNoteMessage').textContent = 'Lead name saved.'; await detail().catch(() => { el('galleryNoteMessage').textContent = 'Lead name saved. Reopen to refresh.'; });
-    } catch (error) { el('galleryNoteMessage').textContent = 'Not saved: ' + error.message; }
-    finally { button.disabled = false; }
-  };
-  el('galleryDate').onsubmit = async event => {
-    event.preventDefault(); if (!selected) return;
-    const id = selected.id, button = event.currentTarget.querySelector('button'); button.disabled = true;
-    try {
-      await api(`/gallery/api/items/${id}/date`, {method:'POST', body:new FormData(event.currentTarget)});
-      if (selected?.id !== id) return;
-      galleryDirty = true; el('galleryNoteMessage').textContent = 'Date saved.'; await detail().catch(() => { el('galleryNoteMessage').textContent = 'Date saved. Reopen to refresh.'; });
-    } catch (error) { el('galleryNoteMessage').textContent = 'Not saved: ' + error.message; }
-    finally { button.disabled = false; }
   };
   setInterval(() => { if (selected && !pendingDetails && !document.hidden && (el('galleryViewer').open || el('galleryNotesSheet').open)) detail().catch(() => {}); }, 5000);
   setInterval(() => { if (!document.hidden && el('galleryInfoSheet').open) summary(); }, 15000);
