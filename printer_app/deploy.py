@@ -159,6 +159,8 @@ def main():
             if not previous.is_symlink() or not (previous.resolve() / '.ready').exists():
                 raise SystemExit('No previous printer release is available')
             release = previous.resolve()
+            if not (release / 'printer_app/admin_auth.py').is_file():
+                raise SystemExit('Rollback blocked: that release predates required printer-admin authentication.')
             run([str(release / '.venv/bin/python'), '-m', 'printer_app.bootstrap', 'migrate'], cwd=release)
             activate(base, release, unattended=args.unattended)
             return
@@ -188,11 +190,12 @@ def main():
             run([python, '-m', 'compileall', '-q', str(release / 'printer_app')])
             (release / '.ready').write_text(release.name + '\n')
         python = str(release / '.venv/bin/python')
-        init_command = [python, '-m', 'printer_app.bootstrap', 'init']
-        if args.initial_login_file:
-            init_command.extend(['--initial-login-file', str(args.initial_login_file.expanduser())])
-        run(init_command, cwd=release)
+        run([python, '-m', 'printer_app.bootstrap', 'init'], cwd=release)
         run([python, '-m', 'printer_app.bootstrap', 'migrate'], cwd=release)
+        admin_command = [python, '-m', 'printer_app.bootstrap', 'ensure-admin']
+        if args.initial_login_file:
+            admin_command.extend(['--initial-login-file', str(args.initial_login_file.expanduser())])
+        run(admin_command, cwd=release)
         activate(base, release, unattended=args.unattended)
         save_result(args.result_file, release, changed=True)
 
