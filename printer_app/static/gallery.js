@@ -106,6 +106,7 @@ import { GalleryOffline } from './gallery_offline.js';
         el(id).scrollTop = view.viewerScroll || 0;
       }
       else if (id === 'galleryNotesSheet' && selected) await openNotes(false);
+      else if (id === 'galleryLeadSheet' && selected && editIdentityCapability()) openLeadEditor(false);
       else if (id === 'galleryDateSheet') dates.open();
       else if (id === 'galleryShareSheet' && shareCapability()) await openShare(false);
       else if (id === 'gallerySearchSheet') { el('query').value = view.searchDraft || ''; showDialog(id, false); }
@@ -132,6 +133,9 @@ import { GalleryOffline } from './gallery_offline.js';
   }
   function shareCapability() {
     return Boolean(access?.capabilities?.includes('share'));
+  }
+  function editIdentityCapability() {
+    return Boolean(access?.capabilities?.includes('edit_identity')) && !offlineMode;
   }
   function shareExpiry(value) {
     return new Date(Number(value) * 1000).toLocaleString([], {
@@ -218,11 +222,17 @@ import { GalleryOffline } from './gallery_offline.js';
     }
     el('galleryOfflineToggle').checked = canOffline && offline.isEnabled();
     if (!canOffline) el('galleryOfflineStatus').textContent = '';
+    const title = el('galleryTitle');
+    const canEditIdentity = !resumed && Boolean(info?.capabilities?.includes('edit_identity'));
+    title.dataset.editable = String(canEditIdentity);
+    title.title = canEditIdentity ? 'Long press to change this lead name everywhere' : '';
     if (info?.csrf) {
       const csrf = el('galleryNote').elements.csrf;
       if (csrf) csrf.value = info.csrf;
       const shareCsrf = el('galleryShareForm').elements.csrf;
       if (shareCsrf) shareCsrf.value = info.csrf;
+      const leadCsrf = el('galleryLeadForm').elements.csrf;
+      if (leadCsrf) leadCsrf.value = info.csrf;
     }
   }
   async function configureAccess() {
@@ -322,8 +332,8 @@ import { GalleryOffline } from './gallery_offline.js';
       el('galleryHeading').textContent = related ? 'Related cards' : query ? 'Search results' : 'Gallery';
       el('galleryCount').textContent = `${total} ${total === 1 ? 'work order' : 'work orders'} · ${dateFilter ? (dateFilter === 'undated' ? 'dates need checking' : dateLabel(dateFilter)) : 'newest dates first'}`;
       el('galleryFilter').hidden = !related && !query;
-      el('galleryFilterTitle').textContent = related ? data.lead_name : query;
-      el('galleryFilterHint').textContent = related ? 'Lead name in printed text or notes · all retained dates' : 'Matching printed text and shared notes';
+      el('galleryFilterTitle').textContent = related ? (data.lead_name || data.address || 'Related work orders') : query;
+      el('galleryFilterHint').textContent = related ? 'Similar lead name or address · all retained dates' : 'Matching printed text and shared notes';
       el('galleryMore').hidden = offset >= total;
       el('galleryEmpty').hidden = total !== 0;
       el('galleryEmpty').textContent = dateFilter ? 'No work orders on this date. Choose another date.' : query || related ? 'No matching work orders.' : 'No work orders yet.';
@@ -436,6 +446,18 @@ import { GalleryOffline } from './gallery_offline.js';
       await detail(true);
     } catch (_) { /* The sheet keeps the error visible. */ }
   }
+  function openLeadEditor(record = true) {
+    if (!selected?.id || !selected.lead_name || !editIdentityCapability()) return;
+    const form = el('galleryLeadForm');
+    form.dataset.itemId = selected.id;
+    form.elements.lead_name.value = selected.lead_name;
+    el('galleryLeadContext').textContent = selected.address || 'No address was recognized on this work order.';
+    el('galleryLeadMessage').textContent = '';
+    showDialog('galleryLeadSheet', false);
+    if (record) navigation.push();
+    form.elements.lead_name.focus();
+    form.elements.lead_name.select();
+  }
   function closeDialogs() { document.querySelectorAll('dialog[open]').forEach(d => d.close()); }
   async function related() {
     const target = currentCard();
@@ -445,11 +467,6 @@ import { GalleryOffline } from './gallery_offline.js';
     try {
       await detail();
       if (selected?.id !== id) return;
-      if (!selected.lead_name) {
-        const message = 'The lead name could not be read on this card. Related results are unavailable.';
-        el(el('galleryViewer').open ? 'galleryViewerMessage' : 'galleryMessage').textContent = message;
-        return; // Never open a name-entry prompt or guess a different lead.
-      }
       navigation.save(); chooseLatest = false;
       relatedId = id; query = ''; dateFilter = ''; dates.setFilter(''); closeDialogs();
       await load(); window.scrollTo({top:0}); navigation.push();
@@ -476,6 +493,32 @@ import { GalleryOffline } from './gallery_offline.js';
   });
   el('galleryNotesSheet').addEventListener('close', () => { if (!el('galleryNotesSheet').open) { draft(); delete el('galleryNote').dataset.itemId; } });
   el('galleryViewer').addEventListener('close', () => { if (!el('galleryViewer').open) el('galleryFull').removeAttribute('src'); });
+  const leadTitle = el('galleryTitle');
+  let leadPressTimer = null, leadPressStart = null, leadPressTriggered = false;
+  const cancelLeadPress = () => {
+    if (leadPressTimer) clearTimeout(leadPressTimer);
+    leadPressTimer = null;
+    leadPressStart = null;
+  };
+  leadTitle.addEventListener('pointerdown', event => {
+    if (!editIdentityCapability() || !selected?.lead_name || event.button > 0) return;
+    leadPressTriggered = false;
+    leadPressStart = {x:event.clientX,y:event.clientY};
+    leadPressTimer = setTimeout(() => {
+      leadPressTimer = null;
+      leadPressTriggered = true;
+      openLeadEditor();
+    }, 550);
+  });
+  leadTitle.addEventListener('pointermove', event => {
+    if (!leadPressStart) return;
+    if (Math.hypot(event.clientX-leadPressStart.x,event.clientY-leadPressStart.y) > 12) cancelLeadPress();
+  });
+  ['pointerup','pointercancel','pointerleave'].forEach(name => leadTitle.addEventListener(name, cancelLeadPress));
+  leadTitle.addEventListener('contextmenu', event => { if (editIdentityCapability()) event.preventDefault(); });
+  leadTitle.addEventListener('click', event => {
+    if (leadPressTriggered) { event.preventDefault(); event.stopPropagation(); leadPressTriggered = false; }
+  });
   el('galleryViewerDate').onclick = () => dates.open(selected?.document_date || 'undated');
   el('galleryMore').onclick = () => load(false);
   el('galleryBack').onclick = () => navigation.back();
@@ -495,6 +538,26 @@ import { GalleryOffline } from './gallery_offline.js';
     } finally {
       toggle.disabled = false;
     }
+  };
+  el('galleryLeadForm').onsubmit = async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const id = form.dataset.itemId;
+    if (!id || selected?.id !== id || !editIdentityCapability()) return;
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    el('galleryLeadMessage').textContent = 'Updating related work orders…';
+    try {
+      const result = await api('/gallery/api/items/' + id + '/lead-name', {method:'POST', body:new FormData(form)});
+      galleryDirty = true;
+      await detail(true);
+      const noun = result.updated === 1 ? 'work order.' : 'work orders.';
+      el('galleryLeadMessage').textContent = 'Updated ' + result.updated + ' ' + noun;
+      el('galleryViewerMessage').textContent = 'Lead name updated across ' + result.updated + ' related ' + noun;
+      if (offline.isEnabled()) offline.sync().catch(() => {});
+    } catch (error) {
+      el('galleryLeadMessage').textContent = 'Could not update lead name: ' + error.message;
+    } finally { button.disabled = false; }
   };
   el('galleryShare').onclick = () => openShare();
   el('galleryShareForm').onsubmit = async event => {
