@@ -62,3 +62,24 @@ The service and gallery HTTP layer pass the normalized filter; `gallery_dates.js
 owns calendar/gesture behavior, and `gallery.js` continues to own retrieval and
 card rendering. No schema migration, OCR/crop changes, files or dates rewritten,
 printer mutations, new dependencies, or new service lifecycle.
+
+
+## Gallery-only email routing
+
+In printer Settings, matching PDFs now default to **Gallery only — do not print
+matching PDFs**. Other attachments keep normal printing behavior. Subject and PDF
+filename keywords are separate optional selectors (at least one is required); all
+filled selectors and the optional sender restriction must match. Set filename to
+`redlines` and clear subject to distinguish that PDF from another report in the same
+email. These are literal case-insensitive substrings, not regular expressions.
+
+**Import and also use normal print rules** deliberately allows both routes. Disabling
+imports stops matching NEW messages; it is not a blanket no-print filter. Incomplete
+handoffs keep their original exclusion even after a restart/settings change and wait
+while imports are disabled. No fallback printing on gallery errors and no automatic
+cancellation of existing print jobs. Intake failures are visible on Print Control and
+in gallery settings; processing failures remain in the gallery information panel.
+
+Classification lives at the ingestion boundary, not in the gallery worker or print
+engine. The optional PDF consumer receives bytes only after the decision is durable.
+No PDF reimport, recropping, notes/date migration or frontend gallery changes required.

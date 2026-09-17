@@ -1,0 +1,6 @@
+{% if state.gallery_intake_errors %}
+<section class="notice"><h2>Gallery import waiting</h2>
+{% for failure in state.gallery_intake_errors %}<p><strong>{{ failure.filename }}</strong> — {{ failure.subject }}<br>{{ failure.error }}<br><span class="muted">{{ failure.updated|localtime }}</span></p>{% endfor %}
+<p>These are import diagnostics, not requests to print. Completed gallery imports and processing errors are listed in the gallery information panel.</p>
+</section>
+{% endif %}

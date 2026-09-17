@@ -240,15 +240,34 @@ and accumulated runtime release environments are not covered by file retention.
 ## Searchable work-order gallery
 
 Update as usual, then open **Print Control → Settings → Searchable work-order gallery**.
-Enable imports and set a distinct email subject keyword (default suggestion: `redlines`)
-and optional sender filter. Existing Gmail credentials/mailbox/check interval are used;
+Enable imports and set a subject keyword (default suggestion: `redlines`) and/or a PDF
+filename keyword, with an optional sender filter. Every nonempty selector must match.
+Use filename matching to distinguish multiple PDFs attached to one email. Existing
+Gmail credentials/mailbox/check interval are used;
 leave email collection enabled. Gallery import is off by default. It only sees newly
 collected mail after enabling; resend an already processed PDF in a new email to import it.
 
-**Print rules are not changed.** If the email also matches existing printing filters,
-it still prints under those existing rules. A gallery-only match never creates a print
-job. A failed handoff retains a FETCHING receipt, protecting that inbox source from
-cleanup until the gallery copy is durable. Newly discovered mail is visited before
+**Matching gallery PDFs default to Gallery only — do not print matching PDFs**, including
+on upgrades with gallery already enabled. They bypass the print queue even when the
+same sender/email also matches print filters. Other attachments still use the saved
+print rules and schedule. To intentionally permit both routes, choose **Import and
+also use normal print rules** (`GALLERY_PRINT_MODE=also-print`). This allows normal
+printing only when its own filters match; it does not force an extra print.
+
+Routing decisions are durably recorded before MIME inspection/download. A failed,
+paused or unavailable gallery handoff never switches a gallery-only PDF to printing,
+including after a restart or a routing-setting change. Failed MIME inspection waits
+without a paper error when the email might contain an excluded gallery PDF. Other
+recognizable attachments/messages can still proceed. Download/encoding/handoff errors
+appear on Print Control and in gallery settings; later processing errors appear in
+the gallery information panel. No image-recognition or CUPS changes are involved.
+
+The new selectors affect newly detected emails, not completed mail or jobs already
+in the print queue. Cancel an accidentally queued old print separately; this update
+does not cancel or delete any print jobs. Disabling gallery imports stops new gallery
+matching, so new emails then follow normal print rules. Pending gallery-only handoffs
+stay held while disabled. A failed handoff retains a FETCHING receipt, protecting that
+inbox source from cleanup until the gallery copy is durable. Newly discovered mail is visited before
 pending downloads so a blocked gallery does not starve new print mail.
 
 Open `/gallery/` on port 5055 for the single searchable image gallery. The QR code on
@@ -296,7 +315,13 @@ Ownership: `gallery/policy.py` is the normalized settings/search contract;
 schema, full-text search, notes and receipts; `gallery/files.py` owns confined filesystem
 access; `gallery/processing.py` and `cropper.py` own rendering/OCR and border detection;
 `gallery/web.py` owns HTTP. `gallery/bootstrap.py` is the feature's composition boundary.
-The email adapter only hands off PDF bytes through the optional consumer contract.
+The email adapter hands off PDF bytes through the optional consumer contract.
+`attachment_routing.py` owns pure per-attachment routing from normalized headers and
+filenames; `attachment_routing_repository.py` persists frozen policies, attachment
+routes and handoff errors in two additive printer-only tables. Their rows expire with
+the parent ingestion record, while minimal replay receipts remain. Neither gallery
+processing nor CUPS owns or bypasses this routing boundary. Releases predating these
+receipts do not honor gallery-only routing; stop the worker before rolling back to one.
 All gallery data is under `PRINTER_DATA_DIR/gallery/`, including its own `gallery.db`.
 Printer retention never traverses those image records or directories.
 

@@ -99,14 +99,14 @@ def test_gallery_handoff_does_not_create_cancel_or_duplicate_print_jobs(tmp_path
             return 'OK', [(b'x', base64.b64encode(payload))]
     class Consumer:
         calls = 0
-        def matches(self, subject, sender): return True
         def offer(self, name, data):
             assert data == payload
             self.calls += 1
             if gallery_failure: raise OSError('Gallery is full')
     monkeypatch.setattr('printer_app.gmail_client.imaplib.IMAP4_SSL', IMAP)
     cfg = Config(data_dir=tmp_path, email_user='fixture@example.test', email_password='fixture',
-                 subject_contains='' if print_match else 'Other print mail')
+                 subject_contains='' if print_match else 'Other print mail',
+                 gallery=GalleryOptions(enabled=True, print_mode='also-print'))
     db = Database(cfg.db_path)
     consumer = Consumer()
     client = GmailClient(cfg, db, gallery=consumer)

@@ -5,7 +5,8 @@ import re
 import unicodedata
 
 FIELDS = {'GALLERY_ENABLED', 'GALLERY_SUBJECT_CONTAINS', 'GALLERY_FROM_CONTAINS',
-          'GALLERY_KEEP_DAYS', 'GALLERY_MAX_MB', 'GALLERY_CROPS_PER_DAY'}
+          'GALLERY_KEEP_DAYS', 'GALLERY_MAX_MB', 'GALLERY_CROPS_PER_DAY',
+          'GALLERY_FILENAME_CONTAINS', 'GALLERY_PRINT_MODE'}
 
 
 @dataclass(frozen=True)
@@ -17,8 +18,18 @@ class GalleryOptions:
     max_mb: int = 2048
     crops_per_day: int = 0  # zero: use observed imports/day, clearly marked as an estimate
 
+    filename: str = ''
+    print_mode: str = 'gallery-only'
+
     def matches(self, subject, sender):
-        return self.enabled and bool(self.subject.strip()) and self.subject.casefold() in subject.casefold() and self.sender.casefold() in sender.casefold()
+        """Envelope candidate; a filename-only rule still needs MIME inspection."""
+        return (self.enabled and bool(self.subject.strip() or self.filename.strip())
+                and self.subject.casefold() in subject.casefold()
+                and self.sender.casefold() in sender.casefold())
+
+    def matches_pdf(self, subject, sender, filename):
+        return (self.matches(subject, sender) and filename.lower().endswith('.pdf')
+                and self.filename.casefold() in filename.casefold())
 
     def apply(self, patch):
         values = {}
@@ -27,8 +38,14 @@ class GalleryOptions:
                 if value not in ('0', '1'):
                     raise ValueError('Invalid gallery switch')
                 values['enabled'] = value == '1'
-            elif key in ('GALLERY_SUBJECT_CONTAINS', 'GALLERY_FROM_CONTAINS'):
-                values['subject' if key == 'GALLERY_SUBJECT_CONTAINS' else 'sender'] = value.strip()
+            elif key == 'GALLERY_PRINT_MODE':
+                if value not in ('gallery-only', 'also-print'):
+                    raise ValueError('Choose Gallery only or Also use normal print rules.')
+                values['print_mode'] = value
+            elif key in ('GALLERY_SUBJECT_CONTAINS', 'GALLERY_FROM_CONTAINS', 'GALLERY_FILENAME_CONTAINS'):
+                attr = {'GALLERY_SUBJECT_CONTAINS': 'subject', 'GALLERY_FROM_CONTAINS': 'sender',
+                        'GALLERY_FILENAME_CONTAINS': 'filename'}[key]
+                values[attr] = value.strip()
             elif key in FIELDS:
                 attr, low, high = {'GALLERY_KEEP_DAYS': ('days', 1, 3650),
                     'GALLERY_MAX_MB': ('max_mb', 64, 1048576),
@@ -39,13 +56,14 @@ class GalleryOptions:
             else:
                 raise ValueError('Unsupported gallery setting')
         result = replace(self, **values)
-        if result.enabled and not result.subject:
-            raise ValueError('Set a gallery subject keyword before enabling imports.')
+        if result.enabled and not (result.subject or result.filename):
+            raise ValueError('Set a gallery subject or PDF filename keyword before enabling imports.')
         return result
 
     def environment(self):
         return dict(GALLERY_ENABLED=str(int(self.enabled)), GALLERY_SUBJECT_CONTAINS=self.subject,
-                    GALLERY_FROM_CONTAINS=self.sender, GALLERY_KEEP_DAYS=str(self.days),
+                    GALLERY_FROM_CONTAINS=self.sender, GALLERY_FILENAME_CONTAINS=self.filename,
+                    GALLERY_PRINT_MODE=self.print_mode, GALLERY_KEEP_DAYS=str(self.days),
                     GALLERY_MAX_MB=str(self.max_mb), GALLERY_CROPS_PER_DAY=str(self.crops_per_day))
 
 
