@@ -101,7 +101,7 @@ class GalleryAccessRepository:
             return dict(row)
 
     def _prune(self, conn, now):
-        conn.execute("DELETE FROM access_invites WHERE expires<?", (now - 86400,))
+        conn.execute("DELETE FROM access_invites WHERE expires<? OR (one_time=1 AND used IS NOT NULL)", (now,))
         conn.execute(
             "DELETE FROM access_credentials WHERE expires IS NOT NULL AND expires<?",
             (now - 7 * 86400,),
