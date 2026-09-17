@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .policy import checked_date, search_expression
+from .policy import checked_date, checked_lead_name, search_expression
 
 
 class GalleryService:
@@ -29,6 +29,23 @@ class GalleryService:
     def search(self, query, offset):
         self.initialize()
         return self.repository.list_items(search_expression(query), max(0, min(offset, 1000000)))
+
+    def related(self, ident, offset=0):
+        self.initialize()
+        item = self.repository.item(ident)
+        if not item:
+            raise LookupError('This image has expired or is unavailable.')
+        if not item['lead_key']:
+            raise ValueError('Confirm the lead name in card details to show related work orders.')
+        result = self.repository.list_items(offset=max(0, min(offset, 1000000)), same_lead=item['lead_key'])
+        return dict(result, lead_name=item['lead_name'], selected_id=ident)
+
+    def lead(self, ident, value):
+        self.initialize()
+        name = checked_lead_name(value)
+        if not name or not any(c.isalpha() for c in name):
+            raise ValueError('Enter the lead name printed on this card.')
+        self.repository.correct_lead(ident, name)
 
     def item(self, ident):
         self.initialize()

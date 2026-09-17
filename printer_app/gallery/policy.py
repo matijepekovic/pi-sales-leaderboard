@@ -2,6 +2,7 @@
 from dataclasses import dataclass, replace
 from datetime import date
 import re
+import unicodedata
 
 FIELDS = {'GALLERY_ENABLED', 'GALLERY_SUBJECT_CONTAINS', 'GALLERY_FROM_CONTAINS',
           'GALLERY_KEEP_DAYS', 'GALLERY_MAX_MB', 'GALLERY_CROPS_PER_DAY'}
@@ -60,3 +61,40 @@ def checked_date(value):
     if parsed.year < 2000 or parsed.year > 2100:
         raise ValueError('Use the printed document date (2000–2100).')
     return parsed.isoformat()
+
+
+def checked_lead_name(value):
+    """Literal, user-confirmable name; never infer identity from notes or filenames."""
+    if not isinstance(value, str) or len(value) > 160 or any(not c.isprintable() for c in value):
+        raise ValueError('Use a single-line lead name of at most 160 characters.')
+    return ' '.join(value.split())
+
+
+def lead_key(value):
+    value = unicodedata.normalize('NFKC', checked_lead_name(value))
+    value = value.translate(str.maketrans({'’': "'", '‘': "'", '‐': '-', '‑': '-'}))
+    return ' '.join(value.casefold().split())
+
+
+def printed_lead(text):
+    """Index an explicit Lead Name header in existing OCR, never OCR/crop here.
+
+    Full-text search still covers every printed word. Related lookup uses only
+    this field so reps, notes and partial-name matches cannot mix unrelated cards.
+    Ambiguous or absent names remain empty and can be corrected in card details.
+    """
+    names = []
+    for line in text.splitlines():
+        match = re.match(r'^[\s|]*Lead\s+Name\s*[:;]\s*(.+)$', line, re.I)
+        if not match:
+            continue
+        value = re.split(r'\s+(?:Address|Phone|Power\s+Questions|Scheduled\s+Start|'
+                         r'Local\s+Scheduled\s+Start\s+Time|Canvass\s+Set\s+By)\s*:',
+                         match[1], maxsplit=1, flags=re.I)[0]
+        value = value.split('|', 1)[0].strip()
+        if not value or len(value) > 160 or not any(c.isalpha() for c in value):
+            return ''
+        if any(not (c.isalpha() or c.isspace() or c in ".'’‘‐‑-,") for c in value):
+            return ''
+        names.append(' '.join(value.split()))
+    return names[0] if names and len({lead_key(n) for n in names}) == 1 else ''

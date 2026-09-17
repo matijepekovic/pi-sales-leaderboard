@@ -54,6 +54,17 @@ def blueprint(service):
         # Data for the in-gallery dialog, not a separate document page.
         return jsonify(existing(ident))
 
+    @bp.get('/api/items/<ident>/related')
+    def related(ident):
+        existing(ident)
+        return jsonify(service.related(ident, int(request.args.get('offset', '0'))))
+
+    @bp.post('/api/items/<ident>/lead-name')
+    def lead_name(ident):
+        existing(ident)
+        service.lead(ident, request.form.get('lead_name', ''))
+        return jsonify(ok=True)
+
     @bp.get('/image/<ident>')
     def image(ident):
         existing(ident)

@@ -4,6 +4,8 @@ import sqlite3
 import time
 from contextlib import contextmanager
 
+from .policy import lead_key, printed_lead
+
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS imports (
  id TEXT PRIMARY KEY, filename TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'WAITING',
@@ -50,6 +52,31 @@ class GalleryRepository:
         with self.connect() as c:
             c.execute('PRAGMA journal_mode=WAL')
             c.executescript(SCHEMA)
+            c.execute('BEGIN IMMEDIATE')
+            columns = {row['name'] for row in c.execute('PRAGMA table_info(items)')}
+            if 'lead_name' not in columns:
+                c.execute("ALTER TABLE items ADD COLUMN lead_name TEXT NOT NULL DEFAULT ''")
+                c.execute("ALTER TABLE items ADD COLUMN lead_key TEXT NOT NULL DEFAULT ''")
+                c.execute("ALTER TABLE items ADD COLUMN lead_status TEXT NOT NULL DEFAULT 'needs-name'")
+                # Backfill saved search text only; no PDF import, OCR or image changes.
+                for row in c.execute('SELECT id,text FROM items'):
+                    name = printed_lead(row['text'])
+                    c.execute('UPDATE items SET lead_name=?,lead_key=?,lead_status=? WHERE id=?',
+                              (name, lead_key(name), 'printed' if name else 'needs-name', row['id']))
+            c.execute('CREATE INDEX IF NOT EXISTS gallery_items_lead ON items(state,lead_key,document_date)')
+            if 'lead_name' not in {row['name'] for row in c.execute('PRAGMA table_info(search)')}:
+                # Replace the one search index, not a parallel implementation.
+                for event in ('insert', 'delete', 'update'):
+                    c.execute('DROP TRIGGER IF EXISTS gallery_' + event)
+                c.execute('DROP TABLE search')
+                c.execute("""CREATE VIRTUAL TABLE search USING fts5(text,notes_text,filename,lead_name,
+                    content='items',content_rowid='rowid',
+                    tokenize='unicode61 remove_diacritics 2',prefix='2 3 4')""")
+                add = 'INSERT INTO search(rowid,text,notes_text,filename,lead_name) VALUES(new.rowid,new.text,new.notes_text,new.filename,new.lead_name);'
+                remove = "INSERT INTO search(search,rowid,text,notes_text,filename,lead_name) VALUES('delete',old.rowid,old.text,old.notes_text,old.filename,old.lead_name);"
+                for event, statement in (('insert', add), ('delete', remove), ('update', remove + add)):
+                    c.execute(f'CREATE TRIGGER gallery_{event} AFTER {event} ON items BEGIN {statement} END')
+                c.execute("INSERT INTO search(search) VALUES('rebuild')")
 
     def import_state(self, ident):
         with self.connect() as c:
@@ -83,8 +110,10 @@ class GalleryRepository:
     def finish(self, ident, items, warning=''):
         with self.connect() as c:
             for item in items:
-                c.execute('''INSERT OR IGNORE INTO items(id,import_id,page,part,filename,text,document_date,date_status,bytes,created)
-                    VALUES (:id,:import_id,:page,:part,:filename,:text,:document_date,:date_status,:bytes,:created)''', item)
+                name = printed_lead(item['text'])
+                c.execute('''INSERT OR IGNORE INTO items(id,import_id,page,part,filename,text,document_date,date_status,bytes,created,lead_name,lead_key,lead_status)
+                    VALUES (:id,:import_id,:page,:part,:filename,:text,:document_date,:date_status,:bytes,:created,:lead_name,:lead_key,:lead_status)''',
+                    dict(item, lead_name=name, lead_key=lead_key(name), lead_status='printed' if name else 'needs-name'))
             c.execute("UPDATE imports SET state='COMPLETE',count=?,error=?,updated=? WHERE id=?",
                       (len(items), warning[:1000], time.time(), ident))
 
@@ -109,17 +138,20 @@ class GalleryRepository:
             result['recent_crops'] = c.execute("SELECT count(*) FROM items WHERE created>=? AND state='ACTIVE'", (time.time()-7*86400,)).fetchone()[0]
             return result
 
-    def list_items(self, expression='', offset=0):
+    def list_items(self, expression='', offset=0, *, same_lead=None):
         clause = "WHERE i.state='ACTIVE'"
         params = []
+        if same_lead is not None:
+            clause += ' AND i.lead_key=? AND i.lead_key!=\'\''
+            params.append(same_lead)
         if expression:
             clause += ' AND i.rowid IN (SELECT rowid FROM search WHERE search MATCH ?)'
             params.append(expression)
         with self.connect() as c:
             total = c.execute('SELECT count(*) FROM items i ' + clause, params).fetchone()[0]
-            rows = c.execute('''SELECT i.id,i.filename,i.page,i.part,i.document_date,i.date_status,i.bytes,
+            rows = c.execute('''SELECT i.id,i.filename,i.page,i.part,i.document_date,i.date_status,i.bytes,i.lead_name,i.lead_status,
                (SELECT count(*) FROM notes n WHERE n.item_id=i.id) AS notes_count FROM items i ''' + clause +
-               ' ORDER BY coalesce(i.document_date,\'9999\') DESC,i.created DESC,i.id LIMIT 24 OFFSET ?', [*params, offset])
+               ' ORDER BY i.document_date IS NULL,i.document_date DESC,i.created DESC,i.id LIMIT 24 OFFSET ?', [*params, offset])
             return dict(total=total, items=[dict(r) for r in rows])
 
     def item(self, ident):
@@ -142,6 +174,12 @@ class GalleryRepository:
                 return
             c.execute('INSERT INTO notes VALUES(?,?,?,?,?)', (note_id, ident, author, body, time.time()))
             c.execute('UPDATE items SET notes_text=notes_text || ? WHERE id=?', ('\n' + author + ': ' + body, ident))
+
+    def correct_lead(self, ident, value):
+        with self.connect() as c:
+            if not c.execute("UPDATE items SET lead_name=?,lead_key=?,lead_status='confirmed' WHERE id=? AND state='ACTIVE'",
+                             (value, lead_key(value), ident)).rowcount:
+                raise LookupError('This image has expired or is unavailable.')
 
     def correct_date(self, ident, value):
         with self.connect() as c:
