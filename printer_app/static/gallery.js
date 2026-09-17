@@ -448,6 +448,7 @@ import { GalleryOffline } from './gallery_offline.js';
   }
   function openLeadEditor(record = true) {
     if (!selected?.id || !selected.lead_name || !editIdentityCapability()) return;
+    if (record) navigation.save();
     const form = el('galleryLeadForm');
     form.dataset.itemId = selected.id;
     form.elements.lead_name.value = selected.lead_name;
