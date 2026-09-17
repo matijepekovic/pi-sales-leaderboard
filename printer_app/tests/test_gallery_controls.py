@@ -166,7 +166,10 @@ def test_browser_one_click_related_and_notes_target_visible_card(tmp_path):
             expect(page.locator('#galleryNotesSheet')).not_to_be_visible()
             # Scroll without tapping a card; actions follow the complete visible card.
             target = page.locator(f'.gallery-card[data-id="{older}"]')
-            target.evaluate('(node) => window.scrollTo(0, scrollY + node.getBoundingClientRect().top - 160)')
+            target.evaluate('''(node) => {
+                const rect = node.getBoundingClientRect();
+                window.scrollTo(0, scrollY + rect.top + rect.height / 2 - innerHeight / 2);
+            }''')
             expect(target).to_have_attribute('aria-pressed', 'true')
             page.locator('body > .gallery-dock [data-action="notes"]').click()
             expect(page.locator('#galleryNote')).to_have_attribute('data-item-id', older)
