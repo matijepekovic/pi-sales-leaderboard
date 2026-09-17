@@ -11,7 +11,7 @@ The floating controls are **Show related**, **Notes**, and **Search**. Notes and
 Related automatically target the complete, unobscured card in view; opening a card
 pins that record while its viewer is open. Related compares the explicit Lead Name
 and Address extracted from each work order. A card is related when **either** its
-normalized lead name differs by at most one letter/number **or** its normalized
+normalized lead name differs by at most one character **or** its normalized
 address is exactly equal. Address matching has zero character tolerance and does
 not expand abbreviations such as Ave/Avenue. Results span all retained dates.
 
@@ -97,7 +97,7 @@ not a CUPS cancellation button. Other reports and gallery data are unchanged.
 In the sales gallery, **Notes** and **Show related** automatically use the fully
 visible, unobscured card. Notes remain pinned to that record while the panel is
 open, including keyboard/viewport changes. Related uses the strict identity rule:
-lead name within one letter/number **or** exact normalized address. It starts across
+lead name within one character **or** exact normalized address. It starts across
 all dates, not just the current date or loaded page. Existing images and notes are
 unchanged; address metadata is backfilled from already-saved OCR text.
 
