@@ -243,8 +243,9 @@ import { GalleryNavigation } from './gallery_navigation.js';
       article.append(text('strong', note.author), stamp, text('p', note.body)); return article;
     });
     const version = item.id + ':' + item.notes.map(n => n.id).join(',');
+    el('galleryViewerNotesSection').hidden = !notes.length;
     if (initial || notesVersion !== version) {
-      el('galleryNotes').replaceChildren(...(notes.length ? notes : [text('p', 'No notes yet. Add the first note below.', 'muted')]));
+      el('galleryNotes').replaceChildren(...notes);
       notesVersion = version;
     }
     updateCard(item);
@@ -283,7 +284,7 @@ import { GalleryNavigation } from './gallery_navigation.js';
     drafts.set(selected.id, saved);
     el('galleryNote').dataset.itemId = selected.id;
     el('galleryNote').elements.author.value = saved.author; el('galleryNote').elements.body.value = saved.body;
-    el('galleryNoteMessage').textContent = ''; el('galleryNotes').replaceChildren(text('p', 'Loading notes…', 'muted'));
+    el('galleryNoteMessage').textContent = '';
     el('galleryNotesContext').textContent = `${cardName(selected)} · ${dateLabel(selected.document_date)}`;
     noteControls(); showDialog('galleryNotesSheet', false);
     if (record) navigation.push();
