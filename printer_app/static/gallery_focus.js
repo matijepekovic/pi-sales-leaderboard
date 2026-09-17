@@ -58,18 +58,25 @@ export class GalleryFocus {
     const left = viewport?.offsetLeft || 0;
     const right = left + (viewport?.width || window.innerWidth);
     const middle = (top + bottom) / 2;
-    let id = null, area = 0, distance = Infinity;
+    const singleDate = document.getElementById('galleryMain')?.dataset.singleDate === 'true';
+    let id = null, fraction = -1, distance = Infinity;
     for (const node of this.container.querySelectorAll('.gallery-card')) {
       const rect = node.getBoundingClientRect(), image = node.querySelector('img');
       if (!image?.complete || !image.naturalWidth) continue;
       const visible = Math.max(0, Math.min(bottom, rect.bottom) - Math.max(top, rect.top));
       const width = Math.max(0, Math.min(right, rect.right) - Math.max(left, rect.left));
-      const score = visible * width, d = Math.abs((rect.top + rect.bottom)/2 - middle);
-      if (!score) continue;
-      // Stable ties avoid flickering at the boundary between adjacent cards.
-      const tie = Math.abs(score-area) <= Math.max(1,width*2);
-      if ((score > area && !tie) || (tie && (node.dataset.id === this.current || (id !== this.current && d < distance)))) {
-        area = score; distance = d; id = node.dataset.id;
+      if (!visible || !width) continue;
+      const total = Math.max(1, rect.width * rect.height);
+      const share = (visible * width) / total;
+      const d = Math.abs((rect.top + rect.bottom) / 2 - middle);
+      const tie = Math.abs(share - fraction) <= .02;
+      // A single-date gallery is read top-to-bottom: when two cards are essentially
+      // equally visible, the earlier card wins. That lets the first card become
+      // active again when the user scrolls back up instead of sticking to card 2.
+      // Search/related views can span dates, so equal visibility is resolved by
+      // whichever card is closest to the usable viewport center.
+      if (share > fraction + .02 || (tie && !singleDate && d < distance)) {
+        fraction = share; distance = d; id = node.dataset.id;
       }
     }
     if (id !== this.current) { this.current = id; this.onChange(id); }
