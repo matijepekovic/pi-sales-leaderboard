@@ -77,12 +77,25 @@ def main():
     # additive admin-auth schema/credential becomes active.
     db = Database(cfg.db_path)
     auth = AdminAuthService(AdminAuthRepository(db))
-    password = auth.ensure_temporary_password()
-    if password:
-        write_initial_login(args.initial_login_file, password)
-        print('Printer admin login initialized. Sign in once and choose a new password.')
-    else:
+    if auth.has_credential():
         print('Existing printer admin credential preserved.')
+        return
+
+    # The private handoff is created before the hash becomes active. If handoff
+    # creation fails, no unknown credential can lock the administrator out.
+    password = auth.generate_temporary_password()
+    write_initial_login(args.initial_login_file, password)
+    try:
+        if not auth.install_temporary_password(password):
+            if args.initial_login_file:
+                args.initial_login_file.expanduser().unlink(missing_ok=True)
+            print('Existing printer admin credential preserved.')
+            return
+    except Exception:
+        if args.initial_login_file:
+            args.initial_login_file.expanduser().unlink(missing_ok=True)
+        raise
+    print('Printer admin login initialized. Sign in once and choose a new password.')
 
 
 if __name__ == '__main__':
