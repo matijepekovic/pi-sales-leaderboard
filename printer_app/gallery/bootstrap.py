@@ -8,6 +8,7 @@ from .service import GalleryService
 
 def build_access(data_dir):
     root = data_dir / 'gallery'
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
     return GalleryAccessService(GalleryAccessRepository(root / 'gallery.db'))
 
 
