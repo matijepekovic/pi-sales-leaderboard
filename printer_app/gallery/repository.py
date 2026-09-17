@@ -161,6 +161,24 @@ class GalleryRepository:
             if previous and (previous['state'], previous['error']) != (state, message[:1000]):
                 self._step(c, ident, now, message[:1000])
 
+    def reset_for_reprocess(self, ident):
+        """Delete generated card data but keep the import receipt reusable for the same PDF hash."""
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row = c.execute('SELECT id,filename,state FROM imports WHERE id=?', (ident,)).fetchone()
+            if not row:
+                raise LookupError('This gallery job is unavailable.')
+            if row['state'] not in ('COMPLETE', 'ERROR'):
+                raise ValueError('Only completed or failed gallery jobs can be reprocessed.')
+            item_ids = [r['id'] for r in c.execute('SELECT id FROM items WHERE import_id=?', (ident,))]
+            c.execute('DELETE FROM items WHERE import_id=?', (ident,))
+            now = time.time()
+            message = 'Reprocess requested. Generated gallery cards were deleted; waiting to fetch the original email PDF again.'
+            c.execute("""UPDATE imports SET state='ERROR',count=0,error=?,progress='{}',started=NULL,
+                completed=NULL,updated=? WHERE id=?""", (message, now, ident))
+            self._step(c, ident, now, message)
+            return dict(id=ident, filename=row['filename'], item_ids=item_ids)
+
     def set_state(self, value):
         with self.connect() as c:
             c.execute("INSERT OR REPLACE INTO meta VALUES('state',?)", (json.dumps(value),))
