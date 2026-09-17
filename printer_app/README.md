@@ -300,7 +300,7 @@ recognized printed text and attempts the printed header dates **after cropping**
 no paid service/API is involved. Blurry printing and handwriting can be misread.
 Search includes arbitrary recognized words, phrases, numbers, filenames and added notes.
 **Show related** links work orders when either the normalized lead name differs by at
-most one letter/number or the normalized address matches exactly; address matching has
+most one character or the normalized address matches exactly; address matching has
 zero character tolerance. On full Gallery access only, long-pressing the lead name in
 the open viewer allows a global lead-name correction across that strict related set.
 Temporary guests cannot perform identity edits.
