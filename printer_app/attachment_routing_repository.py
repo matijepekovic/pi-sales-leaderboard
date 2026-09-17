@@ -43,6 +43,36 @@ class AttachmentRoutingRepository:
         # A synthetic inspection failure is not an attachment. No job is removed.
         self.db.execute("DELETE FROM email_attachment_routes WHERE message_id=? AND part='mime-error'", (message_id,))
 
+    def gallery_source(self, import_id: str, filename: str):
+        """Resolve one original email attachment without guessing across duplicates."""
+        with self.db.connect() as c:
+            exact = list(c.execute("""SELECT r.message_id,r.part,r.filename FROM email_attachment_routes r
+                JOIN attachments a ON a.message_id=r.message_id AND a.part=r.part
+                WHERE r.import_document=1 AND r.gallery_delivered=1 AND a.sha256=?""", (import_id,)))
+            if len(exact) == 1:
+                return dict(exact[0])
+            matches = list(c.execute("""SELECT message_id,part,filename FROM email_attachment_routes
+                WHERE import_document=1 AND gallery_delivered=1 AND filename=?
+                ORDER BY updated DESC LIMIT 3""", (filename,)))
+        if len(matches) == 1:
+            return dict(matches[0])
+        if not matches:
+            raise LookupError('The original email attachment is no longer available for gallery reprocessing.')
+        raise ValueError('More than one original email has this PDF filename. Reprocess is blocked rather than guessing.')
+
+    def requeue_gallery(self, message_id: int, part: str):
+        """Make one already-delivered gallery attachment eligible for Gmail fetch again."""
+        with self.db.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row = c.execute("""SELECT import_document FROM email_attachment_routes
+                WHERE message_id=? AND part=?""", (message_id, part)).fetchone()
+            if not row or not row['import_document']:
+                raise LookupError('The original gallery email attachment is unavailable.')
+            now = time.time()
+            c.execute("""UPDATE email_attachment_routes SET gallery_delivered=0,error='',updated=?
+                WHERE message_id=? AND part=?""", (now, message_id, part))
+            c.execute("UPDATE processed_messages SET state='FETCHING' WHERE id=?", (message_id,))
+
     def pending(self, message_id: int) -> bool:
         return bool(self.db.one("""SELECT 1 FROM email_attachment_routes
             WHERE message_id=? AND import_document=1 AND gallery_delivered=0 LIMIT 1""", (message_id,)))
