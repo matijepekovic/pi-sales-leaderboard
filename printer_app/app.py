@@ -155,12 +155,17 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         except Exception:
             gallery_queue, gallery_intake = None, []
             gallery_error = 'Gallery monitoring is unavailable. Printing is separate.'
-        full_invite = gallery_access.issue_full_invite()
+        try:
+            full_invite = gallery_access.issue_full_invite()
+            full_url = url_for('gallery.redeem_access', token=full_invite,
+                               next=url_for('gallery.page'))
+        except Exception:
+            # Gallery access must never become a dependency of printer control.
+            full_invite, full_url = '', url_for('gallery.page')
+            gallery_error = gallery_error or 'Gallery access is unavailable. Printing is separate.'
         return render_template('control.html', state=state(), jobs=[timing.describe_job(j) for j in db.recent()],
             gallery_queue=gallery_queue, gallery_intake=gallery_intake, gallery_error=gallery_error,
-            gallery_full_token=full_invite,
-            gallery_full_url=url_for('gallery.redeem_access', token=full_invite,
-                                     next=url_for('gallery.page')))
+            gallery_full_token=full_invite, gallery_full_url=full_url)
 
     def settings_view(error='', code=200):
         try:
