@@ -570,7 +570,22 @@ import { GalleryOffline } from './gallery_offline.js';
       loadActiveShares().catch(() => {});
     }
   }, 30000);
-  setInterval(() => { if (!document.hidden && navigator.onLine) configureAccess().catch(() => {}); }, 15 * 60 * 1000);
+  async function checkGuestAccess() {
+    if (document.hidden || !navigator.onLine || access?.role !== 'guest') return;
+    try {
+      await configureAccess();
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) {
+        location.replace('/gallery/');
+      }
+    }
+  }
+  setInterval(checkGuestAccess, 15000);
+  setInterval(() => {
+    if (!document.hidden && navigator.onLine && access?.role === 'full') configureAccess().catch(() => {});
+  }, 15 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkGuestAccess(); });
+  window.addEventListener('focus', checkGuestAccess);
   window.addEventListener('online', async () => {
     const wasOffline = offlineMode;
     try {
