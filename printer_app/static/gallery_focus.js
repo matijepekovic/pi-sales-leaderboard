@@ -58,23 +58,37 @@ export class GalleryFocus {
     const left = viewport?.offsetLeft || 0;
     const right = left + (viewport?.width || window.innerWidth);
     const focusY = top + Math.max(0, bottom - top) / 2;
-    let id = null;
-    let nearest = Infinity;
-
-    // A fixed focus line makes selection reversible and independent of stale state.
-    // The card the user is actually looking at wins even if a sliver of the previous
-    // card is still visible. Tall cards remain active while the focus line is inside
-    // them. In the small gap between cards, choose whichever visible card is nearest.
+    const cards = [];
     for (const node of this.container.querySelectorAll('.gallery-card')) {
       const rect = node.getBoundingClientRect();
       const horizontal = Math.max(0, Math.min(right, rect.right) - Math.max(left, rect.left));
       if (!horizontal || rect.bottom <= top + 1 || rect.top >= bottom - 1) continue;
-      if (rect.top <= focusY && rect.bottom >= focusY) {
-        id = node.dataset.id;
-        break;
+      cards.push({node, rect});
+    }
+
+    let id = null;
+    const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+    const viewportHeight = viewport?.height || window.innerHeight;
+    const pageHeight = document.documentElement.scrollHeight;
+    const atTop = scrollTop <= 2;
+    const atBottom = scrollTop + viewportHeight >= pageHeight - 2;
+
+    // At the ends of the document the first/last visible card must remain reachable,
+    // even when a very tall neighboring card still crosses the center focus line.
+    if (cards.length && atTop) id = cards[0].node.dataset.id;
+    else if (cards.length && atBottom) id = cards[cards.length - 1].node.dataset.id;
+    else {
+      let nearest = Infinity;
+      // In normal scrolling, a fixed focus line makes selection reversible and
+      // independent of stale state. A sliver of the previous card cannot keep focus.
+      for (const {node, rect} of cards) {
+        if (rect.top <= focusY && rect.bottom >= focusY) {
+          id = node.dataset.id;
+          break;
+        }
+        const distance = focusY < rect.top ? rect.top - focusY : focusY - rect.bottom;
+        if (distance < nearest) { nearest = distance; id = node.dataset.id; }
       }
-      const distance = focusY < rect.top ? rect.top - focusY : focusY - rect.bottom;
-      if (distance < nearest) { nearest = distance; id = node.dataset.id; }
     }
     if (id !== this.current) { this.current = id; this.onChange(id); }
     return id;
