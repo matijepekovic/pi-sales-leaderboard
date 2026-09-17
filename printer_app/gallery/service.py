@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .policy import checked_date, checked_lead_name, search_expression
+from .policy import checked_date, checked_date_filter, checked_lead_name, search_expression
 
 
 class GalleryService:
@@ -26,18 +26,20 @@ class GalleryService:
                 self.files.stage(ident, payload, options.max_mb)
                 self.repository.enqueue(ident, filename)
 
-    def search(self, query, offset):
+    def search(self, query, offset, document_date=''):
         self.initialize()
-        return self.repository.list_items(search_expression(query), max(0, min(offset, 1000000)))
+        return self.repository.list_items(search_expression(query), max(0, min(offset, 1000000)),
+                                          document_date=checked_date_filter(document_date))
 
-    def related(self, ident, offset=0):
+    def related(self, ident, offset=0, document_date=''):
         self.initialize()
         item = self.repository.item(ident)
         if not item:
             raise LookupError('This image has expired or is unavailable.')
         if not item['lead_key']:
             raise ValueError('Confirm the lead name in card details to show related work orders.')
-        result = self.repository.list_items(offset=max(0, min(offset, 1000000)), same_lead=item['lead_key'])
+        result = self.repository.list_items(offset=max(0, min(offset, 1000000)), same_lead=item['lead_key'],
+                                            document_date=checked_date_filter(document_date))
         return dict(result, lead_name=item['lead_name'], selected_id=ident)
 
     def lead(self, ident, value):

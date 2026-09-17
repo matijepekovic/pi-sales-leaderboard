@@ -22,6 +22,13 @@
 </header>
 <main id="galleryMain">
 <div id="galleryFilter" class="gallery-filter" hidden><div><strong id="galleryFilterTitle"></strong><p id="galleryFilterHint"></p></div><button id="galleryClear" type="button">All cards</button></div>
+<nav class="gallery-date-nav" aria-label="Browse document dates">
+<button id="galleryPreviousDate" type="button" class="circle-button" aria-label="Previous date with work orders" title="Previous date" disabled>‹</button>
+<button id="galleryChooseDate" type="button" class="gallery-date-trigger" aria-haspopup="dialog" aria-controls="galleryDateSheet">All dates <span aria-hidden="true">⌄</span></button>
+<button id="galleryNextDate" type="button" class="circle-button" aria-label="Next date with work orders" title="Next date" disabled>›</button>
+</nav>
+<p id="galleryDateHint" class="gallery-date-hint">Tap a date to choose · swipe left for newer, right for older</p>
+<p id="galleryDateMessage" class="gallery-message" role="status"></p>
 <p id="galleryMessage" class="gallery-message" role="status"></p>
 <div id="galleryCards" aria-label="Work orders by date"></div>
 <p id="galleryEmpty" class="gallery-empty" hidden></p>
@@ -31,7 +38,7 @@
 <div class="gallery-dock">{{ actions() }}</div>
 
 <dialog id="galleryViewer" class="gallery-viewer" aria-labelledby="galleryTitle">
-<div class="viewer-header"><div><h2 id="galleryTitle">Work order</h2><p id="galleryViewerDate"></p></div><button type="button" class="circle-button" data-close="galleryViewer" aria-label="Close work order">×</button></div>
+<div class="viewer-header"><div><h2 id="galleryTitle">Work order</h2><button id="galleryViewerDate" type="button" class="gallery-date-trigger" aria-haspopup="dialog" aria-controls="galleryDateSheet"></button></div><button type="button" class="circle-button" data-close="galleryViewer" aria-label="Close work order">×</button></div>
 <div class="viewer-content"><img id="galleryFull" alt="Complete work-order image"><p id="galleryViewerMessage" role="status"></p><p id="gallerySource" class="muted"></p></div>
 <div class="gallery-dock">{{ actions() }}</div>
 </dialog>
@@ -55,6 +62,17 @@
 </details>
 </dialog>
 
+<dialog id="galleryDateSheet" class="gallery-sheet date-sheet" aria-labelledby="galleryDateTitle">
+<div class="sheet-handle" aria-hidden="true"></div>
+<div class="sheet-heading"><h2 id="galleryDateTitle">Choose a date</h2><button type="button" class="circle-button" data-close="galleryDateSheet" aria-label="Close date picker">×</button></div>
+<p class="muted">Printed document dates. Only dates with matching work orders are available.</p>
+<label for="galleryCalendarMonth">Month</label><select id="galleryCalendarMonth" aria-controls="galleryCalendarDays"></select>
+<div class="gallery-calendar-week" aria-hidden="true"><span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span></div>
+<div id="galleryCalendarDays" class="gallery-calendar-days" role="group" aria-label="Days with work orders"></div>
+<p id="galleryCalendarEmpty" class="muted" hidden>No dated work orders in this view.</p>
+<div class="gallery-date-options"><button id="galleryAllDates" type="button">All dates</button><button id="galleryUndated" type="button" hidden>Dates need checking</button></div>
+</dialog>
+
 <dialog id="gallerySearchSheet" class="gallery-sheet search-sheet" aria-labelledby="gallerySearchTitle">
 <div class="sheet-handle" aria-hidden="true"></div><div class="sheet-heading"><h2 id="gallerySearchTitle">Search</h2><button type="button" class="circle-button" data-close="gallerySearchSheet" aria-label="Close search">×</button></div>
 <form id="gallerySearch" role="search"><label for="query">Anything printed on a card or in shared notes</label><input id="query" type="search" maxlength="300" placeholder="Name, word, phrase, phone number…" enterkeyhint="search"><button type="submit" class="primary">Search all cards</button></form>
@@ -68,6 +86,6 @@
 <h3>Storage and recent imports</h3><p id="galleryStorage"></p><div id="galleryImports"></div>
 </dialog>
 <noscript>Enable JavaScript for the searchable gallery and shared notes.</noscript>
-<script src="{{ url_for('static', filename='gallery.js') }}" defer></script>
+<script type="module" src="{{ url_for('static', filename='gallery.js') }}"></script>
 </body>
 </html>

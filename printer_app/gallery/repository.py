@@ -138,7 +138,7 @@ class GalleryRepository:
             result['recent_crops'] = c.execute("SELECT count(*) FROM items WHERE created>=? AND state='ACTIVE'", (time.time()-7*86400,)).fetchone()[0]
             return result
 
-    def list_items(self, expression='', offset=0, *, same_lead=None):
+    def list_items(self, expression='', offset=0, *, same_lead=None, document_date=''):
         clause = "WHERE i.state='ACTIVE'"
         params = []
         if same_lead is not None:
@@ -148,11 +148,22 @@ class GalleryRepository:
             clause += ' AND i.rowid IN (SELECT rowid FROM search WHERE search MATCH ?)'
             params.append(expression)
         with self.connect() as c:
+            # Dates describe the complete search/related scope, not just this page
+            # or selected day. Swipes must work beyond the 24-card pagination limit.
+            c.execute('BEGIN')
+            buckets = [dict(r) for r in c.execute(
+                'SELECT i.document_date AS date,count(*) AS count FROM items i ' + clause +
+                ' GROUP BY i.document_date ORDER BY i.document_date DESC', params)]
+            if document_date == 'undated':
+                clause += ' AND i.document_date IS NULL'
+            elif document_date:
+                clause += ' AND i.document_date=?'
+                params.append(document_date)
             total = c.execute('SELECT count(*) FROM items i ' + clause, params).fetchone()[0]
             rows = c.execute('''SELECT i.id,i.filename,i.page,i.part,i.document_date,i.date_status,i.bytes,i.lead_name,i.lead_status,
                (SELECT count(*) FROM notes n WHERE n.item_id=i.id) AS notes_count FROM items i ''' + clause +
                ' ORDER BY i.document_date IS NULL,i.document_date DESC,i.created DESC,i.id LIMIT 24 OFFSET ?', [*params, offset])
-            return dict(total=total, items=[dict(r) for r in rows])
+            return dict(total=total, items=[dict(r) for r in rows], dates=buckets)
 
     def item(self, ident):
         with self.connect() as c:

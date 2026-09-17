@@ -1,9 +1,15 @@
+import { GalleryDates } from './gallery_dates.js';
+
 'use strict';
 (() => {
   const el = id => document.getElementById(id);
   const cards = new Map(), groups = new Map(), drafts = new Map(), saving = new Set();
-  let query = '', relatedId = null, selected = null, offset = 0, total = 0;
+  let query = '', relatedId = null, selected = null, offset = 0, total = 0, dateFilter = '';
   let generation = 0, detailGeneration = 0, loading = false, galleryDirty = false, relatedAfterSave = false, notesVersion = '', pendingDetails = 0;
+  const dates = new GalleryDates({
+    onSelect: chooseDate,
+    blocked: () => loading || Boolean(document.querySelector('dialog[open]')),
+  });
   const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
   const mb = bytes => (bytes / 1048576).toFixed(1) + ' MB';
   const text = (tag, value, className = '') => { const n = document.createElement(tag); n.textContent = value; n.className = className; return n; };
@@ -36,7 +42,12 @@
       const section = text('section', '', 'gallery-day'); section.dataset.date = key;
       const heading = text('div', '', 'gallery-day-heading');
       const label = item.document_date ? new Date(item.document_date + 'T12:00:00').toLocaleDateString('en-US', {weekday:'long'}) : 'Confirm in notes';
-      heading.append(text('h2', dateLabel(item.document_date)), text('span', label));
+      const title = text('h2', '');
+      const dateButton = text('button', dateLabel(item.document_date) + ' ⌄', 'gallery-date-trigger');
+      dateButton.type = 'button'; dateButton.setAttribute('aria-haspopup', 'dialog');
+      dateButton.setAttribute('aria-controls', 'galleryDateSheet');
+      dateButton.addEventListener('click', () => dates.open(key));
+      title.append(dateButton); heading.append(title, text('span', label));
       const list = text('div', '', 'gallery-day-cards'); section.append(heading, list);
       groups.set(key, list); el('galleryCards').append(section);
     }
@@ -55,26 +66,33 @@
   }
   async function load(reset = true) {
     if (!reset && loading) return;
-    if (reset) { generation++; offset = 0; }
+    if (reset) { generation++; offset = 0; cards.clear(); groups.clear(); el('galleryCards').replaceChildren(); }
+    el('galleryDateMessage').textContent = '';
     const token = generation, start = offset, related = relatedId;
-    loading = true; el('galleryMore').disabled = true; el('galleryMessage').textContent = reset ? 'Loading cards…' : '';
-    const url = related ? `/gallery/api/items/${related}/related?offset=${start}` : `/gallery/api/items?q=${encodeURIComponent(query)}&offset=${start}`;
+    loading = true; dates.busy(true); el('galleryCards').setAttribute('aria-busy', 'true'); el('galleryMore').disabled = true; el('galleryMessage').textContent = reset ? 'Loading cards…' : '';
+    const suffix = `&date=${encodeURIComponent(dateFilter)}`;
+    const url = (related ? `/gallery/api/items/${related}/related?offset=${start}` : `/gallery/api/items?q=${encodeURIComponent(query)}&offset=${start}`) + suffix;
     try {
       const data = await api(url);
       if (token !== generation) return;
-      if (reset) { cards.clear(); groups.clear(); el('galleryCards').replaceChildren(); }
+      dates.update(data.dates, dateFilter);
       data.items.forEach(addCard); total = data.total; offset = start + data.items.length;
       el('galleryHeading').textContent = related ? 'Related cards' : query ? 'Search results' : 'Gallery';
-      el('galleryCount').textContent = `${total} ${total === 1 ? 'work order' : 'work orders'} · newest dates first`;
+      el('galleryCount').textContent = `${total} ${total === 1 ? 'work order' : 'work orders'} · ${dateFilter ? (dateFilter === 'undated' ? 'dates need checking' : dateLabel(dateFilter)) : 'newest dates first'}`;
       el('galleryFilter').hidden = !related && !query;
       el('galleryFilterTitle').textContent = related ? data.lead_name : query;
       el('galleryFilterHint').textContent = related ? 'Same lead name · across all retained dates' : 'Matching printed text and shared notes';
       el('galleryMore').hidden = offset >= total;
       el('galleryEmpty').hidden = total !== 0;
-      el('galleryEmpty').textContent = query || related ? 'No matching work orders.' : 'No work orders yet. Enable gallery email imports in Settings.';
+      el('galleryEmpty').textContent = dateFilter ? 'No work orders on this date. Choose another date or All dates.' : query || related ? 'No matching work orders.' : 'No work orders yet. Enable gallery email imports in Settings.';
       el('galleryMessage').textContent = ''; actions();
     } catch (error) { if (token === generation) el('galleryMessage').textContent = error.message; }
-    finally { if (token === generation) { loading = false; el('galleryMore').disabled = false; } }
+    finally { if (token === generation) { loading = false; dates.busy(false); el('galleryCards').setAttribute('aria-busy', 'false'); el('galleryMore').disabled = false; } }
+  }
+  function chooseDate(value) {
+    // This is a read-only view filter, never a correction of a document's date.
+    dateFilter = value; selected = null; detailGeneration++; galleryDirty = false;
+    dates.setFilter(value); closeDialogs(); actions(); load(); window.scrollTo({top:0});
   }
   async function summary() {
     try {
@@ -172,7 +190,7 @@
       await detail();
       if (!selected) return;
       if (!selected.lead_name) { openNotes(true); return; }
-      relatedId = selected.id; query = ''; closeDialogs();
+      relatedId = selected.id; query = ''; dateFilter = ''; dates.setFilter(''); closeDialogs();
       await load(); window.scrollTo({top:0});
     } catch (error) { el('galleryMessage').textContent = error.message; }
   }
@@ -195,11 +213,12 @@
   el('galleryNotesSheet').addEventListener('close', () => { draft(); relatedAfterSave = false; });
   el('galleryViewer').addEventListener('close', () => { el('galleryFull').removeAttribute('src'); });
   el('galleryInfo').onclick = () => { el('galleryInfoSheet').showModal(); summary(); };
+  el('galleryViewerDate').onclick = () => dates.open(selected?.document_date || 'undated');
   el('galleryMore').onclick = () => load(false);
-  el('galleryClear').onclick = () => { selected = null; relatedId = null; query = ''; actions(); load(); };
+  el('galleryClear').onclick = () => { relatedId = null; query = ''; chooseDate(''); };
   el('galleryRefresh').onclick = () => { el('galleryInfoSheet').close(); load(); summary(); };
   el('gallerySearch').onsubmit = event => {
-    event.preventDefault(); query = el('query').value.trim(); relatedId = null; selected = null;
+    event.preventDefault(); query = el('query').value.trim(); relatedId = null; selected = null; dateFilter = ''; dates.setFilter('');
     closeDialogs(); actions(); load(); window.scrollTo({top:0});
   };
   el('galleryNote').addEventListener('input', draft);
