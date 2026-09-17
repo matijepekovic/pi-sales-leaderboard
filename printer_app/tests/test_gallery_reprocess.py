@@ -9,11 +9,12 @@ from printer_app.config import Config
 def seed_source(db, filename, *, message_id=None, sha256='', printed=False):
     now = time.time()
     if message_id is None:
+        identity = hashlib.sha256((filename + str(now)).encode()).hexdigest()
         message_id = db.execute("""INSERT INTO processed_messages
             (identity,account,mailbox,uidvalidity,uid,message_id,subject,sender,state,created)
             VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (hashlib.sha256((filename + str(now)).encode()).hexdigest(), 'office@example.test', 'INBOX',
-             '1', str(int(now * 1000)), '<gallery@test>', 'Gallery source', 'office@example.test', 'COMPLETE', now))
+            (identity, 'office@example.test', 'INBOX', '1', str(int(identity[:12], 16)),
+             f'<{identity[:12]}@gallery.test>', 'Gallery source', 'office@example.test', 'COMPLETE', now))
     db.execute("""INSERT INTO email_attachment_routes
         (message_id,part,filename,print_document,import_document,gallery_delivered,error,updated)
         VALUES (?,?,?,?,?,?,?,?)""", (message_id, '1', filename, int(printed), 1, 1, '', now))
@@ -66,6 +67,7 @@ def test_gallery_queue_reprocess_deletes_cards_and_queues_original_email_again(t
     route = db.one('SELECT * FROM email_attachment_routes')
     assert route['gallery_delivered'] == 0 and route['print_document'] == 1
     assert db.one('SELECT state FROM processed_messages')['state'] == 'FETCHING'
+    assert [row['name'] for row in db.rows('SELECT name FROM commands')] == ['run-now']
     assert db.rows('SELECT * FROM jobs ORDER BY id') == jobs_before
     assert db.rows('SELECT * FROM print_attempts ORDER BY id') == attempts_before
 
@@ -96,6 +98,7 @@ def test_reprocess_refuses_ambiguous_legacy_filename_without_deleting_gallery(tm
     assert gallery.import_job(ident)['state'] == 'COMPLETE'
     assert gallery.files.path('crops', item_id).exists()
     assert len(db.rows('SELECT * FROM email_attachment_routes WHERE gallery_delivered=1')) == 2
+    assert not db.rows('SELECT * FROM commands')
 
 
 def test_queue_page_shows_reprocess_only_for_finished_gallery_jobs(tmp_path):
