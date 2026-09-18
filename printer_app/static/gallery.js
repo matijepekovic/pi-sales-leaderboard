@@ -675,14 +675,15 @@ import { GalleryOffline } from './gallery_offline.js';
       const reachable = await network.probe();
       if (!reachable) return;
       try {
-        await configureAccess();
+        const live = await configureAccess();
+        if (!live) return;
       } catch (error) {
         if (access?.role === 'guest' && (error.status === 401 || error.status === 403)) {
           location.replace('/gallery/');
         }
         return;
       }
-      if (offline.isEnabled()) await offline.sync();
+      if (offline.isEnabled()) await offline.sync().catch(() => {});
       if (wasOffline) await load();
     } finally {
       probingStats = false;
