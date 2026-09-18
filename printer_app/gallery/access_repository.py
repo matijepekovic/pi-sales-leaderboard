@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS access_credentials (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS gallery_access_subject ON access_credentials(subject);
 CREATE INDEX IF NOT EXISTS gallery_access_expiry ON access_credentials(expires);
+CREATE TABLE IF NOT EXISTS access_meta (
+ key TEXT PRIMARY KEY,
+ value TEXT NOT NULL
+);
 """
 
 
@@ -135,6 +139,29 @@ class GalleryAccessRepository:
             if now - row['last_seen'] >= 60:
                 conn.execute("UPDATE access_credentials SET last_seen=? WHERE token_hash=?", (now, token_hash))
             return dict(row)
+
+    def offline_owner(self):
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM access_meta WHERE key='offline_owner_subject'"
+            ).fetchone()
+            return row['value'] if row else ''
+
+    def claim_offline_owner(self, subject):
+        if not subject:
+            raise ValueError('A full Gallery identity is required.')
+        with self.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute(
+                "SELECT value FROM access_meta WHERE key='offline_owner_subject'"
+            ).fetchone()
+            if row:
+                return row['value']
+            conn.execute(
+                "INSERT INTO access_meta(key,value) VALUES('offline_owner_subject',?)",
+                (subject,),
+            )
+            return subject
 
     def active_shares(self, issuer_subject, now=None):
         now = time.time() if now is None else now
