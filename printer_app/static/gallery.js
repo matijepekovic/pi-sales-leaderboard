@@ -1,6 +1,7 @@
 import { GalleryDates } from './gallery_dates.js';
 import { GalleryFocus } from './gallery_focus.js';
 import { GalleryNavigation } from './gallery_navigation.js';
+import { GalleryNetwork } from './gallery_network.js';
 import { GalleryOffline } from './gallery_offline.js';
 
 'use strict';
@@ -14,7 +15,15 @@ import { GalleryOffline } from './gallery_offline.js';
   let generation = 0, detailGeneration = 0, loading = false, galleryDirty = false, actionPending = false, notesVersion = '', pendingDetails = 0;
   let access = null, offlineMode = false;
   let shareQrSessionId = '';
+  const network = new GalleryNetwork({
+    onChange: reachable => {
+      if (!reachable && offline.isEnabled()) {
+        el('galleryOfflineStatus').textContent = 'Stats unreachable · using cards stored on this phone';
+      }
+    },
+  });
   const offline = new GalleryOffline({
+    network,
     onStatus: message => { el('galleryOfflineStatus').textContent = message; },
   });
   const dates = new GalleryDates({
@@ -126,10 +135,7 @@ import { GalleryOffline } from './gallery_offline.js';
   const dateLabel = value => value ? new Date(value + 'T12:00:00').toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'}) : 'Date needs checking';
   const cardName = item => item.lead_name || 'Work order';
   async function api(url, options) {
-    const response = await fetch(url, {cache:'no-store', credentials:'same-origin', ...options});
-    const data = await response.json().catch(() => ({error:'Request failed. Reopen the gallery and try again.'}));
-    if (!response.ok) { const error = new Error(data.error || 'Request failed'); error.status = response.status; throw error; }
-    return data;
+    return network.json(url, options);
   }
   function shareCapability() {
     return Boolean(access?.capabilities?.includes('share'));
