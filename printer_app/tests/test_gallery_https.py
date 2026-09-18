@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 
 from printer_app import https_adapter
+from printer_app.app import create_app
+from printer_app.config import Config
 
 
 class DummySocket:
@@ -68,3 +70,36 @@ def test_https_adapter_boundary_does_not_enter_gallery_business_modules():
     assert 'caddy' not in repository.lower()
     assert 'sqlite3' not in adapter
     assert 'flask' not in adapter
+
+
+def test_secure_offline_setup_and_ca_are_full_gallery_only(tmp_path):
+    data = tmp_path / 'data'
+    env = tmp_path / 'env'
+    env.write_text('EMAIL_ENABLED=0\nEMAIL_MAILBOX=INBOX\n')
+    app = create_app(Config(
+        data_dir=data,
+        env_file=env,
+        secret_key='s' * 64,
+        email_enabled=False,
+    ))
+    app.testing = True
+
+    cert = data / 'gallery' / 'https' / 'root-ca.cer'
+    cert.parent.mkdir(parents=True, exist_ok=True)
+    cert.write_bytes(b'fixture-ca')
+
+    access = app.extensions['gallery_access']
+
+    full = app.test_client()
+    full_token = access.issue_full_invite()
+    assert full.get('/gallery/access/' + full_token).status_code == 303
+    assert full.get('/gallery/offline-setup').status_code == 200
+    certificate = full.get('/gallery/offline-setup/root-ca.cer')
+    assert certificate.status_code == 200
+    assert certificate.data == b'fixture-ca'
+
+    guest = app.test_client()
+    guest_token = access.create_guest_share('test-owner', 'Guest')['token']
+    assert guest.get('/gallery/access/' + guest_token).status_code == 303
+    assert guest.get('/gallery/offline-setup').status_code == 403
+    assert guest.get('/gallery/offline-setup/root-ca.cer').status_code == 403
