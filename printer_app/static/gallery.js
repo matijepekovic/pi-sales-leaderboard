@@ -117,6 +117,7 @@ import { GalleryOffline } from './gallery_offline.js';
       else if (id === 'galleryNotesSheet' && selected) await openNotes(false);
       else if (id === 'galleryLeadSheet' && selected && editIdentityCapability()) openLeadEditor(false);
       else if (id === 'galleryDateSheet') dates.open();
+      else if (id === 'galleryMenuSheet') openMenu(false);
       else if (id === 'galleryShareSheet' && shareCapability()) await openShare(false);
       else if (id === 'gallerySearchSheet') { el('query').value = view.searchDraft || ''; showDialog(id, false); }
       else if (id === 'galleryInfoSheet') { showDialog(id, false); summary(); }
@@ -343,7 +344,7 @@ import { GalleryOffline } from './gallery_offline.js';
       el('galleryCount').textContent = `${total} ${total === 1 ? 'work order' : 'work orders'} · ${dateFilter ? (dateFilter === 'undated' ? 'dates need checking' : dateLabel(dateFilter)) : 'newest dates first'}`;
       el('galleryFilter').hidden = !related && !query;
       el('galleryFilterTitle').textContent = related ? (data.lead_name || data.address || 'Related work orders') : query;
-      el('galleryFilterHint').textContent = related ? 'Name within 1 character or exact address · all retained dates' : 'Matching printed text and shared notes';
+      el('galleryFilterHint').textContent = related ? 'Name letters within 1 character or exact address · all retained dates' : 'Matching printed text and shared notes';
       el('galleryMore').hidden = offset >= total;
       el('galleryEmpty').hidden = total !== 0;
       el('galleryEmpty').textContent = dateFilter ? 'No work orders on this date. Choose another date.' : query || related ? 'No matching work orders.' : 'No work orders yet.';
@@ -469,7 +470,7 @@ import { GalleryOffline } from './gallery_offline.js';
       selected.address || 'No address was recognized on this work order.';
     el('galleryLeadScope').textContent = unnamed
       ? 'This work order has no lead name yet. The first name you set applies only to this work order.'
-      : 'This is a global Gallery update. Work orders with a lead name within 1 character or the exact same address will receive the new lead name.';
+      : 'This is a global Gallery update. Lead-name letters within 1 character or the exact same address will receive the new lead name. Symbols and digits in names are ignored.';
     el('galleryLeadSubmit').textContent = unnamed ? 'Set lead name' : 'Update lead name everywhere';
     el('galleryLeadMessage').textContent = '';
     showDialog('galleryLeadSheet', false);
@@ -491,6 +492,9 @@ import { GalleryOffline } from './gallery_offline.js';
       await load(); window.scrollTo({top:0}); navigation.push();
     } catch (error) { el('galleryMessage').textContent = error.message; }
     finally { actionPending = false; actions(); focus.reset(); }
+  }
+  function openMenu(record = true) {
+    showDialog('galleryMenuSheet', record);
   }
   function openSearch() {
     el('query').value = query; showDialog('gallerySearchSheet'); el('query').focus();
@@ -541,10 +545,11 @@ import { GalleryOffline } from './gallery_offline.js';
   el('galleryViewerDate').onclick = () => dates.open(selected?.document_date || 'undated');
   el('galleryMore').onclick = () => load(false);
   el('galleryBack').onclick = () => navigation.back();
-  el('galleryDateRefresh').onclick = () => {
+  el('galleryMenuButton').onclick = () => openMenu();
+  el('galleryMenuRefresh').onclick = () => {
     galleryDirty = true;
     if (offline.isEnabled() && network.isReachable()) offline.sync().catch(() => {});
-    requestClose('galleryDateSheet');
+    requestClose('galleryMenuSheet');
   };
   el('galleryOfflineToggle').onchange = async event => {
     const toggle = event.currentTarget;
@@ -582,7 +587,7 @@ import { GalleryOffline } from './gallery_offline.js';
       el('galleryViewerMessage').textContent = message;
       form.dataset.unnamed = 'false';
       el('galleryLeadScope').textContent =
-        'This is now a named work order. Future changes use the related-name/address rule.';
+        'This is now a named work order. Future changes compare name letters only, with the exact-address fallback.';
       el('galleryLeadSubmit').textContent = 'Update lead name everywhere';
       if (offline.isEnabled()) offline.sync().catch(() => {});
     } catch (error) {
