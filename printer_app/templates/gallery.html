@@ -9,8 +9,15 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='gallery.css') }}">
 </head>
 <body>
-{% macro actions() %}
+{% macro feed_actions() %}
 <div class="gallery-actions" role="toolbar" aria-label="Gallery controls">
+<button id="galleryMenuButton" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span>Menu</span></button>
+<button type="button" data-action="notes" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span>Notes</span></button>
+<button type="button" data-action="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search</span></button>
+</div>
+{% endmacro %}
+{% macro viewer_actions() %}
+<div class="gallery-actions" role="toolbar" aria-label="Work order controls">
 <button type="button" data-action="related" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="14" height="14" rx="3"/><path d="M16 3H6a3 3 0 0 0-3 3v10"/></svg><span>Show related</span></button>
 <button type="button" data-action="notes" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span>Notes</span></button>
 <button type="button" data-action="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search</span></button>
@@ -32,12 +39,12 @@
 <p id="galleryEmpty" class="gallery-empty" hidden></p>
 <button id="galleryMore" class="load-more" type="button" hidden>Load more</button>
 </main>
-<div class="gallery-dock">{{ actions() }}</div>
+<div class="gallery-dock">{{ feed_actions() }}</div>
 
 <dialog id="galleryViewer" class="gallery-viewer" aria-labelledby="galleryTitle">
 <div class="viewer-header"><div><h2 id="galleryTitle">Work order</h2><button id="galleryViewerDate" type="button" class="gallery-date-trigger" aria-haspopup="dialog" aria-controls="galleryDateSheet"></button></div><button type="button" class="circle-button" data-close="galleryViewer" aria-label="Close work order" autofocus>×</button></div>
 <div class="viewer-content"><img id="galleryFull" alt="Complete work-order image"><p id="galleryViewerMessage" role="status"></p><p id="gallerySource" class="muted"></p><section id="galleryViewerNotesSection" class="viewer-notes" hidden><h3>Notes</h3><div id="galleryNotes" aria-live="polite"></div></section></div>
-<div class="gallery-dock">{{ actions() }}</div>
+<div class="gallery-dock">{{ viewer_actions() }}</div>
 </dialog>
 
 <dialog id="galleryNotesSheet" class="gallery-sheet" aria-labelledby="galleryNotesTitle">
@@ -74,10 +81,15 @@
 <div class="gallery-calendar-week" aria-hidden="true"><span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span></div>
 <div id="galleryCalendarDays" class="gallery-calendar-days" role="group" aria-label="Days with work orders"></div>
 <p id="galleryCalendarEmpty" class="muted" hidden>No dated work orders in this view.</p>
-<div class="gallery-date-options">
-<label id="galleryOfflineWrap" class="gallery-offline-toggle" hidden><input id="galleryOfflineToggle" type="checkbox"><span>Offline</span></label>
+</dialog>
+
+<dialog id="galleryMenuSheet" class="gallery-sheet menu-sheet" aria-labelledby="galleryMenuTitle">
+<div class="sheet-handle" aria-hidden="true"></div>
+<div class="sheet-heading"><h2 id="galleryMenuTitle">Gallery</h2><button type="button" class="circle-button" data-close="galleryMenuSheet" aria-label="Close gallery menu">×</button></div>
+<div class="gallery-menu-options">
 <button id="galleryShare" type="button" hidden>Share</button>
-<button id="galleryDateRefresh" type="button">Refresh cards</button>
+<label id="galleryOfflineWrap" class="gallery-offline-toggle" hidden><input id="galleryOfflineToggle" type="checkbox"><span>Offline</span></label>
+<button id="galleryMenuRefresh" type="button">Refresh</button>
 </div>
 <p id="galleryOfflineStatus" class="muted gallery-offline-status" role="status"></p>
 </dialog>
@@ -109,7 +121,7 @@
 
 <dialog id="galleryInfoSheet" class="gallery-sheet" aria-labelledby="galleryInfoTitle">
 <div class="sheet-handle" aria-hidden="true"></div><div class="sheet-heading"><h2 id="galleryInfoTitle">Your gallery</h2><button type="button" class="circle-button" data-close="galleryInfoSheet" aria-label="Close gallery information">×</button></div>
-<p class="muted">Tap the date to choose a day. Swipe left for newer dates, right for older. Notes and Show related use the card most in view. Tap any card to enlarge it.</p>
+<p class="muted">Tap the date to choose a day. Swipe left for newer dates, right for older. Notes use the card most in view. Show related is available only after opening a work order.</p>
 <p id="galleryStatus" role="status">Loading gallery status…</p><button id="galleryRefresh" type="button">Refresh cards</button>
 <h3>Open on another device</h3><img class="gallery-qr" src="{{ url_for('gallery.qr') }}" alt="QR code for this gallery"><p class="muted">Use the same trusted network. Anyone who can reach this app can view documents and add notes.</p>
 <h3>Storage and recent imports</h3><p id="galleryStorage"></p><div id="galleryImports"></div>
