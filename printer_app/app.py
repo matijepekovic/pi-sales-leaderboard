@@ -83,6 +83,16 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         target = request.full_path if request.query_string else request.path
         return redirect(url_for('admin_login', next=safe_next(target)))
 
+    def effective_request_origin():
+        scheme = request.scheme
+        # Only the local HTTPS adapter may define the forwarded scheme. Direct
+        # LAN clients cannot make a spoofed proxy header change CSRF origin.
+        if request.remote_addr in ('127.0.0.1', '::1'):
+            forwarded = request.headers.get('X-Forwarded-Proto', '').split(',', 1)[0].strip()
+            if forwarded in ('http', 'https'):
+                scheme = forwarded
+        return scheme + '://' + request.host
+
     @app.before_request
     def protect_writes_and_admin():
         if request.endpoint in ('health', 'static'):
@@ -96,7 +106,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             session.permanent = True
         if request.method == 'POST':
             origin = request.headers.get('Origin')
-            if (origin and origin != request.host_url.rstrip('/')) or request.headers.get('Sec-Fetch-Site') == 'cross-site':
+            if (origin and origin != effective_request_origin()) or request.headers.get('Sec-Fetch-Site') == 'cross-site':
                 abort(403, 'Cross-site changes are not allowed')
             if any(len(request.form.getlist(key)) != 1 for key in request.form):
                 abort(400, 'Duplicate form field')
