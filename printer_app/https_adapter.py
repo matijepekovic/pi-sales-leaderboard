@@ -187,7 +187,7 @@ def prepare(data_dir, port, *, unattended=False):
         _run(['sudo', 'install', '-m', '0644', '-o', 'root', '-g', 'root',
               str(local_caddy), str(CADDYFILE)], unattended=unattended)
         _run([
-            'sudo', '-u', 'caddy', '/usr/bin/caddy', 'validate',
+            'sudo', '-H', '-u', 'caddy', '/usr/bin/caddy', 'validate',
             '--config', str(CADDYFILE), '--adapter', 'caddyfile',
         ], unattended=unattended)
 
