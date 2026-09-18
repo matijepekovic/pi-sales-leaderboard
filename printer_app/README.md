@@ -283,7 +283,18 @@ single-use QR grant that expires 6 hours after creation. Active sessions are sho
 name under the QR and can be revoked by the full-access identity that created them;
 revocation also terminates an already-open guest session. Guests can browse and add
 notes but cannot use Offline, Share, Gallery Queue, reprocessing, or gallery
-administration. Gallery POSTs retain CSRF/origin checks.
+administration. Guest QR codes deliberately remain on the certificate-free HTTP
+Gallery at port 5055.
+
+Full-access phones can use **Set up Offline** to install the Pi's private Stats Gallery
+CA once and move to the secure HTTPS Gallery. Caddy is an optional isolated local
+adapter; no cloud server or hosted customer-data copy is introduced. The secure
+Gallery registers its service worker and keeps downloaded work orders in phone-local
+IndexedDB. Runtime availability is based on whether **Stats is reachable**, not whether
+the phone has internet, so cellular/other Wi-Fi automatically uses downloaded cards and
+office-network reachability switches back to live sync. Gallery POSTs retain
+CSRF/origin checks through the trusted local proxy.
+
 Print Control, Printer Settings, Gallery Queue and reprocessing require the separate
 printer-admin password. Gallery full/guest credentials never grant those privileges.
 
