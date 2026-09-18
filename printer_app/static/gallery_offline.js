@@ -9,6 +9,10 @@ const identityKey = value =>
   String(value || '').normalize('NFKD').toLocaleLowerCase()
     .replace(/[\u0300-\u036f]/g, '').match(/[a-z0-9]+/g)?.join(' ') || '';
 
+const nameLetters = value =>
+  String(value || '').normalize('NFKD').toLocaleLowerCase()
+    .replace(/[\u0300-\u036f]/g, '').match(/[a-z]+/g)?.join('') || '';
+
 const withinOneCharacter = (left, right) => {
   if (!left || !right) return false;
   if (left === right) return true;
@@ -278,10 +282,10 @@ export class GalleryOffline {
       const target = cards.find(card => card.id === relatedId);
       relatedName = target?.detail?.lead_name || target?.summary?.lead_name || '';
       relatedAddress = target?.detail?.address || target?.summary?.address || '';
-      const name = identityKey(relatedName).replace(/ /g, '');
+      const name = nameLetters(relatedName);
       const address = identityKey(relatedAddress);
       cards = (name || address) ? cards.filter(card => {
-        const candidateName = identityKey(card.detail?.lead_name || card.summary?.lead_name || '').replace(/ /g, '');
+        const candidateName = nameLetters(card.detail?.lead_name || card.summary?.lead_name || '');
         const candidateAddress = identityKey(card.detail?.address || card.summary?.address || '');
         return withinOneCharacter(name, candidateName) ||
           (Boolean(address) && address === candidateAddress);
