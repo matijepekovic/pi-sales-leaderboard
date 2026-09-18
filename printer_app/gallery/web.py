@@ -131,7 +131,22 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
     def offline_setup():
         require('offline')
         state = secure_device_state()
-        return render_template('gallery_offline_setup.html', secure=state)
+        response = make_response(render_template('gallery_offline_setup.html', secure=state))
+        # Existing full devices may still carry the older SameSite=Strict cookie.
+        # Refresh the exact same credential as Lax before the one top-level
+        # HTTP -> HTTPS transition; the full identity/subject does not change.
+        token = request.cookies.get(ACCESS_COOKIE, '')
+        if token:
+            response.set_cookie(
+                ACCESS_COOKIE,
+                token,
+                max_age=365 * 86400,
+                httponly=True,
+                secure=bool(current_app.config.get('SESSION_COOKIE_SECURE')),
+                samesite='Lax',
+                path='/gallery',
+            )
+        return response
 
     @bp.get('/offline-setup/root-ca.cer')
     def offline_root_ca():
