@@ -192,18 +192,27 @@ actions behind printer-admin authentication. Geometry/OCR remain advisory inputs
 authority for unnamed cards.
 
 
-## Full-access global lead-name correction
+## Lead-name correction
 
 On an opened work order, a full-access Gallery device can long-press the lead name
-in the viewer header to open **Change lead name**. Temporary guests cannot open the
-editor and the server rejects the edit capability for them.
+in the viewer header to open **Change lead name**. The same long-press also works
+when the title is **Work order** because no name was recognized. Temporary guests
+cannot open the editor and the server rejects the edit capability for them.
 
-Saving is intentionally global within the current related identity: every active
-work order whose current lead name is within one character of the selected card's
-name **or** whose normalized address exactly matches the selected card receives the
-new confirmed lead name. The matching set is calculated before the rename. This
-does not rewrite OCR text, images, addresses, notes, dates, source files, or print
-history. `gallery/policy.py` owns the strict identity contract,
-`gallery/repository.py` owns address persistence and the bulk SQL update, the Gallery
-service owns the global workflow, and the web layer enforces the full-access
-`edit_identity` capability.
+For an already named card, saving is intentionally global within the current related
+identity: every active work order whose current lead name is within one character of
+the selected card's name **or** whose normalized address exactly matches the selected
+card receives the new confirmed lead name. For an unnamed active card, the first
+manual name applies only to that work order; later changes use the normal related
+identity rule.
+
+Printer admins can also set/change the lead name directly on every retained card in
+the Gallery Job page, including REVIEW cards whose name was not recognized. That
+job-page correction changes only the selected generated card and does not publish a
+REVIEW card automatically; **Approve to Gallery** remains a separate explicit action.
+
+These corrections do not rewrite OCR text, images, addresses, notes, dates, source
+files, or print history. `gallery/policy.py` owns the strict identity contract,
+`gallery/repository.py` owns lead persistence/bulk updates, the Gallery service owns
+the naming workflows, and the web layer separately enforces full-access Gallery edits
+versus printer-admin Job-page edits.

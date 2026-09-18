@@ -25,6 +25,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         'gallery.queue_page',
         'gallery.import_job_page',
         'gallery.import_item_image',
+        'gallery.import_item_lead_name',
         'gallery.approve_import_item',
         'gallery.delete_import_item',
         'gallery.reprocess_job',
@@ -257,6 +258,24 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
             abort(404)
         return send_file(path, mimetype='image/png', conditional=True)
 
+    @bp.post('/jobs/<ident>/items/<item_id>/lead-name')
+    def import_item_lead_name(ident, item_id):
+        require_admin()
+        retained_job_item(ident, item_id)
+        result = service.import_item_lead(
+            ident, item_id, request.form.get('lead_name', '')
+        )
+        return redirect(
+            url_for(
+                'gallery.import_job_page',
+                ident=ident,
+                offset=action_offset(),
+                action='renamed',
+                renamed_state=result['state'],
+            ) + '#item-' + item_id,
+            code=303,
+        )
+
     @bp.post('/jobs/<ident>/items/<item_id>/approve')
     def approve_import_item(ident, item_id):
         require_admin()
@@ -347,8 +366,8 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
     def lead_name(ident):
         require('edit_identity')
         existing(ident)
-        updated = service.lead(ident, request.form.get('lead_name', ''))
-        return jsonify(ok=True, updated=updated)
+        result = service.lead(ident, request.form.get('lead_name', ''))
+        return jsonify(ok=True, **result)
 
     @bp.get('/image/<ident>')
     def image(ident):

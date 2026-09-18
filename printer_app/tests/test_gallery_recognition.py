@@ -88,7 +88,7 @@ def test_related_uses_one_character_name_or_exact_address_and_global_rename(tmp_
     assert related['address'].startswith('792 Park Ave')
 
     changed=service.lead(anchor,'Darryl Mitchell')
-    assert changed==3
+    assert changed=={'updated':3,'scope':'related'}
     assert service.item(anchor)['lead_name']=='Darryl Mitchell'
     assert service.item(one_letter_name)['lead_name']=='Darryl Mitchell'
     assert service.item(exact_address)['lead_name']=='Darryl Mitchell'
@@ -96,6 +96,44 @@ def test_related_uses_one_character_name_or_exact_address_and_global_rename(tmp_
     assert service.item(one_letter_address)['lead_name']=='Another Person'
     assert service.item(expanded_address)['lead_name']=='Different Customer'
     assert service.item(unrelated)['lead_name']=='Other Person'
+
+
+def test_review_card_can_be_named_from_job_page_without_auto_approval(tmp_path):
+    service=build(tmp_path)
+    source='a'*64
+    ident=seed(service,20,1,text='Address: 10 Example St Phone: 123')
+    before=service.import_item(source,ident)
+    assert before['state']=='REVIEW'
+    assert before['lead_name']==''
+
+    changed=service.import_item_lead(source,ident,'Jordan Example')
+    assert changed['state']=='REVIEW'
+    after=service.import_item(source,ident)
+    assert after['lead_name']=='Jordan Example'
+    assert after['lead_status']=='confirmed'
+    assert after['state']=='REVIEW'
+    assert service.item(ident) is None
+
+    service.approve_import_item(source,ident)
+    assert service.item(ident)['lead_name']=='Jordan Example'
+
+
+def test_first_name_on_approved_unnamed_card_is_local_then_future_edits_are_global(tmp_path):
+    service=build(tmp_path)
+    source='a'*64
+    unnamed=seed(service,21,1,text='Address: 55 Exact Rd Phone: 1')
+    service.approve_import_item(source,unnamed)
+    other=seed(service,22,1,text='Lead Name: Other Person Address: 55 Exact Rd Phone: 2')
+
+    first=service.lead(unnamed,'Jordan Example')
+    assert first=={'updated':1,'scope':'single'}
+    assert service.item(unnamed)['lead_name']=='Jordan Example'
+    assert service.item(other)['lead_name']=='Other Person'
+
+    second=service.lead(unnamed,'Jordan Example Jr')
+    assert second=={'updated':2,'scope':'related'}
+    assert service.item(unnamed)['lead_name']=='Jordan Example Jr'
+    assert service.item(other)['lead_name']=='Jordan Example Jr'
 
 
 def test_existing_repair_preserves_ids_images_notes_dates_and_confirmation(tmp_path):
@@ -188,7 +226,10 @@ def test_recognition_and_navigation_have_explicit_owners():
     assert 'sqlite3' not in access_service and 'flask' not in access_service
     assert 'flask' not in access_repository
     assert "'edit_identity'" in access_service
-    assert "require('edit_identity')" in (root/'gallery/web.py').read_text()
+    web_source=(root/'gallery/web.py').read_text()
+    assert "require('edit_identity')" in web_source
+    assert "'gallery.import_item_lead_name'" in web_source
+    assert "if (!selected?.id || !editIdentityCapability()) return;" in gallery_ui
     assert 'indexedDB' not in gallery_ui and 'localStorage' not in gallery_ui
     assert 'indexedDB' in offline_runtime and '/gallery/api/offline/index' in offline_runtime
     assert 'navigator.onLine' not in gallery_ui and 'navigator.onLine' not in offline_runtime
