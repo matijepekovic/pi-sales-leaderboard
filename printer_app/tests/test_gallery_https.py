@@ -74,7 +74,7 @@ def test_https_adapter_boundary_does_not_enter_gallery_business_modules():
     assert 'flask' not in adapter
 
 
-def test_secure_offline_setup_and_ca_are_full_gallery_only(tmp_path):
+def test_secure_offline_setup_is_owned_by_first_secure_full_device(tmp_path):
     data = tmp_path / 'data'
     env = tmp_path / 'env'
     env.write_text('EMAIL_ENABLED=0\nEMAIL_MAILBOX=INBOX\n')
@@ -92,17 +92,34 @@ def test_secure_offline_setup_and_ca_are_full_gallery_only(tmp_path):
 
     access = app.extensions['gallery_access']
 
-    full = app.test_client()
-    full_token = access.issue_full_invite()
-    enrolled = full.get('/gallery/access/' + full_token)
+    owner = app.test_client()
+    owner_token = access.issue_full_invite()
+    enrolled = owner.get('/gallery/access/' + owner_token, base_url='http://10.40.80.254')
     assert enrolled.status_code == 303
     assert 'SameSite=Lax' in enrolled.headers.get('Set-Cookie', '')
-    setup = full.get('/gallery/offline-setup')
+
+    http_info = owner.get('/gallery/api/access', base_url='http://10.40.80.254').get_json()
+    assert 'offline' not in http_info['capabilities']
+    assert http_info['offline_owner_set'] is False
+
+    secure_info = owner.get('/gallery/api/access', base_url='https://10.40.80.254').get_json()
+    assert 'offline' in secure_info['capabilities']
+    assert secure_info['offline_owner_set'] is True
+    setup = owner.get('/gallery/offline-setup', base_url='https://10.40.80.254')
     assert setup.status_code == 200
-    assert 'SameSite=Lax' in setup.headers.get('Set-Cookie', '')
-    certificate = full.get('/gallery/offline-setup/root-ca.cer')
+    certificate = owner.get('/gallery/offline-setup/root-ca.cer', base_url='https://10.40.80.254')
     assert certificate.status_code == 200
     assert certificate.data == b'fixture-ca'
+
+    other = app.test_client()
+    other_token = access.issue_full_invite()
+    assert other.get('/gallery/access/' + other_token, base_url='http://10.40.80.254').status_code == 303
+    other_info = other.get('/gallery/api/access', base_url='https://10.40.80.254').get_json()
+    assert other_info['role'] == 'full'
+    assert 'offline' not in other_info['capabilities']
+    assert other_info['offline_owner_set'] is True
+    assert other.get('/gallery/offline-setup', base_url='https://10.40.80.254').status_code == 403
+    assert other.get('/gallery/offline-setup/root-ca.cer', base_url='https://10.40.80.254').status_code == 403
 
     guest = app.test_client()
     guest_token = access.create_guest_share('test-owner', 'Guest')['token']
