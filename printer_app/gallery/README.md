@@ -184,10 +184,14 @@ that page only; completed pages are not rendered/cropped again.
 
 The checkpoint lives only in the Gallery-owned `work/<pdf-hash>/` directory. It does
 not publish partial cards to the normal Gallery, alter the source PDF, or create print
-jobs. Hard processing failures still follow the existing failure path; resumability is
-for interrupted work, not a second parallel processing implementation. `processing.py`
-owns the page checkpoint contract, `gallery/files.py` owns workspace size/accounting,
-and `gallery/worker.py` owns retry/restart lifecycle.
+jobs. Renderer timeouts, temporary tool/runtime failures, memory pressure and storage
+interruptions use an explicit retry exit contract: the source PDF and completed-page
+checkpoint are preserved and the job returns to the queue. A slow page also gets up to
+five minutes of Poppler render time before it is treated as interrupted. Invalid PDFs
+or unsupported layouts still use the hard-failure path. `processing.py` owns the
+checkpoint/retry classification, `processing_contract.py` is the subprocess boundary,
+`gallery/files.py` owns workspace size/accounting, and `gallery/worker.py` owns the
+retry/restart lifecycle.
 
 ## Manual review for unnamed generated cards
 
