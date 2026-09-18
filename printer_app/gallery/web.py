@@ -174,7 +174,12 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
     def share_access():
         identity = require('share')
         shared = access.create_guest_share(identity.subject, request.form.get('name', ''))
-        destination = url_for('gallery.redeem_access', token=shared.pop('token'), _external=True)
+        token = shared.pop('token')
+        host = urlsplit('//' + request.host).hostname or ''
+        if ':' in host and not host.startswith('['):
+            host = '[' + host + ']'
+        port = int(current_app.config.get('PRINTER_PORT', 5055))
+        destination = f'http://{host}:{port}' + url_for('gallery.redeem_access', token=token)
         return jsonify(session=shared, qr_svg=qr_svg(destination))
 
     @bp.get('/api/shares')
