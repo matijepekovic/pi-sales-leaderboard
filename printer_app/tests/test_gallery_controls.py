@@ -127,6 +127,7 @@ def test_gallery_focus_is_loaded_and_related_has_no_prompt():
     assert 'openNotes(true)' not in source and 'relatedAfterSave' not in source
     assert 'history.back(' not in source
     assert template.count('data-action="related"') == 1
+    assert "if (!el('galleryViewer').open) return;" in source
     assert 'id="galleryMenuButton"' in template and 'id="galleryMenuSheet"' in template
     calendar = template.split('id="galleryDateSheet"', 1)[1].split('</dialog>', 1)[0]
     assert 'galleryShare' not in calendar
