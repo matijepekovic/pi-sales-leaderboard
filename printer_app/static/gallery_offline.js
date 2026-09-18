@@ -168,22 +168,28 @@ export class GalleryOffline {
     return offlineImagePath(this.subject, id);
   }
 
-  async ensureImage(id) {
+  async ensureImage(id, legacyCard = null) {
     const cache = await this.imageCache();
-    if (!cache) return '';
+    if (!cache) throw new Error('Offline image cache is unavailable in this browser.');
     const key = this.imagePath(id);
     const cached = await cache.match(key);
     if (cached) return key;
 
-    // Cache Storage is the durable image-body owner. Always seed a missing entry
-    // from the live server rather than trusting an older IndexedDB image object.
-    const response = await this.network.fetch('/gallery/image/' + id);
-    if (!response.ok) throw new Error('Could not download a work-order image.');
-    const clone = response.clone();
-    const probe = await clone.blob();
-    if (!probe.size) throw new Error('Downloaded work-order image was empty.');
-    await cache.put(key, response);
-    return key;
+    try {
+      // Image downloads get their own longer timeout; one slow card must not make
+      // the whole Offline sync look complete while leaving later images missing.
+      const response = await this.network.fetch('/gallery/image/' + id, {timeoutMs:20000});
+      if (!response.ok) throw new Error('Could not download a work-order image.');
+      const clone = response.clone();
+      const probe = await clone.blob();
+      if (!probe.size) throw new Error('Downloaded work-order image was empty.');
+      await cache.put(key, response);
+      return key;
+    } catch (error) {
+      const migrated = await this.migrateLegacyImage(id, legacyCard);
+      if (migrated) return migrated;
+      throw error;
+    }
   }
 
   async migrateLegacyImage(id, card) {
@@ -284,35 +290,54 @@ export class GalleryOffline {
       this.onStatus('Updating offline cards…');
       await this.flushPending();
       const index = await this.json('/gallery/api/offline/index');
-      let downloaded = 0;
+      let downloaded = 0, missingImages = 0;
       for (const summary of index.items || []) {
         const saved = await this.card(summary.id);
         let detail = saved?.detail;
         const notesChanged = !saved || (saved.summary?.notes_count ?? -1) !== summary.notes_count;
 
-        const cache = await this.imageCache();
-        const key = this.imagePath(summary.id);
-        const hadImage = Boolean(cache && await cache.match(key));
-        await this.ensureImage(summary.id);
-        if (!hadImage) downloaded++;
+        let imageReady = false;
+        try {
+          const cache = await this.imageCache();
+          const key = this.imagePath(summary.id);
+          const hadImage = Boolean(cache && await cache.match(key));
+          imageReady = Boolean(await this.ensureImage(summary.id, saved));
+          if (imageReady && !hadImage) downloaded++;
+        } catch (_) {
+          // Keep syncing metadata and later images. This card will retry on the
+          // next live sync instead of blocking the entire Offline library.
+          missingImages++;
+        }
 
         if (!detail || notesChanged) detail = await this.json('/gallery/api/items/' + summary.id);
         else detail = {...detail, ...summary};
 
-        // Metadata/notes live in IndexedDB. Image bodies live in Cache Storage.
-        // Replacing the record also drops legacy image/blob fields once repaired.
-        await this.putCard({
-          id:summary.id,
-          summary,
-          detail,
-          saved_at:Date.now(),
-        });
+        if (imageReady) {
+          // Metadata/notes live in IndexedDB. Image bodies live in Cache Storage.
+          // A repaired record can now drop the legacy Blob/ArrayBuffer fields.
+          await this.putCard({
+            id:summary.id,
+            summary,
+            detail,
+            saved_at:Date.now(),
+          });
+        } else {
+          // Preserve any legacy image bytes until a Cache Storage copy succeeds.
+          await this.putCard({
+            ...(saved || {}),
+            id:summary.id,
+            summary,
+            detail,
+            saved_at:Date.now(),
+          });
+        }
       }
       const all = await this.allCards();
       const pending = await this.pendingNotes();
       this.onStatus(
         `Offline ready · ${all.length} ${all.length === 1 ? 'card' : 'cards'} on this phone` +
-        (downloaded ? ` · ${downloaded} new` : '') +
+        (downloaded ? ` · ${downloaded} images repaired` : '') +
+        (missingImages ? ` · ${missingImages} image${missingImages === 1 ? '' : 's'} waiting to retry` : '') +
         (pending.length ? ` · ${pending.length} note${pending.length === 1 ? '' : 's'} waiting to sync` : '') +
         (!window.isSecureContext ? ' · secure setup required for relaunch' : '')
       );
