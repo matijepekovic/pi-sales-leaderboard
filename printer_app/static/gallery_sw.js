@@ -1,4 +1,5 @@
-const CACHE = 'stats-gallery-shell-v6';
+const CACHE = 'stats-gallery-shell-v7';
+const IMAGE_CACHE = 'stats-gallery-images-v1';
 const SHELL = [
   '/gallery/',
   '/gallery/manifest.webmanifest',
@@ -35,6 +36,13 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/gallery/offline-image/')) {
+    event.respondWith((async () => {
+      const cache = await caches.open(IMAGE_CACHE);
+      return (await cache.match(event.request)) || new Response('', {status:404});
+    })());
+    return;
+  }
   if (event.request.mode === 'navigate' && url.pathname.startsWith('/gallery')) {
     event.respondWith((async () => {
       const controller = new AbortController();

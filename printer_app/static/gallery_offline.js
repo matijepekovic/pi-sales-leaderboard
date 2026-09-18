@@ -4,6 +4,7 @@ const DB_VERSION = 2;
 const PAGE_SIZE = 24;
 const MODE_KEY = 'stats.gallery.accessMode';
 const SUBJECT_KEY = 'stats.gallery.offlineSubject';
+const IMAGE_CACHE = 'stats-gallery-images-v1';
 
 const identityKey = value =>
   String(value || '').normalize('NFKD').toLocaleLowerCase()
@@ -50,6 +51,9 @@ const imageBytes = card => {
   }
   return null;
 };
+
+const offlineImagePath = (subject, id) =>
+  '/gallery/offline-image/' + encodeURIComponent(subject) + '/' + encodeURIComponent(id);
 
 export class GalleryOffline {
   constructor({network, onStatus = () => {}} = {}) {
@@ -155,6 +159,61 @@ export class GalleryOffline {
     return this.network.json(url, options);
   }
 
+  async imageCache() {
+    if (!('caches' in globalThis)) return null;
+    return caches.open(IMAGE_CACHE);
+  }
+
+  imagePath(id) {
+    return offlineImagePath(this.subject, id);
+  }
+
+  async ensureImage(id, legacyCard = null) {
+    const cache = await this.imageCache();
+    if (!cache) throw new Error('Offline image cache is unavailable in this browser.');
+    const key = this.imagePath(id);
+    const cached = await cache.match(key);
+    if (cached) return key;
+
+    try {
+      // Image downloads get their own longer timeout; one slow card must not make
+      // the whole Offline sync look complete while leaving later images missing.
+      const response = await this.network.fetch('/gallery/image/' + id, {timeoutMs:20000});
+      if (!response.ok) throw new Error('Could not download a work-order image.');
+      const clone = response.clone();
+      const probe = await clone.blob();
+      if (!probe.size) throw new Error('Downloaded work-order image was empty.');
+      await cache.put(key, response);
+      return key;
+    } catch (error) {
+      const migrated = await this.migrateLegacyImage(id, legacyCard);
+      if (migrated) return migrated;
+      throw error;
+    }
+  }
+
+  async migrateLegacyImage(id, card) {
+    const cache = await this.imageCache();
+    if (!cache) return '';
+    const key = this.imagePath(id);
+    if (await cache.match(key)) return key;
+
+    let blob = null;
+    const bytes = imageBytes(card);
+    if (bytes) blob = new Blob([bytes], {type:card.image_type || 'image/png'});
+    else if (card?.image instanceof Blob && card.image.size) blob = card.image;
+    if (!blob?.size) return '';
+
+    await cache.put(
+      key,
+      new Response(blob, {
+        status:200,
+        headers:{'Content-Type': blob.type || 'image/png', 'Cache-Control':'private, max-age=31536000'},
+      }),
+    );
+    return key;
+  }
+
   async card(id) {
     await this.open();
     const tx = this.db.transaction('cards', 'readonly');
@@ -231,45 +290,54 @@ export class GalleryOffline {
       this.onStatus('Updating offline cards…');
       await this.flushPending();
       const index = await this.json('/gallery/api/offline/index');
-      let downloaded = 0;
+      let downloaded = 0, missingImages = 0;
       for (const summary of index.items || []) {
         const saved = await this.card(summary.id);
-        let bytes = imageBytes(saved);
-        let imageType = saved?.image_type || '';
         let detail = saved?.detail;
         const notesChanged = !saved || (saved.summary?.notes_count ?? -1) !== summary.notes_count;
 
-        // iOS/WebKit can restore old persisted Blob records unreliably across
-        // launches. Migrate a readable legacy Blob to plain ArrayBuffer once;
-        // ArrayBuffer is the durable IndexedDB image contract from DB v2 onward.
-        if (!bytes && saved?.image instanceof Blob && saved.image.size) {
-          bytes = await saved.image.arrayBuffer();
-          imageType = saved.image.type || 'image/png';
+        let imageReady = false;
+        try {
+          const cache = await this.imageCache();
+          const key = this.imagePath(summary.id);
+          const hadImage = Boolean(cache && await cache.match(key));
+          imageReady = Boolean(await this.ensureImage(summary.id, saved));
+          if (imageReady && !hadImage) downloaded++;
+        } catch (_) {
+          // Keep syncing metadata and later images. This card will retry on the
+          // next live sync instead of blocking the entire Offline library.
+          missingImages++;
         }
-        if (!bytes) {
-          const response = await this.network.fetch('/gallery/image/' + summary.id);
-          if (!response.ok) throw new Error('Could not download a work-order image.');
-          bytes = await response.arrayBuffer();
-          if (!bytes.byteLength) throw new Error('Downloaded work-order image was empty.');
-          imageType = response.headers.get('Content-Type') || 'image/png';
-          downloaded++;
-        }
+
         if (!detail || notesChanged) detail = await this.json('/gallery/api/items/' + summary.id);
         else detail = {...detail, ...summary};
-        await this.putCard({
-          id:summary.id,
-          summary,
-          detail,
-          image_bytes:bytes,
-          image_type:imageType || 'image/png',
-          saved_at:Date.now(),
-        });
+
+        if (imageReady) {
+          // Metadata/notes live in IndexedDB. Image bodies live in Cache Storage.
+          // A repaired record can now drop the legacy Blob/ArrayBuffer fields.
+          await this.putCard({
+            id:summary.id,
+            summary,
+            detail,
+            saved_at:Date.now(),
+          });
+        } else {
+          // Preserve any legacy image bytes until a Cache Storage copy succeeds.
+          await this.putCard({
+            ...(saved || {}),
+            id:summary.id,
+            summary,
+            detail,
+            saved_at:Date.now(),
+          });
+        }
       }
       const all = await this.allCards();
       const pending = await this.pendingNotes();
       this.onStatus(
         `Offline ready · ${all.length} ${all.length === 1 ? 'card' : 'cards'} on this phone` +
-        (downloaded ? ` · ${downloaded} new` : '') +
+        (downloaded ? ` · ${downloaded} images repaired` : '') +
+        (missingImages ? ` · ${missingImages} image${missingImages === 1 ? '' : 's'} waiting to retry` : '') +
         (pending.length ? ` · ${pending.length} note${pending.length === 1 ? '' : 's'} waiting to sync` : '') +
         (!window.isSecureContext ? ' · secure setup required for relaunch' : '')
       );
@@ -284,16 +352,22 @@ export class GalleryOffline {
   }
 
   async imageUrl(id) {
-    if (this.urls.has(id)) return this.urls.get(id);
+    const cache = await this.imageCache();
+    const key = this.imagePath(id);
+    if (cache && await cache.match(key)) return key;
+
+    // An old install can still self-migrate readable IndexedDB image bytes while
+    // already away from Stats. If that fails, the next live sync downloads it.
     const card = await this.card(id);
+    const migrated = await this.migrateLegacyImage(id, card);
+    if (migrated) return migrated;
+
+    // Cache Storage is unavailable only on unsupported browser contexts. Keep a
+    // last-resort object URL for old records rather than silently losing them.
     let blob = null;
     const bytes = imageBytes(card);
-    if (bytes) {
-      blob = new Blob([bytes], {type:card.image_type || 'image/png'});
-    } else if (card?.image instanceof Blob && card.image.size) {
-      // Read old DB v1 records without requiring an immediate online migration.
-      blob = card.image;
-    }
+    if (bytes) blob = new Blob([bytes], {type:card.image_type || 'image/png'});
+    else if (card?.image instanceof Blob && card.image.size) blob = card.image;
     if (!blob) return '';
     const url = URL.createObjectURL(blob);
     this.urls.set(id, url);

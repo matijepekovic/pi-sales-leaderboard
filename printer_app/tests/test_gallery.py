@@ -184,7 +184,11 @@ def test_gallery_architecture_keeps_ocr_and_sql_out_of_printing():
     assert 'galleryOfflineSetup' not in gallery_template
 
     offline_runtime = (root / 'static/gallery_offline.js').read_text()
+    service_worker = (root / 'static/gallery_sw.js').read_text()
     assert 'const DB_VERSION = 2;' in offline_runtime
-    assert 'response.arrayBuffer()' in offline_runtime
-    assert 'image_bytes:bytes' in offline_runtime
-    assert 'new Blob([bytes]' in offline_runtime
+    assert "const IMAGE_CACHE = 'stats-gallery-images-v1';" in offline_runtime
+    assert 'await cache.put(key, response)' in offline_runtime
+    assert '/gallery/offline-image/' in offline_runtime
+    assert "const IMAGE_CACHE = 'stats-gallery-images-v1';" in service_worker
+    assert "url.pathname.startsWith('/gallery/offline-image/')" in service_worker
+    assert 'cache.match(event.request)' in service_worker
