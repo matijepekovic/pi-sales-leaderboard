@@ -88,18 +88,41 @@ class GalleryService:
             selected_id=ident,
         )
 
-    def lead(self, ident, value):
-        self.initialize()
+    @staticmethod
+    def _checked_lead(value):
         name = checked_lead_name(value)
         if not name or not any(c.isalpha() for c in name):
             raise ValueError('Enter the lead name printed on this card.')
+        return name
+
+    def lead(self, ident, value):
+        self.initialize()
+        name = self._checked_lead(value)
         item = self.repository.item(ident)
         if not item:
             raise LookupError('This image has expired or is unavailable.')
+        # An unnamed active card has no confirmed name identity yet. Its first
+        # correction is intentionally local; later edits can use related identity.
+        if not item.get('lead_name'):
+            return dict(updated=self.repository.rename_one_active_lead(
+                ident, name, lead_key(name)
+            ), scope='single')
         matches = self._identity_matches(item)
-        return self.repository.rename_leads(
-            [row['id'] for row in matches], name, lead_key(name)
+        return dict(
+            updated=self.repository.rename_leads(
+                [row['id'] for row in matches], name, lead_key(name)
+            ),
+            scope='related',
         )
+
+    def import_item_lead(self, import_id, item_id, value):
+        """Admin correction for one retained generated card, including REVIEW."""
+        self.initialize()
+        name = self._checked_lead(value)
+        result = self.repository.correct_import_item_lead(
+            import_id, item_id, name, lead_key(name)
+        )
+        return dict(result, lead_name=name)
 
     def item(self, ident):
         self.initialize()
