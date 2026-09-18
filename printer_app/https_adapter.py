@@ -65,6 +65,9 @@ def _openssl_config(ips, dns):
         'CN = Stats Gallery',
         '[req_ext]',
         'subjectAltName = @alt_names',
+        'basicConstraints = critical,CA:FALSE',
+        'keyUsage = critical,digitalSignature,keyEncipherment',
+        'extendedKeyUsage = serverAuth',
         '[alt_names]',
     ]
     for index, value in enumerate(ips, 1):
@@ -154,6 +157,9 @@ def prepare(data_dir, port, *, unattended=False):
             _run([
                 'openssl', 'req', '-x509', '-newkey', 'rsa:3072', '-sha256', '-nodes',
                 '-days', '3650', '-subj', '/CN=Stats Gallery Local CA',
+                '-addext', 'basicConstraints=critical,CA:TRUE',
+                '-addext', 'keyUsage=critical,keyCertSign,cRLSign',
+                '-addext', 'subjectKeyIdentifier=hash',
                 '-keyout', str(root_key), '-out', str(root_cert),
             ])
             _run(['sudo', 'install', '-m', '0600', '-o', 'root', '-g', 'root',
