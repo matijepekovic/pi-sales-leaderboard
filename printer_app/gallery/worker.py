@@ -84,15 +84,37 @@ def main():
                     next_cleanup = now + 3600
                 job = gallery.repository.claim()
                 if job:
+                    directory = gallery.files.path('work', job['id'])
+                    directory.mkdir(exist_ok=True)
+
+                    # Existing checkpointed pages already count toward gallery usage.
+                    # Give the child a total workspace budget that includes those
+                    # bytes plus only the space still available to this import.
                     use = gallery.files.usage()
-                    budget = min(cfg.gallery.max_mb * 1048576 - use['total'], use['free'] - 576 * 1048576)
-                    if budget < 32 * 1048576:
-                        gallery.repository.failed(job['id'], 'Waiting for gallery space; printing is unaffected.', retry=True)
+                    work_bytes = gallery.files.work_size(job['id'])
+                    available = min(
+                        cfg.gallery.max_mb * 1048576 - use['total'],
+                        use['free'] - 576 * 1048576,
+                    )
+                    has_checkpoint = (directory / 'checkpoint.json').is_file()
+                    has_manifest = (directory / 'manifest.json').is_file()
+                    if available < 32 * 1048576 and not has_checkpoint and not has_manifest:
+                        gallery.repository.failed(
+                            job['id'],
+                            'Waiting for gallery space; printing is unaffected.',
+                            retry=True,
+                        )
                         stop.wait(60)
                         continue
-                    directory = gallery.files.path('work', job['id'])
-                    gallery.files.remove('work', job['id'])
-                    directory.mkdir()
+                    if available <= 0 and has_checkpoint and not has_manifest:
+                        gallery.repository.failed(
+                            job['id'],
+                            'Waiting for gallery space to resume; completed pages are preserved.',
+                            retry=True,
+                        )
+                        stop.wait(60)
+                        continue
+                    budget = work_bytes + max(0, available)
                     script = Path(__file__).with_name('processing.py')
                     # Distro image/OCR dependencies are independent of the printer venv.
                     env = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'OMP_THREAD_LIMIT': '1',
