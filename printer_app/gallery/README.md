@@ -37,8 +37,8 @@ Tap a printed date heading, the date at the top, or the date in an open image to
 choose a day in the calendar sheet. Only days with matching retained work orders
 are selectable; the month selector jumps between months that contain records.
 Choosing a date filters the feed to that day. The date sheet contains the calendar
-and Refresh cards. Full-access devices also see **Offline** and **Share** beside each
-other. Temporary guests do not see those controls. This is browsing state, not a
+and Refresh cards. Full-access devices see **Share**; only the single designated
+Offline-owner full device sees **Offline**. Temporary guests see neither control. This is browsing state, not a
 change to a document's saved date or retention.
 
 Swipe **left for the next newer date**, **right for the previous older date** on
@@ -102,8 +102,9 @@ all dates, not just the current date or loaded page. Existing images and notes a
 unchanged; address metadata is backfilled from already-saved OCR text.
 
 The gallery's links back to Print Control and Settings are removed. Gallery access
-is capability-based: full-access devices can browse, add notes, keep an offline copy
-and share temporary access; temporary guests can browse and add notes only. Neither
+is capability-based: full-access devices can browse, add notes and share temporary
+access; Offline is additionally granted to one full-access device only. Temporary
+guests can browse and add notes only. Neither
 Gallery role grants printer administration. Gallery Queue, reprocessing, approval,
 deletion, Print Control and Settings require the separate printer-admin password.
 
@@ -121,9 +122,9 @@ a short-lived enrollment token for a long-lived gallery credential. Reopening fr
 Print Control does not replace an existing full identity, so the phone keeps the same
 account-scoped offline store.
 
-The date picker shows **Offline** and **Share** only to full access. Share opens a
-Gallery sheet where the full-access user first names the session, then creates a QR
-code. The bearer URL is never printed in the UI. Each session lasts **6 hours from
+The date picker shows **Share** to full access. **Offline** is shown only to the
+single full-access device that owns Offline. Share opens a Gallery sheet where the
+full-access user first names the session, then creates a QR code. The bearer URL is never printed in the UI. Each session lasts **6 hours from
 creation**. Active sessions created by that full-access Gallery identity are listed
 under the QR with their name, whether the QR has been opened, expiry time, and a
 **Revoke** button. Revocation immediately invalidates both an unused QR and an
@@ -136,9 +137,13 @@ keeps each guest credential tied to its issuing share grant so expiry/revocation
 cannot be bypassed by keeping an old cookie. Legacy temporary grants from the older
 24-hour, non-revocable flow are invalidated when this schema is installed.
 
-Offline is phone-local and is available only to full-access Gallery identities.
-The installer prepares an optional local HTTPS adapter using Caddy plus a private
-**Stats Gallery Local CA**. From the normal HTTP Gallery, turning **Offline** on redirects a full-access phone
+Offline is phone-local and intentionally single-owner. The first secure full-access
+Gallery identity to reconnect after this release claims the durable Offline owner;
+because the CA has only been installed on the intended phone, that phone becomes the
+owner. Other full-access devices continue to browse, note, share and edit identity
+but do not receive the Offline capability or certificate endpoints. The installer
+prepares an optional local HTTPS adapter using Caddy plus a private **Stats Gallery
+Local CA**. From the normal HTTP Gallery, turning **Offline** on redirects a full-access phone
 to the certificate page when HTTPS trust is still required. The phone downloads that
 CA certificate, installs/trusts it once, then opens the secure
 `https://<pi-address>/gallery/` origin. Temporary
@@ -157,16 +162,19 @@ Gallery navigation falls back to its cached shell after a short failed Pi connec
 then the UI reads downloaded work orders immediately. It probes Stats periodically and
 returns to live mode/sync automatically when the Pi becomes reachable again.
 
-Server retention never deletes the browser store, so a previously downloaded image can
-remain on the phone after its server copy expires. Turning Offline off stops automatic
-downloads but does not erase downloaded cards. Queued offline notes sync when Stats is
+Server retention never deletes the owner's browser store, so a previously downloaded
+image can remain on that phone after its server copy expires. Turning Offline off stops
+automatic downloads but does not erase downloaded cards. A non-owner full device that
+had previously downloaded an Offline store has that local Offline flag/store removed
+the next time it reconnects after ownership is assigned. Queued offline notes sync when Stats is
 reachable again. Browser/OS storage can still be evicted; the app requests persistence
 but cannot override iOS storage policy.
 
 `https_adapter.py` owns Caddy/local-CA deployment and exposes only normalized readiness
 and the public CA certificate to runtime composition. `printer-app-https.service` is an
 optional isolated proxy and cannot make printer health fail. The access repository owns
-access SQL, the access service owns roles/capabilities/shares, the Gallery web layer owns
+access SQL plus the durable Offline-owner subject, the access service owns
+roles/capabilities/shares, the Gallery web layer owns secure first-owner claiming and
 certificate/setup HTTP endpoints, `gallery_network.js` owns Pi reachability, and
 `gallery_offline.js` owns phone storage/sync. Gallery business/repository modules do not
 depend on Caddy.
