@@ -156,6 +156,7 @@ configuration are not modified. No root privileges are needed for normal runtime
 
 ```bash
 journalctl -u printer-app-web.service -u printer-app-worker.service -f
+journalctl -u printer-app-https.service -f
 journalctl -u printer-app-install.service -f
 curl --fail http://127.0.0.1:5055/health
 ```
