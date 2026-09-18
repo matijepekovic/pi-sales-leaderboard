@@ -8,6 +8,11 @@ page geometry owns the line-pattern distinction; OCR, repositories and UI do not
 import cv2
 import numpy as np
 
+if __package__:
+    from .form_template import register_form, trim_last_form
+else:
+    from form_template import register_form, trim_last_form
+
 
 def _runs(mask):
     edges = np.flatnonzero(np.diff(np.r_[False, mask, False].astype(np.int8)))
@@ -20,6 +25,17 @@ def _gray(image):
     if image.shape[2] == 4:
         return cv2.cvtColor(image, cv2.COLOR_RGBA2GRAY)
     return cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+
+
+def _analysis_image(image, max_width=1400):
+    """Return a bounded geometry raster plus exact x/y scale factors."""
+    h, w = image.shape[:2]
+    if w <= max_width:
+        return image, 1.0, 1.0
+    target_w = max_width
+    target_h = max(1, int(round(h * target_w / w)))
+    small = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_AREA)
+    return small, target_w / float(w), target_h / float(h)
 
 
 def _rotate_bound(image, angle):
@@ -42,16 +58,16 @@ def _rotate_bound(image, angle):
 
 
 def deskew_page(image):
-    """Align the dominant long printed rules to 0/90 degrees before cutting.
+    """Align long printed rules while measuring skew on a bounded analysis copy.
 
-    Text and handwriting are too short to vote.  Every long line votes only for
-    its deviation from the nearest horizontal/vertical axis, so both horizontal
-    and vertical form rules agree on the same page-skew correction.
+    The rotation is still applied once to the full-resolution page, so saved crops
+    lose no image detail. This removes most Hough/Canny pixels from the hot path.
     """
-    h, w = image.shape[:2]
+    analysis, _, _ = _analysis_image(image)
+    h, w = analysis.shape[:2]
     if min(h, w) < 120:
         return image
-    gray = _gray(image)
+    gray = _gray(analysis)
     edges = cv2.Canny(gray, 50, 150, apertureSize=3)
     min_length = max(100, int(min(h, w) * .24))
     lines = cv2.HoughLinesP(
@@ -87,12 +103,8 @@ def deskew_page(image):
 
 
 def is_dense_grid_page(image):
-    """True for full-sheet reports/tables, not stacked work-order forms.
-
-    The unwanted report pages have many long vertical rules spanning much of the
-    page and crossing many long horizontal rules. Work orders have only a small
-    set of repeated vertical partitions even when several forms are stacked.
-    """
+    """True for full-sheet reports/tables, using only a bounded analysis raster."""
+    image, _, _ = _analysis_image(image)
     h, w = image.shape[:2]
     if min(h, w) < 120:
         return False
@@ -124,13 +136,8 @@ def _rule_centers(runs):
 
 
 def is_work_order_form(image):
-    """Reject table/report rectangles that only happen to have an outer border.
-
-    Work-order forms have a comparatively sparse structural grid and at least one
-    substantial vertical gap between long horizontal rules for the larger notes/
-    checklist areas. Reports like commission/NRA sheets repeat many narrow rows
-    and columns with many intersections across most of the rectangle.
-    """
+    """Legacy report rejection fallback, evaluated on a bounded analysis raster."""
+    image, _, _ = _analysis_image(image)
     h, w = image.shape[:2]
     if min(h, w) < 120:
         return False
@@ -188,7 +195,7 @@ def is_work_order_form(image):
     return not (dense_repetition or no_large_work_area or sideways_dense_report)
 
 
-def form_tops(image):
+def _form_tops_native(image):
     """Return per-column top-border coordinates, excluding footer/empty frames.
 
     RETR_EXTERNAL on the whole grid is deliberately not used: a pen stroke can
@@ -261,17 +268,42 @@ def form_tops(image):
     return tops
 
 
+def form_tops(image):
+    """Detect card tops on a small copy and map the traced borders to full resolution."""
+    original_h, original_w = image.shape[:2]
+    analysis, sx, sy = _analysis_image(image)
+    tops = _form_tops_native(analysis)
+    if sx == 1.0 and sy == 1.0:
+        return tops
+    if not tops:
+        return []
+    x_small = np.linspace(0.0, original_w - 1.0, analysis.shape[1])
+    x_full = np.arange(original_w, dtype=float)
+    mapped = []
+    for top in tops:
+        y_full = np.interp(x_full, x_small, top.astype(float) / sy)
+        mapped.append(np.rint(np.clip(y_full, 0, original_h - 1)).astype(int))
+    return mapped
+
+
 def cut_forms(image):
     h, w = image.shape[:2]
     tops = form_tops(image)
     for index, top in enumerate(tops):
-        bottom = tops[index+1] if index+1 < len(tops) else np.full(w, h)
+        last = index + 1 == len(tops)
+        bottom = tops[index+1] if not last else np.full(w, h)
         if np.any(bottom <= top):
             raise ValueError('Ambiguous form boundaries; page needs a clearer scan')
         y0, y1 = int(top.min()), int(bottom.max())
         crop = image[y0:y1].copy()
         rows = np.arange(y0, y1)[:, None]
         crop[(rows < top[None, :]) | (rows >= bottom[None, :])] = 255
-        if not is_work_order_form(crop):
+
+        # The supplied blank-card template is a fast positive registration only.
+        # If it does not confidently match, preserve the existing generic validator.
+        registration = register_form(crop)
+        if not registration.matched and not is_work_order_form(crop):
             continue
+        if last and registration.matched:
+            crop = trim_last_form(crop, registration)
         yield index+1, crop

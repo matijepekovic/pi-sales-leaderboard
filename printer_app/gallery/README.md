@@ -178,6 +178,30 @@ certificate/setup HTTP endpoints, `gallery_network.js` owns Pi reachability, and
 depend on Caddy.
 
 
+## Template-assisted fast processing
+
+The blank single-card work-order template is represented by normalized printed-rule
+geometry in `form_template.py`. It is a conservative fast path, not a replacement for
+the generic cutter: a card must strongly match the known rule spacing before template
+registration is trusted; otherwise the existing border/report validation remains in
+control.
+
+Page-wide skew is still corrected once before cutting, but Canny/Hough and line-grid
+analysis now run on bounded working copies and the resulting geometry is mapped back to
+the original 3300-pixel render. Saved Gallery crops remain full resolution and still use
+optimized PNG output, so storage/image quality behavior is unchanged.
+
+For recognized work orders, template registration supplies a cheap positive form check.
+Earlier stacked cards keep the existing hard boundary at the next card's top. The final
+card uses the template to locate its printed bottom, then extends only through meaningful
+ink below that border before trimming blank scanner tail.
+
+Search indexing remains on the critical path and its OCR path is intentionally
+unchanged: Tesseract still sees the complete full-resolution card, preserving the
+existing searchable-text behavior. The first reliable document date is still reused
+across the PDF; no time value is reused. Optimized PNG output and Gallery CPU/service
+limits are unchanged.
+
 ## Resumable PDF processing
 
 Gallery rendering checkpoints only after a complete PDF page has finished. The work
