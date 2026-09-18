@@ -260,8 +260,13 @@ def test_recognition_and_navigation_have_explicit_owners():
     s=(root/'static/gallery_navigation.js').read_text()
     assert 'fetch(' not in s and 'history.pushState' in s and 'popstate' in s
     s=(root/'gallery/recognition.py').read_text()
+    template=(root/'gallery/form_template.py').read_text()
+    processing=(root/'gallery/processing.py').read_text()
     assert 'printer_app' not in s and 'gmail' not in s.lower()
     assert 'csv.QUOTE_NONE' in s
+    assert 'sqlite3' not in template and 'flask' not in template and 'gmail' not in template.lower()
+    assert 'OCR_MAX_WIDTH = 2400' in s
+    assert 'Image.fromarray(crop).save(path, optimize=True)' in processing
 
     access_service=(root/'gallery/access_service.py').read_text()
     access_repository=(root/'gallery/access_repository.py').read_text()
