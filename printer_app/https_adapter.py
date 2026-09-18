@@ -136,10 +136,14 @@ def prepare(data_dir, port, *, unattended=False):
         _run(['sudo', 'install', '-d', '-m', '0750', '-o', 'root', '-g', 'caddy',
               str(SYSTEM_DIR)], unattended=unattended)
 
-        root_exists = subprocess.run(
-            ['sudo', *(['-n'] if unattended else []), 'test', '-s', str(ROOT_KEY)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
-        ).returncode == 0
+        sudo_prefix = ['sudo', *(['-n'] if unattended else [])]
+        root_exists = all(
+            subprocess.run(
+                [*sudo_prefix, 'test', '-s', str(path)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            ).returncode == 0
+            for path in (ROOT_KEY, ROOT_CERT)
+        )
 
         if not root_exists:
             _run([
