@@ -183,9 +183,14 @@ def test_recognition_and_navigation_have_explicit_owners():
     access_repository=(root/'gallery/access_repository.py').read_text()
     gallery_ui=(root/'static/gallery.js').read_text()
     offline_runtime=(root/'static/gallery_offline.js').read_text()
+    network_runtime=(root/'static/gallery_network.js').read_text()
+    service_worker=(root/'static/gallery_sw.js').read_text()
     assert 'sqlite3' not in access_service and 'flask' not in access_service
     assert 'flask' not in access_repository
     assert "'edit_identity'" in access_service
     assert "require('edit_identity')" in (root/'gallery/web.py').read_text()
     assert 'indexedDB' not in gallery_ui and 'localStorage' not in gallery_ui
     assert 'indexedDB' in offline_runtime and '/gallery/api/offline/index' in offline_runtime
+    assert 'navigator.onLine' not in gallery_ui and 'navigator.onLine' not in offline_runtime
+    assert 'class GalleryNetwork' in network_runtime and 'AbortController' in network_runtime
+    assert "gallery_network.js" in service_worker and "serviceWorker.register" in offline_runtime
