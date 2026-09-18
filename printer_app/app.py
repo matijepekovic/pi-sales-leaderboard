@@ -39,6 +39,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.config.update(SECRET_KEY=cfg.secret_key, SESSION_COOKIE_NAME='printer_app_session',
         SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
         SESSION_COOKIE_SECURE=cfg.secure_cookie, PERMANENT_SESSION_LIFETIME=8 * 3600,
+        PRINTER_PORT=cfg.port,
         MAX_CONTENT_LENGTH=16384, MAX_FORM_MEMORY_SIZE=16384, MAX_FORM_PARTS=64)
     db = Database(cfg.db_path)
     admin_auth = AdminAuthService(AdminAuthRepository(db))
