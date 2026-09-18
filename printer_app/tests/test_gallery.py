@@ -163,3 +163,17 @@ def test_gallery_architecture_keeps_ocr_and_sql_out_of_printing():
     unit = (root / 'systemd/printer-app-gallery.service').read_text()
     assert 'PrivateNetwork=true' in unit and 'CPUQuota=25%' in unit and 'User=scoreboard' in unit
     assert 'Requires=' not in unit and 'PartOf=' not in unit
+
+    # Completed pages are a durable processing boundary. Worker restarts must
+    # reuse the work directory and the phone UI must not link into certificate setup.
+    processing = (root / 'gallery/processing.py').read_text()
+    worker = (root / 'gallery/worker.py').read_text()
+    gallery_ui = (root / 'static/gallery.js').read_text()
+    gallery_template = (root / 'templates/gallery.html').read_text()
+    assert "CHECKPOINT = 'checkpoint.json'" in processing
+    assert 'save_checkpoint(output, pages, page, manifest, pdf_date)' in processing
+    assert 'directory.mkdir(exist_ok=True)' in worker
+    assert "work_bytes = gallery.files.work_size(job['id'])" in worker
+    assert 'offline-setup' not in gallery_ui
+    assert 'galleryOfflineSetup' not in gallery_ui
+    assert 'galleryOfflineSetup' not in gallery_template
