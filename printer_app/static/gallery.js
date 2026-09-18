@@ -480,6 +480,7 @@ import { GalleryOffline } from './gallery_offline.js';
   }
   function closeDialogs() { document.querySelectorAll('dialog[open]').forEach(d => d.close()); }
   async function related() {
+    if (!el('galleryViewer').open) return;
     const target = currentCard();
     if (!target || actionPending) return;
     const id = target.id;
