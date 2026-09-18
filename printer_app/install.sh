@@ -31,6 +31,10 @@ fi
 if ! "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y --no-install-recommends --no-upgrade \
   caddy openssl; then
   echo 'Secure Gallery tools could not be installed; full-device offline relaunch will remain unavailable.' >&2
+else
+  # The package's sample web service is not part of Stats. A dedicated hardened
+  # printer-app-https.service owns only the Gallery HTTPS endpoint.
+  "${SUDO[@]}" systemctl disable --now caddy.service >/dev/null 2>&1 || true
 fi
 command -v libreoffice >/dev/null
 command -v lp >/dev/null
