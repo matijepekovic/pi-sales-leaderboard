@@ -18,7 +18,7 @@ import uuid
 from pathlib import Path
 
 UNITS = ['printer-app-web.service', 'printer-app-worker.service']
-OPTIONAL_UNITS = ['printer-app-gallery.service']
+OPTIONAL_UNITS = ['printer-app-gallery.service', 'printer-app-https.service']
 
 def release_units(release):
     return UNITS + [u for u in OPTIONAL_UNITS if (release / 'printer_app/systemd' / u).is_file()]
@@ -121,7 +121,7 @@ def activate(base: Path, release: Path, *, unattended=False):
         try:
             run(['sudo', 'systemctl', 'restart', unit], unattended=unattended)
         except subprocess.SubprocessError:
-            print('Optional gallery worker could not start; existing printing remains active.', file=sys.stderr)
+            print(f'Optional service {unit} could not start; existing printing remains active.', file=sys.stderr)
     print('Printer release: ' + release.name)
     print(f'Web URL: http://<pi-ip>:{paths["port"]}/system/print-control')
     print('Database: ' + paths['data'] + '/printer_app.db')
@@ -196,6 +196,18 @@ def main():
         if args.initial_login_file:
             admin_command.extend(['--initial-login-file', str(args.initial_login_file.expanduser())])
         run(admin_command, cwd=release)
+        paths = release_paths(release)
+        https_command = [
+            python, '-m', 'printer_app.https_adapter', 'prepare',
+            '--data-dir', paths['data'], '--port', str(paths['port']),
+        ]
+        if args.unattended:
+            https_command.append('--unattended')
+        try:
+            run(https_command, cwd=release)
+        except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+            print('Secure full-device Gallery setup is unavailable; printing and normal Gallery access continue. '
+                  + type(exc).__name__, file=sys.stderr)
         activate(base, release, unattended=args.unattended)
         save_result(args.result_file, release, changed=True)
 
