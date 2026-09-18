@@ -284,10 +284,14 @@ single-use QR grant that expires 6 hours after creation. Active sessions are sho
 name under the QR and can be revoked by the full-access identity that created them;
 revocation also terminates an already-open guest session. Guests can browse and add
 notes but cannot use Offline, Share, Gallery Queue, reprocessing, or gallery
-administration. Guest QR codes deliberately remain on the certificate-free HTTP
+administration. Offline is reserved for one full-access Gallery identity; other
+full-access devices do not receive that capability. Guest QR codes deliberately remain on the certificate-free HTTP
 Gallery at port 5055.
 
-On a full-access phone, turning **Offline** on from the normal HTTP Gallery opens the
+The first secure full-access phone to reconnect after this policy is installed becomes
+the durable Offline owner. Only that full identity sees/uses **Offline**. Other
+full-access phones retain normal Gallery/Share/edit access but cannot use Offline.
+On the owner phone, turning **Offline** on from the normal HTTP Gallery opens the
 certificate flow when needed, then moves that phone to the secure HTTPS Gallery. Caddy is an optional isolated local
 adapter; no cloud server or hosted customer-data copy is introduced. The secure
 Gallery registers its service worker and keeps downloaded work orders in phone-local
