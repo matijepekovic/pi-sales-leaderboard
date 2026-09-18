@@ -278,9 +278,9 @@ inbox source from cleanup until the gallery copy is durable. Newly discovered ma
 pending downloads so a blocked gallery does not starve new print mail.
 
 Open the searchable image gallery from Print Control on port 5055. The Print Control
-link and Full gallery access QR enroll that browser with full gallery capability. A
-full-access device can open Share in the date picker, name a session, and create a
-single-use QR grant that expires 6 hours after creation. Active sessions are shown by
+link and Full gallery access QR enroll that browser with full gallery capability. A full-access device can open the Gallery hamburger menu and use Share, Offline
+(when available), or Refresh. Share names a session and creates a single-use QR grant
+that expires 6 hours after creation. Active sessions are shown by
 name under the QR and can be revoked by the full-access identity that created them;
 revocation also terminates an already-open guest session. Guests can browse and add
 notes but cannot use Offline, Share, Gallery Queue, reprocessing, or gallery
@@ -312,12 +312,13 @@ Local Poppler renders temporary pages. OpenCV detects rules. Tesseract indexes a
 recognized printed text and attempts the printed header dates **after cropping**.
 Completed pages are checkpointed in the Gallery-owned work directory. If rendering is
 interrupted by a restart, reboot or update, processing resumes from the next unfinished
-page; only an in-progress page is repeated.
-no paid service/API is involved. Blurry printing and handwriting can be misread.
+page; only an in-progress page is repeated. No paid service/API is involved. Blurry printing and handwriting can be misread.
 Search includes arbitrary recognized words, phrases, numbers, filenames and added notes.
-**Show related** links work orders when either the normalized lead name differs by at
-most one character or the normalized address matches exactly; address matching has
-zero character tolerance. On full Gallery access only, long-pressing the lead name in
+**Show related** appears only inside an opened work order. It links work orders when
+the lead-name **letters only** differ by at most one character or the normalized
+address matches exactly. Name punctuation, spacing, symbols and digits are ignored;
+address matching still has zero character tolerance so house numbers remain part of
+the identity. On full Gallery access only, long-pressing the lead name in
 the open viewer allows a global lead-name correction across that strict related set.
 Temporary guests cannot perform identity edits.
 
