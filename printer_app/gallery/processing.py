@@ -176,7 +176,7 @@ def process(source, output, budget):
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
-                timeout=120,
+                timeout=300,
             )
             pagefile = prefix.with_suffix('.png')
             with Image.open(pagefile) as image:
