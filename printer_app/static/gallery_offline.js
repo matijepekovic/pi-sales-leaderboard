@@ -11,7 +11,7 @@ const identityKey = value =>
 
 const nameLetters = value =>
   String(value || '').normalize('NFKD').toLocaleLowerCase()
-    .replace(/[\u0300-\u036f]/g, '').match(/[a-z]+/g)?.join('') || '';
+    .replace(/\p{M}/gu, '').match(/\p{L}/gu)?.join('') || '';
 
 const withinOneCharacter = (left, right) => {
   if (!left || !right) return false;
