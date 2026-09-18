@@ -147,14 +147,15 @@ continues to see and use Offline normally. Temporary six-hour guests stay on the
 `http://<pi-address>:5055` Gallery and never receive Offline capability.
 
 On the secure full-device origin, enabling Offline registers the Gallery service
-worker, asks for persistent browser storage when available, and downloads active card
-images/details/notes into the full identity's IndexedDB store. Image bytes are stored
-as ArrayBuffers rather than persisted Blob objects so iPhone/WebKit can reliably
-reconstruct them after Safari/PWA relaunch. Existing readable Blob records migrate on
-the next live sync; missing image bytes are downloaded again automatically while Stats
-is reachable. The service worker caches only the Gallery application shell, not
-customer image/API responses; those remain in IndexedDB. When the phone is on cellular
-or another Wi-Fi, internet can still
+worker and asks for persistent browser storage when available. IndexedDB owns normalized
+card metadata, details, notes and queued-note state. Work-order image bodies use a
+separate Cache Storage namespace owned by the Offline runtime. Each cached image gets a
+subject-scoped synthetic `/gallery/offline-image/...` URL that the service worker serves
+directly while Stats is unreachable. This avoids depending on iPhone/WebKit restoring
+persisted Blob/object URLs correctly after Safari/PWA relaunch. Existing readable
+IndexedDB image records can self-migrate without deleting browser data, and any missing
+image is downloaded again automatically during the next live sync. When the phone is
+on cellular or another Wi-Fi, internet can still
 be available while the private Pi is unreachable. `gallery_network.js` therefore owns
 **Stats reachability** with bounded probes/timeouts; neither `gallery.js` nor
 `gallery_offline.js` uses `navigator.onLine` as the availability decision. A secure
