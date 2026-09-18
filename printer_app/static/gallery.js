@@ -260,7 +260,7 @@ import { GalleryOffline } from './gallery_offline.js';
       });
       return true;
     } catch (error) {
-      if (!error.status && await offline.resume()) {
+      if ((!error.status || error.status >= 500) && await offline.resume()) {
         access = null;
         offlineMode = true;
         accessControls(null, true);
