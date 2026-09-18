@@ -54,6 +54,17 @@ class GalleryFiles:
             raise ValueError('Gallery file symlink refused')
         return path
 
+    def work_size(self, ident):
+        """Bytes already committed to one resumable processing workspace."""
+        path = self.path('work', ident)
+        if not path.exists():
+            return 0
+        return sum(
+            entry.stat().st_size
+            for entry in path.rglob('*')
+            if entry.is_file() and not entry.is_symlink()
+        )
+
     def usage(self):
         self.initialize()
         sizes = {}
