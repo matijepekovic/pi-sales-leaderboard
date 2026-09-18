@@ -103,3 +103,40 @@ def test_secure_offline_setup_and_ca_are_full_gallery_only(tmp_path):
     assert guest.get('/gallery/access/' + guest_token).status_code == 303
     assert guest.get('/gallery/offline-setup').status_code == 403
     assert guest.get('/gallery/offline-setup/root-ca.cer').status_code == 403
+
+
+def test_local_https_proxy_scheme_is_accepted_but_spoofed_forwarding_is_not(tmp_path):
+    data = tmp_path / 'data'
+    env = tmp_path / 'env'
+    env.write_text('EMAIL_ENABLED=0\nEMAIL_MAILBOX=INBOX\n')
+    app = create_app(Config(
+        data_dir=data,
+        env_file=env,
+        secret_key='s' * 64,
+        email_enabled=False,
+    ))
+    app.testing = True
+    access = app.extensions['gallery_access']
+    origin = 'https://10.40.80.254'
+
+    client = app.test_client()
+    token = access.issue_full_invite()
+    assert client.get('/gallery/access/' + token, base_url='http://10.40.80.254').status_code == 303
+    info = client.get('/gallery/api/access', base_url='http://10.40.80.254').get_json()
+    response = client.post(
+        '/gallery/api/share',
+        base_url='http://10.40.80.254',
+        data={'csrf': info['csrf'], 'name': 'Proxy test'},
+        headers={'Origin': origin, 'X-Forwarded-Proto': 'https'},
+        environ_overrides={'REMOTE_ADDR': '127.0.0.1'},
+    )
+    assert response.status_code == 200
+
+    response = client.post(
+        '/gallery/api/share',
+        base_url='http://10.40.80.254',
+        data={'csrf': info['csrf'], 'name': 'Spoofed proxy'},
+        headers={'Origin': origin, 'X-Forwarded-Proto': 'https'},
+        environ_overrides={'REMOTE_ADDR': '10.40.80.44'},
+    )
+    assert response.status_code == 403
