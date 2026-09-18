@@ -117,8 +117,10 @@ export class GalleryOffline {
       if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
       const shellReady = await this.registerShell();
       await this.sync();
-      if (!shellReady && !window.isSecureContext) {
-        this.onStatus('Cards are downloaded. Reopening the gallery with no network requires a secure (HTTPS) connection.');
+      if (!shellReady) {
+        this.onStatus(window.isSecureContext
+          ? 'Cards are downloaded, but the offline app shell could not be installed. Reopen the secure Gallery and try Offline again.'
+          : 'Cards are downloaded. Reopening away from the office requires the secure full-device setup.');
       }
     } else {
       this.onStatus('Offline automatic downloads are off. Existing downloaded cards stay on this phone.');
