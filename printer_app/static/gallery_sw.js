@@ -37,8 +37,10 @@ self.addEventListener('fetch', event => {
   if (url.origin !== self.location.origin) return;
   if (event.request.mode === 'navigate' && url.pathname.startsWith('/gallery')) {
     event.respondWith((async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2200);
       try {
-        const response = await fetch(event.request);
+        const response = await fetch(event.request, {signal:controller.signal});
         if (response.ok && (url.pathname === '/gallery' || url.pathname === '/gallery/')) {
           const cache = await caches.open(CACHE);
           await cache.put('/gallery/', response.clone());
@@ -46,6 +48,8 @@ self.addEventListener('fetch', event => {
         return response;
       } catch (_) {
         return (await caches.match('/gallery/')) || Response.error();
+      } finally {
+        clearTimeout(timer);
       }
     })());
     return;
