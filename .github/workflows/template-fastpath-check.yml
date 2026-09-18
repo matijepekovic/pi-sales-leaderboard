@@ -1,0 +1,20 @@
+name: Temporary template fast-path check
+on:
+  push:
+    branches: [feature/gallery-template-fastpath]
+permissions:
+  contents: read
+jobs:
+  targeted:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system Gallery test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-opencv python3-pytest python3-pil
+      - name: Compile and run Gallery geometry/recognition regressions
+        run: |
+          /usr/bin/python3 -m compileall -q printer_app/gallery
+          /usr/bin/python3 -m pytest printer_app/tests/test_gallery_borders.py printer_app/tests/test_gallery_recognition.py printer_app/tests/test_gallery_pdf_date.py -v
