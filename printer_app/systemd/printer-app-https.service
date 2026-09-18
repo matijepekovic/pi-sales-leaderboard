@@ -10,6 +10,9 @@ Type=simple
 User=caddy
 Group=caddy
 WorkingDirectory=/var/lib/caddy
+Environment=HOME=/var/lib/caddy
+Environment=XDG_DATA_HOME=/var/lib/caddy/.local/share
+Environment=XDG_CONFIG_HOME=/var/lib/caddy/.config
 ExecStart=/usr/bin/caddy run --config /etc/printer-app-https/Caddyfile --adapter caddyfile
 ExecReload=/usr/bin/caddy reload --config /etc/printer-app-https/Caddyfile --adapter caddyfile --force
 Restart=on-failure
