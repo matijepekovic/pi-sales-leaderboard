@@ -6,7 +6,9 @@ import pytest
 
 from printer_app.gallery.bootstrap import build
 from printer_app.gallery.policy import printed_lead
-from printer_app.gallery.recognition import tsv_words, search_text, lead_cell_text
+from printer_app.gallery.recognition import (
+    bounded_ocr_image, lead_cell_text, rescale_words, search_text, tsv_words,
+)
 
 
 def seed(service, page=1, part=1, text='Lead Name: Jordan Example Address: 10 Example St', **extra):
@@ -19,6 +21,26 @@ def seed(service, page=1, part=1, text='Lead Name: Jordan Example Address: 10 Ex
         bytes=12,created=1000-page*10-part,**extra)])
     service.files.path('crops',ident).write_bytes(b'preserved-png')
     return ident
+
+
+def test_bounded_ocr_keeps_full_search_geometry_contract():
+    np = pytest.importorskip('numpy')
+    source = np.full((1400, 3300), 255, np.uint8)
+    smaller, scale = bounded_ocr_image(source)
+    assert smaller.shape[1] == 2400
+    assert smaller.shape[0] == round(1400 * scale)
+    words = [dict(page_num=1,block_num=1,par_num=1,line_num=1,
+                  left=1200,top=360,width=300,height=90,text='Example',conf=95)]
+    # Simulate the geometry Tesseract reports on the bounded copy.
+    reduced = [dict(words[0],
+                    left=round(words[0]['left']*scale),
+                    top=round(words[0]['top']*scale),
+                    width=round(words[0]['width']*scale),
+                    height=round(words[0]['height']*scale))]
+    restored = rescale_words(reduced, scale)[0]
+    for key in ('left','top','width','height'):
+        assert abs(restored[key] - words[0][key]) <= 1
+    assert search_text([restored]) == 'Example'
 
 
 def test_tsv_quotes_cannot_swallow_rows_or_leak_geometry():
