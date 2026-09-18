@@ -196,11 +196,11 @@ Earlier stacked cards keep the existing hard boundary at the next card's top. Th
 card uses the template to locate its printed bottom, then extends only through meaningful
 ink below that border before trimming blank scanner tail.
 
-Search indexing remains on the critical path and still OCRs the complete card rather
-than selected fields. Its temporary OCR raster is capped at 2400 pixels wide and all
-Tesseract word geometry is mapped back to the original card coordinates before lead/date
-extraction. The first reliable document date is still reused across the PDF; no time
-value is reused. Gallery CPU/service limits are unchanged.
+Search indexing remains on the critical path and its OCR path is intentionally
+unchanged: Tesseract still sees the complete full-resolution card, preserving the
+existing searchable-text behavior. The first reliable document date is still reused
+across the PDF; no time value is reused. Optimized PNG output and Gallery CPU/service
+limits are unchanged.
 
 ## Resumable PDF processing
 
