@@ -1,6 +1,6 @@
 /* Offline Runtime owns phone-local gallery persistence and queued note sync.
  * Gallery rendering stays in gallery.js; the server remains authoritative online. */
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const PAGE_SIZE = 24;
 const MODE_KEY = 'stats.gallery.accessMode';
 const SUBJECT_KEY = 'stats.gallery.offlineSubject';
@@ -41,6 +41,15 @@ const transactionDone = transaction => new Promise((resolve, reject) => {
   transaction.onabort = () => reject(transaction.error);
   transaction.onerror = () => reject(transaction.error);
 });
+
+const imageBytes = card => {
+  const value = card?.image_bytes;
+  if (value instanceof ArrayBuffer && value.byteLength) return value;
+  if (ArrayBuffer.isView(value) && value.byteLength) {
+    return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+  }
+  return null;
+};
 
 export class GalleryOffline {
   constructor({network, onStatus = () => {}} = {}) {
@@ -225,18 +234,36 @@ export class GalleryOffline {
       let downloaded = 0;
       for (const summary of index.items || []) {
         const saved = await this.card(summary.id);
-        let image = saved?.image;
+        let bytes = imageBytes(saved);
+        let imageType = saved?.image_type || '';
         let detail = saved?.detail;
         const notesChanged = !saved || (saved.summary?.notes_count ?? -1) !== summary.notes_count;
-        if (!image) {
+
+        // iOS/WebKit can restore old persisted Blob records unreliably across
+        // launches. Migrate a readable legacy Blob to plain ArrayBuffer once;
+        // ArrayBuffer is the durable IndexedDB image contract from DB v2 onward.
+        if (!bytes && saved?.image instanceof Blob && saved.image.size) {
+          bytes = await saved.image.arrayBuffer();
+          imageType = saved.image.type || 'image/png';
+        }
+        if (!bytes) {
           const response = await this.network.fetch('/gallery/image/' + summary.id);
           if (!response.ok) throw new Error('Could not download a work-order image.');
-          image = await response.blob();
+          bytes = await response.arrayBuffer();
+          if (!bytes.byteLength) throw new Error('Downloaded work-order image was empty.');
+          imageType = response.headers.get('Content-Type') || 'image/png';
           downloaded++;
         }
         if (!detail || notesChanged) detail = await this.json('/gallery/api/items/' + summary.id);
         else detail = {...detail, ...summary};
-        await this.putCard({id:summary.id, summary, detail, image, saved_at:Date.now()});
+        await this.putCard({
+          id:summary.id,
+          summary,
+          detail,
+          image_bytes:bytes,
+          image_type:imageType || 'image/png',
+          saved_at:Date.now(),
+        });
       }
       const all = await this.allCards();
       const pending = await this.pendingNotes();
@@ -259,8 +286,16 @@ export class GalleryOffline {
   async imageUrl(id) {
     if (this.urls.has(id)) return this.urls.get(id);
     const card = await this.card(id);
-    if (!card?.image) return '';
-    const url = URL.createObjectURL(card.image);
+    let blob = null;
+    const bytes = imageBytes(card);
+    if (bytes) {
+      blob = new Blob([bytes], {type:card.image_type || 'image/png'});
+    } else if (card?.image instanceof Blob && card.image.size) {
+      // Read old DB v1 records without requiring an immediate online migration.
+      blob = card.image;
+    }
+    if (!blob) return '';
+    const url = URL.createObjectURL(blob);
     this.urls.set(id, url);
     return url;
   }
