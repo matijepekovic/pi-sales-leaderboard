@@ -234,8 +234,15 @@ class GalleryHttpsAdapter:
             return dict(configured=False, addresses=[], dns=[])
         if not isinstance(value, dict):
             return dict(configured=False, addresses=[], dns=[])
+        ready = False
+        if value.get('configured') and (self.root / 'root-ca.crt').is_file():
+            try:
+                with socket.create_connection(('127.0.0.1', 443), timeout=0.2):
+                    ready = True
+            except OSError:
+                pass
         return dict(
-            configured=bool(value.get('configured')),
+            configured=ready,
             addresses=[str(v) for v in value.get('addresses', [])],
             dns=[str(v) for v in value.get('dns', [])],
             fingerprint=str(value.get('fingerprint', '')),
