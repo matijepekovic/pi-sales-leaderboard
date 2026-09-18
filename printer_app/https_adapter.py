@@ -200,13 +200,14 @@ def prepare(data_dir, port, *, unattended=False):
         ], unattended=unattended)
 
         root_bytes = subprocess.run(
-            ['sudo', *(['-n'] if unattended else []), 'cat', str(ROOT_CERT)],
+            ['sudo', *(['-n'] if unattended else []), 'openssl', 'x509',
+             '-in', str(ROOT_CERT), '-outform', 'DER'],
             capture_output=True, check=True
         ).stdout
 
     public_root = _status_dir(data_dir)
     public_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    cert_target = public_root / 'root-ca.crt'
+    cert_target = public_root / 'root-ca.cer'
     cert_target.write_bytes(root_bytes)
     cert_target.chmod(0o644)
     fingerprint = hashlib.sha256(root_bytes).hexdigest()
@@ -239,7 +240,7 @@ class GalleryHttpsAdapter:
         if not isinstance(value, dict):
             return dict(configured=False, addresses=[], dns=[])
         ready = False
-        if value.get('configured') and (self.root / 'root-ca.crt').is_file():
+        if value.get('configured') and (self.root / 'root-ca.cer').is_file():
             try:
                 with socket.create_connection(('127.0.0.1', 443), timeout=0.2):
                     ready = True
@@ -253,7 +254,7 @@ class GalleryHttpsAdapter:
         )
 
     def root_certificate(self):
-        path = self.root / 'root-ca.crt'
+        path = self.root / 'root-ca.cer'
         return path if path.is_file() else None
 
 
