@@ -217,10 +217,29 @@ class GalleryRepository:
     def import_item(self, import_id, item_id):
         with self.connect() as c:
             row = c.execute("""SELECT id,import_id,page,part,bytes,document_date,date_status,
-                    lead_name,lead_status,state FROM items
+                    lead_name,lead_status,address,state FROM items
                 WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
                 (item_id, import_id)).fetchone()
             return dict(row) if row else None
+
+    def correct_import_item_lead(self, import_id, item_id, value, key):
+        """Correct one retained generated card without changing review/publication state."""
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row = c.execute("""SELECT page,part,state FROM items
+                WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
+                (item_id, import_id)).fetchone()
+            if not row:
+                raise LookupError('This generated card is unavailable.')
+            c.execute("""UPDATE items
+                SET lead_name=?,lead_key=?,lead_status='confirmed'
+                WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
+                (value, key, item_id, import_id))
+            self._step(
+                c, import_id, time.time(),
+                f"Manually corrected lead name on page {row['page']} card {row['part']}."
+            )
+            return dict(row)
 
     def approve_import_item(self, import_id, item_id):
         with self.connect() as c:
@@ -368,6 +387,15 @@ class GalleryRepository:
                     WHERE id=? AND state='ACTIVE'""", (value, key, ident)).rowcount
             if not changed:
                 raise LookupError('No active related work orders are available.')
+            return changed
+
+    def rename_one_active_lead(self, ident, value, key):
+        with self.connect() as c:
+            changed = c.execute("""UPDATE items
+                SET lead_name=?,lead_key=?,lead_status='confirmed'
+                WHERE id=? AND state='ACTIVE'""", (value, key, ident)).rowcount
+            if not changed:
+                raise LookupError('This image has expired or is unavailable.')
             return changed
 
     def correct_lead(self, ident, value):
