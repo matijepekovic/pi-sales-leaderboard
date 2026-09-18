@@ -173,14 +173,17 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
     @bp.get('/api/access')
     def access_info():
         identity = require('browse')
+        capabilities = access.capabilities(identity)
         result = dict(
             role=identity.role,
             subject=identity.subject,
             expires=identity.expires,
-            capabilities=sorted(access.capabilities(identity)),
+            capabilities=sorted(capabilities),
             csrf=session.get('csrf', ''),
         )
-        if access.allows(identity, 'offline'):
+        if identity.role == 'full':
+            result['offline_owner_set'] = bool(access.offline_owner())
+        if 'offline' in capabilities:
             result['secure_offline'] = secure_device_state()
         return jsonify(result)
 
