@@ -146,9 +146,6 @@ def prepare(data_dir, port, *, unattended=False):
               str(SYSTEM_DIR)], unattended=unattended)
 
         root_exists = subprocess.run(
-            ['sudo', '-n' if unattended else '-v'], stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, check=False
-        ).returncode == 0 and subprocess.run(
             ['sudo', *(['-n'] if unattended else []), 'test', '-s', str(ROOT_KEY)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
         ).returncode == 0
