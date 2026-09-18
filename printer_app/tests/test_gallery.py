@@ -170,8 +170,13 @@ def test_gallery_architecture_keeps_ocr_and_sql_out_of_printing():
     worker = (root / 'gallery/worker.py').read_text()
     gallery_ui = (root / 'static/gallery.js').read_text()
     gallery_template = (root / 'templates/gallery.html').read_text()
+    contract = (root / 'gallery/processing_contract.py').read_text()
     assert "CHECKPOINT = 'checkpoint.json'" in processing
     assert 'save_checkpoint(output, pages, page, manifest, pdf_date)' in processing
+    assert 'except (subprocess.TimeoutExpired, OSError, MemoryError)' in processing
+    assert 'raise SystemExit(RETRYABLE_EXIT)' in processing
+    assert 'RETRYABLE_EXIT = 75' in contract
+    assert 'returncode == RETRYABLE_EXIT' in worker
     assert 'directory.mkdir(exist_ok=True)' in worker
     assert "work_bytes = gallery.files.work_size(job['id'])" in worker
     assert 'offline-setup' not in gallery_ui
