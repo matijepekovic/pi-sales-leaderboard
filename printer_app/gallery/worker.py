@@ -123,8 +123,10 @@ def main():
                             str(directory), str(budget)], env=env, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL) as child:
                         deadline = time.monotonic() + 1800
+                        timed_out = False
                         while child.poll() is None:
                             if stop.wait(5) or time.monotonic() > deadline:
+                                timed_out = not stop.is_set()
                                 child.terminate()
                                 try:
                                     child.wait(timeout=10)
@@ -133,10 +135,19 @@ def main():
                                 break
                             gallery.repository.set_state(dict(heartbeat=time.time(), processing=True, error=''))
                             gallery.report_progress(job['id'])
+                        returncode = child.wait()
                         if stop.is_set():
-                            gallery.repository.failed(job['id'], 'Interrupted; will resume after restart.', retry=True)
+                            gallery.repository.failed(job['id'], 'Interrupted; completed pages preserved for restart.', retry=True)
                             break
-                        if child.wait() != 0:
+                        if timed_out or returncode < 0:
+                            gallery.repository.failed(
+                                job['id'],
+                                'Processing interrupted; completed pages preserved and will resume.',
+                                retry=True,
+                            )
+                            stop.wait(15)
+                            continue
+                        if returncode != 0:
                             raise ValueError('Import failed: unreadable PDF, unsupported layout, missing local tools, or storage limit. Resend after correcting it.')
                     gallery.report_progress(job['id'])
                     manifest = json.loads((directory / 'manifest.json').read_text())
