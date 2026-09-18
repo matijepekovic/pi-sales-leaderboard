@@ -218,9 +218,11 @@ import { GalleryOffline } from './gallery_offline.js';
     catch (error) { el('galleryShareMessage').textContent = 'Could not load active access: ' + error.message; }
   }
   function accessControls(info, resumed = false) {
-    const canOffline = resumed || Boolean(info?.capabilities?.includes('offline'));
+    // Offline is exposed only on the already-secure Gallery. The certificate
+    // setup page remains server-side but there is intentionally no UI path to it.
+    const canOffline = resumed ||
+      (window.isSecureContext && Boolean(info?.capabilities?.includes('offline')));
     const canShare = !resumed && Boolean(info?.capabilities?.includes('share'));
-    const secureSetup = !resumed ? info?.secure_offline : null;
     el('galleryOfflineWrap').hidden = !canOffline;
     el('galleryShare').hidden = !canShare;
     if (!canShare) {
@@ -229,11 +231,6 @@ import { GalleryOffline } from './gallery_offline.js';
     }
     el('galleryOfflineToggle').checked = canOffline && offline.isEnabled();
     if (!canOffline) el('galleryOfflineStatus').textContent = '';
-    else if (!resumed && !window.isSecureContext && !offline.isEnabled()) {
-      el('galleryOfflineStatus').textContent = secureSetup?.configured
-        ? 'Offline requires the secure full-device connection on this phone.'
-        : 'Secure Offline setup is not available on this Pi yet.';
-    }
     const title = el('galleryTitle');
     const canEditIdentity = !resumed && Boolean(info?.capabilities?.includes('edit_identity'));
     title.dataset.editable = String(canEditIdentity);
@@ -551,9 +548,8 @@ import { GalleryOffline } from './gallery_offline.js';
   };
   el('galleryOfflineToggle').onchange = async event => {
     const toggle = event.currentTarget;
-    if (toggle.checked && !window.isSecureContext) {
-      toggle.checked = offline.isEnabled();
-      location.href = access?.secure_offline?.setup_url || '/gallery/offline-setup';
+    if (!window.isSecureContext) {
+      toggle.checked = false;
       return;
     }
     toggle.disabled = true;
