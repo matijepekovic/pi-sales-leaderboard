@@ -84,18 +84,6 @@ def _caddyfile(port):
     auto_https off
 }}
 
-http://:80 {{
-    handle /gallery* {{
-        reverse_proxy {backend}
-    }}
-    handle /static/gallery* {{
-        reverse_proxy {backend}
-    }}
-    handle {{
-        respond "Not found" 404
-    }}
-}}
-
 https://:443 {{
     tls {SERVER_CERT} {SERVER_KEY}
     handle /gallery* {{
