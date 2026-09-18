@@ -20,6 +20,7 @@
 <li>Then open <strong>General → About → Certificate Trust Settings</strong> and enable full trust for <strong>Stats Gallery Local CA</strong>.</li>
 <li><a class="button primary" href="{{ secure.secure_url }}">Open secure Gallery</a></li>
 <li>In the secure Gallery, turn <strong>Offline</strong> on once and let the download finish.</li>
+<li>Optional but useful on iPhone: use Safari's Share menu → <strong>Add to Home Screen</strong> for one-tap offline relaunch.</li>
 </ol>
 <p class="muted">After that, opening the secure Gallery away from the office network uses the work orders stored on this phone. When Stats becomes reachable again, it returns to live mode automatically.</p>
 {% if secure.fingerprint %}<p class="muted">Certificate fingerprint: {{ secure.fingerprint[:16] }}…</p>{% endif %}
