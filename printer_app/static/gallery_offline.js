@@ -59,17 +59,13 @@ export class GalleryOffline {
     return Boolean(this.subject) && localStorage.getItem(this.enabledKey()) === '1';
   }
 
-  async revokeLocal(subject) {
+  disableLocal(subject) {
     if (!subject) return;
     if (this.db) this.db.close();
     this.db = null;
     this.releaseUrls();
     localStorage.removeItem(this.enabledKey(subject));
     if (localStorage.getItem(SUBJECT_KEY) === subject) localStorage.removeItem(SUBJECT_KEY);
-    await new Promise(resolve => {
-      const request = indexedDB.deleteDatabase('stats-gallery-offline-' + subject);
-      request.onsuccess = request.onerror = request.onblocked = () => resolve();
-    });
   }
 
   async configure(access) {
@@ -80,9 +76,10 @@ export class GalleryOffline {
     this.allowed = Boolean(full);
     if (!full) {
       // Once the server has an Offline owner, other full-access devices lose
-      // any previously downloaded Offline store the next time they reconnect.
+      // the ability to reopen any previous local Offline store. The bytes are
+      // left untouched so this authorization change never silently deletes data.
       if (access?.role === 'full' && access.offline_owner_set && previousSubject) {
-        await this.revokeLocal(previousSubject);
+        this.disableLocal(previousSubject);
       } else {
         if (this.db) this.db.close();
         this.releaseUrls();
