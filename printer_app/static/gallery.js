@@ -220,7 +220,10 @@ import { GalleryOffline } from './gallery_offline.js';
   function accessControls(info, resumed = false) {
     const canOffline = resumed || Boolean(info?.capabilities?.includes('offline'));
     const canShare = !resumed && Boolean(info?.capabilities?.includes('share'));
+    const secureSetup = !resumed ? info?.secure_offline : null;
     el('galleryOfflineWrap').hidden = !canOffline;
+    el('galleryOfflineSetup').hidden = !canOffline || resumed || window.isSecureContext;
+    el('galleryOfflineSetup').dataset.url = secureSetup?.setup_url || '/gallery/offline-setup';
     el('galleryShare').hidden = !canShare;
     if (!canShare) {
       if (el('galleryShareSheet').open) el('galleryShareSheet').close();
@@ -228,6 +231,11 @@ import { GalleryOffline } from './gallery_offline.js';
     }
     el('galleryOfflineToggle').checked = canOffline && offline.isEnabled();
     if (!canOffline) el('galleryOfflineStatus').textContent = '';
+    else if (!resumed && !window.isSecureContext && !offline.isEnabled()) {
+      el('galleryOfflineStatus').textContent = secureSetup?.configured
+        ? 'Set up this full-access phone for reliable Offline relaunch.'
+        : 'Secure Offline setup is not available on this Pi yet.';
+    }
     const title = el('galleryTitle');
     const canEditIdentity = !resumed && Boolean(info?.capabilities?.includes('edit_identity'));
     title.dataset.editable = String(canEditIdentity);
@@ -316,13 +324,14 @@ import { GalleryOffline } from './gallery_offline.js';
     try {
       let data;
       try {
+        if (offlineMode && !network.isReachable()) throw new Error('Stats is unreachable from this network.');
         data = await api(url);
         offlineMode = false;
       } catch (networkError) {
         data = await offline.list({q:query, relatedId:related, date:dateFilter, offset:start});
         if (!data) throw networkError;
         offlineMode = true;
-        el('galleryOfflineStatus').textContent = 'Offline · showing cards stored on this phone';
+        el('galleryOfflineStatus').textContent = 'Stats unreachable · showing cards stored on this phone';
       }
       if (token !== generation) return;
       if (chooseLatest) {
@@ -409,6 +418,7 @@ import { GalleryOffline } from './gallery_offline.js';
     try {
       let item;
       try {
+        if (offlineMode && !network.isReachable()) throw new Error('Stats is unreachable from this network.');
         item = await api('/gallery/api/items/' + id);
         offlineMode = false;
       } catch (networkError) {
@@ -531,11 +541,19 @@ import { GalleryOffline } from './gallery_offline.js';
   el('galleryBack').onclick = () => navigation.back();
   el('galleryDateRefresh').onclick = () => {
     galleryDirty = true;
-    if (offline.isEnabled() && navigator.onLine) offline.sync().catch(() => {});
+    if (offline.isEnabled() && network.isReachable()) offline.sync().catch(() => {});
     requestClose('galleryDateSheet');
+  };
+  el('galleryOfflineSetup').onclick = () => {
+    location.href = el('galleryOfflineSetup').dataset.url || '/gallery/offline-setup';
   };
   el('galleryOfflineToggle').onchange = async event => {
     const toggle = event.currentTarget;
+    if (toggle.checked && !window.isSecureContext) {
+      toggle.checked = offline.isEnabled();
+      location.href = el('galleryOfflineSetup').dataset.url || '/gallery/offline-setup';
+      return;
+    }
     toggle.disabled = true;
     try {
       await offline.setEnabled(toggle.checked);
@@ -632,38 +650,48 @@ import { GalleryOffline } from './gallery_offline.js';
     }
     finally { saving.delete(id); noteControls(); }
   };
-  setInterval(() => { if (selected && !pendingDetails && !document.hidden && (el('galleryViewer').open || el('galleryNotesSheet').open)) detail().catch(() => {}); }, 5000);
-  setInterval(() => { if (!document.hidden && el('galleryInfoSheet').open) summary(); }, 15000);
-  setInterval(() => { if (!document.hidden && navigator.onLine && offline.isEnabled()) offline.sync().catch(() => {}); }, 60000);
   setInterval(() => {
-    if (!document.hidden && navigator.onLine && el('galleryShareSheet').open) {
+    if (selected && !pendingDetails && !document.hidden &&
+        (el('galleryViewer').open || el('galleryNotesSheet').open)) detail().catch(() => {});
+  }, 5000);
+  setInterval(() => {
+    if (!document.hidden && network.isReachable() && el('galleryInfoSheet').open) summary();
+  }, 15000);
+  setInterval(() => {
+    if (!document.hidden && network.isReachable() && offline.isEnabled()) offline.sync().catch(() => {});
+  }, 60000);
+  setInterval(() => {
+    if (!document.hidden && network.isReachable() && el('galleryShareSheet').open) {
       loadActiveShares().catch(() => {});
     }
   }, 30000);
-  async function checkGuestAccess() {
-    if (document.hidden || !navigator.onLine || access?.role !== 'guest') return;
-    try {
-      await configureAccess();
-    } catch (error) {
-      if (error.status === 401 || error.status === 403) {
-        location.replace('/gallery/');
-      }
-    }
-  }
-  setInterval(checkGuestAccess, 15000);
-  setInterval(() => {
-    if (!document.hidden && navigator.onLine && access?.role === 'full') configureAccess().catch(() => {});
-  }, 15 * 60 * 1000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkGuestAccess(); });
-  window.addEventListener('focus', checkGuestAccess);
-  window.addEventListener('online', async () => {
+
+  let probingStats = false;
+  async function probeStats() {
+    if (document.hidden || probingStats) return;
+    probingStats = true;
     const wasOffline = offlineMode;
     try {
-      await configureAccess();
+      const reachable = await network.probe();
+      if (!reachable) return;
+      try {
+        await configureAccess();
+      } catch (error) {
+        if (access?.role === 'guest' && (error.status === 401 || error.status === 403)) {
+          location.replace('/gallery/');
+        }
+        return;
+      }
       if (offline.isEnabled()) await offline.sync();
       if (wasOffline) await load();
-    } catch (_) { /* The cached gallery remains available. */ }
-  });
+    } finally {
+      probingStats = false;
+    }
+  }
+  setInterval(probeStats, 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) probeStats(); });
+  window.addEventListener('focus', probeStats);
+  window.addEventListener('online', probeStats);
   async function start() {
     try {
       await configureAccess();
