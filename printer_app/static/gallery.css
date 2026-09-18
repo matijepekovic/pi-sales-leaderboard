@@ -148,4 +148,3 @@ body:has(dialog[open]){overflow:hidden}
 .gallery-device-setup ol{padding-left:22px}
 .gallery-device-setup li{margin:18px 0;line-height:1.5}
 .gallery-device-setup .button{margin:4px 0}
-#galleryOfflineSetup{color:var(--accent)}
