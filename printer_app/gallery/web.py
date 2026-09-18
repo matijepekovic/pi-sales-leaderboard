@@ -130,7 +130,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         state = secure_device_state()
         return render_template('gallery_offline_setup.html', secure=state)
 
-    @bp.get('/offline-setup/root-ca.crt')
+    @bp.get('/offline-setup/root-ca.cer')
     def offline_root_ca():
         require('offline')
         path = https_access.root_certificate() if https_access else None
@@ -138,9 +138,9 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
             abort(503)
         response = send_file(
             path,
-            mimetype='application/x-x509-ca-cert',
+            mimetype='application/pkix-cert',
             as_attachment=True,
-            download_name='stats-gallery-local-ca.crt',
+            download_name='stats-gallery-local-ca.cer',
             conditional=False,
         )
         response.headers['Cache-Control'] = 'private, no-store'
