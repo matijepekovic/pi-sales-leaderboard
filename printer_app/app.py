@@ -6,6 +6,7 @@ import secrets
 import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from flask import g, Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
@@ -84,15 +85,35 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         target = request.full_path if request.query_string else request.path
         return redirect(url_for('admin_login', next=safe_next(target)))
 
+    def normalized_origin(value):
+        try:
+            parsed = urlsplit(str(value or ''))
+            if parsed.scheme not in ('http', 'https') or not parsed.hostname:
+                return ''
+            port = parsed.port
+        except ValueError:
+            return ''
+        host = parsed.hostname
+        if ':' in host and not host.startswith('['):
+            host = '[' + host + ']'
+        if port and not ((parsed.scheme == 'http' and port == 80) or
+                         (parsed.scheme == 'https' and port == 443)):
+            host += ':' + str(port)
+        return parsed.scheme + '://' + host
+
     def effective_request_origin():
-        scheme = request.scheme
-        # Only the local HTTPS adapter may define the forwarded scheme. Direct
-        # LAN clients cannot make a spoofed proxy header change CSRF origin.
+        scheme, host = request.scheme, request.host
+        # Only the local HTTPS adapter may define forwarded origin metadata.
+        # Direct LAN clients cannot make spoofed proxy headers relax CSRF.
         if request.remote_addr in ('127.0.0.1', '::1'):
-            forwarded = request.headers.get('X-Forwarded-Proto', '').split(',', 1)[0].strip()
-            if forwarded in ('http', 'https'):
-                scheme = forwarded
-        return scheme + '://' + request.host
+            forwarded_proto = request.headers.get('X-Forwarded-Proto', '').split(',', 1)[0].strip()
+            forwarded_host = request.headers.get('X-Forwarded-Host', '').split(',', 1)[0].strip()
+            if forwarded_proto in ('http', 'https'):
+                scheme = forwarded_proto
+            if forwarded_host and '/' not in forwarded_host and '\\' not in forwarded_host and all(
+                    c.isalnum() or c in '.-:[]' for c in forwarded_host):
+                host = forwarded_host
+        return normalized_origin(scheme + '://' + host)
 
     @app.before_request
     def protect_writes_and_admin():
@@ -107,7 +128,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             session.permanent = True
         if request.method == 'POST':
             origin = request.headers.get('Origin')
-            if (origin and origin != effective_request_origin()) or request.headers.get('Sec-Fetch-Site') == 'cross-site':
+            if (origin and normalized_origin(origin) != effective_request_origin()) or request.headers.get('Sec-Fetch-Site') == 'cross-site':
                 abort(403, 'Cross-site changes are not allowed')
             if any(len(request.form.getlist(key)) != 1 for key in request.form):
                 abort(400, 'Duplicate form field')

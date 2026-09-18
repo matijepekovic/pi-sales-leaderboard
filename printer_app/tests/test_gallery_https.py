@@ -20,6 +20,8 @@ def test_https_config_is_gallery_only_and_keeps_guest_http_port():
     assert 'https://:443' in config
     assert 'http://:80' not in config
     assert 'reverse_proxy 127.0.0.1:5055' in config
+    assert 'header_up X-Forwarded-Host {http.request.host}' in config
+    assert 'header_up X-Forwarded-Proto https' in config
     assert 'handle /gallery*' in config
     assert 'handle /static/gallery*' in config
     assert 'respond "Not found" 404' in config
@@ -129,9 +131,13 @@ def test_local_https_proxy_scheme_is_accepted_but_spoofed_forwarding_is_not(tmp_
     info = client.get('/gallery/api/access', base_url='http://10.40.80.254').get_json()
     response = client.post(
         '/gallery/api/share',
-        base_url='http://10.40.80.254',
+        base_url='http://127.0.0.1:5055',
         data={'csrf': info['csrf'], 'name': 'Proxy test'},
-        headers={'Origin': origin, 'X-Forwarded-Proto': 'https'},
+        headers={
+            'Origin': origin + ':443',
+            'X-Forwarded-Proto': 'https',
+            'X-Forwarded-Host': '10.40.80.254',
+        },
         environ_overrides={'REMOTE_ADDR': '127.0.0.1'},
     )
     assert response.status_code == 200
@@ -140,7 +146,24 @@ def test_local_https_proxy_scheme_is_accepted_but_spoofed_forwarding_is_not(tmp_
         '/gallery/api/share',
         base_url='http://10.40.80.254',
         data={'csrf': info['csrf'], 'name': 'Spoofed proxy'},
-        headers={'Origin': origin, 'X-Forwarded-Proto': 'https'},
+        headers={
+            'Origin': origin,
+            'X-Forwarded-Proto': 'https',
+            'X-Forwarded-Host': '10.40.80.254',
+        },
         environ_overrides={'REMOTE_ADDR': '10.40.80.44'},
+    )
+    assert response.status_code == 403
+
+    response = client.post(
+        '/gallery/api/share',
+        base_url='http://127.0.0.1:5055',
+        data={'csrf': info['csrf'], 'name': 'Wrong secure host'},
+        headers={
+            'Origin': 'https://evil.example',
+            'X-Forwarded-Proto': 'https',
+            'X-Forwarded-Host': '10.40.80.254',
+        },
+        environ_overrides={'REMOTE_ADDR': '127.0.0.1'},
     )
     assert response.status_code == 403

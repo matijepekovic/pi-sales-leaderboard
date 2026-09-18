@@ -87,10 +87,18 @@ def _caddyfile(port):
 https://:443 {{
     tls {SERVER_CERT} {SERVER_KEY}
     handle /gallery* {{
-        reverse_proxy {backend}
+        reverse_proxy {backend} {{
+            header_up Host {{http.request.host}}
+            header_up X-Forwarded-Host {{http.request.host}}
+            header_up X-Forwarded-Proto https
+        }}
     }}
     handle /static/gallery* {{
-        reverse_proxy {backend}
+        reverse_proxy {backend} {{
+            header_up Host {{http.request.host}}
+            header_up X-Forwarded-Host {{http.request.host}}
+            header_up X-Forwarded-Proto https
+        }}
     }}
     handle {{
         respond "Not found" 404
