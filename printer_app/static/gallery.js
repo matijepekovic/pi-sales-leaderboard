@@ -463,17 +463,24 @@ import { GalleryOffline } from './gallery_offline.js';
     } catch (_) { /* The sheet keeps the error visible. */ }
   }
   function openLeadEditor(record = true) {
-    if (!selected?.id || !selected.lead_name || !editIdentityCapability()) return;
+    if (!selected?.id || !editIdentityCapability()) return;
     if (record) navigation.save();
     const form = el('galleryLeadForm');
+    const unnamed = !selected.lead_name;
     form.dataset.itemId = selected.id;
-    form.elements.lead_name.value = selected.lead_name;
-    el('galleryLeadContext').textContent = selected.address || 'No address was recognized on this work order.';
+    form.dataset.unnamed = String(unnamed);
+    form.elements.lead_name.value = selected.lead_name || '';
+    el('galleryLeadContext').textContent =
+      selected.address || 'No address was recognized on this work order.';
+    el('galleryLeadScope').textContent = unnamed
+      ? 'This work order has no lead name yet. The first name you set applies only to this work order.'
+      : 'This is a global Gallery update. Work orders with a lead name within 1 character or the exact same address will receive the new lead name.';
+    el('galleryLeadSubmit').textContent = unnamed ? 'Set lead name' : 'Update lead name everywhere';
     el('galleryLeadMessage').textContent = '';
     showDialog('galleryLeadSheet', false);
     if (record) navigation.push();
     form.elements.lead_name.focus();
-    form.elements.lead_name.select();
+    if (!unnamed) form.elements.lead_name.select();
   }
   function closeDialogs() { document.querySelectorAll('dialog[open]').forEach(d => d.close()); }
   async function related() {
@@ -518,7 +525,7 @@ import { GalleryOffline } from './gallery_offline.js';
     leadPressStart = null;
   };
   leadTitle.addEventListener('pointerdown', event => {
-    if (!editIdentityCapability() || !selected?.lead_name || event.button > 0) return;
+    if (!editIdentityCapability() || !selected?.id || event.button > 0) return;
     leadPressTriggered = false;
     leadPressStart = {x:event.clientX,y:event.clientY};
     leadPressTimer = setTimeout(() => {
@@ -576,9 +583,16 @@ import { GalleryOffline } from './gallery_offline.js';
       const result = await api('/gallery/api/items/' + id + '/lead-name', {method:'POST', body:new FormData(form)});
       galleryDirty = true;
       await detail(true);
-      const noun = result.updated === 1 ? 'work order.' : 'work orders.';
-      el('galleryLeadMessage').textContent = 'Updated ' + result.updated + ' ' + noun;
-      el('galleryViewerMessage').textContent = 'Lead name updated across ' + result.updated + ' related ' + noun;
+      const noun = result.updated === 1 ? 'work order' : 'work orders';
+      const message = result.scope === 'single'
+        ? 'Lead name set for this work order.'
+        : 'Lead name updated across ' + result.updated + ' related ' + noun + '.';
+      el('galleryLeadMessage').textContent = message;
+      el('galleryViewerMessage').textContent = message;
+      form.dataset.unnamed = 'false';
+      el('galleryLeadScope').textContent =
+        'This is now a named work order. Future changes use the related-name/address rule.';
+      el('galleryLeadSubmit').textContent = 'Update lead name everywhere';
       if (offline.isEnabled()) offline.sync().catch(() => {});
     } catch (error) {
       el('galleryLeadMessage').textContent = 'Could not update lead name: ' + error.message;
