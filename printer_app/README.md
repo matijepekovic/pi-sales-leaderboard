@@ -287,8 +287,8 @@ notes but cannot use Offline, Share, Gallery Queue, reprocessing, or gallery
 administration. Guest QR codes deliberately remain on the certificate-free HTTP
 Gallery at port 5055.
 
-Full-access phones can use **Set up Offline** to install the Pi's private Stats Gallery
-CA once and move to the secure HTTPS Gallery. Caddy is an optional isolated local
+On a full-access phone, turning **Offline** on from the normal HTTP Gallery opens the
+certificate flow when needed, then moves that phone to the secure HTTPS Gallery. Caddy is an optional isolated local
 adapter; no cloud server or hosted customer-data copy is introduced. The secure
 Gallery registers its service worker and keeps downloaded work orders in phone-local
 IndexedDB. Runtime availability is based on whether **Stats is reachable**, not whether
