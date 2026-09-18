@@ -13,6 +13,7 @@ from ..config import Config, environment_file
 from ..settings import SettingsService
 from ..settings_repository import SettingsRepository
 from .bootstrap import build
+from .processing_contract import RETRYABLE_EXIT
 
 log = logging.getLogger(__name__)
 
@@ -139,16 +140,16 @@ def main():
                         if stop.is_set():
                             gallery.repository.failed(job['id'], 'Interrupted; completed pages preserved for restart.', retry=True)
                             break
-                        if timed_out or returncode < 0:
+                        if timed_out or returncode < 0 or returncode == RETRYABLE_EXIT:
                             gallery.repository.failed(
                                 job['id'],
-                                'Processing interrupted; completed pages preserved and will resume.',
+                                'Processing interrupted; source and completed pages preserved. Retrying from the last completed page.',
                                 retry=True,
                             )
                             stop.wait(15)
                             continue
                         if returncode != 0:
-                            raise ValueError('Import failed: unreadable PDF, unsupported layout, missing local tools, or storage limit. Resend after correcting it.')
+                            raise ValueError('Import failed: unreadable PDF or unsupported layout. Source cannot be processed.')
                     gallery.report_progress(job['id'])
                     manifest = json.loads((directory / 'manifest.json').read_text())
                     gallery.publish(job, manifest, directory)

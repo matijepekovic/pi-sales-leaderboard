@@ -21,6 +21,7 @@ import numpy as np
 # Executed as a script, deliberately without loading the printer package/runtime.
 from cropper import cut_forms, deskew_page, is_dense_grid_page
 from recognition import recognize
+from processing_contract import RETRYABLE_EXIT
 
 
 CHECKPOINT_VERSION = 1
@@ -175,7 +176,7 @@ def process(source, output, budget):
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
-                timeout=120,
+                timeout=300,
             )
             pagefile = prefix.with_suffix('.png')
             with Image.open(pagefile) as image:
@@ -250,4 +251,9 @@ def process(source, output, budget):
 if __name__ == '__main__':
     os.environ['OMP_THREAD_LIMIT'] = '1'
     cv2.setNumThreads(1)
-    process(Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]))
+    try:
+        process(Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]))
+    except (subprocess.TimeoutExpired, OSError, MemoryError):
+        # Runtime/tool/storage interruptions are not source-data failures.
+        # The worker keeps the PDF plus every page-complete checkpoint and retries.
+        raise SystemExit(RETRYABLE_EXIT)
