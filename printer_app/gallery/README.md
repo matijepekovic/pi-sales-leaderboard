@@ -7,13 +7,16 @@ aspect ratio: no thumbnail grid, square crops, cover scaling, or new image files
 Opening a card shows the same full image. Retention and the border cutter are not
 changed by this presentation update.
 
-The floating controls are **Show related**, **Notes**, and **Search**. Notes and
-Related automatically target the complete, unobscured card in view; opening a card
-pins that record while its viewer is open. Related compares the explicit Lead Name
-and Address extracted from each work order. A card is related when **either** its
-normalized lead name differs by at most one character **or** its normalized
-address is exactly equal. Address matching has zero character tolerance and does
-not expand abbreviations such as Ave/Avenue. Results span all retained dates.
+The Gallery feed floating controls are **Menu**, **Notes**, and **Search**. **Show
+related** is intentionally available only after opening a work order; it is never a
+feed action. The Menu opens a Gallery sheet containing Share, Offline (when available),
+and Refresh. Those utilities are not part of the calendar.
+
+Related compares the explicit Lead Name and Address extracted from the opened work
+order. Name identity uses letters only: spacing, punctuation, hyphens, apostrophes,
+symbols and digits are ignored, then the name may differ by at most one letter.
+The address fallback remains exact after case/punctuation/spacing normalization, so
+house numbers still matter. Results span all retained dates.
 
 Notes opens a bottom sheet only to add a note for the selected card. Existing
 notes are shown underneath the document when that work order is opened. The target
@@ -36,10 +39,10 @@ leaderboard Update button; reopen the gallery afterward.
 Tap a printed date heading, the date at the top, or the date in an open image to
 choose a day in the calendar sheet. Only days with matching retained work orders
 are selectable; the month selector jumps between months that contain records.
-Choosing a date filters the feed to that day. The date sheet contains the calendar
-and Refresh cards. Full-access devices also see **Offline** and **Share** beside each
-other. Temporary guests do not see those controls. This is browsing state, not a
-change to a document's saved date or retention.
+Choosing a date filters the feed to that day. The date sheet contains only date
+browsing controls. Share, Offline and Refresh live in the Gallery hamburger menu,
+not in the calendar. This is browsing state, not a change to a document's saved date
+or retention.
 
 Swipe **left for the next newer date**, **right for the previous older date** on
 the card feed, or use the arrow buttons next to the date. Empty days are skipped.
@@ -94,12 +97,12 @@ POST uses existing same-origin/CSRF protection and the dispatch service's durabl
 cancellation boundary. Once submission is reserved, removal is rejected; this is
 not a CUPS cancellation button. Other reports and gallery data are unchanged.
 
-In the sales gallery, **Notes** and **Show related** automatically use the fully
-visible, unobscured card. Notes remain pinned to that record while the panel is
-open, including keyboard/viewport changes. Related uses the strict identity rule:
-lead name within one character **or** exact normalized address. It starts across
-all dates, not just the current date or loaded page. Existing images and notes are
-unchanged; address metadata is backfilled from already-saved OCR text.
+In the sales gallery, **Notes** can still target the fully visible, unobscured card
+from the feed. **Show related** requires opening that card first, which removes any
+ambiguity about the anchor work order. Related uses the strict identity rule:
+letters-only lead name within one character **or** exact normalized address. It
+starts across all dates, not just the current date or loaded page. Existing images
+and notes are unchanged; address metadata is backfilled from already-saved OCR text.
 
 The gallery's links back to Print Control and Settings are removed. Gallery access
 is capability-based: full-access devices can browse, add notes, keep an offline copy
@@ -121,9 +124,9 @@ a short-lived enrollment token for a long-lived gallery credential. Reopening fr
 Print Control does not replace an existing full identity, so the phone keeps the same
 account-scoped offline store.
 
-The date picker shows **Offline** and **Share** only to full access. Share opens a
-Gallery sheet where the full-access user first names the session, then creates a QR
-code. The bearer URL is never printed in the UI. Each session lasts **6 hours from
+The hamburger Gallery menu shows **Share**, **Offline** (when available), and
+**Refresh**. Share opens a Gallery sheet where the full-access user first names the
+session, then creates a QR code. The bearer URL is never printed in the UI. Each session lasts **6 hours from
 creation**. Active sessions created by that full-access Gallery identity are listed
 under the QR with their name, whether the QR has been opened, expiry time, and a
 **Revoke** button. Revocation immediately invalidates both an unused QR and an

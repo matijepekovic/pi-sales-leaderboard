@@ -132,6 +132,12 @@ def address_key(value):
     return ' '.join(re.findall(r'[a-z0-9]+', value))
 
 
+def related_name_key(value):
+    """Letters-only identity key for Related; ignore digits, punctuation and symbols."""
+    value = unicodedata.normalize('NFKD', lead_key(value)).casefold()
+    return ''.join(c for c in value if unicodedata.category(c).startswith('L'))
+
+
 def _within_one_character(left, right):
     """True only for exact equality or one insertion/deletion/substitution."""
     if not left or not right:
@@ -159,9 +165,9 @@ def _within_one_character(left, right):
 
 
 def related_identity(reference_name, reference_address, candidate_name, candidate_address):
-    """Related when name differs by <=1 letter/number OR address is exactly equal."""
-    reference_name = ''.join(re.findall(r'[a-z0-9]+', lead_key(reference_name)))
-    candidate_name = ''.join(re.findall(r'[a-z0-9]+', lead_key(candidate_name)))
+    """Related when name letters differ by <=1 OR normalized address is exactly equal."""
+    reference_name = related_name_key(reference_name)
+    candidate_name = related_name_key(candidate_name)
     reference_address = address_key(reference_address)
     candidate_address = address_key(candidate_address)
     name_match = _within_one_character(reference_name, candidate_name)

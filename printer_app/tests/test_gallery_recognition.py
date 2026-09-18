@@ -136,6 +136,30 @@ def test_first_name_on_approved_unnamed_card_is_local_then_future_edits_are_glob
     assert service.item(other)['lead_name']=='Jordan Example Jr'
 
 
+def test_related_name_matching_uses_letters_only_but_address_keeps_numbers(tmp_path):
+    service=build(tmp_path)
+    anchor=seed(service,30,1,
+        text="Lead Name: D'Arcy-7 O'Neil Address: 101 First Ave, Lacey, WA Phone: 1")
+    same_letters=seed(service,31,1,
+        text='Lead Name: Darcy ONeil Address: 999 Other Rd, Lacey, WA Phone: 2')
+    one_letter=seed(service,32,1,
+        text='Lead Name: Darcy X ONeil Address: 998 Other Rd, Lacey, WA Phone: 3')
+    two_letters=seed(service,33,1,
+        text='Lead Name: Darcy XX ONeil Address: 997 Other Rd, Lacey, WA Phone: 4')
+    exact_address=seed(service,34,1,
+        text='Lead Name: Completely Different Address: 101 FIRST AVE, Lacey, WA Phone: 5')
+    wrong_house=seed(service,35,1,
+        text='Lead Name: Unrelated Person Address: 102 First Ave, Lacey, WA Phone: 6')
+
+    ids={row['id'] for row in service.related(anchor)['items']}
+    assert anchor in ids
+    assert same_letters in ids  # apostrophe, hyphen and digit do not affect name identity
+    assert one_letter in ids
+    assert two_letters not in ids
+    assert exact_address in ids  # exact normalized address fallback remains
+    assert wrong_house not in ids  # house numbers still matter for address identity
+
+
 def test_existing_repair_preserves_ids_images_notes_dates_and_confirmation(tmp_path):
     service=build(tmp_path)
     ident=seed(service,text='Lead Name: JORDAN EXAMPLE eet 6311 Street Phone: 123\n4 1 1 1 16 0 1152')
@@ -232,6 +256,8 @@ def test_recognition_and_navigation_have_explicit_owners():
     assert "if (!selected?.id || !editIdentityCapability()) return;" in gallery_ui
     assert 'indexedDB' not in gallery_ui and 'localStorage' not in gallery_ui
     assert 'indexedDB' in offline_runtime and '/gallery/api/offline/index' in offline_runtime
+    assert 'const nameLetters' in offline_runtime
+    assert "unicodedata.category(c).startswith('L')" in (root/'gallery/policy.py').read_text()
     assert 'navigator.onLine' not in gallery_ui and 'navigator.onLine' not in offline_runtime
     assert 'class GalleryNetwork' in network_runtime and 'AbortController' in network_runtime
     assert "gallery_network.js" in service_worker and "serviceWorker.register" in offline_runtime

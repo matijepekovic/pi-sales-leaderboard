@@ -39,7 +39,7 @@ p{line-height:1.45}
 .gallery-actions{display:flex;align-items:stretch;gap:4px;border:1px solid #ffffffed;border-radius:34px;background:var(--glass);box-shadow:0 10px 38px #0002,0 1px 4px #0001;padding:7px;backdrop-filter:blur(24px) saturate(1.6);-webkit-backdrop-filter:blur(24px) saturate(1.6)}
 .gallery-actions button{flex:1;padding:6px 5px;display:flex;flex-direction:column;align-items:center;gap:5px;background:transparent;border-radius:25px;font-size:11px;white-space:nowrap;font-weight:600}
 .gallery-actions button:hover:not(:disabled){background:#ededf2}
-.gallery-actions button[data-action=search]{color:var(--accent)}
+.gallery-actions button[data-action=search],#galleryMenuButton{color:var(--accent)}
 .gallery-actions svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 
 dialog{color:#1d1d1f;border:0;box-shadow:0 10px 60px #0003}
@@ -105,8 +105,11 @@ body:has(dialog[open]){overflow:hidden}
 .gallery-calendar-day small{font-size:10px;margin-top:2px}
 .gallery-calendar-day:disabled{background:transparent;color:var(--muted);opacity:.4}
 .gallery-calendar-day[aria-current=date]{background:var(--accent);color:white}
-.gallery-date-options{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
-.gallery-date-options button{color:var(--accent)}
+.menu-sheet{max-width:420px}
+.gallery-menu-options{display:grid;gap:10px;margin:10px 0 4px}
+.gallery-menu-options>button,.gallery-menu-options>.gallery-offline-toggle{width:100%;min-height:52px}
+.gallery-menu-options>button{font-size:16px;text-align:left;color:var(--accent);padding:13px 15px}
+.gallery-menu-options>.gallery-offline-toggle{justify-content:space-between}
 
 @media(prefers-reduced-transparency:reduce){.gallery-actions,.gallery-day-heading,.gallery-date-nav{background:#fff;backdrop-filter:none;-webkit-backdrop-filter:none}
 }
