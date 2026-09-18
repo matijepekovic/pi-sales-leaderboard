@@ -231,7 +231,7 @@ import { GalleryOffline } from './gallery_offline.js';
     if (!canOffline) el('galleryOfflineStatus').textContent = '';
     else if (!resumed && !window.isSecureContext && !offline.isEnabled()) {
       el('galleryOfflineStatus').textContent = secureSetup?.configured
-        ? 'Set up this full-access phone for reliable Offline relaunch.'
+        ? 'Offline requires the secure full-device connection on this phone.'
         : 'Secure Offline setup is not available on this Pi yet.';
     }
     const title = el('galleryTitle');
