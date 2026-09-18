@@ -164,9 +164,10 @@ returns to live mode/sync automatically when the Pi becomes reachable again.
 
 Server retention never deletes the owner's browser store, so a previously downloaded
 image can remain on that phone after its server copy expires. Turning Offline off stops
-automatic downloads but does not erase downloaded cards. A non-owner full device that
-had previously downloaded an Offline store has that local Offline flag/store removed
-the next time it reconnects after ownership is assigned. Queued offline notes sync when Stats is
+automatic downloads but does not erase downloaded cards. A non-owner full device that had previously enabled Offline has its local Offline
+authorization flag cleared the next time it reconnects after ownership is assigned,
+so the app will not reopen that cache away from Stats. Existing browser bytes are not
+silently deleted by this authorization change. Queued offline notes sync when Stats is
 reachable again. Browser/OS storage can still be evicted; the app requests persistence
 but cannot override iOS storage policy.
 
