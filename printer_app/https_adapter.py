@@ -194,6 +194,10 @@ def prepare(data_dir, port, *, unattended=False):
         local_caddy.write_text(_caddyfile(port), encoding='utf-8')
         _run(['sudo', 'install', '-m', '0644', '-o', 'root', '-g', 'root',
               str(local_caddy), str(CADDYFILE)], unattended=unattended)
+        _run([
+            'sudo', '-u', 'caddy', '/usr/bin/caddy', 'validate',
+            '--config', str(CADDYFILE), '--adapter', 'caddyfile',
+        ], unattended=unattended)
 
         root_bytes = subprocess.run(
             ['sudo', *(['-n'] if unattended else []), 'cat', str(ROOT_CERT)],
