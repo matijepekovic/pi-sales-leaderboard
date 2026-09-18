@@ -26,6 +26,7 @@ from .attachment_routing_repository import AttachmentRoutingRepository
 from .gallery.bootstrap import build as build_gallery, build_access as build_gallery_access
 from .gallery.web import blueprint as gallery_blueprint
 from .gallery_reprocess import GalleryReprocessService
+from .https_adapter import GalleryHttpsAdapter
 
 
 def create_app(cfg: Config | None = None, settings_service: SettingsService | None = None) -> Flask:
@@ -52,18 +53,20 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.extensions['printer_admin_auth'] = admin_auth
     gallery = build_gallery(cfg.data_dir)
     gallery_access = build_gallery_access(cfg.data_dir)
+    gallery_https = GalleryHttpsAdapter(cfg.data_dir)
     intake = AttachmentRoutingRepository(db)
     reprocess = GalleryReprocessService(gallery, intake, lambda: request_command('run-now'))
     app.extensions['printer_gallery'] = gallery
     app.extensions['gallery_access'] = gallery_access
     app.extensions['gallery_reprocess'] = reprocess
+    app.extensions['gallery_https'] = gallery_https
 
     def current_admin_session():
         return admin_auth.session_state(session.get('printer_admin_revision'))
 
     app.register_blueprint(gallery_blueprint(
         gallery, gallery_access, intake.intake, reprocess,
-        admin_session=current_admin_session,
+        admin_session=current_admin_session, https_access=gallery_https,
     ))
 
     @app.template_filter('localtime')
