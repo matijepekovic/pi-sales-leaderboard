@@ -1,6 +1,7 @@
 """Gallery HTTP boundary. Shares only the printer web host and write protection."""
 import re
 import time
+from urllib.parse import urlsplit
 
 from flask import (
     Blueprint, Response, abort, current_app, g, jsonify, make_response,
@@ -11,7 +12,7 @@ from flask import (
 ACCESS_COOKIE = 'gallery_access'
 
 
-def blueprint(service, access, intake_reader=None, reprocessor=None, admin_session=None):
+def blueprint(service, access, intake_reader=None, reprocessor=None, admin_session=None, https_access=None):
     bp = Blueprint('gallery', __name__, url_prefix='/gallery')
 
     public_endpoints = {
@@ -103,22 +104,61 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         )
         return response
 
+    def secure_device_state():
+        state = https_access.status() if https_access else {'configured': False, 'addresses': [], 'dns': []}
+        hostname = urlsplit('//' + request.host).hostname or ''
+        candidates = [*state.get('addresses', []), *state.get('dns', [])]
+        target = hostname if hostname in candidates else (candidates[0] if candidates else hostname)
+        if ':' in target and not target.startswith('['):
+            target = '[' + target + ']'
+        return dict(
+            configured=bool(state.get('configured') and target),
+            secure_url=('https://' + target + url_for('gallery.page')) if target else '',
+            setup_url=url_for('gallery.offline_setup'),
+            fingerprint=state.get('fingerprint', ''),
+        )
+
     @bp.get('')
     @bp.get('/')
     def page():
         require('browse')
         return render_template('gallery.html')
 
+    @bp.get('/offline-setup')
+    def offline_setup():
+        require('offline')
+        state = secure_device_state()
+        return render_template('gallery_offline_setup.html', secure=state)
+
+    @bp.get('/offline-setup/root-ca.crt')
+    def offline_root_ca():
+        require('offline')
+        path = https_access.root_certificate() if https_access else None
+        if not path:
+            abort(503)
+        response = send_file(
+            path,
+            mimetype='application/x-x509-ca-cert',
+            as_attachment=True,
+            download_name='stats-gallery-local-ca.crt',
+            conditional=False,
+        )
+        response.headers['Cache-Control'] = 'private, no-store'
+        return response
+
     @bp.get('/api/access')
     def access_info():
         identity = require('browse')
-        return jsonify(
+        result = dict(
             role=identity.role,
             subject=identity.subject,
             expires=identity.expires,
             capabilities=sorted(identity.capabilities),
             csrf=session.get('csrf', ''),
         )
+        if identity.allows('offline'):
+            result['secure_offline'] = secure_device_state()
+        return jsonify(result)
 
     def qr_svg(destination):
         from reportlab.graphics.barcode.qr import QrCodeWidget
