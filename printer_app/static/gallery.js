@@ -222,8 +222,6 @@ import { GalleryOffline } from './gallery_offline.js';
     const canShare = !resumed && Boolean(info?.capabilities?.includes('share'));
     const secureSetup = !resumed ? info?.secure_offline : null;
     el('galleryOfflineWrap').hidden = !canOffline;
-    el('galleryOfflineSetup').hidden = !canOffline || resumed || window.isSecureContext;
-    el('galleryOfflineSetup').dataset.url = secureSetup?.setup_url || '/gallery/offline-setup';
     el('galleryShare').hidden = !canShare;
     if (!canShare) {
       if (el('galleryShareSheet').open) el('galleryShareSheet').close();
@@ -233,7 +231,7 @@ import { GalleryOffline } from './gallery_offline.js';
     if (!canOffline) el('galleryOfflineStatus').textContent = '';
     else if (!resumed && !window.isSecureContext && !offline.isEnabled()) {
       el('galleryOfflineStatus').textContent = secureSetup?.configured
-        ? 'Set up this full-access phone for reliable Offline relaunch.'
+        ? 'Offline requires the secure full-device connection on this phone.'
         : 'Secure Offline setup is not available on this Pi yet.';
     }
     const title = el('galleryTitle');
@@ -551,14 +549,11 @@ import { GalleryOffline } from './gallery_offline.js';
     if (offline.isEnabled() && network.isReachable()) offline.sync().catch(() => {});
     requestClose('galleryDateSheet');
   };
-  el('galleryOfflineSetup').onclick = () => {
-    location.href = el('galleryOfflineSetup').dataset.url || '/gallery/offline-setup';
-  };
   el('galleryOfflineToggle').onchange = async event => {
     const toggle = event.currentTarget;
     if (toggle.checked && !window.isSecureContext) {
       toggle.checked = offline.isEnabled();
-      location.href = el('galleryOfflineSetup').dataset.url || '/gallery/offline-setup';
+      location.href = access?.secure_offline?.setup_url || '/gallery/offline-setup';
       return;
     }
     toggle.disabled = true;

@@ -138,9 +138,10 @@ cannot be bypassed by keeping an old cookie. Legacy temporary grants from the ol
 
 Offline is phone-local and is available only to full-access Gallery identities.
 The installer prepares an optional local HTTPS adapter using Caddy plus a private
-**Stats Gallery Local CA**. From the normal HTTP Gallery, **Set up Offline** opens a
-full-access-only page where the phone downloads that CA certificate, installs/trusts
-it once, then opens the secure `https://<pi-address>/gallery/` origin. Temporary
+**Stats Gallery Local CA**. From the normal HTTP Gallery, turning **Offline** on redirects a full-access phone
+to the certificate page when HTTPS trust is still required. The phone downloads that
+CA certificate, installs/trusts it once, then opens the secure
+`https://<pi-address>/gallery/` origin. Temporary
 six-hour guests stay on the normal `http://<pi-address>:5055` Gallery and never need
 or receive the certificate.
 
