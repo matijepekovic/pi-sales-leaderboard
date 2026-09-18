@@ -14,6 +14,9 @@ import subprocess
 import sys
 
 
+OCR_MAX_WIDTH = 2400
+
+
 def tsv_words(value):
     words = []
     for row in csv.DictReader(io.StringIO(value), delimiter='\t', quoting=csv.QUOTE_NONE):
@@ -30,6 +33,34 @@ def tsv_words(value):
         except (KeyError, TypeError, ValueError):
             continue
     return words
+
+
+def bounded_ocr_image(image):
+    """Reduce OCR pixels only; archived image quality and PNG compression are unchanged."""
+    import cv2
+    h, w = image.shape[:2]
+    if w <= OCR_MAX_WIDTH:
+        return image, 1.0
+    scale = OCR_MAX_WIDTH / float(w)
+    resized = cv2.resize(
+        image,
+        (OCR_MAX_WIDTH, max(1, int(round(h * scale)))),
+        interpolation=cv2.INTER_AREA,
+    )
+    return resized, scale
+
+
+def rescale_words(words, scale):
+    """Map Tesseract geometry back to the original card coordinate system."""
+    if scale == 1.0:
+        return words
+    result = []
+    for word in words:
+        mapped = dict(word)
+        for key in ('left', 'top', 'width', 'height'):
+            mapped[key] = max(0, int(round(word[key] / scale)))
+        result.append(mapped)
+    return result
 
 
 def search_text(words):
@@ -124,12 +155,17 @@ def recognize(path, work, known_date=None):
     rules |= cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((max(30, min(h//12, w//25)), 1), np.uint8))
     disposable = source.copy()
     disposable[cv2.dilate(rules, np.ones((3, 3), np.uint8)) > 0] = 255
+
+    # Search indexing remains complete: Tesseract still sees the entire card.
+    # Only the working raster is bounded; word coordinates are mapped back before
+    # header/date extraction. The archived optimized PNG is never resized.
+    ocr_input, scale = bounded_ocr_image(disposable)
     ocr_copy = Path(work) / 'ocr.png'
     try:
-        cv2.imwrite(str(ocr_copy), disposable)
+        cv2.imwrite(str(ocr_copy), ocr_input)
         result = subprocess.run(['tesseract', str(ocr_copy), 'stdout', '-l', 'eng', '--psm', '6', 'tsv'],
                                 check=True, capture_output=True, text=True, timeout=120)
-        words = tsv_words(result.stdout)
+        words = rescale_words(tsv_words(result.stdout), scale)
         docdate, state = document_date(words, h, known_date)
         return dict(text=search_text(words), lead_text=lead_cell_text(words, source),
                     document_date=docdate, date_status=state)
