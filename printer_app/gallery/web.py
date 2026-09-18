@@ -99,7 +99,10 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
             max_age=max_age,
             httponly=True,
             secure=bool(current_app.config.get('SESSION_COOKIE_SECURE')),
-            samesite='Strict',
+            # Lax permits the one top-level HTTP -> HTTPS transition used by
+            # full-device Offline setup. Gallery writes still require CSRF +
+            # same-origin checks, so cross-site POSTs remain rejected.
+            samesite='Lax',
             path='/gallery',
         )
         return response
