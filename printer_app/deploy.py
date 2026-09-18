@@ -135,6 +135,23 @@ def save_result(target: Path | None, release: Path, *, changed: bool):
         target.chmod(0o600)
 
 
+def prepare_gallery_https(release: Path, paths: dict, *, unattended=False) -> bool:
+    python = str(release / '.venv/bin/python')
+    command = [
+        python, '-m', 'printer_app.https_adapter', 'prepare',
+        '--data-dir', paths['data'], '--port', str(paths['port']),
+    ]
+    if unattended:
+        command.append('--unattended')
+    try:
+        run(command, cwd=release)
+        return True
+    except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+        print('Secure full-device Gallery setup is unavailable; printing and normal Gallery access continue. '
+              + type(exc).__name__, file=sys.stderr)
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['install', 'update', 'rollback'])
@@ -168,10 +185,19 @@ def main():
         release = releases / fingerprint(source)
         current = base / 'current'
         if current.is_symlink() and current.resolve() == release and (release / '.ready').exists():
+            paths = release_paths(release)
+            https_ready = prepare_gallery_https(release, paths, unattended=args.unattended)
             if args.action == 'install':
                 activate(base, release, unattended=args.unattended)
             else:
-                print('printer_app is unchanged; no dependency install or service restart.')
+                if https_ready and 'printer-app-https.service' in release_units(release):
+                    try:
+                        run(['sudo', 'systemctl', 'restart', 'printer-app-https.service'],
+                            unattended=args.unattended)
+                    except subprocess.SubprocessError:
+                        print('Secure Gallery HTTPS service could not restart; normal Gallery access continues.',
+                              file=sys.stderr)
+                print('printer_app is unchanged; core services were not restarted.')
             save_result(args.result_file, release, changed=False)
             return
         if not (release / '.ready').exists():
@@ -197,17 +223,7 @@ def main():
             admin_command.extend(['--initial-login-file', str(args.initial_login_file.expanduser())])
         run(admin_command, cwd=release)
         paths = release_paths(release)
-        https_command = [
-            python, '-m', 'printer_app.https_adapter', 'prepare',
-            '--data-dir', paths['data'], '--port', str(paths['port']),
-        ]
-        if args.unattended:
-            https_command.append('--unattended')
-        try:
-            run(https_command, cwd=release)
-        except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
-            print('Secure full-device Gallery setup is unavailable; printing and normal Gallery access continue. '
-                  + type(exc).__name__, file=sys.stderr)
+        prepare_gallery_https(release, paths, unattended=args.unattended)
         activate(base, release, unattended=args.unattended)
         save_result(args.result_file, release, changed=True)
 
