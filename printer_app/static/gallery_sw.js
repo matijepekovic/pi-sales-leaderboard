@@ -1,4 +1,4 @@
-const CACHE = 'stats-gallery-shell-v3';
+const CACHE = 'stats-gallery-shell-v4';
 const SHELL = [
   '/gallery/',
   '/gallery/manifest.webmanifest',
@@ -7,6 +7,7 @@ const SHELL = [
   '/static/gallery_dates.js',
   '/static/gallery_focus.js',
   '/static/gallery_navigation.js',
+  '/static/gallery_network.js',
   '/static/gallery_offline.js'
 ];
 
