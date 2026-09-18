@@ -59,16 +59,36 @@ export class GalleryOffline {
     return Boolean(this.subject) && localStorage.getItem(this.enabledKey()) === '1';
   }
 
+  async revokeLocal(subject) {
+    if (!subject) return;
+    if (this.db) this.db.close();
+    this.db = null;
+    this.releaseUrls();
+    localStorage.removeItem(this.enabledKey(subject));
+    if (localStorage.getItem(SUBJECT_KEY) === subject) localStorage.removeItem(SUBJECT_KEY);
+    await new Promise(resolve => {
+      const request = indexedDB.deleteDatabase('stats-gallery-offline-' + subject);
+      request.onsuccess = request.onerror = request.onblocked = () => resolve();
+    });
+  }
+
   async configure(access) {
     this.csrf = access?.csrf || this.csrf;
     const full = access?.role === 'full' && access.capabilities?.includes('offline');
+    const previousSubject = this.subject || localStorage.getItem(SUBJECT_KEY) || '';
     localStorage.setItem(MODE_KEY, access?.role || 'guest');
     this.allowed = Boolean(full);
     if (!full) {
-      if (this.db) this.db.close();
-      this.releaseUrls();
+      // Once the server has an Offline owner, other full-access devices lose
+      // any previously downloaded Offline store the next time they reconnect.
+      if (access?.role === 'full' && access.offline_owner_set && previousSubject) {
+        await this.revokeLocal(previousSubject);
+      } else {
+        if (this.db) this.db.close();
+        this.releaseUrls();
+        this.db = null;
+      }
       this.subject = '';
-      this.db = null;
       return false;
     }
     if (this.subject && this.subject !== access.subject) {
