@@ -26,6 +26,16 @@ if ! "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get 
   python3-opencv python3-pil poppler-utils tesseract-ocr tesseract-ocr-eng; then
   echo 'Gallery tools could not be installed; printing will still update. Retry Update before enabling gallery imports.' >&2
 fi
+# Full-access phone Offline uses a local HTTPS adapter. Failure is optional:
+# normal printing, HTTP Gallery and temporary guest QR access still work.
+if ! "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y --no-install-recommends --no-upgrade \
+  caddy openssl; then
+  echo 'Secure Gallery tools could not be installed; full-device offline relaunch will remain unavailable.' >&2
+else
+  # The package's sample web service is not part of Stats. A dedicated hardened
+  # printer-app-https.service owns only the Gallery HTTPS endpoint.
+  "${SUDO[@]}" systemctl disable --now caddy.service >/dev/null 2>&1 || true
+fi
 command -v libreoffice >/dev/null
 command -v lp >/dev/null
 lpstat -p konicaa >/dev/null || { echo 'Existing queue konicaa was not found. No printer settings were changed.' >&2; exit 1; }

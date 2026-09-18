@@ -1,6 +1,7 @@
 """Gallery HTTP boundary. Shares only the printer web host and write protection."""
 import re
 import time
+from urllib.parse import urlsplit
 
 from flask import (
     Blueprint, Response, abort, current_app, g, jsonify, make_response,
@@ -11,7 +12,7 @@ from flask import (
 ACCESS_COOKIE = 'gallery_access'
 
 
-def blueprint(service, access, intake_reader=None, reprocessor=None, admin_session=None):
+def blueprint(service, access, intake_reader=None, reprocessor=None, admin_session=None, https_access=None):
     bp = Blueprint('gallery', __name__, url_prefix='/gallery')
 
     public_endpoints = {
@@ -98,10 +99,27 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
             max_age=max_age,
             httponly=True,
             secure=bool(current_app.config.get('SESSION_COOKIE_SECURE')),
-            samesite='Strict',
+            # Lax permits the one top-level HTTP -> HTTPS transition used by
+            # full-device Offline setup. Gallery writes still require CSRF +
+            # same-origin checks, so cross-site POSTs remain rejected.
+            samesite='Lax',
             path='/gallery',
         )
         return response
+
+    def secure_device_state():
+        state = https_access.status() if https_access else {'configured': False, 'addresses': [], 'dns': []}
+        hostname = urlsplit('//' + request.host).hostname or ''
+        candidates = [*state.get('addresses', []), *state.get('dns', [])]
+        target = hostname if hostname in candidates else (candidates[0] if candidates else hostname)
+        if ':' in target and not target.startswith('['):
+            target = '[' + target + ']'
+        return dict(
+            configured=bool(state.get('configured') and target),
+            secure_url=('https://' + target + url_for('gallery.page')) if target else '',
+            setup_url=url_for('gallery.offline_setup'),
+            fingerprint=state.get('fingerprint', ''),
+        )
 
     @bp.get('')
     @bp.get('/')
@@ -109,16 +127,56 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         require('browse')
         return render_template('gallery.html')
 
+    @bp.get('/offline-setup')
+    def offline_setup():
+        require('offline')
+        state = secure_device_state()
+        response = make_response(render_template('gallery_offline_setup.html', secure=state))
+        # Existing full devices may still carry the older SameSite=Strict cookie.
+        # Refresh the exact same credential as Lax before the one top-level
+        # HTTP -> HTTPS transition; the full identity/subject does not change.
+        token = request.cookies.get(ACCESS_COOKIE, '')
+        if token:
+            response.set_cookie(
+                ACCESS_COOKIE,
+                token,
+                max_age=365 * 86400,
+                httponly=True,
+                secure=bool(current_app.config.get('SESSION_COOKIE_SECURE')),
+                samesite='Lax',
+                path='/gallery',
+            )
+        return response
+
+    @bp.get('/offline-setup/root-ca.cer')
+    def offline_root_ca():
+        require('offline')
+        path = https_access.root_certificate() if https_access else None
+        if not path:
+            abort(503)
+        response = send_file(
+            path,
+            mimetype='application/pkix-cert',
+            as_attachment=True,
+            download_name='stats-gallery-local-ca.cer',
+            conditional=False,
+        )
+        response.headers['Cache-Control'] = 'private, no-store'
+        return response
+
     @bp.get('/api/access')
     def access_info():
         identity = require('browse')
-        return jsonify(
+        result = dict(
             role=identity.role,
             subject=identity.subject,
             expires=identity.expires,
             capabilities=sorted(identity.capabilities),
             csrf=session.get('csrf', ''),
         )
+        if identity.allows('offline'):
+            result['secure_offline'] = secure_device_state()
+        return jsonify(result)
 
     def qr_svg(destination):
         from reportlab.graphics.barcode.qr import QrCodeWidget
@@ -134,7 +192,12 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
     def share_access():
         identity = require('share')
         shared = access.create_guest_share(identity.subject, request.form.get('name', ''))
-        destination = url_for('gallery.redeem_access', token=shared.pop('token'), _external=True)
+        token = shared.pop('token')
+        host = urlsplit('//' + request.host).hostname or ''
+        if ':' in host and not host.startswith('['):
+            host = '[' + host + ']'
+        port = int(current_app.config.get('PRINTER_PORT', 5055))
+        destination = f'http://{host}:{port}' + url_for('gallery.redeem_access', token=token)
         return jsonify(session=shared, qr_svg=qr_svg(destination))
 
     @bp.get('/api/shares')

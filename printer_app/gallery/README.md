@@ -136,18 +136,39 @@ keeps each guest credential tied to its issuing share grant so expiry/revocation
 cannot be bypassed by keeping an old cookie. Legacy temporary grants from the older
 24-hour, non-revocable flow are invalidated when this schema is installed.
 
-Offline is phone-local. While enabled and Stats is reachable, the browser downloads
-new active card images plus current details and notes into IndexedDB and uploads queued
-offline notes. Server retention never deletes that browser store, so a previously
-downloaded image remains on the phone after its server copy expires. Turning Offline
-off stops automatic downloads but does not erase downloaded cards. The local database
-is scoped to the full-access identity, so a temporary guest cannot inherit it.
+Offline is phone-local and is available only to full-access Gallery identities.
+The installer prepares an optional local HTTPS adapter using Caddy plus a private
+**Stats Gallery Local CA**. From the normal HTTP Gallery, **Set up Offline** opens a
+full-access-only page where the phone downloads that CA certificate, installs/trusts
+it once, then opens the secure `https://<pi-address>/gallery/` origin. Temporary
+six-hour guests stay on the normal `http://<pi-address>:5055` Gallery and never need
+or receive the certificate.
 
-The access repository owns access SQL, the access service owns roles, capabilities,
-invitations and expiry, and the gallery web layer owns cookie and HTTP enforcement.
-gallery_offline.js alone owns browser persistence and queued-note sync. Offline relaunch
-uses a service worker when the gallery is served in a secure browser context (HTTPS);
-IndexedDB downloading still works while the page is open on ordinary LAN HTTP.
+On the secure full-device origin, enabling Offline registers the Gallery service
+worker, asks for persistent browser storage when available, and downloads active card
+images/details/notes into the full identity's IndexedDB store. The service worker
+caches only the Gallery application shell, not customer image/API responses; those
+remain in IndexedDB. When the phone is on cellular or another Wi-Fi, internet can still
+be available while the private Pi is unreachable. `gallery_network.js` therefore owns
+**Stats reachability** with bounded probes/timeouts; neither `gallery.js` nor
+`gallery_offline.js` uses `navigator.onLine` as the availability decision. A secure
+Gallery navigation falls back to its cached shell after a short failed Pi connection,
+then the UI reads downloaded work orders immediately. It probes Stats periodically and
+returns to live mode/sync automatically when the Pi becomes reachable again.
+
+Server retention never deletes the browser store, so a previously downloaded image can
+remain on the phone after its server copy expires. Turning Offline off stops automatic
+downloads but does not erase downloaded cards. Queued offline notes sync when Stats is
+reachable again. Browser/OS storage can still be evicted; the app requests persistence
+but cannot override iOS storage policy.
+
+`https_adapter.py` owns Caddy/local-CA deployment and exposes only normalized readiness
+and the public CA certificate to runtime composition. `printer-app-https.service` is an
+optional isolated proxy and cannot make printer health fail. The access repository owns
+access SQL, the access service owns roles/capabilities/shares, the Gallery web layer owns
+certificate/setup HTTP endpoints, `gallery_network.js` owns Pi reachability, and
+`gallery_offline.js` owns phone storage/sync. Gallery business/repository modules do not
+depend on Caddy.
 
 
 ## Manual review for unnamed generated cards

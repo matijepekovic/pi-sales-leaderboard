@@ -39,7 +39,9 @@ const transactionDone = transaction => new Promise((resolve, reject) => {
 });
 
 export class GalleryOffline {
-  constructor({onStatus = () => {}} = {}) {
+  constructor({network, onStatus = () => {}} = {}) {
+    if (!network) throw new Error('GalleryOffline requires the shared Gallery network runtime.');
+    this.network = network;
     this.onStatus = onStatus;
     this.subject = '';
     this.allowed = false;
@@ -76,7 +78,10 @@ export class GalleryOffline {
     }
     this.subject = access.subject;
     localStorage.setItem(SUBJECT_KEY, this.subject);
-    if (this.isEnabled()) await this.open();
+    if (this.isEnabled()) {
+      await this.open();
+      if (window.isSecureContext) await this.registerShell();
+    }
     return this.isEnabled();
   }
 
@@ -112,8 +117,10 @@ export class GalleryOffline {
       if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
       const shellReady = await this.registerShell();
       await this.sync();
-      if (!shellReady && !window.isSecureContext) {
-        this.onStatus('Cards are downloaded. Reopening the gallery with no network requires a secure (HTTPS) connection.');
+      if (!shellReady) {
+        this.onStatus(window.isSecureContext
+          ? 'Cards are downloaded, but the offline app shell could not be installed. Reopen the secure Gallery and try Offline again.'
+          : 'Cards are downloaded. Reopening away from the office requires the secure full-device setup.');
       }
     } else {
       this.onStatus('Offline automatic downloads are off. Existing downloaded cards stay on this phone.');
@@ -124,6 +131,7 @@ export class GalleryOffline {
     if (!('serviceWorker' in navigator) || !window.isSecureContext) return false;
     try {
       await navigator.serviceWorker.register('/gallery/service-worker.js', {scope:'/gallery/'});
+      await navigator.serviceWorker.ready;
       return true;
     } catch (_) {
       return false;
@@ -131,14 +139,7 @@ export class GalleryOffline {
   }
 
   async json(url, options) {
-    const response = await fetch(url, {cache:'no-store', credentials:'same-origin', ...options});
-    const data = await response.json().catch(() => ({error:'Request failed'}));
-    if (!response.ok) {
-      const error = new Error(data.error || 'Request failed');
-      error.status = response.status;
-      throw error;
-    }
-    return data;
+    return this.network.json(url, options);
   }
 
   async card(id) {
@@ -182,7 +183,7 @@ export class GalleryOffline {
   }
 
   async flushPending() {
-    if (!this.csrf || !navigator.onLine) return;
+    if (!this.csrf || !this.network.isReachable()) return;
     const notes = await this.pendingNotes();
     for (const note of notes) {
       const form = new FormData();
@@ -211,7 +212,7 @@ export class GalleryOffline {
   }
 
   async sync() {
-    if (!this.isEnabled() || !this.allowed || this.syncing || !navigator.onLine) return;
+    if (!this.isEnabled() || !this.allowed || this.syncing || !this.network.isReachable()) return;
     this.syncing = true;
     try {
       this.onStatus('Updating offline cards…');
@@ -224,7 +225,7 @@ export class GalleryOffline {
         let detail = saved?.detail;
         const notesChanged = !saved || (saved.summary?.notes_count ?? -1) !== summary.notes_count;
         if (!image) {
-          const response = await fetch('/gallery/image/' + summary.id, {cache:'no-store', credentials:'same-origin'});
+          const response = await this.network.fetch('/gallery/image/' + summary.id);
           if (!response.ok) throw new Error('Could not download a work-order image.');
           image = await response.blob();
           downloaded++;
@@ -238,7 +239,8 @@ export class GalleryOffline {
       this.onStatus(
         `Offline ready · ${all.length} ${all.length === 1 ? 'card' : 'cards'} on this phone` +
         (downloaded ? ` · ${downloaded} new` : '') +
-        (pending.length ? ` · ${pending.length} note${pending.length === 1 ? '' : 's'} waiting to sync` : '')
+        (pending.length ? ` · ${pending.length} note${pending.length === 1 ? '' : 's'} waiting to sync` : '') +
+        (!window.isSecureContext ? ' · secure setup required for relaunch' : '')
       );
     } finally {
       this.syncing = false;

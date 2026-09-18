@@ -79,17 +79,27 @@ def test_unattended_service_setup_uses_noninteractive_sudo(monkeypatch):
     assert 'pi-tableau-leaderboard.service' not in command
 
 
-def test_same_release_unattended_update_is_noop(tmp_path, monkeypatch):
+def test_same_release_update_retries_optional_https_without_restarting_core(tmp_path, monkeypatch):
     release = tmp_path / '.local/lib/printer-app/releases' / deploy.fingerprint(Path(deploy.__file__).parent)
     release.mkdir(parents=True)
     (release / '.ready').write_text('ready')
+    (release / 'printer_app/systemd').mkdir(parents=True)
+    (release / 'printer_app/systemd/printer-app-https.service').write_text('fixture')
     (release.parent.parent / 'current').symlink_to(release)
     result_file = tmp_path / 'result.json'
+    prepared, calls = [], []
     monkeypatch.setattr(Path, 'home', lambda: tmp_path)
     monkeypatch.setattr(deploy.getpass, 'getuser', lambda: 'scoreboard')
     monkeypatch.setattr(deploy.os, 'geteuid', lambda: 1000)
-    monkeypatch.setattr(deploy, 'release_paths', lambda release: {'port':5055})
-    monkeypatch.setattr(deploy, 'run', lambda *a, **k: (_ for _ in ()).throw(AssertionError('No process for unchanged release')))
+    monkeypatch.setattr(deploy, 'release_paths',
+                        lambda release: {'port':5055, 'data':str(tmp_path / 'data')})
+    monkeypatch.setattr(
+        deploy, 'prepare_gallery_https',
+        lambda release, paths, unattended=False: prepared.append((release, paths, unattended)) or True,
+    )
+    monkeypatch.setattr(deploy, 'run', lambda command, **kwargs: calls.append(command))
     monkeypatch.setattr(sys, 'argv', ['deploy', 'update', '--unattended', '--result-file', str(result_file)])
     deploy.main()
+    assert prepared and prepared[0][2] is True
+    assert calls == [['sudo', 'systemctl', 'restart', 'printer-app-https.service']]
     assert json.loads(result_file.read_text()) == {'port':5055, 'changed':False}

@@ -26,6 +26,7 @@ from .attachment_routing_repository import AttachmentRoutingRepository
 from .gallery.bootstrap import build as build_gallery, build_access as build_gallery_access
 from .gallery.web import blueprint as gallery_blueprint
 from .gallery_reprocess import GalleryReprocessService
+from .https_adapter import GalleryHttpsAdapter
 
 
 def create_app(cfg: Config | None = None, settings_service: SettingsService | None = None) -> Flask:
@@ -38,6 +39,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.config.update(SECRET_KEY=cfg.secret_key, SESSION_COOKIE_NAME='printer_app_session',
         SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
         SESSION_COOKIE_SECURE=cfg.secure_cookie, PERMANENT_SESSION_LIFETIME=8 * 3600,
+        PRINTER_PORT=cfg.port,
         MAX_CONTENT_LENGTH=16384, MAX_FORM_MEMORY_SIZE=16384, MAX_FORM_PARTS=64)
     db = Database(cfg.db_path)
     admin_auth = AdminAuthService(AdminAuthRepository(db))
@@ -52,18 +54,20 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.extensions['printer_admin_auth'] = admin_auth
     gallery = build_gallery(cfg.data_dir)
     gallery_access = build_gallery_access(cfg.data_dir)
+    gallery_https = GalleryHttpsAdapter(cfg.data_dir)
     intake = AttachmentRoutingRepository(db)
     reprocess = GalleryReprocessService(gallery, intake, lambda: request_command('run-now'))
     app.extensions['printer_gallery'] = gallery
     app.extensions['gallery_access'] = gallery_access
     app.extensions['gallery_reprocess'] = reprocess
+    app.extensions['gallery_https'] = gallery_https
 
     def current_admin_session():
         return admin_auth.session_state(session.get('printer_admin_revision'))
 
     app.register_blueprint(gallery_blueprint(
         gallery, gallery_access, intake.intake, reprocess,
-        admin_session=current_admin_session,
+        admin_session=current_admin_session, https_access=gallery_https,
     ))
 
     @app.template_filter('localtime')
@@ -80,6 +84,16 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         target = request.full_path if request.query_string else request.path
         return redirect(url_for('admin_login', next=safe_next(target)))
 
+    def effective_request_origin():
+        scheme = request.scheme
+        # Only the local HTTPS adapter may define the forwarded scheme. Direct
+        # LAN clients cannot make a spoofed proxy header change CSRF origin.
+        if request.remote_addr in ('127.0.0.1', '::1'):
+            forwarded = request.headers.get('X-Forwarded-Proto', '').split(',', 1)[0].strip()
+            if forwarded in ('http', 'https'):
+                scheme = forwarded
+        return scheme + '://' + request.host
+
     @app.before_request
     def protect_writes_and_admin():
         if request.endpoint in ('health', 'static'):
@@ -93,7 +107,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             session.permanent = True
         if request.method == 'POST':
             origin = request.headers.get('Origin')
-            if (origin and origin != request.host_url.rstrip('/')) or request.headers.get('Sec-Fetch-Site') == 'cross-site':
+            if (origin and origin != effective_request_origin()) or request.headers.get('Sec-Fetch-Site') == 'cross-site':
                 abort(403, 'Cross-site changes are not allowed')
             if any(len(request.form.getlist(key)) != 1 for key in request.form):
                 abort(400, 'Duplicate form field')
