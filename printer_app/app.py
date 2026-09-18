@@ -406,11 +406,28 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     return app
 
 
+def web_server_options(cfg):
+    """Waitress owns trusted-proxy interpretation at the web-server boundary."""
+    return dict(
+        host=cfg.host,
+        port=cfg.port,
+        threads=4,
+        max_request_body_size=16384,
+        channel_timeout=30,
+        ident='printer-app',
+        # Caddy connects to Waitress only over this explicit loopback backend.
+        # Direct LAN clients are not trusted to supply X-Forwarded-* metadata.
+        trusted_proxy='127.0.0.1',
+        trusted_proxy_count=1,
+        trusted_proxy_headers={'x-forwarded-host', 'x-forwarded-proto'},
+        clear_untrusted_proxy_headers=True,
+    )
+
+
 def main():
     from waitress import serve
     cfg = Config.from_env()
-    serve(create_app(cfg), host=cfg.host, port=cfg.port, threads=4,
-          max_request_body_size=16384, channel_timeout=30, ident='printer-app')
+    serve(create_app(cfg), **web_server_options(cfg))
 
 
 if __name__ == '__main__':
