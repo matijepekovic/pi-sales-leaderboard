@@ -120,11 +120,18 @@ def test_web_controls_really_render_and_cancel_with_csrf(tmp_path):
 def test_gallery_focus_is_loaded_and_related_has_no_prompt():
     root = Path(__file__).resolve().parents[1]
     source = (root / 'static/gallery.js').read_text()
+    template = (root / 'templates/gallery.html').read_text()
     assert "import { GalleryFocus } from './gallery_focus.js'" in source
     assert 'new GalleryFocus(' in source and 'focus.reset()' in source
     assert 'form.dataset.itemId' in source
     assert 'openNotes(true)' not in source and 'relatedAfterSave' not in source
     assert 'history.back(' not in source
+    assert template.count('data-action="related"') == 1
+    assert 'id="galleryMenuButton"' in template and 'id="galleryMenuSheet"' in template
+    calendar = template.split('id="galleryDateSheet"', 1)[1].split('</dialog>', 1)[0]
+    assert 'galleryShare' not in calendar
+    assert 'galleryOfflineToggle' not in calendar
+    assert 'galleryMenuRefresh' not in calendar
     for name in ('app.py', 'gallery/web.py', 'gallery/service.py', 'static/gallery_focus.js'):
         assert 'print_queue_cancellations' not in (root / name).read_text()
 
@@ -155,11 +162,17 @@ def test_browser_one_click_related_and_notes_target_visible_card(tmp_path):
             page = context.new_page(); errors = []; page.on('pageerror', lambda e: errors.append(str(e)))
             page.goto(origin + '/gallery/')
             expect(page.locator(f'.gallery-card[data-id="{anchor}"]')).to_have_attribute('aria-pressed', 'true')
-            # No card tap, no name entry. Date filter must not restrict related.
+            # Feed controls expose Menu/Notes/Search. Related belongs only to an opened card.
             page.locator('#galleryChooseDate').click()
             page.locator('#galleryCalendarDays [data-date="2026-09-15"]').click()
             expect(page.locator('.gallery-card')).to_have_count(1)
-            page.locator('body > .gallery-dock [data-action="related"]').click()
+            expect(page.locator('body > .gallery-dock [data-action="related"]')).to_have_count(0)
+            page.locator('#galleryMenuButton').click()
+            expect(page.locator('#galleryMenuSheet')).to_be_visible()
+            expect(page.locator('#galleryMenuRefresh')).to_be_visible()
+            page.locator('[data-close="galleryMenuSheet"]').click()
+            page.locator('.gallery-card').click()
+            page.locator('#galleryViewer [data-action="related"]').click()
             expect(page.locator('#galleryHeading')).to_have_text('Related cards')
             expect(page.locator('#galleryFilterTitle')).to_have_text('Jordan Example')
             expect(page.locator('.gallery-card')).to_have_count(3)
