@@ -43,9 +43,11 @@ def test_named_guest_session_is_six_hours_and_owner_can_revoke_open_access(tmp_p
 def test_offline_owner_is_single_and_persistent(tmp_path):
     access = service(tmp_path)
     first_token = access.issue_full_invite()
-    first = access.redeem(first_token).identity
+    first_grant = access.redeem(first_token)
+    first = first_grant.identity
     second_token = access.issue_full_invite()
-    second = access.redeem(second_token).identity
+    second_grant = access.redeem(second_token)
+    second = second_grant.identity
 
     assert 'offline' not in access.capabilities(first)
     assert 'offline' not in access.capabilities(second)
@@ -62,9 +64,11 @@ def test_offline_owner_is_single_and_persistent(tmp_path):
     assert access.allows(second, 'offline') is False
 
     reloaded = service(tmp_path)
-    resolved = reloaded.resolve(first_token)
-    assert resolved is None  # invite is not a credential; owner persistence is repository state.
+    resolved = reloaded.resolve(first_grant.token)
+    assert resolved and resolved.subject == first.subject
     assert reloaded.offline_owner() == first.subject
+    assert reloaded.allows(resolved, 'offline') is True
+    assert reloaded.allows(reloaded.resolve(second_grant.token), 'offline') is False
 
 
 def test_share_name_is_required_and_bounded(tmp_path):
