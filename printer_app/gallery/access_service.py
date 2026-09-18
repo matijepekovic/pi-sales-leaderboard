@@ -12,7 +12,7 @@ import time
 
 
 CAPABILITIES = {
-    'full': frozenset({'browse', 'notes', 'offline', 'share', 'edit_identity'}),
+    'full': frozenset({'browse', 'notes', 'share', 'edit_identity'}),
     'guest': frozenset({'browse', 'notes'}),
 }
 GUEST_SESSION_SECONDS = 6 * 3600
@@ -52,6 +52,23 @@ class GalleryAccessService:
     @staticmethod
     def _hash(token):
         return hashlib.sha256(token.encode('ascii')).hexdigest()
+
+    def offline_owner(self):
+        self.initialize()
+        return self.repository.offline_owner()
+
+    def claim_offline_owner(self, subject):
+        self.initialize()
+        return self.repository.claim_offline_owner(subject) == subject
+
+    def capabilities(self, identity):
+        capabilities = set(CAPABILITIES[identity.role])
+        if identity.role == 'full' and self.repository.offline_owner() == identity.subject:
+            capabilities.add('offline')
+        return frozenset(capabilities)
+
+    def allows(self, identity, capability):
+        return capability in self.capabilities(identity)
 
     def issue_full_invite(self, ttl=600):
         return self._issue_invite('full', ttl, one_time=False)
