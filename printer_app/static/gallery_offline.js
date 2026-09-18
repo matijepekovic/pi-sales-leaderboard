@@ -239,7 +239,8 @@ export class GalleryOffline {
       this.onStatus(
         `Offline ready · ${all.length} ${all.length === 1 ? 'card' : 'cards'} on this phone` +
         (downloaded ? ` · ${downloaded} new` : '') +
-        (pending.length ? ` · ${pending.length} note${pending.length === 1 ? '' : 's'} waiting to sync` : '')
+        (pending.length ? ` · ${pending.length} note${pending.length === 1 ? '' : 's'} waiting to sync` : '') +
+        (!window.isSecureContext ? ' · secure setup required for relaunch' : '')
       );
     } finally {
       this.syncing = false;
