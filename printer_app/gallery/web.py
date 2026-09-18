@@ -118,7 +118,6 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         return dict(
             configured=bool(state.get('configured') and target),
             secure_url=('https://' + target + url_for('gallery.page')) if target else '',
-            setup_url=url_for('gallery.offline_setup'),
             fingerprint=state.get('fingerprint', ''),
         )
 

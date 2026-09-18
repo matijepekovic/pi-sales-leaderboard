@@ -137,13 +137,11 @@ cannot be bypassed by keeping an old cookie. Legacy temporary grants from the ol
 24-hour, non-revocable flow are invalidated when this schema is installed.
 
 Offline is phone-local and is available only to full-access Gallery identities.
-The installer prepares an optional local HTTPS adapter using Caddy plus a private
-**Stats Gallery Local CA**. From the normal HTTP Gallery, turning **Offline** on redirects a full-access phone
-to the certificate page when HTTPS trust is still required. The phone downloads that
-CA certificate, installs/trusts it once, then opens the secure
-`https://<pi-address>/gallery/` origin. Temporary
-six-hour guests stay on the normal `http://<pi-address>:5055` Gallery and never need
-or receive the certificate.
+The installer still retains the private HTTPS/certificate setup page for an already
+configured installation, but the Gallery UI does not link or redirect to it. On normal
+HTTP Gallery pages the Offline control is hidden. An already-secure full-access phone
+continues to see and use Offline normally. Temporary six-hour guests stay on the normal
+`http://<pi-address>:5055` Gallery and never receive Offline capability.
 
 On the secure full-device origin, enabling Offline registers the Gallery service
 worker, asks for persistent browser storage when available, and downloads active card
@@ -171,6 +169,22 @@ certificate/setup HTTP endpoints, `gallery_network.js` owns Pi reachability, and
 `gallery_offline.js` owns phone storage/sync. Gallery business/repository modules do not
 depend on Caddy.
 
+
+## Resumable PDF processing
+
+Gallery rendering checkpoints only after a complete PDF page has finished. The work
+folder keeps the crops and normalized recognition metadata for every completed page.
+If the Gallery worker is restarted, the Pi reboots, an update stops the service, or
+the processing child is otherwise interrupted, the import returns to the queue and
+continues at the next unfinished page. An interruption in the middle of a page repeats
+that page only; completed pages are not rendered/cropped again.
+
+The checkpoint lives only in the Gallery-owned `work/<pdf-hash>/` directory. It does
+not publish partial cards to the normal Gallery, alter the source PDF, or create print
+jobs. Hard processing failures still follow the existing failure path; resumability is
+for interrupted work, not a second parallel processing implementation. `processing.py`
+owns the page checkpoint contract, `gallery/files.py` owns workspace size/accounting,
+and `gallery/worker.py` owns retry/restart lifecycle.
 
 ## Manual review for unnamed generated cards
 

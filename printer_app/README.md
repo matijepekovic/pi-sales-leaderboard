@@ -287,11 +287,12 @@ notes but cannot use Offline, Share, Gallery Queue, reprocessing, or gallery
 administration. Guest QR codes deliberately remain on the certificate-free HTTP
 Gallery at port 5055.
 
-On a full-access phone, turning **Offline** on from the normal HTTP Gallery opens the
-certificate flow when needed, then moves that phone to the secure HTTPS Gallery. Caddy is an optional isolated local
-adapter; no cloud server or hosted customer-data copy is introduced. The secure
-Gallery registers its service worker and keeps downloaded work orders in phone-local
-IndexedDB. Runtime availability is based on whether **Stats is reachable**, not whether
+The certificate/setup page remains installed but is no longer connected to the Gallery
+UI. Normal HTTP Gallery pages hide Offline and do not redirect into setup. An
+already-secure full-access phone continues to see/use Offline. Caddy remains an optional
+isolated local adapter; no cloud server or hosted customer-data copy is introduced.
+The secure Gallery registers its service worker and keeps downloaded work orders in
+phone-local IndexedDB. Runtime availability is based on whether **Stats is reachable**, not whether
 the phone has internet, so cellular/other Wi-Fi automatically uses downloaded cards and
 office-network reachability switches back to live sync. Gallery POSTs retain
 CSRF/origin checks through the trusted local proxy.
@@ -308,7 +309,10 @@ sheets) are reported as skipped, never blindly split. Damaged/connected borders 
 need a clearer scan. This is not a guarantee of detecting every possible form layout.
 
 Local Poppler renders temporary pages. OpenCV detects rules. Tesseract indexes all
-recognized printed text and attempts the printed header dates **after cropping**;
+recognized printed text and attempts the printed header dates **after cropping**.
+Completed pages are checkpointed in the Gallery-owned work directory. If rendering is
+interrupted by a restart, reboot or update, processing resumes from the next unfinished
+page; only an in-progress page is repeated.
 no paid service/API is involved. Blurry printing and handwriting can be misread.
 Search includes arbitrary recognized words, phrases, numbers, filenames and added notes.
 **Show related** links work orders when either the normalized lead name differs by at

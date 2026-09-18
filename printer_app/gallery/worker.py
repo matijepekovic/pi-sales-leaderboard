@@ -84,15 +84,37 @@ def main():
                     next_cleanup = now + 3600
                 job = gallery.repository.claim()
                 if job:
+                    directory = gallery.files.path('work', job['id'])
+                    directory.mkdir(exist_ok=True)
+
+                    # Existing checkpointed pages already count toward gallery usage.
+                    # Give the child a total workspace budget that includes those
+                    # bytes plus only the space still available to this import.
                     use = gallery.files.usage()
-                    budget = min(cfg.gallery.max_mb * 1048576 - use['total'], use['free'] - 576 * 1048576)
-                    if budget < 32 * 1048576:
-                        gallery.repository.failed(job['id'], 'Waiting for gallery space; printing is unaffected.', retry=True)
+                    work_bytes = gallery.files.work_size(job['id'])
+                    available = min(
+                        cfg.gallery.max_mb * 1048576 - use['total'],
+                        use['free'] - 576 * 1048576,
+                    )
+                    has_checkpoint = (directory / 'checkpoint.json').is_file()
+                    has_manifest = (directory / 'manifest.json').is_file()
+                    if available < 32 * 1048576 and not has_checkpoint and not has_manifest:
+                        gallery.repository.failed(
+                            job['id'],
+                            'Waiting for gallery space; printing is unaffected.',
+                            retry=True,
+                        )
                         stop.wait(60)
                         continue
-                    directory = gallery.files.path('work', job['id'])
-                    gallery.files.remove('work', job['id'])
-                    directory.mkdir()
+                    if available <= 0 and has_checkpoint and not has_manifest:
+                        gallery.repository.failed(
+                            job['id'],
+                            'Waiting for gallery space to resume; completed pages are preserved.',
+                            retry=True,
+                        )
+                        stop.wait(60)
+                        continue
+                    budget = work_bytes + max(0, available)
                     script = Path(__file__).with_name('processing.py')
                     # Distro image/OCR dependencies are independent of the printer venv.
                     env = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'OMP_THREAD_LIMIT': '1',
@@ -101,8 +123,10 @@ def main():
                             str(directory), str(budget)], env=env, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL) as child:
                         deadline = time.monotonic() + 1800
+                        timed_out = False
                         while child.poll() is None:
                             if stop.wait(5) or time.monotonic() > deadline:
+                                timed_out = not stop.is_set()
                                 child.terminate()
                                 try:
                                     child.wait(timeout=10)
@@ -111,10 +135,19 @@ def main():
                                 break
                             gallery.repository.set_state(dict(heartbeat=time.time(), processing=True, error=''))
                             gallery.report_progress(job['id'])
+                        returncode = child.wait()
                         if stop.is_set():
-                            gallery.repository.failed(job['id'], 'Interrupted; will resume after restart.', retry=True)
+                            gallery.repository.failed(job['id'], 'Interrupted; completed pages preserved for restart.', retry=True)
                             break
-                        if child.wait() != 0:
+                        if timed_out or returncode < 0:
+                            gallery.repository.failed(
+                                job['id'],
+                                'Processing interrupted; completed pages preserved and will resume.',
+                                retry=True,
+                            )
+                            stop.wait(15)
+                            continue
+                        if returncode != 0:
                             raise ValueError('Import failed: unreadable PDF, unsupported layout, missing local tools, or storage limit. Resend after correcting it.')
                     gallery.report_progress(job['id'])
                     manifest = json.loads((directory / 'manifest.json').read_text())
