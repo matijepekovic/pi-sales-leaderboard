@@ -92,7 +92,9 @@ def test_secure_offline_setup_and_ca_are_full_gallery_only(tmp_path):
 
     full = app.test_client()
     full_token = access.issue_full_invite()
-    assert full.get('/gallery/access/' + full_token).status_code == 303
+    enrolled = full.get('/gallery/access/' + full_token)
+    assert enrolled.status_code == 303
+    assert 'SameSite=Lax' in enrolled.headers.get('Set-Cookie', '')
     assert full.get('/gallery/offline-setup').status_code == 200
     certificate = full.get('/gallery/offline-setup/root-ca.cer')
     assert certificate.status_code == 200
