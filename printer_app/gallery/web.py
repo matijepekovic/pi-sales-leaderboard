@@ -53,12 +53,17 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
             if request.path.startswith('/gallery/api/') or request.method != 'GET':
                 return jsonify(error='Gallery access expired. Open a new access link.'), 401
             return render_template('gallery_access.html'), 401
+        # Offline is intentionally single-device for now. The first secure
+        # full-access Gallery identity claims ownership; later full identities
+        # never receive the Offline capability.
+        if identity.role == 'full' and request.is_secure and not access.offline_owner():
+            access.claim_offline_owner(identity.subject)
         g.gallery_identity = identity
         return None
 
     def require(capability):
         identity = getattr(g, 'gallery_identity', None)
-        if identity is None or not identity.allows(capability):
+        if identity is None or not access.allows(identity, capability):
             abort(403)
         return identity
 
@@ -172,10 +177,10 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
             role=identity.role,
             subject=identity.subject,
             expires=identity.expires,
-            capabilities=sorted(identity.capabilities),
+            capabilities=sorted(access.capabilities(identity)),
             csrf=session.get('csrf', ''),
         )
-        if identity.allows('offline'):
+        if access.allows(identity, 'offline'):
             result['secure_offline'] = secure_device_state()
         return jsonify(result)
 
