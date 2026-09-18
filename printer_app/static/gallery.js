@@ -689,7 +689,8 @@ import { GalleryOffline } from './gallery_offline.js';
       probingStats = false;
     }
   }
-  setInterval(probeStats, 30000);
+  setInterval(() => { if (access?.role === 'guest') probeStats(); }, 15000);
+  setInterval(() => { if (access?.role !== 'guest') probeStats(); }, 30000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) probeStats(); });
   window.addEventListener('focus', probeStats);
   window.addEventListener('online', probeStats);
