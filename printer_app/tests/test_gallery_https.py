@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from printer_app import https_adapter
-from printer_app.app import create_app
+from printer_app.app import create_app, web_server_options
 from printer_app.config import Config
 
 
@@ -167,3 +167,18 @@ def test_local_https_proxy_scheme_is_accepted_but_spoofed_forwarding_is_not(tmp_
         environ_overrides={'REMOTE_ADDR': '127.0.0.1'},
     )
     assert response.status_code == 403
+
+
+
+def test_waitress_trusts_only_loopback_gallery_proxy_headers(tmp_path):
+    cfg = Config(
+        data_dir=tmp_path / 'data',
+        secret_key='s' * 64,
+        email_enabled=False,
+    )
+    options = web_server_options(cfg)
+    assert options['trusted_proxy'] == '127.0.0.1'
+    assert options['trusted_proxy_count'] == 1
+    assert options['trusted_proxy_headers'] == {'x-forwarded-host', 'x-forwarded-proto'}
+    assert options['clear_untrusted_proxy_headers'] is True
+    assert '*' not in options['trusted_proxy_headers']
