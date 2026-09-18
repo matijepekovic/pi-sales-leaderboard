@@ -88,7 +88,7 @@ def test_related_uses_one_character_name_or_exact_address_and_global_rename(tmp_
     assert related['address'].startswith('792 Park Ave')
 
     changed=service.lead(anchor,'Darryl Mitchell')
-    assert changed==3
+    assert changed=={'updated':3,'scope':'related'}
     assert service.item(anchor)['lead_name']=='Darryl Mitchell'
     assert service.item(one_letter_name)['lead_name']=='Darryl Mitchell'
     assert service.item(exact_address)['lead_name']=='Darryl Mitchell'
