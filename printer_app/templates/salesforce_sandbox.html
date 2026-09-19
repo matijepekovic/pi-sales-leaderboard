@@ -12,12 +12,12 @@
   {% if snapshot.orgs %}
   <form class="sf-org" method="get" action="{{ url_for('salesforce_sandbox.page') }}">
     <label for="sfOrg">Org</label>
-    <select id="sfOrg" name="org" onchange="this.form.submit()">
+    <select id="sfOrg" name="org">
       {% for org in snapshot.orgs %}
       <option value="{{ org.value }}" {% if org.value == snapshot.selected_org %}selected{% endif %}>{{ org.label }}{% if org.default %} (default){% endif %}</option>
       {% endfor %}
     </select>
-    <noscript><button type="submit">Load</button></noscript>
+    <button type="submit">Load</button>
   </form>
   {% endif %}
 </div>
