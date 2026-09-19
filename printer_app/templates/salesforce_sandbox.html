@@ -1,0 +1,117 @@
+{% extends 'base.html' %}
+{% block title %}Salesforce Sandbox{% endblock %}
+{% block content %}
+<style>
+.sf-sandbox{max-width:1500px;margin:0 auto}.sf-sandbox .beta{display:inline-block;padding:4px 8px;border-radius:999px;background:#fff3cd;color:#705500;font-size:11px;font-weight:800;letter-spacing:.08em}
+.sf-status{display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;margin-bottom:18px}.sf-status section{flex:1;min-width:280px;margin:0}.sf-status form{min-width:280px;flex:0 1 380px}
+.sf-status label{margin:0}.sf-status select{margin-top:8px}.sf-mod-wrap{overflow-x:auto;padding-bottom:10px}.sf-mod{min-width:1050px;width:100%;border-collapse:collapse;table-layout:fixed;background:white;color:#000;font-family:Georgia,"Times New Roman",serif;margin:0 0 24px}
+.sf-mod td{border:2px solid #000;vertical-align:top;padding:5px 7px;font-size:16px;line-height:1.15;overflow:hidden;word-wrap:break-word}.sf-mod b{font-weight:700}
+.sf-mod .one{height:48px}.sf-mod .two{height:84px}.sf-mod .lead-desc{height:136px}.sf-mod .notes{height:390px}.sf-mod .mid{height:76px}.sf-mod .short{height:52px}.sf-mod .need{height:104px}
+.sf-mod .sf-owned{background:#f7fbff}.sf-mod .sf-owned::after{content:"Salesforce";float:right;font-family:system-ui,sans-serif;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#5d7488;margin-left:8px}
+.sf-empty{color:#777;font-family:system-ui,sans-serif;font-size:13px}.sf-products span{display:inline-block;padding:1px 4px;margin-right:3px}.sf-products .blue{background:#00B0F0}.sf-products .green{background:#92D050}.sf-products .pink{background:#FF69B4}.sf-products .orange{background:#FFA500}.sf-products .gray{background:#D9D9D9}.sf-products .yellow{background:#FFF200}
+@media(max-width:750px){.sf-status{align-items:stretch}.sf-status form{min-width:0;width:100%}}
+</style>
+<div class="sf-sandbox">
+<div class="heading"><div><p class="eyebrow">READ-ONLY BETA <span class="beta">SANDBOX</span></p><h1>Salesforce Sandbox</h1></div><a class="button" href="{{ url_for('salesforce_sandbox.page', org=snapshot.selected_org) }}">Refresh</a></div>
+<p class="notice">This tab is isolated from the normal Gallery and printing. It reads the Pi's existing Salesforce CLI session and recreates today's MOD sheets from Salesforce data. It does not write to Salesforce.</p>
+
+<div class="sf-status">
+<section>
+<h2>Salesforce connection</h2>
+<p class="status {{ 'good' if snapshot.status.connected else 'error' }}">{{ 'Connected' if snapshot.status.connected else 'Not connected' }}</p>
+{% if snapshot.status.connected %}
+<dl><dt>User</dt><dd>{{ snapshot.status.username or '—' }}</dd><dt>Alias</dt><dd>{{ snapshot.status.alias or '—' }}</dd><dt>Instance</dt><dd>{{ snapshot.status.instance_url or '—' }}</dd><dt>Detail</dt><dd>{{ snapshot.status.detail or 'Authenticated through sf CLI' }}</dd></dl>
+{% else %}
+<p class="error">{{ snapshot.error or snapshot.status.detail }}</p>
+{% endif %}
+</section>
+{% if snapshot.orgs %}
+<form method="get" action="{{ url_for('salesforce_sandbox.page') }}">
+<label>Salesforce org
+<select name="org" onchange="this.form.submit()">
+{% for org in snapshot.orgs %}<option value="{{ org.value }}" {% if org.value == snapshot.selected_org %}selected{% endif %}>{{ org.label }}{% if org.default %} (default){% endif %}</option>{% endfor %}
+</select>
+</label>
+<noscript><button type="submit">Load org</button></noscript>
+<p class="muted">Only connected CLI orgs are listed. No Salesforce access token is displayed or stored by this page.</p>
+</form>
+{% endif %}
+</div>
+
+{% if snapshot.status.connected and not snapshot.records %}
+<p class="notice">Salesforce access works. No Service Appointments with a Scheduled Start of TODAY were returned.</p>
+{% endif %}
+
+{% for record in snapshot.records %}
+<div class="sf-mod-wrap">
+<table class="sf-mod" aria-label="MOD sheet for {{ record.lead_name or record.work_order_number or record.source_id }}">
+<colgroup>{% for _ in range(12) %}<col style="width:8.333%">{% endfor %}</colgroup>
+<tr>
+<td colspan="4" class="one"><b>Work Order Number: </b>{{ record.work_order_number }}</td>
+<td colspan="4" class="one"><b>Local Scheduled Start Time: </b>{{ record.local_scheduled_start_time }}</td>
+<td colspan="4" class="one"><b>Canvass Set By: </b>{{ record.canvass_set_by }}</td>
+</tr>
+<tr>
+<td colspan="4" class="two"><b>Lead Name: </b>{{ record.lead_name }}</td>
+<td colspan="4" class="two"><b>Address: </b>{{ record.address }}</td>
+<td colspan="2" class="two"><b>Phone: </b>{{ record.phone }}</td>
+<td colspan="2" class="two"><b>Power Questions </b>□</td>
+</tr>
+<tr>
+<td colspan="3" class="two"><b>Scheduled Start: </b>{{ record.scheduled_start }}</td>
+<td colspan="5" class="two sf-owned"><b>Assigned Service Resource: </b>{{ record.assigned_service_resources|join(', ') }}</td>
+<td colspan="2" class="two"><b>Set By: </b>{{ record.set_by }}</td>
+<td colspan="2" class="two"><b>T Close:</b></td>
+</tr>
+<tr>
+<td colspan="3" class="two"><b>Work Type: </b>{{ record.work_type }}</td>
+<td colspan="3" class="two"><b>Product Interest: </b>
+{% set product = record.product_interest|lower %}
+<span class="sf-products">
+{% if 'roofing' in product %}<span class="blue">Roofing</span>{% endif %}
+{% if 'siding' in product %}<span class="green">Siding</span>{% endif %}
+{% if 'bath' in product %}<span class="pink">Bath</span>{% endif %}
+{% if 'gutters' in product %}<span class="blue">Gutters</span>{% endif %}
+{% if 'windows' in product %}<span class="orange">Windows</span>{% endif %}
+{% if 'doors' in product %}<span class="orange">Doors</span>{% endif %}
+{% if 'other' in product %}<span class="gray">Other</span>{% endif %}
+{% if 'walk-in tubs' in product %}<span class="pink">Walk-In Tubs</span>{% endif %}
+{% if 'solar' in product %}<span class="yellow">Solar</span>{% endif %}
+{% if not record.product_interest %}<span class="sf-empty">—</span>{% endif %}
+</span>
+</td>
+<td colspan="2" class="two"><b>Source: </b>{{ record.source }}</td>
+<td colspan="2" class="two"><b>Sub Source: </b>{{ record.sub_source }}</td>
+<td colspan="2" class="two"><b>Hover / Flir:</b></td>
+</tr>
+<tr>
+<td colspan="5" rowspan="3" class="lead-desc"><b>Lead Description: </b>{{ record.lead_description }}</td>
+<td colspan="2" class="short"><b>Start Price:</b></td>
+<td colspan="2" class="short"><b>Final Price:</b></td>
+<td colspan="3" class="short"><b>Deposit/Payment:</b></td>
+</tr>
+<tr>
+<td colspan="7" rowspan="8" class="notes"><b>MOD Notes:</b></td>
+</tr>
+<tr class="short"></tr>
+<tr>
+<td colspan="2" class="mid"><b>Fin Checklist</b></td>
+<td colspan="2" class="mid"><b>Bid Sheets</b></td>
+<td colspan="1" class="mid"><b>Pictures</b></td>
+</tr>
+<tr><td colspan="5" class="short"><b>Dispo:</b></td></tr>
+<tr>
+<td colspan="2" class="short"><b>Call 1:</b></td>
+<td colspan="3" rowspan="2" class="need"><b>Need:</b></td>
+</tr>
+<tr><td colspan="2" class="short"><b>Call 2:</b></td></tr>
+<tr>
+<td colspan="2" class="short"><b>90 Min:</b></td>
+<td colspan="3" rowspan="2" class="need"><b>Want:</b></td>
+</tr>
+<tr><td colspan="2" class="short"></td></tr>
+</table>
+</div>
+{% endfor %}
+</div>
+{% endblock %}
