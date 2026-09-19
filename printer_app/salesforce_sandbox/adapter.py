@@ -1,10 +1,12 @@
-"""Replaceable Salesforce CLI adapter.
+"""Replaceable Salesforce CLI adapter for the MOD-sheet sandbox.
 
 Only this module knows Salesforce object names, relationship paths, SOQL, or the
 `sf` command. Access tokens are never returned to the application.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 import json
 from pathlib import Path
 import shutil
@@ -15,6 +17,13 @@ from ..mod_sheet_contract import ModSheetRecord, SourceStatus
 
 class SalesforceAdapterError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class PortalField:
+    label: str
+    path: str
+    values: tuple[str, ...]
 
 
 def _nested(record, path):
@@ -140,40 +149,172 @@ class SalesforceCliAdapter:
             detail=('Org ' + org_id[-8:]) if org_id else 'Authenticated through Salesforce CLI',
         )
 
-    def mod_sheets_today(self, target_org='', limit=100):
-        limit = max(1, min(int(limit), 100))
-        query = f"""SELECT
-Id,
-Local_Scheduled_Start_Time__c,
-SchedStartTime,
-FSSK__FSK_Work_Order__r.WorkOrderNumber,
-FSSK__FSK_Work_Order__r.Street,
-FSSK__FSK_Work_Order__r.City,
-FSSK__FSK_Work_Order__r.State,
-FSSK__FSK_Work_Order__r.PostalCode,
-FSSK__FSK_Work_Order__r.WorkType.Name,
-FSSK__FSK_Work_Order__r.Product_Interest__c,
-FSSK__FSK_Work_Order__r.Lead__r.Name,
-FSSK__FSK_Work_Order__r.Lead__r.Phone,
-FSSK__FSK_Work_Order__r.Lead__r.Canvass_Set_By__r.Name,
-FSSK__FSK_Work_Order__r.Lead__r.Set_By__r.Name,
-FSSK__FSK_Work_Order__r.Lead__r.LeadSource,
-FSSK__FSK_Work_Order__r.Lead__r.Sub_Source__c,
-FSSK__FSK_Work_Order__r.Lead__r.Description
-FROM ServiceAppointment
-WHERE SchedStartTime = TODAY
-ORDER BY SchedStartTime ASC
-LIMIT {limit}"""
+    def _describe(self, sobject, target_org=''):
+        return self._run(
+            ['sobject', 'describe', '--sobject', sobject, *self._target_args(target_org)],
+            timeout=30,
+        )
+
+    @staticmethod
+    def _field_by_label(description, label):
+        wanted = label.casefold()
+        for field in description.get('fields', []) if isinstance(description, dict) else []:
+            if str(field.get('label') or '').casefold() == wanted:
+                return field
+        return None
+
+    def _portal_field(self, label, target_org=''):
+        """Find the exact Salesforce field by its UI label, without hard-coding API names."""
+        scopes = (
+            ('ServiceAppointment', ''),
+            ('WorkOrder', 'FSSK__FSK_Work_Order__r.'),
+            ('Lead', 'FSSK__FSK_Work_Order__r.Lead__r.'),
+        )
+        for sobject, prefix in scopes:
+            try:
+                description = self._describe(sobject, target_org)
+            except SalesforceAdapterError:
+                continue
+            field = self._field_by_label(description, label)
+            if not field:
+                continue
+            values = []
+            for option in field.get('picklistValues', []) or []:
+                if option.get('active', True):
+                    value = str(option.get('value') or option.get('label') or '').strip()
+                    if value and value not in values:
+                        values.append(value)
+            return PortalField(label, prefix + str(field.get('name') or ''), tuple(values))
+        return PortalField(label, '', ())
+
+    def portal_fields(self, target_org=''):
+        """Resolve the three controls shown by trac_MODSheetPortalController."""
+        return {
+            'market_segment': self._portal_field('Market Segment', target_org),
+            'product_category': self._portal_field('Product Category', target_org),
+            'source_type': self._portal_field('Source Type', target_org),
+        }
+
+    @staticmethod
+    def _parse_date(value):
+        value = str(value or '').strip()
+        for fmt in ('%m/%d/%Y', '%m/%d/%y', '%Y-%m-%d'):
+            try:
+                return datetime.strptime(value, fmt).date()
+            except ValueError:
+                pass
+        raise SalesforceAdapterError('Use dates in M/D/YYYY format.')
+
+    def mod_sheets(
+        self,
+        target_org='',
+        *,
+        start_date='',
+        end_date='',
+        market_segment='',
+        product_category='',
+        source_type='',
+        remove_canceled=True,
+        remove_unconfirmed=True,
+        limit=1000,
+    ):
+        start = self._parse_date(start_date)
+        end = self._parse_date(end_date)
+        if end < start:
+            raise SalesforceAdapterError('End Date must be on or after Start Date.')
+        if (end - start).days > 366:
+            raise SalesforceAdapterError('Choose a date range of 367 days or less.')
+        limit = max(1, min(int(limit), 1000))
+        portal_fields = self.portal_fields(target_org)
+
+        dynamic_paths = [
+            portal_fields[key].path
+            for key in ('market_segment', 'product_category', 'source_type')
+            if portal_fields[key].path
+        ]
+        select_fields = [
+            'Id',
+            'Status',
+            'Local_Scheduled_Start_Time__c',
+            'SchedStartTime',
+            'FSSK__FSK_Work_Order__r.WorkOrderNumber',
+            'FSSK__FSK_Work_Order__r.Street',
+            'FSSK__FSK_Work_Order__r.City',
+            'FSSK__FSK_Work_Order__r.State',
+            'FSSK__FSK_Work_Order__r.PostalCode',
+            'FSSK__FSK_Work_Order__r.WorkType.Name',
+            'FSSK__FSK_Work_Order__r.Product_Interest__c',
+            'FSSK__FSK_Work_Order__r.Lead__r.Name',
+            'FSSK__FSK_Work_Order__r.Lead__r.Phone',
+            'FSSK__FSK_Work_Order__r.Lead__r.Canvass_Set_By__r.Name',
+            'FSSK__FSK_Work_Order__r.Lead__r.Set_By__r.Name',
+            'FSSK__FSK_Work_Order__r.Lead__r.LeadSource',
+            'FSSK__FSK_Work_Order__r.Lead__r.Sub_Source__c',
+            'FSSK__FSK_Work_Order__r.Lead__r.Description',
+        ]
+        for path in dynamic_paths:
+            if path not in select_fields:
+                select_fields.append(path)
+
+        # Query one extra local-calendar day on each side, then apply the final
+        # local date boundary below. This avoids silently dropping edge appointments
+        # when the Salesforce org/user timezone differs from UTC.
+        query_start = start - timedelta(days=1)
+        query_end = end + timedelta(days=2)
+        query = (
+            'SELECT ' + ', '.join(select_fields)
+            + ' FROM ServiceAppointment'
+            + f' WHERE SchedStartTime >= {query_start.isoformat()}T00:00:00Z'
+            + f' AND SchedStartTime < {query_end.isoformat()}T00:00:00Z'
+            + ' ORDER BY SchedStartTime ASC'
+            + ' LIMIT 2000'
+        )
         result = self._run(
             ['data', 'query', '--query', query, *self._target_args(target_org)],
-            timeout=45,
+            timeout=60,
         )
         records = result.get('records', []) if isinstance(result, dict) else []
-        appointment_ids = [str(item.get('Id') or '') for item in records if item.get('Id')]
+
+        selected = {
+            'market_segment': str(market_segment or '').strip(),
+            'product_category': str(product_category or '').strip(),
+            'source_type': str(source_type or '').strip(),
+        }
+        filtered = []
+        for item in records:
+            status = str(item.get('Status') or '').casefold()
+            if remove_canceled and 'cancel' in status:
+                continue
+            if remove_unconfirmed and 'unconfirm' in status:
+                continue
+
+            scheduled = str(item.get('SchedStartTime') or '')
+            try:
+                scheduled_date = date.fromisoformat(scheduled[:10])
+            except ValueError:
+                scheduled_date = None
+            if scheduled_date and not (start <= scheduled_date <= end):
+                continue
+
+            rejected = False
+            for key, wanted in selected.items():
+                if not wanted:
+                    continue
+                path = portal_fields[key].path
+                if not path or _nested(item, path).casefold() != wanted.casefold():
+                    rejected = True
+                    break
+            if rejected:
+                continue
+            filtered.append(item)
+            if len(filtered) >= limit:
+                break
+
+        appointment_ids = [str(item.get('Id') or '') for item in filtered if item.get('Id')]
         resources = self._assigned_resources(appointment_ids, target_org)
 
         normalized = []
-        for item in records:
+        for item in filtered:
             work_order = item.get('FSSK__FSK_Work_Order__r') or {}
             lead = work_order.get('Lead__r') or {} if isinstance(work_order, dict) else {}
             appointment_id = str(item.get('Id') or '')
