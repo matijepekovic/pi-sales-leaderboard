@@ -52,6 +52,7 @@ class SalesforceCliAdapter:
         self._runner = runner
         self._executable = str(executable or '/usr/bin/sf')
         self.default_org = str(default_org or 'work')
+        self._portal_fields_cache = {}
 
     def _run(self, args, timeout=30):
         executable = self._executable
@@ -159,7 +160,12 @@ class SalesforceCliAdapter:
         return tuple(values)
 
     def portal_fields(self, target_org=''):
-        """Resolve all three portal controls with one describe per Salesforce object."""
+        """Resolve portal controls once per org, then reuse metadata for Generate."""
+        cache_key = str(target_org or self.default_org).strip()
+        cached = self._portal_fields_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         scopes = (
             ('ServiceAppointment', ''),
             ('WorkOrder', 'FSSK__FSK_Work_Order__r.'),
@@ -195,6 +201,7 @@ class SalesforceCliAdapter:
                 resolved = PortalField(label, path, tuple(values))
                 break
             result[key] = resolved
+        self._portal_fields_cache[cache_key] = result
         return result
 
     @staticmethod
