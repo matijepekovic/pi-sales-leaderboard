@@ -55,11 +55,12 @@ def _cli_path():
 class SalesforceCliAdapter:
     """Read-only Salesforce source using the Pi user's existing sf CLI login."""
 
-    def __init__(self, runner=subprocess.run):
+    def __init__(self, runner=subprocess.run, executable=''):
         self._runner = runner
+        self._executable = str(executable or '')
 
     def _run(self, args, timeout=30):
-        executable = _cli_path()
+        executable = self._executable or _cli_path()
         if not executable:
             raise SalesforceAdapterError(
                 'Salesforce CLI is not available to the printer web service user.'
@@ -127,7 +128,7 @@ class SalesforceCliAdapter:
         # non-secret connection metadata into the application contract.
         username = str(result.get('username') or '')
         alias = str(result.get('alias') or '')
-        instance = str(result.get('instanceUrl') or result.get('instanceUrl') or '')
+        instance = str(result.get('instanceUrl') or '')
         org_id = str(result.get('id') or '')
         return SourceStatus(
             connected=True,
