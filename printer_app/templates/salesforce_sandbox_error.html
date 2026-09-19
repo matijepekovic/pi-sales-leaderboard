@@ -1,0 +1,6 @@
+{% extends 'base.html' %}
+{% block title %}Salesforce Sandbox Error{% endblock %}
+{% block content %}
+<div class="heading"><div><p class="eyebrow">SALESFORCE SANDBOX</p><h1>MOD Sheet could not be generated</h1></div><a class="button" href="{{ url_for('salesforce_sandbox.page') }}">Back</a></div>
+<p class="notice error" role="alert">{{ message }}</p>
+{% endblock %}
