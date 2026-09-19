@@ -42,7 +42,9 @@ def _cli_path():
         return found
     home = Path.home()
     for candidate in (
+        home / 'sf/bin/sf',
         home / '.local/bin/sf',
+        home / '.local/share/sf/client/bin/sf',
         home / '.npm-global/bin/sf',
         Path('/usr/local/bin/sf'),
         Path('/usr/bin/sf'),
