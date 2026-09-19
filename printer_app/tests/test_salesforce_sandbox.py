@@ -181,7 +181,7 @@ def test_portal_and_generate_are_separate_and_fail_locally():
 def test_templates_recreate_original_portal_generate_contract():
     root = Path(__file__).resolve().parents[1]
     portal = (root / 'templates/salesforce_sandbox.html').read_text()
-    mod = (root / 'templates/salesforce_mod_sheet.html').read_text()
+    renderer = (root / 'salesforce_sandbox/pdf_renderer.py').read_text()
 
     for text in (
         'Manager On Duty Sheet',
@@ -203,9 +203,26 @@ def test_templates_recreate_original_portal_generate_contract():
     ):
         assert f'name="{name}"' in portal
     assert 'target="_blank"' in portal
-    assert 'Assigned Service Resource:' in mod
-    assert "snapshot.color_code" in mod
-    assert 'MOD Notes:' in mod
+    assert 'Assigned Service Resource:' in renderer
+    assert 'color_code' in renderer
+    assert 'MOD Notes:' in renderer
+
+
+def test_pdf_renderer_accepts_only_normalized_records():
+    from printer_app.mod_sheet_contract import ModSheetRecord
+    from printer_app.salesforce_sandbox.pdf_renderer import render_mod_pdf
+
+    pdf = render_mod_pdf([
+        ModSheetRecord(
+            source_id='08p1',
+            work_order_number='00012345',
+            lead_name='Jordan Example',
+            assigned_service_resources=('Sales Rep One',),
+            product_interest='Windows',
+        )
+    ], color_code=True)
+    assert pdf.startswith(b'%PDF')
+    assert len(pdf) > 1000
 
 
 def test_salesforce_sandbox_isolated_from_gallery_printing_and_ocr():
