@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 import json
 from pathlib import Path
+import getpass
+import re
 import shutil
 import subprocess
 
@@ -93,10 +95,20 @@ class SalesforceCliAdapter:
             raise SalesforceAdapterError('Salesforce CLI returned an unreadable response.') from exc
 
         if result.returncode or payload.get('status') not in (0, None):
-            message = payload.get('message')
+            message = str(payload.get('message') or '').strip()
             if not message and isinstance(payload.get('result'), dict):
-                message = payload['result'].get('message')
-            raise SalesforceAdapterError(str(message or 'Salesforce CLI request failed.')[:500])
+                message = str(payload['result'].get('message') or '').strip()
+            if not message:
+                message = str(getattr(result, 'stderr', '') or '').strip().splitlines()[0:1]
+                message = message[0] if message else ''
+            # Never reflect obvious credential-bearing values from CLI diagnostics.
+            message = re.sub(r'(?i)(accessToken|sfdxAuthUrl|authorization)\s*[:=]\s*\S+',
+                             r'\1=[REDACTED]', message)
+            user = getpass.getuser() or 'unknown'
+            raise SalesforceAdapterError(
+                f'Salesforce CLI failed for Linux user {user}: '
+                + (message or 'no authenticated/default org was available')
+            )
         return payload.get('result') or {}
 
     @staticmethod
@@ -109,13 +121,12 @@ class SalesforceCliAdapter:
         return ['--target-org', target]
 
     def orgs(self):
-        """Return connected org choices without exposing tokens or auth material."""
-        try:
-            result = self._run(['org', 'list'], timeout=20)
-        except SalesforceAdapterError:
-            return []
+        """Return locally authenticated org choices without exposing auth material."""
+        # Avoid a live status probe while discovering orgs. The selected org is
+        # verified by org display immediately afterwards.
+        result = self._run(['org', 'list', '--skip-connection-status'], timeout=20)
         orgs = []
-        for group in ('nonScratchOrgs', 'scratchOrgs', 'sandboxes', 'devHubs'):
+        for group in ('nonScratchOrgs', 'scratchOrgs', 'sandboxes', 'devHubs', 'other'):
             for item in result.get(group, []) if isinstance(result, dict) else []:
                 if not isinstance(item, dict):
                     continue
