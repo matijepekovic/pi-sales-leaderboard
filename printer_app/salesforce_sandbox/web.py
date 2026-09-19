@@ -1,5 +1,9 @@
 """HTTP boundary for the isolated Salesforce Sandbox MOD portal."""
-from flask import Blueprint, render_template, request
+from io import BytesIO
+
+from flask import Blueprint, render_template, request, send_file
+
+from .pdf_renderer import render_mod_pdf
 
 
 def _bool_arg(name, default=False):
@@ -37,6 +41,14 @@ def blueprint(service):
             color_code=_bool_arg('colorCode', False),
             limit=1000,
         )
-        return render_template('salesforce_mod_sheet.html', snapshot=snapshot), 400 if snapshot.error else 200
+        if snapshot.error:
+            return render_template('salesforce_sandbox_error.html', message=snapshot.error), 400
+        pdf = BytesIO(render_mod_pdf(snapshot.records, color_code=snapshot.color_code))
+        return send_file(
+            pdf,
+            mimetype='application/pdf',
+            as_attachment=False,
+            download_name='MOD-Sheet.pdf',
+        )
 
     return bp
