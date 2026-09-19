@@ -32,8 +32,8 @@ def blueprint(service):
             market_segment=request.args.get('marketsegment', ''),
             product_category=request.args.get('productCategory', ''),
             source_type=request.args.get('sourceType', ''),
-            remove_canceled=_bool_arg('removeCanceled', True),
-            remove_unconfirmed=_bool_arg('removeUnconfirmed', True),
+            remove_canceled=_bool_arg('removeCanceled', False),
+            remove_unconfirmed=_bool_arg('removeUnconfirmed', False),
             color_code=_bool_arg('colorCode', False),
             limit=1000,
         )
