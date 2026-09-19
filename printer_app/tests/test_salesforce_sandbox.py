@@ -203,6 +203,8 @@ def test_templates_recreate_original_portal_generate_contract():
     ):
         assert f'name="{name}"' in portal
     assert 'target="_blank"' in portal
+    assert '<style>' not in portal and 'onchange=' not in portal
+    assert 'salesforce_sandbox.css' in portal
     assert 'Assigned Service Resource:' in renderer
     assert 'color_code' in renderer
     assert 'MOD Notes:' in renderer
