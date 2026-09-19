@@ -196,11 +196,22 @@ Earlier stacked cards keep the existing hard boundary at the next card's top. Th
 card uses the template to locate its printed bottom, then extends only through meaningful
 ink below that border before trimming blank scanner tail.
 
-Search indexing remains on the critical path and its OCR path is intentionally
-unchanged: Tesseract still sees the complete full-resolution card, preserving the
-existing searchable-text behavior. The first reliable document date is still reused
-across the PDF; no time value is reused. Optimized PNG output and Gallery CPU/service
-limits are unchanged.
+The supplied blank template also owns normalized field and printed-label rectangles.
+Registration uses the actual outer top and bottom rules, so field geometry is mapped
+with the card's measured horizontal and vertical scale instead of assuming both scales
+are identical.
+
+On a strong template match, recognition masks the constant labels and grid by geometry,
+cheaply skips empty fields, and packs only populated variable regions into one much
+smaller OCR raster. All populated structured and free-form fields still enter the same
+search index; normalized field labels are reintroduced after OCR so Lead Name, Address
+and other existing parsing contracts remain stable. Large handwriting areas are skipped
+only when they contain no meaningful ink. A nonmatching card automatically uses the
+legacy whole-card OCR path.
+
+The first reliable document date is still reused across the PDF; per-card time text is
+always read from that card and is never reused. Saved crops remain full-resolution
+optimized PNGs, and Gallery storage behavior plus CPU/service limits are unchanged.
 
 ## Resumable PDF processing
 
