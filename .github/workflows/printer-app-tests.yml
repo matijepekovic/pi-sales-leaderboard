@@ -21,8 +21,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libcups2-dev cups-client cups-daemon libreoffice-calc fonts-liberation fonts-dejavu-core python3-opencv python3-pil python3-pytest poppler-utils tesseract-ocr tesseract-ocr-eng
-          python -m pip install -r printer_app/requirements.txt pytest xlwt 'playwright>=1.55,<2'
+          python -m pip install -r printer_app/requirements.txt pytest xlwt 'playwright>=1.55,<2' 'opencv-python-headless>=4.10,<5'
           python -m playwright install --with-deps chromium webkit
+      - name: Gallery template fast-path regressions
+        run: |
+          python -m pytest             printer_app/tests/test_gallery_borders.py             printer_app/tests/test_gallery_recognition.py::test_tsv_quotes_cannot_swallow_rows_or_leak_geometry             printer_app/tests/test_gallery_recognition.py::test_header_geometry_works_when_address_label_is_unreadable             printer_app/tests/test_gallery_recognition.py::test_new_normalized_header_is_used_without_address_or_number_guessing             printer_app/tests/test_gallery_recognition.py::test_related_uses_one_character_name_or_exact_address_and_global_rename             printer_app/tests/test_gallery_recognition.py::test_existing_source_order_is_page_then_part_across_pagination             printer_app/tests/test_gallery_recognition.py::test_recognition_and_navigation_have_explicit_owners             printer_app/tests/test_gallery_pdf_date.py::test_known_pdf_date_skips_per_card_date_detection             -v -rs
       - name: Isolated CI-only CUPS sink (never a physical printer)
         run: |
           echo 'FileDevice Yes' | sudo tee -a /etc/cups/cups-files.conf
