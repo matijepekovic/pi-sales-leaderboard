@@ -1,0 +1,26 @@
+.sf-beta-row{max-width:760px;margin:0 auto 14px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.sf-beta-row .status-line{font-size:13px;color:#60778d}
+.sf-beta-row .status-line strong{color:#23764e}
+.sf-beta-row .status-line.error strong{color:#a43131}
+.sf-org{display:flex;align-items:center;gap:8px;margin:0}
+.sf-org label{margin:0}
+.sf-org select{display:inline-block;width:auto;margin:0;padding:7px 10px}
+.mod-portal .container{border-radius:18px;-moz-border-radius:18px;-webkit-border-radius:18px;border:3px solid #800000;margin:10px auto;overflow:hidden;padding:10px;width:400px;text-align:center;background:#fff;color:#111}
+.mod-portal h1{font-size:24px;font-weight:bold;padding:25px;margin:0}
+.mod-portal p{font-size:18px}
+.mod-portal a{text-decoration:underline;font-size:16px}
+.mod-portal a:hover{cursor:pointer}
+.mod-portal .text-center{text-align:center}
+.mod-portal .tile{float:left;overflow:hidden;padding:5px;width:45%}
+.mod-portal .tile:after{clear:both;content:"";display:block}
+.mod-portal .clear-fix{clear:both}
+.mod-portal .settings{font-size:16px;margin:0;padding:0 10px}
+.mod-portal .setting{text-align:left}
+.mod-portal .setting span{display:inline-block;margin-bottom:5px}
+.mod-portal input,.mod-portal select{font-size:16px;width:100%;padding:6px 8px;margin:3px 0 0;border:1px solid #aaa;border-radius:2px;background:#fff}
+.mod-portal input[type=checkbox]{display:inline-block;width:auto;margin:0 0 0 8px;vertical-align:middle}
+.mod-portal .check-setting{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.mod-portal button{font-size:16px;padding:6px 14px}
+.mod-portal .limit{font-size:13px;color:#333}
+.mod-portal .page-message{max-width:400px;margin:0 auto 10px}
+@media(max-width:470px){.mod-portal .container{width:100%}}

@@ -23,6 +23,10 @@ jobs:
           sudo apt-get install -y libcups2-dev cups-client cups-daemon libreoffice-calc fonts-liberation fonts-dejavu-core python3-opencv python3-pil python3-pytest poppler-utils tesseract-ocr tesseract-ocr-eng
           python -m pip install -r printer_app/requirements.txt pytest xlwt 'playwright>=1.55,<2' 'opencv-python-headless>=4.10,<5'
           python -m playwright install --with-deps chromium webkit
+      - name: Salesforce sandbox regressions
+        run: |
+          python -m pytest printer_app/tests/test_salesforce_sandbox.py -v
+
       - name: Gallery template fast-path regressions
         run: |
           python -m pytest \

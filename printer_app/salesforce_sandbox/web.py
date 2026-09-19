@@ -1,0 +1,54 @@
+"""HTTP boundary for the isolated Salesforce Sandbox MOD portal."""
+from io import BytesIO
+
+from flask import Blueprint, render_template, request, send_file
+
+from .pdf_renderer import render_mod_pdf
+
+
+def _bool_arg(name, default=False):
+    value = request.args.get(name)
+    if value is None:
+        return default
+    return str(value).casefold() in ('1', 'true', 'on', 'yes')
+
+
+def blueprint(service):
+    bp = Blueprint('salesforce_sandbox', __name__)
+
+    @bp.get('/salesforce-sandbox')
+    def page():
+        target = request.args.get('org', '')
+        if len(target) > 254:
+            target = ''
+        snapshot = service.portal(target)
+        return render_template('salesforce_sandbox.html', snapshot=snapshot)
+
+    @bp.get('/salesforce-sandbox/mod-sheet')
+    def mod_sheet():
+        target = request.args.get('org', '')
+        if len(target) > 254:
+            target = ''
+        snapshot = service.generate(
+            target,
+            start_date=request.args.get('startdate', ''),
+            end_date=request.args.get('enddate', ''),
+            market_segment=request.args.get('marketsegment', ''),
+            product_category=request.args.get('productCategory', ''),
+            source_type=request.args.get('sourceType', ''),
+            remove_canceled=_bool_arg('removeCanceled', False),
+            remove_unconfirmed=_bool_arg('removeUnconfirmed', False),
+            color_code=_bool_arg('colorCode', False),
+            limit=1000,
+        )
+        if snapshot.error:
+            return render_template('salesforce_sandbox_error.html', message=snapshot.error), 400
+        pdf = BytesIO(render_mod_pdf(snapshot.records, color_code=snapshot.color_code))
+        return send_file(
+            pdf,
+            mimetype='application/pdf',
+            as_attachment=False,
+            download_name='MOD-Sheet.pdf',
+        )
+
+    return bp

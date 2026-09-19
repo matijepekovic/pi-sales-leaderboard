@@ -28,6 +28,9 @@ from .gallery.bootstrap import build as build_gallery, build_access as build_gal
 from .gallery.web import blueprint as gallery_blueprint
 from .gallery_reprocess import GalleryReprocessService
 from .https_adapter import GalleryHttpsAdapter
+from .salesforce_sandbox.adapter import SalesforceCliAdapter
+from .salesforce_sandbox.service import SalesforceSandboxService
+from .salesforce_sandbox.web import blueprint as salesforce_sandbox_blueprint
 
 
 def create_app(cfg: Config | None = None, settings_service: SettingsService | None = None) -> Flask:
@@ -70,6 +73,12 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         gallery, gallery_access, intake.intake, reprocess,
         admin_session=current_admin_session, https_access=gallery_https,
     ))
+
+    # Beta-only, read-only external source. Salesforce details stay behind the
+    # adapter and this composition boundary; Gallery and printing do not depend on it.
+    salesforce_sandbox = SalesforceSandboxService(SalesforceCliAdapter())
+    app.extensions['salesforce_sandbox'] = salesforce_sandbox
+    app.register_blueprint(salesforce_sandbox_blueprint(salesforce_sandbox))
 
     @app.template_filter('localtime')
     def localtime(value):

@@ -1,0 +1,98 @@
+{% extends 'base.html' %}
+{% block title %}Salesforce Sandbox{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='salesforce_sandbox.css') }}">{% endblock %}
+{% block content %}
+
+<div class="sf-beta-row">
+  <div class="status-line {{ 'error' if not snapshot.status.connected else '' }}">
+    Salesforce Sandbox · <strong>{{ 'Connected' if snapshot.status.connected else 'Not connected' }}</strong>
+    {% if snapshot.status.connected and snapshot.status.username %} · {{ snapshot.status.username }}{% endif %}
+  </div>
+  {% if snapshot.orgs %}
+  <form class="sf-org" method="get" action="{{ url_for('salesforce_sandbox.page') }}">
+    <label for="sfOrg">Org</label>
+    <select id="sfOrg" name="org">
+      {% for org in snapshot.orgs %}
+      <option value="{{ org.value }}" {% if org.value == snapshot.selected_org %}selected{% endif %}>{{ org.label }}{% if org.default %} (default){% endif %}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Load</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="mod-portal">
+{% if snapshot.error %}
+  <p class="notice error page-message">{{ snapshot.error }}</p>
+{% endif %}
+<form method="get" action="{{ url_for('salesforce_sandbox.mod_sheet') }}" target="_blank" autocomplete="off">
+  <input type="hidden" name="org" value="{{ snapshot.selected_org }}">
+  <div class="container">
+    <h1>Manager On Duty Sheet</h1>
+    <div class="settings">
+      <br><br>
+      <div class="setting">
+        <span>Start Date:</span>
+        <input id="startDate" name="startdate" value="{{ snapshot.today }}" inputmode="numeric" placeholder="M/D/YYYY" required>
+      </div>
+      <br>
+      <div class="setting">
+        <span>End Date:</span>
+        <input id="endDate" name="enddate" value="{{ snapshot.today }}" inputmode="numeric" placeholder="M/D/YYYY" required>
+      </div>
+      <br>
+      <div class="setting">
+        <span>Market Segment:</span>
+        <select id="marketSegment" name="marketsegment">
+          <option value="">All</option>
+          {% for value in snapshot.fields.get('market_segment').values if snapshot.fields.get('market_segment') %}
+          <option value="{{ value }}">{{ value }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <br>
+      <div class="setting">
+        <span>Product Category:</span>
+        <select id="productCategory" name="productCategory">
+          <option value="">All</option>
+          {% for value in snapshot.fields.get('product_category').values if snapshot.fields.get('product_category') %}
+          <option value="{{ value }}">{{ value }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <br>
+      <div class="setting">
+        <span>Source Type:</span>
+        <select id="srcType" name="sourceType">
+          <option value="">All</option>
+          {% for value in snapshot.fields.get('source_type').values if snapshot.fields.get('source_type') %}
+          <option value="{{ value }}">{{ value }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <br><br>
+      <div class="setting check-setting">
+        <span>Remove Canceled Appointments:</span>
+        <input type="checkbox" id="canceled" name="removeCanceled" value="true" checked>
+      </div>
+      <br>
+      <div class="setting check-setting">
+        <span>Remove Unconfirmed Appointments:</span>
+        <input type="checkbox" id="unconfirmed" name="removeUnconfirmed" value="true" checked>
+      </div>
+      <br>
+      <div class="setting check-setting">
+        <span>Color Code Products:</span>
+        <input type="checkbox" id="colorCode" name="colorCode" value="true">
+      </div>
+      <br>
+      <div>
+        <button type="submit" id="generate" {% if not snapshot.status.connected %}disabled{% endif %}>Generate</button>
+      </div>
+      <br>
+      <p class="limit">*A maximum of 1000 appointments will be displayed</p>
+    </div>
+  </div>
+</form>
+</div>
+{% endblock %}
