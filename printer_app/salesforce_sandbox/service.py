@@ -69,6 +69,7 @@ class SalesforceSandboxService:
             )
 
     def generate(self, target_org='', **filters):
+        color_code = bool(filters.pop('color_code', False))
         try:
             records = tuple(self.adapter.mod_sheets(target_org, **filters))
             return GeneratedSnapshot(
@@ -81,7 +82,7 @@ class SalesforceSandboxService:
                 source_type=filters.get('source_type', ''),
                 remove_canceled=bool(filters.get('remove_canceled', True)),
                 remove_unconfirmed=bool(filters.get('remove_unconfirmed', True)),
-                color_code=bool(filters.get('color_code', False)),
+                color_code=color_code,
             )
         except SalesforceAdapterError as exc:
             return GeneratedSnapshot(
