@@ -76,7 +76,9 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
 
     # Beta-only, read-only external source. Salesforce details stay behind the
     # adapter and this composition boundary; Gallery and printing do not depend on it.
-    salesforce_sandbox = SalesforceSandboxService(SalesforceCliAdapter())
+    salesforce_sandbox = SalesforceSandboxService(
+        SalesforceCliAdapter(executable='/usr/bin/sf', default_org='work')
+    )
     app.extensions['salesforce_sandbox'] = salesforce_sandbox
     app.register_blueprint(salesforce_sandbox_blueprint(salesforce_sandbox))
 
