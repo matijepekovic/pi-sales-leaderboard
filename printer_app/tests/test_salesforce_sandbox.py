@@ -189,6 +189,8 @@ def test_portal_shell_does_not_block_on_salesforce_and_metadata_is_separate():
     assert metadata.status.connected
     assert metadata.fields['market_segment'].values == ('Retail',)
     assert calls
+    describe_calls = [call for call in calls if call[1:3] == ['sobject', 'describe']]
+    assert len(describe_calls) == 3
 
     generated = service.generate(
         'office',
@@ -204,6 +206,9 @@ def test_portal_shell_does_not_block_on_salesforce_and_metadata_is_separate():
     )
     assert len(generated.records) == 1
     assert generated.color_code is True
+    # Generate reuses the already-resolved portal metadata instead of describing
+    # all three Salesforce objects again.
+    assert len([call for call in calls if call[1:3] == ['sobject', 'describe']]) == 3
 
     class BrokenAdapter:
         def orgs(self):
