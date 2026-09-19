@@ -1,7 +1,7 @@
 """HTTP boundary for the isolated Salesforce Sandbox MOD portal."""
 from io import BytesIO
 
-from flask import Blueprint, render_template, request, send_file
+from flask import Blueprint, jsonify, render_template, request, send_file
 
 from .pdf_renderer import render_mod_pdf
 
@@ -23,6 +23,24 @@ def blueprint(service):
             target = ''
         snapshot = service.portal(target)
         return render_template('salesforce_sandbox.html', snapshot=snapshot)
+
+    @bp.get('/salesforce-sandbox/api/metadata')
+    def metadata():
+        target = request.args.get('org', '')
+        if len(target) > 254:
+            target = ''
+        snapshot = service.metadata(target)
+        if snapshot.error:
+            return jsonify(ok=False, error=snapshot.error), 503
+        return jsonify(
+            ok=True,
+            username=snapshot.status.username,
+            alias=snapshot.status.alias,
+            fields={
+                key: list(value.values)
+                for key, value in snapshot.fields.items()
+            },
+        )
 
     @bp.get('/salesforce-sandbox/mod-sheet')
     def mod_sheet():

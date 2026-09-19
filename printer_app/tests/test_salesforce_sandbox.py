@@ -126,9 +126,9 @@ def test_printer_service_uses_scoreboard_sf_work_login():
     root = Path(__file__).resolve().parents[1]
     unit = (root / 'systemd/printer-app-web.service').read_text()
     app = (root / 'app.py').read_text()
-    assert 'User=scoreboard' in unit
-    assert 'Environment=HOME=/home/scoreboard' in unit
-    assert '/home/scoreboard/.sf' in unit
+    assert 'User=scoreboard' in unit  # existing Printer service identity is unchanged
+    assert 'Environment=HOME=/home/scoreboard' not in unit
+    assert '/home/scoreboard/.sf' not in unit
     assert "SalesforceCliAdapter(executable='/usr/bin/sf', default_org='work')" in app
 
 
@@ -172,14 +172,25 @@ def test_cli_adapter_recreates_portal_controls_and_mod_fields_read_only():
                    for command in calls for word in command)
 
 
-def test_portal_and_generate_are_separate_and_fail_locally():
+def test_portal_shell_does_not_block_on_salesforce_and_metadata_is_separate():
     calls = []
     service = SalesforceSandboxService(
         SalesforceCliAdapter(runner=_salesforce_runner(calls), executable='/fake/sf')
     )
+
+    # Opening the tab must render immediately: no sf subprocess is allowed here.
     portal = service.portal('office')
-    assert portal.status.connected
-    assert portal.fields['market_segment'].values == ('Retail',)
+    assert calls == []
+    assert not portal.status.connected
+    assert portal.fields == {}
+    assert portal.selected_org == 'office'
+
+    metadata = service.metadata('office')
+    assert metadata.status.connected
+    assert metadata.fields['market_segment'].values == ('Retail',)
+    assert calls
+    describe_calls = [call for call in calls if call[1:3] == ['sobject', 'describe']]
+    assert len(describe_calls) == 3
 
     generated = service.generate(
         'office',
@@ -195,14 +206,17 @@ def test_portal_and_generate_are_separate_and_fail_locally():
     )
     assert len(generated.records) == 1
     assert generated.color_code is True
+    # Generate reuses the already-resolved portal metadata instead of describing
+    # all three Salesforce objects again.
+    assert len([call for call in calls if call[1:3] == ['sobject', 'describe']]) == 3
 
     class BrokenAdapter:
         def orgs(self):
-            return []
+            return [{'value': 'work', 'label': 'work', 'default': True}]
         def status(self, target_org=''):
             raise SalesforceAdapterError('CLI session unavailable')
 
-    broken = SalesforceSandboxService(BrokenAdapter()).portal()
+    broken = SalesforceSandboxService(BrokenAdapter()).metadata()
     assert not broken.status.connected
     assert broken.error == 'CLI session unavailable'
 
@@ -234,6 +248,12 @@ def test_templates_recreate_original_portal_generate_contract():
     assert 'target="_blank"' in portal
     assert '<style>' not in portal and 'onchange=' not in portal
     assert 'salesforce_sandbox.css' in portal
+    assert 'salesforce_sandbox.js' in portal
+    assert 'Checking Salesforce…' in portal
+    assert 'id="generate" disabled' in portal
+    js = (root / 'static/salesforce_sandbox.js').read_text()
+    assert 'AbortController' in js and '20000' in js
+    assert 'data-metadata-url' in portal
     assert 'Assigned Service Resource:' in renderer
     assert 'color_code' in renderer
     assert 'MOD Notes:' in renderer

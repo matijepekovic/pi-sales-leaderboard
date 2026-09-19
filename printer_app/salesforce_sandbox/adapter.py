@@ -52,6 +52,7 @@ class SalesforceCliAdapter:
         self._runner = runner
         self._executable = str(executable or '/usr/bin/sf')
         self.default_org = str(default_org or 'work')
+        self._portal_fields_cache = {}
 
     def _run(self, args, timeout=30):
         executable = self._executable
@@ -158,40 +159,50 @@ class SalesforceCliAdapter:
                 values.append(value)
         return tuple(values)
 
-    def _portal_field(self, label, target_org=''):
-        """Find the exact Salesforce field by its UI label, without hard-coding API names."""
+    def portal_fields(self, target_org=''):
+        """Resolve portal controls once per org, then reuse metadata for Generate."""
+        cache_key = str(target_org or self.default_org).strip()
+        cached = self._portal_fields_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         scopes = (
             ('ServiceAppointment', ''),
             ('WorkOrder', 'FSSK__FSK_Work_Order__r.'),
             ('Lead', 'FSSK__FSK_Work_Order__r.Lead__r.'),
         )
+        descriptions = []
         for sobject, prefix in scopes:
             try:
-                description = self._describe(sobject, target_org)
+                descriptions.append((prefix, self._describe(sobject, target_org)))
             except SalesforceAdapterError:
                 continue
-            field = self._field_by_label(description, label)
-            if not field:
-                continue
-            path = prefix + str(field.get('name') or '')
-            values = []
-            for option in field.get('picklistValues', []) or []:
-                if option.get('active', True):
-                    value = str(option.get('value') or option.get('label') or '').strip()
-                    if value and value not in values:
-                        values.append(value)
-            if not values:
-                values.extend(self._distinct_values(path, target_org))
-            return PortalField(label, path, tuple(values))
-        return PortalField(label, '', ())
 
-    def portal_fields(self, target_org=''):
-        """Resolve the three controls shown by trac_MODSheetPortalController."""
-        return {
-            'market_segment': self._portal_field('Market Segment', target_org),
-            'product_category': self._portal_field('Product Category', target_org),
-            'source_type': self._portal_field('Source Type', target_org),
-        }
+        result = {}
+        for key, label in (
+            ('market_segment', 'Market Segment'),
+            ('product_category', 'Product Category'),
+            ('source_type', 'Source Type'),
+        ):
+            resolved = PortalField(label, '', ())
+            for prefix, description in descriptions:
+                field = self._field_by_label(description, label)
+                if not field:
+                    continue
+                path = prefix + str(field.get('name') or '')
+                values = []
+                for option in field.get('picklistValues', []) or []:
+                    if option.get('active', True):
+                        value = str(option.get('value') or option.get('label') or '').strip()
+                        if value and value not in values:
+                            values.append(value)
+                if not values:
+                    values.extend(self._distinct_values(path, target_org))
+                resolved = PortalField(label, path, tuple(values))
+                break
+            result[key] = resolved
+        self._portal_fields_cache[cache_key] = result
+        return result
 
     @staticmethod
     def _parse_date(value):

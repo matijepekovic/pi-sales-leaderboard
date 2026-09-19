@@ -13,7 +13,6 @@ EnvironmentFile=@ENV@
 Environment=PRINTER_ENV_FILE=@ENV@
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
-Environment=HOME=/home/scoreboard
 ExecStart=/bin/bash @BASE@/current/printer_app/launch.sh web
 Restart=on-failure
 RestartSec=5
@@ -24,7 +23,7 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=@DATA@ @CONFIG@ -/home/scoreboard/.sf -/home/scoreboard/.sfdx -/home/scoreboard/.config/sf
+ReadWritePaths=@DATA@ @CONFIG@
 RestrictSUIDSGID=true
 LockPersonality=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

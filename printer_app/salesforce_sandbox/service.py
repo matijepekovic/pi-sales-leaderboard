@@ -46,9 +46,21 @@ class SalesforceSandboxService:
         return str(default.get('value') or '') if default else ''
 
     def portal(self, target_org=''):
+        """Return the MOD portal shell without blocking on Salesforce CLI."""
         orgs = tuple(self.adapter.orgs())
         selected = self._selected_org(orgs, target_org)
-        today = date.today().strftime('%-m/%-d/%Y')
+        return PortalSnapshot(
+            status=SourceStatus(connected=False, detail='Checking Salesforce…'),
+            orgs=orgs,
+            selected_org=selected,
+            today=date.today().strftime('%-m/%-d/%Y'),
+            fields={},
+        )
+
+    def metadata(self, target_org=''):
+        """Load connection state and filter options separately from page rendering."""
+        orgs = tuple(self.adapter.orgs())
+        selected = self._selected_org(orgs, target_org)
         try:
             status = self.adapter.status(selected)
             fields = self.adapter.portal_fields(selected)
@@ -56,7 +68,7 @@ class SalesforceSandboxService:
                 status=status,
                 orgs=orgs,
                 selected_org=selected,
-                today=today,
+                today=date.today().strftime('%-m/%-d/%Y'),
                 fields=fields,
             )
         except SalesforceAdapterError as exc:
@@ -64,7 +76,7 @@ class SalesforceSandboxService:
                 status=SourceStatus(connected=False, detail=str(exc)),
                 orgs=orgs,
                 selected_org=selected,
-                today=today,
+                today=date.today().strftime('%-m/%-d/%Y'),
                 error=str(exc),
             )
 

@@ -1,30 +1,18 @@
 {% extends 'base.html' %}
 {% block title %}Salesforce Sandbox{% endblock %}
-{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='salesforce_sandbox.css') }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='salesforce_sandbox.css') }}"><script src="{{ url_for('static', filename='salesforce_sandbox.js') }}" defer></script>{% endblock %}
 {% block content %}
 
-<div class="sf-beta-row">
-  <div class="status-line {{ 'error' if not snapshot.status.connected else '' }}">
-    Salesforce Sandbox · <strong>{{ 'Connected' if snapshot.status.connected else 'Not connected' }}</strong>
-    {% if snapshot.status.connected and snapshot.status.username %} · {{ snapshot.status.username }}{% endif %}
+<div class="sf-beta-row" id="sfSandboxState" data-metadata-url="{{ url_for('salesforce_sandbox.metadata', org=snapshot.selected_org) }}">
+  <div class="status-line">
+    Salesforce Sandbox · <strong id="sfConnectionStatus">Checking Salesforce…</strong>
+    <span id="sfConnectionUser"></span>
   </div>
-  {% if snapshot.orgs %}
-  <form class="sf-org" method="get" action="{{ url_for('salesforce_sandbox.page') }}">
-    <label for="sfOrg">Org</label>
-    <select id="sfOrg" name="org">
-      {% for org in snapshot.orgs %}
-      <option value="{{ org.value }}" {% if org.value == snapshot.selected_org %}selected{% endif %}>{{ org.label }}{% if org.default %} (default){% endif %}</option>
-      {% endfor %}
-    </select>
-    <button type="submit">Load</button>
-  </form>
-  {% endif %}
+  <button type="button" id="sfRetry" hidden>Retry connection</button>
 </div>
 
 <div class="mod-portal">
-{% if snapshot.error %}
-  <p class="notice error page-message">{{ snapshot.error }}</p>
-{% endif %}
+<p id="sfConnectionError" class="notice error page-message" hidden></p>
 <form method="get" action="{{ url_for('salesforce_sandbox.mod_sheet') }}" target="_blank" autocomplete="off">
   <input type="hidden" name="org" value="{{ snapshot.selected_org }}">
   <div class="container">
@@ -43,31 +31,22 @@
       <br>
       <div class="setting">
         <span>Market Segment:</span>
-        <select id="marketSegment" name="marketsegment">
-          <option value="">All</option>
-          {% for value in snapshot.fields.get('market_segment').values if snapshot.fields.get('market_segment') %}
-          <option value="{{ value }}">{{ value }}</option>
-          {% endfor %}
+        <select id="marketSegment" name="marketsegment" disabled>
+          <option value="">Loading…</option>
         </select>
       </div>
       <br>
       <div class="setting">
         <span>Product Category:</span>
-        <select id="productCategory" name="productCategory">
-          <option value="">All</option>
-          {% for value in snapshot.fields.get('product_category').values if snapshot.fields.get('product_category') %}
-          <option value="{{ value }}">{{ value }}</option>
-          {% endfor %}
+        <select id="productCategory" name="productCategory" disabled>
+          <option value="">Loading…</option>
         </select>
       </div>
       <br>
       <div class="setting">
         <span>Source Type:</span>
-        <select id="srcType" name="sourceType">
-          <option value="">All</option>
-          {% for value in snapshot.fields.get('source_type').values if snapshot.fields.get('source_type') %}
-          <option value="{{ value }}">{{ value }}</option>
-          {% endfor %}
+        <select id="srcType" name="sourceType" disabled>
+          <option value="">Loading…</option>
         </select>
       </div>
       <br><br>
@@ -87,7 +66,7 @@
       </div>
       <br>
       <div>
-        <button type="submit" id="generate" {% if not snapshot.status.connected %}disabled{% endif %}>Generate</button>
+        <button type="submit" id="generate" disabled>Generate</button>
       </div>
       <br>
       <p class="limit">*A maximum of 1000 appointments will be displayed</p>
