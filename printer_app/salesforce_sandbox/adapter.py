@@ -163,6 +163,27 @@ class SalesforceCliAdapter:
                 return field
         return None
 
+    def _distinct_values(self, path, target_org=''):
+        if not path:
+            return ()
+        query = (
+            f'SELECT {path} FROM ServiceAppointment'
+            f' WHERE {path} != null GROUP BY {path} ORDER BY {path} LIMIT 200'
+        )
+        try:
+            result = self._run(
+                ['data', 'query', '--query', query, *self._target_args(target_org)],
+                timeout=45,
+            )
+        except SalesforceAdapterError:
+            return ()
+        values = []
+        for row in result.get('records', []) if isinstance(result, dict) else []:
+            value = _nested(row, path).strip()
+            if value and value not in values:
+                values.append(value)
+        return tuple(values)
+
     def _portal_field(self, label, target_org=''):
         """Find the exact Salesforce field by its UI label, without hard-coding API names."""
         scopes = (
@@ -178,13 +199,16 @@ class SalesforceCliAdapter:
             field = self._field_by_label(description, label)
             if not field:
                 continue
+            path = prefix + str(field.get('name') or '')
             values = []
             for option in field.get('picklistValues', []) or []:
                 if option.get('active', True):
                     value = str(option.get('value') or option.get('label') or '').strip()
                     if value and value not in values:
                         values.append(value)
-            return PortalField(label, prefix + str(field.get('name') or ''), tuple(values))
+            if not values:
+                values.extend(self._distinct_values(path, target_org))
+            return PortalField(label, path, tuple(values))
         return PortalField(label, '', ())
 
     def portal_fields(self, target_org=''):
