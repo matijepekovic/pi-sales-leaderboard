@@ -11,7 +11,6 @@ import json
 from pathlib import Path
 import getpass
 import re
-import shutil
 import subprocess
 
 from ..mod_sheet_contract import ModSheetRecord, SourceStatus
@@ -47,37 +46,16 @@ def _address(work_order):
     return ', '.join(part.strip() for part in parts if part and part.strip())
 
 
-def _cli_path():
-    found = shutil.which('sf')
-    if found:
-        return found
-    home = Path.home()
-    for candidate in (
-        home / 'sf/bin/sf',
-        home / '.local/bin/sf',
-        home / '.local/share/sf/client/bin/sf',
-        home / '.npm-global/bin/sf',
-        Path('/usr/local/bin/sf'),
-        Path('/usr/bin/sf'),
-    ):
-        if candidate.is_file():
-            return str(candidate)
-    return ''
-
-
 class SalesforceCliAdapter:
     """Read-only Salesforce source using the Pi user's existing sf CLI login."""
 
-    def __init__(self, runner=subprocess.run, executable=''):
+    def __init__(self, runner=subprocess.run, executable='/usr/bin/sf', default_org='work'):
         self._runner = runner
-        self._executable = str(executable or '')
+        self._executable = str(executable or '/usr/bin/sf')
+        self.default_org = str(default_org or 'work')
 
     def _run(self, args, timeout=30):
-        executable = self._executable or _cli_path()
-        if not executable:
-            raise SalesforceAdapterError(
-                'Salesforce CLI is not available to the printer web service user.'
-            )
+        executable = self._executable
         try:
             result = self._runner(
                 [executable, *args, '--json'],
@@ -111,9 +89,8 @@ class SalesforceCliAdapter:
             )
         return payload.get('result') or {}
 
-    @staticmethod
-    def _target_args(target_org):
-        target = str(target_org or '').strip()
+    def _target_args(self, target_org):
+        target = str(target_org or self.default_org).strip()
         if not target:
             return []
         if len(target) > 254 or any(not c.isprintable() for c in target):
@@ -121,28 +98,12 @@ class SalesforceCliAdapter:
         return ['--target-org', target]
 
     def orgs(self):
-        """Return locally authenticated org choices without exposing auth material."""
-        # Avoid a live status probe while discovering orgs. The selected org is
-        # verified by org display immediately afterwards.
-        result = self._run(['org', 'list', '--skip-connection-status'], timeout=20)
-        orgs = []
-        for group in ('nonScratchOrgs', 'scratchOrgs', 'sandboxes', 'devHubs', 'other'):
-            for item in result.get(group, []) if isinstance(result, dict) else []:
-                if not isinstance(item, dict):
-                    continue
-                if str(item.get('connectedStatus', '')).lower() not in ('connected', ''):
-                    continue
-                username = str(item.get('username') or '')
-                alias = str(item.get('alias') or '')
-                key = alias or username
-                if key and not any(row['value'] == key for row in orgs):
-                    orgs.append({
-                        'value': key,
-                        'label': alias + (' — ' + username if username and alias else '') or username,
-                        'default': bool(item.get('isDefaultUsername')),
-                    })
-        orgs.sort(key=lambda item: (not item['default'], item['label'].casefold()))
-        return orgs
+        """The sandbox intentionally uses the already-authenticated `work` org."""
+        return [{
+            'value': self.default_org,
+            'label': self.default_org,
+            'default': True,
+        }]
 
     def status(self, target_org=''):
         result = self._run(['org', 'display', *self._target_args(target_org)], timeout=20)
