@@ -64,7 +64,10 @@ class SalesforceCliAdapter:
                 timeout=timeout,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise SalesforceAdapterError('Salesforce CLI could not be started.') from exc
+            user = getpass.getuser() or 'unknown'
+            raise SalesforceAdapterError(
+                f'Could not run {executable} as Linux user {user}: {exc}'
+            ) from exc
 
         try:
             payload = json.loads(result.stdout or '{}')
