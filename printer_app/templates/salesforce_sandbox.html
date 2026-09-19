@@ -1,7 +1,6 @@
 {% extends 'base.html' %}
-{% block title %}Salesforce Sandbox<script src="{{ url_for('static', filename='salesforce_sandbox.js') }}" defer></script>
-{% endblock %}
-{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='salesforce_sandbox.css') }}">{% endblock %}
+{% block title %}Salesforce Sandbox{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='salesforce_sandbox.css') }}"><script src="{{ url_for('static', filename='salesforce_sandbox.js') }}" defer></script>{% endblock %}
 {% block content %}
 
 <div class="sf-beta-row" id="sfSandboxState" data-metadata-url="{{ url_for('salesforce_sandbox.metadata', org=snapshot.selected_org) }}">
