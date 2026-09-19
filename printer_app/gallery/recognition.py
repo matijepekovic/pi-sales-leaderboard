@@ -1,8 +1,8 @@
 """Local OCR adapter. Only normalized text/header/date values leave this module.
 
-Tesseract TSV is NOT quoted CSV: a printed quote must never absorb subsequent
-rows. Word positions and the original rules isolate the Lead Name cell before
-we flatten anything for search. The archived image is never modified.
+Known work-order cards use template geometry to OCR only variable ink. Nonmatching
+images retain the legacy whole-card path. Tesseract TSV is NOT quoted CSV: a printed
+quote must never absorb subsequent rows. The archived image is never modified.
 """
 import csv
 from datetime import date
@@ -12,6 +12,11 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+
+if __package__:
+    from .form_template import TEMPLATE_FIELDS, map_box, register_form
+else:
+    from form_template import TEMPLATE_FIELDS, map_box, register_form
 
 
 def tsv_words(value):
@@ -88,20 +93,29 @@ def lead_cell_text(words, gray):
     return readings[0] if len(readings) == 1 else ''
 
 
-def printed_date(words, height):
-    header = ' '.join(w['text'] for w in words if w['top'] < height * .27 and w['conf'] >= 70)
+def _date_readings(text):
     readings = []
-    for m in re.finditer(r'\b(20\d{2})[.\-/](\d{1,2})[.\-/](\d{1,2})\b', header):
+    for match in re.finditer(r'\b(20\d{2})[.\-/](\d{1,2})[.\-/](\d{1,2})\b', text):
         try:
-            readings.append(date(*map(int, m.groups())).isoformat())
+            readings.append(date(*map(int, match.groups())).isoformat())
         except ValueError:
             pass
     months = 'jan feb mar apr may jun jul aug sep oct nov dec'.split()
-    for m in re.finditer(r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s+(20\d{2})\b', header, re.I):
+    for match in re.finditer(
+            r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+'
+            r'(\d{1,2}),?\s+(20\d{2})\b', text, re.I):
         try:
-            readings.append(date(int(m[3]), months.index(m[1].lower()) + 1, int(m[2])).isoformat())
+            readings.append(
+                date(int(match[3]), months.index(match[1].lower()) + 1, int(match[2])).isoformat()
+            )
         except ValueError:
             pass
+    return readings
+
+
+def printed_date(words, height):
+    header = ' '.join(w['text'] for w in words if w['top'] < height * .27 and w['conf'] >= 70)
+    readings = _date_readings(header)
     return (readings[0], 'printed') if len(readings) >= 2 and len(set(readings)) == 1 else (None, 'needs-date')
 
 
@@ -112,27 +126,203 @@ def document_date(words, height, known_date=None):
     return printed_date(words, height)
 
 
-def recognize(path, work, known_date=None):
+def _template_document_date(values, known_date=None):
+    if known_date:
+        return known_date, 'printed'
+    per_field = []
+    for field in TEMPLATE_FIELDS:
+        if not field.date_candidate:
+            continue
+        readings = _date_readings(values.get(field.key, ''))
+        unique = set(readings)
+        if len(unique) == 1:
+            per_field.append(next(iter(unique)))
+    return (per_field[0], 'printed') if len(per_field) >= 2 and len(set(per_field)) == 1 else (None, 'needs-date')
+
+
+def _clamp_box(box, width, height):
+    left, top, right, bottom = box
+    return (
+        max(0, min(width, left)),
+        max(0, min(height, top)),
+        max(0, min(width, right)),
+        max(0, min(height, bottom)),
+    )
+
+
+def _meaningful_bbox(image, minimum_area):
+    """Cheap blank/dust test; return the bounding box of real variable ink."""
     import cv2
     import numpy as np
-    source = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-    if source is None:
-        raise ValueError('Saved image cannot be read')
+
+    binary = (image < 225).astype(np.uint8)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
+    kept = []
+    for label in range(1, count):
+        x, y, width, height, area = stats[label]
+        if area >= minimum_area and (width >= 2 or height >= 3):
+            kept.append((x, y, width, height))
+    if not kept:
+        return None
+    left = min(value[0] for value in kept)
+    top = min(value[1] for value in kept)
+    right = max(value[0] + value[2] for value in kept)
+    bottom = max(value[1] + value[3] for value in kept)
+    return left, top, right, bottom
+
+
+def template_ocr_canvas(source, registration):
+    """Pack only populated variable regions into one small Tesseract image.
+
+    Constant labels and grid rules never enter this raster. Empty fields, including
+    empty large handwriting areas, cost only the cheap connected-component check.
+    Returned segments preserve each field's ownership after OCR.
+    """
+    import numpy as np
+
+    height, width = source.shape
+    frame_width = max(1, registration.right - registration.left)
+    frame_height = max(1, registration.bottom - registration.top)
+    edge_x = max(4, int(round(frame_width * .006)))
+    edge_y = max(4, int(round(frame_height * .010)))
+    label_pad_x = max(3, int(round(frame_width * .004)))
+    label_pad_y = max(3, int(round(frame_height * .006)))
+    ink_pad = max(4, int(round(frame_width * .002)))
+    minimum_area = max(4, int(round(frame_width / 1200.0)))
+
+    active = []
+    for field in TEMPLATE_FIELDS:
+        left, top, right, bottom = _clamp_box(map_box(registration, field.box), width, height)
+        left += edge_x
+        right -= edge_x
+        top += edge_y
+        bottom -= edge_y
+        if right <= left or bottom <= top:
+            continue
+        crop = source[top:bottom, left:right].copy()
+
+        ll, lt, lr, lb = _clamp_box(map_box(registration, field.label_box), width, height)
+        ll = max(left, ll - label_pad_x) - left
+        lr = min(right, lr + label_pad_x) - left
+        lt = max(top, lt - label_pad_y) - top
+        lb = min(bottom, lb + label_pad_y) - top
+        if lr > ll and lb > lt:
+            crop[lt:lb, ll:lr] = 255
+
+        box = _meaningful_bbox(crop, minimum_area)
+        if box is None:
+            continue
+        x0, y0, x1, y1 = box
+        x0 = max(0, x0 - ink_pad)
+        x1 = min(crop.shape[1], x1 + ink_pad)
+        y0 = max(0, y0 - ink_pad)
+        y1 = min(crop.shape[0], y1 + ink_pad)
+        active.append((field, crop[y0:y1, x0:x1]))
+
+    if not active:
+        return None, []
+
+    gap = max(12, int(round(frame_height * .012)))
+    margin = gap
+    canvas_width = max(crop.shape[1] for _, crop in active) + margin * 2
+    canvas_height = sum(crop.shape[0] for _, crop in active) + gap * (len(active) - 1) + margin * 2
+    canvas = np.full((canvas_height, canvas_width), 255, np.uint8)
+    segments = []
+    y = margin
+    for field, crop in active:
+        canvas[y:y + crop.shape[0], margin:margin + crop.shape[1]] = crop
+        segments.append((field.key, y, y + crop.shape[0]))
+        y += crop.shape[0] + gap
+    return canvas, segments
+
+
+def _field_values(words, segments):
+    values = {}
+    for key, top, bottom in segments:
+        selected = [word for word in words
+                    if top <= word['top'] + word['height'] / 2.0 < bottom]
+        value = ' '.join(search_text(selected).split())
+        if value:
+            values[key] = value
+    return values
+
+
+def _template_search_text(values):
+    lines = []
+    for field in TEMPLATE_FIELDS:
+        value = values.get(field.key, '')
+        if value:
+            lines.append(f'{field.label}: {value}')
+    return '\n'.join(lines)[:100000]
+
+
+def _run_tesseract(image, ocr_copy):
+    import cv2
+
+    if not cv2.imwrite(str(ocr_copy), image):
+        raise OSError('OCR working image cannot be written')
+    result = subprocess.run(
+        ['tesseract', str(ocr_copy), 'stdout', '-l', 'eng', '--psm', '6', 'tsv'],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    return tsv_words(result.stdout)
+
+
+def _recognize_template(source, registration, ocr_copy, known_date):
+    canvas, segments = template_ocr_canvas(source, registration)
+    if canvas is None:
+        docdate, state = _template_document_date({}, known_date)
+        return dict(text='', lead_text='', document_date=docdate, date_status=state)
+
+    words = _run_tesseract(canvas, ocr_copy)
+    values = _field_values(words, segments)
+    lead = next((values.get(field.key, '') for field in TEMPLATE_FIELDS if field.lead), '')
+    docdate, state = _template_document_date(values, known_date)
+    return dict(
+        text=_template_search_text(values),
+        lead_text=('Lead Name: ' + lead) if lead else '',
+        document_date=docdate,
+        date_status=state,
+    )
+
+
+def _recognize_legacy(source, ocr_copy, known_date):
+    import cv2
+    import numpy as np
+
     h, w = source.shape
     ink = cv2.threshold(source, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
     rules = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((1, max(30, w//25)), np.uint8))
-    rules |= cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((max(30, min(h//12, w//25)), 1), np.uint8))
+    rules |= cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN, np.ones((max(30, min(h//12, w//25)), 1), np.uint8)
+    )
     disposable = source.copy()
     disposable[cv2.dilate(rules, np.ones((3, 3), np.uint8)) > 0] = 255
+    words = _run_tesseract(disposable, ocr_copy)
+    docdate, state = document_date(words, h, known_date)
+    return dict(
+        text=search_text(words),
+        lead_text=lead_cell_text(words, source),
+        document_date=docdate,
+        date_status=state,
+    )
+
+
+def recognize(path, work, known_date=None):
+    import cv2
+
+    source = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    if source is None:
+        raise ValueError('Saved image cannot be read')
     ocr_copy = Path(work) / 'ocr.png'
     try:
-        cv2.imwrite(str(ocr_copy), disposable)
-        result = subprocess.run(['tesseract', str(ocr_copy), 'stdout', '-l', 'eng', '--psm', '6', 'tsv'],
-                                check=True, capture_output=True, text=True, timeout=120)
-        words = tsv_words(result.stdout)
-        docdate, state = document_date(words, h, known_date)
-        return dict(text=search_text(words), lead_text=lead_cell_text(words, source),
-                    document_date=docdate, date_status=state)
+        registration = register_form(source)
+        if registration.matched:
+            return _recognize_template(source, registration, ocr_copy, known_date)
+        return _recognize_legacy(source, ocr_copy, known_date)
     finally:
         ocr_copy.unlink(missing_ok=True)
 
