@@ -103,6 +103,35 @@ def _salesforce_runner(calls):
     return runner
 
 
+def test_printer_service_uses_scoreboard_sf_work_login():
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        return _result({'status': 0, 'result': {
+            'username': 'rep@example.test',
+            'alias': 'work',
+            'instanceUrl': 'https://example.my.salesforce.com',
+            'id': '00D000000000123',
+        }})
+
+    adapter = SalesforceCliAdapter(runner=runner)
+    status = adapter.status()
+    assert status.connected
+    assert calls == [[
+        '/usr/bin/sf', 'org', 'display',
+        '--target-org', 'work', '--json'
+    ]]
+
+    root = Path(__file__).resolve().parents[1]
+    unit = (root / 'systemd/printer-app-web.service').read_text()
+    app = (root / 'app.py').read_text()
+    assert 'User=scoreboard' in unit
+    assert 'Environment=HOME=/home/scoreboard' in unit
+    assert '/home/scoreboard/.sf' in unit
+    assert "SalesforceCliAdapter(executable='/usr/bin/sf', default_org='work')" in app
+
+
 def test_cli_adapter_recreates_portal_controls_and_mod_fields_read_only():
     calls = []
     adapter = SalesforceCliAdapter(runner=_salesforce_runner(calls), executable='/fake/sf')
@@ -121,7 +150,7 @@ def test_cli_adapter_recreates_portal_controls_and_mod_fields_read_only():
         remove_unconfirmed=True,
     )
 
-    assert orgs[0]['value'] == 'office'
+    assert orgs[0]['value'] == 'work'
     assert status.connected and status.username == 'rep@example.test'
     assert 'MUST_NOT_ESCAPE' not in repr(status)
     assert fields['market_segment'].values == ('Retail',)
