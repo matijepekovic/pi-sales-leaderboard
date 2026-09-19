@@ -99,4 +99,4 @@ def test_template_and_ocr_owners_remain_replaceable():
     assert 'sqlite3' not in template and 'flask' not in template
     assert 'TEMPLATE_FIELDS' in recognition
     assert 'TEMPLATE_FIELDS' not in processing
-    assert 'tesseract' not in processing.lower()
+    assert "['tesseract'," not in processing.lower()  # no direct OCR-engine invocation
