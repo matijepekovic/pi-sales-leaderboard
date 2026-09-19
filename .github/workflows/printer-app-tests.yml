@@ -21,8 +21,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libcups2-dev cups-client cups-daemon libreoffice-calc fonts-liberation fonts-dejavu-core python3-opencv python3-pil python3-pytest poppler-utils tesseract-ocr tesseract-ocr-eng
-          python -m pip install -r printer_app/requirements.txt pytest xlwt 'playwright>=1.55,<2'
+          python -m pip install -r printer_app/requirements.txt pytest xlwt 'playwright>=1.55,<2' 'opencv-python-headless>=4.10,<5'
           python -m playwright install --with-deps chromium webkit
+      - name: Gallery template fast-path regressions
+        run: |
+          python -m pytest             printer_app/tests/test_gallery_borders.py             printer_app/tests/test_gallery_recognition.py             printer_app/tests/test_gallery_pdf_date.py             -v -rs
       - name: Isolated CI-only CUPS sink (never a physical printer)
         run: |
           echo 'FileDevice Yes' | sudo tee -a /etc/cups/cups-files.conf
