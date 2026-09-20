@@ -78,7 +78,7 @@
         <p><strong>Automatic print:</strong> {{ snapshot.schedule }}</p>
         <p><strong>Date:</strong> always the current day</p>
         {% if snapshot.configured %}
-          <p><strong>Next run:</strong> {{ snapshot.next_run|localtime }}</p>
+          <p><strong>Next run:</strong> {% if snapshot.due_now %}Due now{% else %}{{ snapshot.next_run|localtime }}{% endif %}</p>
           {% if snapshot.state %}
             <p><strong>Last run:</strong> {{ snapshot.state.day or '—' }} · {{ snapshot.state.message or snapshot.state.status or '—' }}</p>
             {% if snapshot.queue_state %}
