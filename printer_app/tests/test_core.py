@@ -20,7 +20,7 @@ from printer_app.db import Database
 from printer_app.deploy import fingerprint, source_files
 from printer_app.error_pages import error_page
 from printer_app.gmail_client import GmailClient, attachment_parts, sexpr
-from printer_app.printer import MissingJob, PrinterError, SubmissionRejected
+from printer_app.printer import MissingJob, Printer, PrinterError, SubmissionRejected
 from printer_app.worker import Engine
 
 
@@ -201,6 +201,24 @@ def test_completed_attachment_restart_does_not_reprint(rig, tmp_path):
     Engine(cfg, Database(cfg.db_path), printer).process_attachment(attachment)
     complete(rig)
     assert len(printer.printed) == 1 and len(db.recent()) == 1
+
+
+def test_printer_high_priority_maps_to_cups_priority_100(tmp_path):
+    cfg = Config(data_dir=tmp_path, queue='konicaa')
+    printer = Printer(cfg)
+    path = pdf(tmp_path / 'priority.pdf')
+    printer.run = lambda command: 'request id is konicaa-1 (1 file(s))'
+
+    _, _, command = printer.hold(
+        path,
+        'priority-test',
+        PrintOptions(),
+        received_pdf=True,
+        high_priority=True,
+    )
+
+    assert '-q' in command
+    assert command[command.index('-q') + 1] == '100'
 
 
 def test_immediate_generated_job_uses_high_printer_priority(rig, tmp_path):
