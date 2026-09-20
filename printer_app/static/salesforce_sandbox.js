@@ -11,9 +11,9 @@
   const clearShell = document.getElementById('sfShellClear');
   const form = document.getElementById('sfModForm');
   const fields = [
-    {key: 'market_segment', label: 'Market Segment', select: document.getElementById('marketSegment')},
-    {key: 'product_category', label: 'Product Category', select: document.getElementById('productCategory')},
-    {key: 'source_type', label: 'Source Type', select: document.getElementById('srcType')},
+    {key: 'market_segment', label: 'Market Segment', allValue: '', select: document.getElementById('marketSegment')},
+    {key: 'product_category', label: 'Product Category', allValue: 'All', select: document.getElementById('productCategory')},
+    {key: 'source_type', label: 'Source Type', allValue: 'All', select: document.getElementById('srcType')},
   ];
   let loading = false;
 
@@ -40,10 +40,10 @@
     select.disabled = true;
   }
 
-  function setOptions(select, values) {
+  function setOptions(select, values, allValue) {
     select.replaceChildren();
     const all = document.createElement('option');
-    all.value = '';
+    all.value = allValue;
     all.textContent = 'All';
     select.appendChild(all);
     for (const value of values || []) {
@@ -82,7 +82,7 @@
     const url = state.dataset.fieldUrl.replace('__FIELD__', encodeURIComponent(item.key));
     try {
       const payload = await requestJson(url, 100000);
-      setOptions(item.select, payload.field.values);
+      setOptions(item.select, payload.field.values, item.allValue);
       appendShell('# resolved ' + item.label + ': ' + (payload.field.path || 'not found'));
       return true;
     } catch (exc) {
