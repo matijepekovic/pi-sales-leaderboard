@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -110,9 +111,17 @@ class DailyModSheetService:
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         target = directory / f'MOD-Sheet-{day}.pdf'
         temporary = directory / f'.MOD-Sheet-{day}.tmp'
-        temporary.write_bytes(payload)
+        with temporary.open('wb') as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
         temporary.chmod(0o600)
         temporary.replace(target)
+        directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
         return target
 
     def run_due(self, stamp=None) -> dict:
