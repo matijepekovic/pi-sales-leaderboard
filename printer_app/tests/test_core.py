@@ -203,6 +203,29 @@ def test_completed_attachment_restart_does_not_reprint(rig, tmp_path):
     assert len(printer.printed) == 1 and len(db.recent()) == 1
 
 
+def test_printer_sides_sets_ipp_and_konica_duplex_options(tmp_path):
+    cfg = Config(data_dir=tmp_path, queue='konicaa')
+    printer = Printer(cfg)
+    path = pdf(tmp_path / 'sides.pdf')
+    printer.run = lambda command: 'request id is konicaa-1 (1 file(s))'
+
+    cases = (
+        ('one-sided', 'None'),
+        ('two-sided-long-edge', 'DuplexNoTumble'),
+        ('two-sided-short-edge', 'DuplexTumble'),
+    )
+    for sides, duplex in cases:
+        _, _, command = printer.hold(
+            path,
+            'sides-' + sides,
+            PrintOptions(sides=sides),
+            received_pdf=True,
+        )
+        joined = ' '.join(command)
+        assert 'sides=' + sides in joined
+        assert 'Duplex=' + duplex in joined
+
+
 def test_printer_high_priority_maps_to_cups_priority_100(tmp_path):
     cfg = Config(data_dir=tmp_path, queue='konicaa')
     printer = Printer(cfg)
