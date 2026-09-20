@@ -72,9 +72,12 @@ def _address(work_order):
 class SalesforceCliAdapter:
     """Read-only Salesforce source using the Pi user's existing sf CLI login."""
 
-    def __init__(self, runner=subprocess.run, executable='/usr/bin/sf'):
+    def __init__(self, runner=subprocess.run, executable='/usr/bin/sf', target_org='work'):
         self._runner = runner
         self._executable = str(executable or '/usr/bin/sf')
+        self.target_org = str(target_org or '').strip()
+        if not self.target_org:
+            raise ValueError('Salesforce target org alias is required.')
         self._portal_fields_cache = None
 
     def _run(self, args, timeout=30):
@@ -122,10 +125,11 @@ class SalesforceCliAdapter:
             )
         return payload.get('result') or {}
 
+    def _target_args(self):
+        return ['--target-org', self.target_org]
+
     def status(self):
-        # No target org is supplied here. Salesforce CLI resolves its own saved
-        # target-org/default authorization exactly as it would in the scoreboard shell.
-        result = self._run(['org', 'display'], timeout=20)
+        result = self._run(['org', 'display', *self._target_args()], timeout=20)
         # sf org display includes accessToken in JSON. Deliberately copy only
         # non-secret connection metadata into the application contract.
         username = str(result.get('username') or '')
@@ -142,7 +146,7 @@ class SalesforceCliAdapter:
 
     def _describe(self, sobject):
         return self._run(
-            ['sobject', 'describe', '--sobject', sobject],
+            ['sobject', 'describe', '--sobject', sobject, *self._target_args()],
             timeout=30,
         )
 
@@ -163,7 +167,7 @@ class SalesforceCliAdapter:
         )
         try:
             result = self._run(
-                ['data', 'query', '--query', query],
+                ['data', 'query', '--query', query, *self._target_args()],
                 timeout=45,
             )
         except SalesforceAdapterError:
@@ -292,7 +296,7 @@ class SalesforceCliAdapter:
             + ' LIMIT 2000'
         )
         result = self._run(
-            ['data', 'query', '--query', query],
+            ['data', 'query', '--query', query, *self._target_args()],
             timeout=60,
         )
         records = result.get('records', []) if isinstance(result, dict) else []
@@ -372,7 +376,7 @@ FROM AssignedResource
 WHERE ServiceAppointmentId IN ({ids})
 ORDER BY ServiceAppointmentId, CreatedDate"""
         result = self._run(
-            ['data', 'query', '--query', query],
+            ['data', 'query', '--query', query, *self._target_args()],
             timeout=45,
         )
         output = {}
