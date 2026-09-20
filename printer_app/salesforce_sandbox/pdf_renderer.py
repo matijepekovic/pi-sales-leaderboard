@@ -12,11 +12,40 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.platypus import (
+    Flowable,
+    KeepTogether,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 
 
 PAGE_MARGIN_X = 0.5 * cm
 PAGE_MARGIN_Y = 0.55 * cm
+
+# Measured from the reference Salesforce Visualforce PDF supplied for parity.
+# The Visualforce renderer does not end up using twelve equal visible columns;
+# its resolved grid is ten equal columns across a 571.65pt table.
+VISUALFORCE_TABLE_WIDTH = 571.65
+VISUALFORCE_COLUMNS = 10
+VISUALFORCE_ROW_HEIGHTS = (
+    13.5,   # one-row-height
+    25.5,   # two-row-height
+    25.5,
+    25.5,
+    13.5,   # Start / Final / Deposit row
+    33.75,  # Lead Description continuation + MOD Notes start
+    25.5,   # Fin Checklist / Bid Sheets / Pictures
+    13.5,   # Dispo
+    13.5,   # Call 1
+    16.5,   # Call 2
+    30.0,   # 90 Min / Want
+)
+
 PRODUCT_COLORS = (
     ('roofing', 'Roofing', '#00B0F0'),
     ('siding', 'Siding', '#92D050'),
@@ -28,6 +57,27 @@ PRODUCT_COLORS = (
     ('walk-in tubs', 'Walk-In Tubs', '#FF69B4'),
     ('solar', 'Solar', '#FFF200'),
 )
+
+
+class _PowerQuestions(Flowable):
+    """Match the narrow two-line Visualforce label plus unchecked box."""
+
+    def wrap(self, availWidth, availHeight):
+        self.width = availWidth
+        self.height = 20
+        return availWidth, self.height
+
+    def draw(self):
+        canv = self.canv
+        canv.setFillColor(colors.black)
+        canv.setStrokeColor(colors.HexColor('#d9d9d9'))
+        canv.setLineWidth(0.5)
+        canv.setFont('Times-Bold', 9)
+        canv.drawString(0, 11, 'Power')
+        canv.drawString(0, 1, 'Questions')
+        label_width = stringWidth('Questions', 'Times-Bold', 9)
+        box_x = min(label_width + 3, max(0, self.width - 6))
+        canv.rect(box_x, 2, 5, 5, stroke=1, fill=0)
 
 
 def _p(style, label, value=''):
@@ -57,83 +107,87 @@ def _canvass(style, value, color_code):
     return Paragraph('<b>Canvass Set By: </b>' + value, style)
 
 
-def _mod_table(record, color_code, available_width):
+def _mod_table(record, color_code):
     style = ParagraphStyle(
         'mod-cell',
-        fontName='Helvetica',
+        fontName='Times-Roman',
         fontSize=9,
         leading=10,
         textColor=colors.black,
         spaceAfter=0,
         spaceBefore=0,
     )
-    rows = 13
-    data = [['' for _ in range(12)] for _ in range(rows)]
 
+    rows = len(VISUALFORCE_ROW_HEIGHTS)
+    data = [['' for _ in range(VISUALFORCE_COLUMNS)] for _ in range(rows)]
+
+    # Row 1: resolved by Salesforce's PDF renderer as 3 / 4 / 3 columns.
     data[0][0] = _p(style, 'Work Order Number: ', record.work_order_number)
-    data[0][4] = _p(style, 'Local Scheduled Start Time: ', record.local_scheduled_start_time)
-    data[0][8] = _canvass(style, record.canvass_set_by, color_code)
+    data[0][3] = _p(style, 'Local Scheduled Start Time: ', record.local_scheduled_start_time)
+    data[0][7] = _canvass(style, record.canvass_set_by, color_code)
 
+    # Row 2: 3 / 4 / 2 / 1.
     data[1][0] = _p(style, 'Lead Name: ', record.lead_name)
-    data[1][4] = _p(style, 'Address: ', record.address)
-    data[1][8] = _p(style, 'Phone: ', record.phone)
-    data[1][10] = _p(style, 'Power Questions ', '[ ]')
+    data[1][3] = _p(style, 'Address: ', record.address)
+    data[1][7] = _p(style, 'Phone: ', record.phone)
+    data[1][9] = _PowerQuestions()
 
+    # Row 3: 2 / 5 / 2 / 1.
     data[2][0] = _p(style, 'Scheduled Start: ', record.scheduled_start)
-    data[2][3] = _p(
+    data[2][2] = _p(
         style,
         'Assigned Service Resource: ',
         ', '.join(record.assigned_service_resources),
     )
-    data[2][8] = _p(style, 'Set By: ', record.set_by)
-    data[2][10] = _p(style, 'T Close:')
+    data[2][7] = _p(style, 'Set By: ', record.set_by)
+    data[2][9] = _p(style, 'T Close:')
 
+    # Row 4: 2 / 3 / 2 / 2 / 1.
     data[3][0] = _p(style, 'Work Type: ', record.work_type)
-    data[3][3] = _product(style, record.product_interest, color_code)
-    data[3][6] = _p(style, 'Source: ', record.source)
-    data[3][8] = _p(style, 'Sub Source: ', record.sub_source)
-    data[3][10] = _p(style, 'Hover / Flir:')
+    data[3][2] = _product(style, record.product_interest, color_code)
+    data[3][5] = _p(style, 'Source: ', record.source)
+    data[3][7] = _p(style, 'Sub Source: ', record.sub_source)
+    data[3][9] = _p(style, 'Hover / Flir:')
 
+    # Lower worksheet.
     data[4][0] = _p(style, 'Lead Description: ', record.lead_description)
-    data[4][5] = _p(style, 'Start Price:')
-    data[4][7] = _p(style, 'Final Price:')
-    data[4][9] = _p(style, 'Deposit/Payment:')
+    data[4][4] = _p(style, 'Start Price:')
+    data[4][6] = _p(style, 'Final Price:')
+    data[4][8] = _p(style, 'Deposit/Payment:')
+    data[5][4] = _p(style, 'MOD Notes:')
 
-    data[5][5] = _p(style, 'MOD Notes:')
-    data[7][0] = _p(style, 'Fin Checklist')
-    data[7][2] = _p(style, 'Bid Sheets')
-    data[7][4] = _p(style, 'Pictures')
-    data[8][0] = _p(style, 'Dispo:')
-    data[9][0] = _p(style, 'Call 1:')
-    data[9][2] = _p(style, 'Need:')
-    data[10][0] = _p(style, 'Call 2:')
-    data[11][0] = _p(style, '90 Min:')
-    data[11][2] = _p(style, 'Want:')
+    data[6][0] = _p(style, 'Fin Checklist')
+    data[6][1] = _p(style, 'Bid Sheets')
+    data[6][3] = _p(style, 'Pictures')
+    data[7][0] = _p(style, 'Dispo:')
+    data[8][0] = _p(style, 'Call 1:')
+    data[8][1] = _p(style, 'Need:')
+    data[9][0] = _p(style, 'Call 2:')
+    data[10][0] = _p(style, '90 Min:')
+    data[10][1] = _p(style, 'Want:')
 
-    col_widths = [available_width / 12.0] * 12
-    # Visualforce uses 12px cell text and the explicit row-height helper
-    # classes shown in the original MOD Sheet. 96dpi CSS pixels convert to
-    # 0.75 PDF points.
-    row_heights = [
-        10.5, 22.5, 22.5, 22.5, 10.5, 24.75, 9,
-        22.5, 10.5, 10.5, 10.5, 10.5, 9,
-    ]
-    table = Table(data, colWidths=col_widths, rowHeights=row_heights)
+    col_widths = [VISUALFORCE_TABLE_WIDTH / VISUALFORCE_COLUMNS] * VISUALFORCE_COLUMNS
+    table = Table(
+        data,
+        colWidths=col_widths,
+        rowHeights=list(VISUALFORCE_ROW_HEIGHTS),
+        hAlign='CENTER',
+    )
+
     spans = [
-        ((0, 0), (3, 0)), ((4, 0), (7, 0)), ((8, 0), (11, 0)),
-        ((0, 1), (3, 1)), ((4, 1), (7, 1)), ((8, 1), (9, 1)), ((10, 1), (11, 1)),
-        ((0, 2), (2, 2)), ((3, 2), (7, 2)), ((8, 2), (9, 2)), ((10, 2), (11, 2)),
-        ((0, 3), (2, 3)), ((3, 3), (5, 3)), ((6, 3), (7, 3)), ((8, 3), (9, 3)), ((10, 3), (11, 3)),
-        ((0, 4), (4, 6)),
-        ((5, 4), (6, 4)), ((7, 4), (8, 4)), ((9, 4), (11, 4)),
-        ((5, 5), (11, 12)),
-        ((0, 7), (1, 7)), ((2, 7), (3, 7)),
-        ((0, 8), (4, 8)),
-        ((0, 9), (1, 9)), ((2, 9), (4, 10)),
-        ((0, 10), (1, 10)),
-        ((0, 11), (1, 11)), ((2, 11), (4, 12)),
-        ((0, 12), (1, 12)),
+        ((0, 0), (2, 0)), ((3, 0), (6, 0)), ((7, 0), (9, 0)),
+        ((0, 1), (2, 1)), ((3, 1), (6, 1)), ((7, 1), (8, 1)),
+        ((0, 2), (1, 2)), ((2, 2), (6, 2)), ((7, 2), (8, 2)),
+        ((0, 3), (1, 3)), ((2, 3), (4, 3)), ((5, 3), (6, 3)), ((7, 3), (8, 3)),
+        ((0, 4), (3, 5)),
+        ((4, 4), (5, 4)), ((6, 4), (7, 4)), ((8, 4), (9, 4)),
+        ((4, 5), (9, 10)),
+        ((1, 6), (2, 6)),
+        ((0, 7), (3, 7)),
+        ((1, 8), (3, 9)),
+        ((1, 10), (3, 10)),
     ]
+
     commands = [
         ('GRID', (0, 0), (-1, -1), 1.34, colors.black),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
@@ -159,15 +213,19 @@ def render_mod_pdf(records, *, color_code=False):
         title='MOD Sheet',
         author='Stats Salesforce Sandbox',
     )
-    available_width = letter[0] - PAGE_MARGIN_X * 2
     story = []
     records = tuple(records)
     if not records:
-        style = ParagraphStyle('empty', fontName='Helvetica', fontSize=11, leading=14)
+        style = ParagraphStyle(
+            'empty',
+            fontName='Times-Roman',
+            fontSize=11,
+            leading=14,
+        )
         story.append(Paragraph('No appointments matched the selected MOD Sheet filters.', style))
     else:
         for index, record in enumerate(records):
-            block = [_mod_table(record, color_code, available_width)]
+            block = [_mod_table(record, color_code)]
             if index + 1 < len(records):
                 block.append(Spacer(1, 18))
             story.append(KeepTogether(block))
