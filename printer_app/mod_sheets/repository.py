@@ -83,7 +83,17 @@ class ModSheetAutomationRepository:
         for day, value in sorted(self._reference_outbox().items()):
             if value.get('delivered_at') is not None or not value.get('job_id'):
                 continue
-            records = tuple(ModSheetRecord(**record) for record in value.get('records', ()))
+            records = tuple(
+                ModSheetRecord(
+                    **dict(
+                        record,
+                        assigned_service_resources=tuple(
+                            record.get('assigned_service_resources', ())
+                        ),
+                    )
+                )
+                for record in value.get('records', ())
+            )
             result.append(dict(value, day=day, records=records))
         return result
 
