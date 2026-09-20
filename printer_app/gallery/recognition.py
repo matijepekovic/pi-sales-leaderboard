@@ -199,15 +199,30 @@ def template_ocr_canvas(source, registration):
         bottom -= edge_y
         if right <= left or bottom <= top:
             continue
-        crop = source[top:bottom, left:right].copy()
 
-        ll, lt, lr, lb = _clamp_box(map_box(registration, field.label_box), width, height)
-        ll = max(left, ll - label_pad_x) - left
-        lr = min(right, lr + label_pad_x) - left
-        lt = max(top, lt - label_pad_y) - top
-        lb = min(bottom, lb + label_pad_y) - top
-        if lr > ll and lb > lt:
-            crop[lt:lb, ll:lr] = 255
+        label_left, label_top, label_right, label_bottom = _clamp_box(
+            map_box(registration, field.label_box), width, height
+        )
+        if field.lead:
+            # Lead Name is a single printed value immediately to the right of its
+            # fixed label. Do not send the whole cell to OCR and then try to hide
+            # the label/grid afterward: crop to the actual value lane up front.
+            # This removes label remnants and top/left grid artifacts that real
+            # scans were turning into prefixes such as quotes, underscores and TM.
+            value_left = max(left, label_right)
+            value_top = max(top, label_top - label_pad_y)
+            value_bottom = min(bottom, label_bottom + label_pad_y)
+            if right <= value_left or value_bottom <= value_top:
+                continue
+            crop = source[value_top:value_bottom, value_left:right].copy()
+        else:
+            crop = source[top:bottom, left:right].copy()
+            ll = max(left, label_left - label_pad_x) - left
+            lr = min(right, label_right + label_pad_x) - left
+            lt = max(top, label_top - label_pad_y) - top
+            lb = min(bottom, label_bottom + label_pad_y) - top
+            if lr > ll and lb > lt:
+                crop[lt:lb, ll:lr] = 255
 
         box = _meaningful_bbox(crop, minimum_area)
         if box is None:
