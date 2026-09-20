@@ -66,6 +66,46 @@ def test_template_ocr_packs_only_populated_variable_fields():
     assert 'mod_notes' not in keys  # blank handwriting area never enters OCR
 
 
+def test_lead_name_ocr_receives_only_value_lane_not_label_or_grid_residue():
+    cv2 = pytest.importorskip('cv2')
+    np = pytest.importorskip('numpy')
+    from printer_app.gallery.form_template import FormRegistration, TEMPLATE_FIELDS, map_box
+    from printer_app.gallery.recognition import _meaningful_bbox, template_ocr_canvas
+
+    image = np.full((809, 1942), 255, np.uint8)
+    registration = FormRegistration(1.0, 26, 1916, 19, 787)
+    lead = next(field for field in TEMPLATE_FIELDS if field.lead)
+    left, top, right, bottom = map_box(registration, lead.box)
+    _, label_top, label_right, label_bottom = map_box(registration, lead.label_box)
+
+    # Simulate scan residue from the printed label/top-left grid. This is outside
+    # the label mask used by the old whole-cell approach, but it is not customer
+    # data and must never enter name OCR.
+    cv2.rectangle(image, (left + 45, top + 8), (left + 90, top + 13), 0, -1)
+
+    # Simulate the actual printed lead-name value immediately after the label.
+    value_left = label_right + 6
+    value_top = label_top + 3
+    cv2.rectangle(
+        image,
+        (value_left, value_top),
+        (min(right - 18, value_left + 70), min(label_bottom + 2, bottom - 8)),
+        0,
+        -1,
+    )
+
+    canvas, segments = template_ocr_canvas(image, registration)
+    lead_segment = next((segment for segment in segments if segment[0] == 'lead_name'), None)
+    assert lead_segment is not None
+    _, seg_top, seg_bottom = lead_segment
+    bbox = _meaningful_bbox(canvas[seg_top:seg_bottom], minimum_area=1)
+
+    assert bbox is not None
+    # Only the value block remains. If left-side label/grid residue leaked into
+    # this OCR segment, the bounding box would span far more than this.
+    assert bbox[2] - bbox[0] < 100
+
+
 def test_template_search_contract_keeps_fields_lead_date_and_each_cards_time():
     from printer_app.gallery.recognition import _template_document_date, _template_search_text
 
