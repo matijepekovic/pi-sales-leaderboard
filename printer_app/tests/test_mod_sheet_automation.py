@@ -374,6 +374,7 @@ def test_mod_sheet_automation_has_no_salesforce_field_structures():
     assert 'Salesforce' not in runtime
     assert '.sf-' not in styles
     assert worker.index('engine.queue.immediate_jobs(now)') < worker.index('engine.tick()')
+    assert 'captured.print_options' not in worker
 
 
 def test_mod_settings_page_has_separate_print_settings_and_immediate_test():
