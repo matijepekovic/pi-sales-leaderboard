@@ -28,6 +28,8 @@ jobs:
           python -m pytest \
             printer_app/tests/test_salesforce_sandbox.py \
             printer_app/tests/test_mod_sheet_automation.py \
+            printer_app/tests/test_core.py::test_printer_one_sided_uses_verified_konica_print_type \
+            printer_app/tests/test_core.py::test_printer_does_not_invent_konica_binding_for_two_sided_modes \
             printer_app/tests/test_core.py::test_printer_high_priority_maps_to_cups_priority_100 \
             printer_app/tests/test_core.py::test_immediate_generated_job_uses_high_printer_priority \
             -v

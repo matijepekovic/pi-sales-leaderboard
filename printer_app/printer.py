@@ -103,6 +103,11 @@ class Printer:
             command += ['-o', 'print-color-mode=' + options.color]
         if options.sides != 'default':
             command += ['-o', 'sides=' + options.sides]
+            if options.sides == 'one-sided':
+                # The installed Konica PPD exposes KMDuplex/Print Type with
+                # values 1Sided and 2Sided, defaulting to 2Sided. Keep this
+                # vendor-specific translation inside the printer adapter.
+                command += ['-o', 'KMDuplex=1Sided']
         if received_pdf and options.pdf_scaling != 'default':
             command += ['-o', 'print-scaling=' + ('fit' if options.pdf_scaling == 'fit' else 'none'),
                         '-o', 'fit-to-page=' + ('true' if options.pdf_scaling == 'fit' else 'false')]
