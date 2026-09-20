@@ -28,6 +28,11 @@ from .retention import RetentionService
 from .retention_repository import RetentionRepository
 from .retention_files import RetentionFiles
 from .gmail_cleanup import GmailCleanup
+from .mod_sheets.pdf_renderer import render_mod_pdf
+from .mod_sheets.repository import ModSheetAutomationRepository
+from .mod_sheets.service import DailyModSheetService
+from .salesforce_sandbox.adapter import SalesforceCliAdapter
+from .salesforce_sandbox.service import SalesforceSandboxService
 
 log = logging.getLogger(__name__)
 
@@ -150,7 +155,8 @@ class Engine:
                     try:
                         cups_id, result, command = self.printer.hold(Path(job['printable']), attempt['token'],
                             self.job_options(job).error_sheet() if job['is_error'] else self.job_options(job),
-                            received_pdf=bool(job['is_error']) or job['group_key'] == 'pdf')
+                            received_pdf=bool(job['is_error']) or job['group_key'] == 'pdf'
+                            or job['group_key'].startswith('pdf:'))
                     except SubmissionRejected as exc:
                         self.db.execute("UPDATE print_attempts SET state='FAILED',result=?,updated=? WHERE id=?",
                                         (str(exc), time.time(), aid))
@@ -285,6 +291,22 @@ def main():
 
         retention = make_retention(cfg)
 
+        def make_daily_mod_sheets(captured):
+            source = SalesforceSandboxService(
+                SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')
+            )
+            return DailyModSheetService(
+                ModSheetAutomationRepository(db),
+                source,
+                PrintQueueRepository(db),
+                render_mod_pdf,
+                captured.data_dir,
+                captured.timezone,
+                captured.print_options,
+            )
+
+        daily_mod_sheets = make_daily_mod_sheets(cfg)
+
         def heartbeat():
             while not stop.is_set():
                 try:
@@ -294,12 +316,11 @@ def main():
                 stop.wait(5)
         thread = threading.Thread(target=heartbeat, daemon=True, name='printer-heartbeat')
         thread.start()
-        # One collection/cleanup task and one preparation task may run concurrently.
-        # Cleanup never races an IMAP download. Its network work cannot block CUPS.
-        # Only this main loop can submit/release CUPS jobs, and the existing
-        # process lock still prevents a second worker from doing the same work.
-        background = ThreadPoolExecutor(max_workers=2, thread_name_prefix='printer-work')
-        polling, preparing, cleaning = None, None, None
+        # Collection, cleanup, preparation and the daily MOD source request may
+        # overlap, but only this main loop submits/releases CUPS jobs.
+        # The process lock still prevents a second worker from double-printing.
+        background = ThreadPoolExecutor(max_workers=3, thread_name_prefix='printer-work')
+        polling, preparing, cleaning, daily_mod_task = None, None, None, None
         next_poll, next_status = 0, 0
         active_revision = None
         log.info('Independent printer worker started, queue=%s', cfg.queue)
@@ -318,6 +339,7 @@ def main():
                                 engine = Engine(cfg, db, stop=stop)
                                 gmail = GmailClient(cfg, db, stop=stop, gallery=GalleryInbox(cfg.data_dir, cfg.gallery))
                                 retention = make_retention(cfg)
+                                daily_mod_sheets = make_daily_mod_sheets(cfg)
                                 next_poll, next_status = 0, 0
                             active_revision = revision
                             db.set('settings_revision', revision)
@@ -352,6 +374,11 @@ def main():
                     if cleaning is not None and cleaning.done():
                         finished, cleaning = cleaning, None
                         finished.result()
+                    if daily_mod_task is not None and daily_mod_task.done():
+                        finished, daily_mod_task = daily_mod_task, None
+                        finished.result()
+                    if daily_mod_task is None and daily_mod_sheets.due(now):
+                        daily_mod_task = background.submit(daily_mod_sheets.run_due)
                     if cleaning is None and polling is None and retention.due(now):
                         cleaning = background.submit(retention.run)
                     paused = db.get('paused', False)
