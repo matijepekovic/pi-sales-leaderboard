@@ -20,19 +20,41 @@ def blueprint(service):
     def page():
         return render_template('salesforce_sandbox.html', snapshot=service.portal())
 
-    @bp.get('/salesforce-sandbox/api/metadata')
-    def metadata():
-        snapshot = service.metadata()
+    @bp.get('/salesforce-sandbox/api/connection')
+    def connection():
+        snapshot = service.connection()
         if snapshot.error:
-            return jsonify(ok=False, error=snapshot.error), 503
+            return jsonify(
+                ok=False,
+                error=snapshot.error,
+                trace=list(snapshot.trace),
+            ), 503
         return jsonify(
             ok=True,
             username=snapshot.status.username,
             alias=snapshot.status.alias,
-            fields={
-                key: list(value.values)
-                for key, value in snapshot.fields.items()
+            instance_url=snapshot.status.instance_url,
+            trace=list(snapshot.trace),
+        )
+
+    @bp.get('/salesforce-sandbox/api/field/<key>')
+    def field(key):
+        snapshot = service.field(key)
+        if snapshot.error:
+            return jsonify(
+                ok=False,
+                error=snapshot.error,
+                trace=list(snapshot.trace),
+            ), 503
+        return jsonify(
+            ok=True,
+            key=key,
+            field={
+                'label': snapshot.field.label,
+                'path': snapshot.field.path,
+                'values': list(snapshot.field.values),
             },
+            trace=list(snapshot.trace),
         )
 
     @bp.get('/salesforce-sandbox/mod-sheet')
