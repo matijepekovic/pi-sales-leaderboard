@@ -8,7 +8,7 @@ from printer_app.mod_sheets.policy import (
     ModSheetAutomationSettings,
 )
 from printer_app.mod_sheets.repository import ModSheetAutomationRepository
-from printer_app.mod_sheets.service import DailyModSheetService
+from printer_app.mod_sheets.service import DailyModSheetService, ModSheetSettingsService
 from printer_app.print_options import PrintOptions
 from printer_app.print_queue_repository import PrintQueueRepository
 
@@ -180,6 +180,33 @@ def test_generated_pdf_queue_identity_is_durable_and_not_duplicated(tmp_path):
     assert job['status'] == 'READY'
     assert job['page_count'] == 1
     assert db.job_print_settings(first) == options
+
+
+
+def test_settings_status_shows_due_now_after_seven_until_today_is_handled(tmp_path):
+    db = Database(tmp_path / 'printer.db')
+    repository = ModSheetAutomationRepository(db)
+    queue = FakeQueue()
+    service = ModSheetSettingsService(repository, queue)
+    repository.save_settings(ModSheetAutomationSettings(market_segment='Olympia'))
+
+    snapshot = service.snapshot(
+        'America/Los_Angeles',
+        _stamp(2026, 9, 21, 7, 5),
+    )
+    assert snapshot['due_now'] is True
+
+    repository.save_state({
+        'day': '2026-09-21',
+        'status': 'no_appointments',
+        'message': 'No appointments',
+    })
+    handled = service.snapshot(
+        'America/Los_Angeles',
+        _stamp(2026, 9, 21, 7, 6),
+    )
+    assert handled['due_now'] is False
+    assert handled['state']['message'] == 'No appointments'
 
 
 def test_mod_settings_page_is_separate_and_dates_are_not_persisted():
