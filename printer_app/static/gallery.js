@@ -272,11 +272,16 @@ import { GalleryOffline } from './gallery_offline.js';
     });
     cards.forEach(({node, item}) => node.setAttribute('aria-pressed', String(item.id === selected?.id)));
   }
+  function cardSubtitle(item) {
+    const base = `Page ${item.page} · work order ${item.part}`;
+    return item.assigned_service_resource ? base + ` · Rep: ${item.assigned_service_resource}` : base;
+  }
   function updateCard(item) {
     const card = cards.get(item.id);
     if (!card) return;
     Object.assign(card.item, item);
     card.name.textContent = cardName(item);
+    card.subtitle.textContent = cardSubtitle(item);
     const count = item.notes ? item.notes.length : item.notes_count;
     if (count !== undefined) card.badge.textContent = `${count} ${count === 1 ? 'note' : 'notes'}`;
   }
@@ -303,11 +308,12 @@ import { GalleryOffline } from './gallery_offline.js';
     image.alt = `${cardName(item)} — complete work order, ${dateLabel(item.document_date)}`;
     const meta = text('span', '', 'gallery-card-meta');
     const caption = text('span', ''); const name = text('span', cardName(item), 'gallery-card-name');
-    caption.append(name, text('span', `Page ${item.page} · work order ${item.part}`, 'gallery-card-subtitle'));
+    const subtitle = text('span', cardSubtitle(item), 'gallery-card-subtitle');
+    caption.append(name, subtitle);
     const badge = text('span', `${item.notes_count} ${item.notes_count === 1 ? 'note' : 'notes'}`, 'gallery-card-badge');
     meta.append(caption, badge); node.append(image, meta);
     node.addEventListener('click', () => openViewer(cards.get(item.id).item));
-    cards.set(item.id, {node, item, name, badge}); groups.get(key).append(node);
+    cards.set(item.id, {node, item, name, subtitle, badge}); groups.get(key).append(node);
   }
   async function load(reset = true) {
     if (!reset && loading) return;
@@ -392,7 +398,8 @@ import { GalleryOffline } from './gallery_offline.js';
     el('galleryTitle').textContent = cardName(item);
     if (item._offline_image_url && el('galleryViewer').open) el('galleryFull').src = item._offline_image_url;
     el('galleryViewerDate').textContent = dateLabel(item.document_date);
-    el('gallerySource').textContent = `${item.filename} · page ${item.page}, work order ${item.part}`;
+    el('gallerySource').textContent = `${item.filename} · page ${item.page}, work order ${item.part}` +
+      (item.assigned_service_resource ? ` · Rep: ${item.assigned_service_resource}` : '');
     el('galleryNotesContext').textContent = `${cardName(item)} · ${dateLabel(item.document_date)}`;
     const notes = item.notes.map(note => {
       const article = text('article', ''); const at = new Date(note.created * 1000);
@@ -436,7 +443,8 @@ import { GalleryOffline } from './gallery_offline.js';
     if (record) navigation.save();
     selected = item; actions(); el('galleryViewerMessage').textContent = '';
     el('galleryTitle').textContent = cardName(item); el('galleryViewerDate').textContent = dateLabel(item.document_date);
-    el('gallerySource').textContent = `${item.filename} · page ${item.page}, work order ${item.part}`;
+    el('gallerySource').textContent = `${item.filename} · page ${item.page}, work order ${item.part}` +
+      (item.assigned_service_resource ? ` · Rep: ${item.assigned_service_resource}` : '');
     el('galleryFull').src = item._offline_image_url || '/gallery/image/' + item.id;
     showDialog('galleryViewer', false); el('galleryViewer').scrollTop = 0;
     el('galleryViewer').querySelector('[data-close]').focus({preventScroll:true});
