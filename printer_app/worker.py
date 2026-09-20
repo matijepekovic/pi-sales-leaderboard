@@ -1,4 +1,4 @@
-"""The only Gmail scheduler and print submitter. Web requests only enqueue commands."""
+"""The only background scheduler and print submitter. Web requests only enqueue commands."""
 from __future__ import annotations
 
 import fcntl
