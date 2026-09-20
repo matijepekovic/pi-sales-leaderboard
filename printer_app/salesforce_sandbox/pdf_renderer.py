@@ -27,6 +27,9 @@ from reportlab.platypus import (
 
 PAGE_MARGIN_X = 0.5 * cm
 PAGE_MARGIN_Y = 0.55 * cm
+PAGE_NUMBER_X = letter[0] - PAGE_MARGIN_X
+PAGE_NUMBER_Y = 0.22 * cm
+PAGE_NUMBER_FONT_SIZE = 8
 
 # Measured from the reference Salesforce Visualforce PDF supplied for parity.
 # The Visualforce renderer does not end up using twelve equal visible columns;
@@ -296,6 +299,19 @@ def _mod_table(record, color_code):
     return table
 
 
+def _draw_page_number(canvas, doc):
+    """Draw the current page number in the bottom-right corner."""
+    canvas.saveState()
+    canvas.setFillColor(colors.black)
+    canvas.setFont('Times-Roman', PAGE_NUMBER_FONT_SIZE)
+    canvas.drawRightString(
+        PAGE_NUMBER_X,
+        PAGE_NUMBER_Y,
+        str(canvas.getPageNumber()),
+    )
+    canvas.restoreState()
+
+
 def render_mod_pdf(records, *, color_code=False):
     stream = BytesIO()
     doc = SimpleDocTemplate(
@@ -326,5 +342,9 @@ def render_mod_pdf(records, *, color_code=False):
                     story.append(PageBreak())
                 else:
                     story.append(Spacer(1, 18))
-    doc.build(story)
+    doc.build(
+        story,
+        onFirstPage=_draw_page_number,
+        onLaterPages=_draw_page_number,
+    )
     return stream.getvalue()
