@@ -57,12 +57,13 @@ class FakePrinter:
             raise PrinterError('CUPS CONNECTION FAILED')
         return [dict(value, **{'job-id': key}) for key, value in self.jobs.items() if value['job-name'] == token]
 
-    def hold(self, path, token, options, *, received_pdf=False):
+    def hold(self, path, token, options, *, received_pdf=False, high_priority=False):
         if self.fail_hold:
             self.fail_hold = False
             raise SubmissionRejected('PRINTER SUBMISSION FAILED')
         jid = len(self.jobs) + 1
-        self.jobs[jid] = {'job-name': token, 'job-state': 4, 'path': str(path), 'options': options, 'received_pdf': received_pdf}
+        self.jobs[jid] = {'job-name': token, 'job-state': 4, 'path': str(path), 'options': options,
+                          'received_pdf': received_pdf, 'high_priority': high_priority}
         return jid, f'request id is konicaa-{jid} (1 file(s))', ['lp', '-H', 'hold', '--', str(path)]
 
     def attributes(self, jid):
@@ -200,6 +201,20 @@ def test_completed_attachment_restart_does_not_reprint(rig, tmp_path):
     Engine(cfg, Database(cfg.db_path), printer).process_attachment(attachment)
     complete(rig)
     assert len(printer.printed) == 1 and len(db.recent()) == 1
+
+
+def test_immediate_generated_job_uses_high_printer_priority(rig, tmp_path):
+    _, db, printer, engine = rig
+    target = pdf(tmp_path / 'immediate.pdf')
+    jid = db.create_job(None, 'pdf:test-immediate', PrintOptions().snapshot())
+    db.execute(
+        "UPDATE jobs SET printable=?,page_count=1,status='READY',updated=? WHERE id=?",
+        (str(target), time.time(), jid),
+    )
+
+    engine.advance(db.job(jid), immediate=True)
+
+    assert printer.jobs[1]['high_priority'] is True
 
 
 def test_crash_after_cups_hold_before_sqlite_receipt(rig, tmp_path):
