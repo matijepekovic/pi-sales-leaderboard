@@ -125,7 +125,7 @@ Error: spawn secret-tool ENOENT
 
     adapter = SalesforceCliAdapter(runner=runner, executable='/usr/bin/sf')
     with pytest.raises(SalesforceAdapterError) as exc:
-        adapter.status('work')
+        adapter.status()
     message = str(exc.value)
     assert 'node:events:505' not in message
     assert 'Error: spawn secret-tool ENOENT' in message
@@ -135,7 +135,7 @@ Error: spawn secret-tool ENOENT
     assert '[REDACTED]' in message
 
 
-def test_printer_service_uses_scoreboard_sf_work_login():
+def test_printer_service_uses_salesforce_cli_default_org():
     calls = []
 
     def runner(command, **kwargs):
@@ -151,8 +151,7 @@ def test_printer_service_uses_scoreboard_sf_work_login():
     status = adapter.status()
     assert status.connected
     assert calls == [[
-        '/usr/bin/sf', 'org', 'display',
-        '--target-org', 'work', '--json'
+        '/usr/bin/sf', 'org', 'display', '--json'
     ]]
 
     root = Path(__file__).resolve().parents[1]
@@ -161,18 +160,17 @@ def test_printer_service_uses_scoreboard_sf_work_login():
     assert 'User=scoreboard' in unit  # existing Printer service identity is unchanged
     assert 'Environment=HOME=/home/scoreboard' not in unit
     assert '/home/scoreboard/.sf' not in unit
-    assert "SalesforceCliAdapter(executable='/usr/bin/sf', default_org='work')" in app
+    assert "SalesforceCliAdapter(executable='/usr/bin/sf')" in app
+    assert "default_org" not in app
 
 
 def test_cli_adapter_recreates_portal_controls_and_mod_fields_read_only():
     calls = []
     adapter = SalesforceCliAdapter(runner=_salesforce_runner(calls), executable='/fake/sf')
 
-    orgs = adapter.orgs()
-    status = adapter.status('office')
-    fields = adapter.portal_fields('office')
+    status = adapter.status()
+    fields = adapter.portal_fields()
     records = adapter.mod_sheets(
-        'office',
         start_date='9/19/2026',
         end_date='9/19/2026',
         market_segment='Retail',
@@ -182,9 +180,9 @@ def test_cli_adapter_recreates_portal_controls_and_mod_fields_read_only():
         remove_unconfirmed=True,
     )
 
-    assert orgs[0]['value'] == 'work'
     assert status.connected and status.username == 'rep@example.test'
     assert 'MUST_NOT_ESCAPE' not in repr(status)
+    assert all('--target-org' not in call for call in calls)
     assert fields['market_segment'].values == ('Retail',)
     assert fields['product_category'].values == ('Windows',)
     assert fields['source_type'].values == ('Canvass',)
@@ -211,13 +209,12 @@ def test_portal_shell_does_not_block_on_salesforce_and_metadata_is_separate():
     )
 
     # Opening the tab must render immediately: no sf subprocess is allowed here.
-    portal = service.portal('office')
+    portal = service.portal()
     assert calls == []
     assert not portal.status.connected
     assert portal.fields == {}
-    assert portal.selected_org == 'office'
 
-    metadata = service.metadata('office')
+    metadata = service.metadata()
     assert metadata.status.connected
     assert metadata.fields['market_segment'].values == ('Retail',)
     assert calls
@@ -225,7 +222,6 @@ def test_portal_shell_does_not_block_on_salesforce_and_metadata_is_separate():
     assert len(describe_calls) == 3
 
     generated = service.generate(
-        'office',
         start_date='9/19/2026',
         end_date='9/19/2026',
         market_segment='Retail',
@@ -243,9 +239,7 @@ def test_portal_shell_does_not_block_on_salesforce_and_metadata_is_separate():
     assert len([call for call in calls if call[1:3] == ['sobject', 'describe']]) == 3
 
     class BrokenAdapter:
-        def orgs(self):
-            return [{'value': 'work', 'label': 'work', 'default': True}]
-        def status(self, target_org=''):
+        def status(self):
             raise SalesforceAdapterError('CLI session unavailable')
 
     broken = SalesforceSandboxService(BrokenAdapter()).metadata()
@@ -286,6 +280,9 @@ def test_templates_recreate_original_portal_generate_contract():
     js = (root / 'static/salesforce_sandbox.js').read_text()
     assert 'AbortController' in js and '20000' in js
     assert 'data-metadata-url' in portal
+    assert 'name="org"' not in portal
+    web = (root / 'salesforce_sandbox/web.py').read_text()
+    assert "request.args.get('org'" not in web
     assert 'Assigned Service Resource:' in renderer
     assert 'color_code' in renderer
     assert 'MOD Notes:' in renderer
