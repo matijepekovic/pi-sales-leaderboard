@@ -8,18 +8,32 @@ from .db import Database
 STATE_KEY = 'print_schedule_state'
 # A completed/ambiguous job is never eligible for automatic reprinting.
 UNFINISHED = "('PREPARING','READY','SUBMITTED','PRINTER ERROR')"
+IMMEDIATE_JOB_PREFIX = 'print-job-now:'
+IMMEDIATE_JOB_STATUSES = ('READY', 'SUBMITTED', 'PRINTER ERROR')
 
 
 class PrintQueueRepository:
     def __init__(self, db: Database):
         self.db = db
 
-    def enqueue_generated_pdf(self, identity: str, path, pages: int, options: dict, now: float) -> tuple[int, bool]:
-        """Queue one already-rendered PDF exactly once for a durable identity."""
+    @staticmethod
+    def _validate_generated_pdf(identity: str, pages: int) -> None:
         if not identity.startswith('pdf:'):
             raise ValueError('Generated PDF identity must use the pdf: namespace.')
         if type(pages) is not int or pages < 1:
             raise ValueError('Generated PDF must contain at least one page.')
+
+    def _enqueue_generated_pdf(
+        self,
+        identity: str,
+        path,
+        pages: int,
+        options: dict,
+        now: float,
+        *,
+        immediate: bool,
+    ) -> tuple[int, bool]:
+        self._validate_generated_pdf(identity, pages)
         path = str(path)
         with self.db.connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
@@ -28,26 +42,77 @@ class PrintQueueRepository:
                 (identity,),
             ).fetchone()
             if existing:
-                return int(existing['id']), False
-            job_id = conn.execute(
-                """INSERT INTO jobs(
-                    attachment_id,group_key,status,printable,page_count,tabloid,next_attempt,created,updated
-                ) VALUES (NULL,?,'READY',?,?,0,0,?,?)""",
-                (identity, path, pages, now, now),
-            ).lastrowid
-            conn.execute(
-                'INSERT INTO meta(key,value) VALUES (?,?)',
-                ('job_print_settings:' + str(job_id), json.dumps(options, sort_keys=True)),
-            )
-            conn.execute(
-                'INSERT INTO outputs(job_id,role,path) VALUES (?,?,?)',
-                (job_id, 'Generated PDF', path),
-            )
-            conn.execute(
-                'INSERT INTO steps(job_id,at,message) VALUES (?,?,?)',
-                (job_id, now, f'Generated PDF queued: {pages} page(s)'),
-            )
-            return int(job_id), True
+                job_id, created = int(existing['id']), False
+            else:
+                job_id = conn.execute(
+                    """INSERT INTO jobs(
+                        attachment_id,group_key,status,printable,page_count,tabloid,next_attempt,created,updated
+                    ) VALUES (NULL,?,'READY',?,?,0,0,?,?)""",
+                    (identity, path, pages, now, now),
+                ).lastrowid
+                conn.execute(
+                    'INSERT INTO meta(key,value) VALUES (?,?)',
+                    ('job_print_settings:' + str(job_id), json.dumps(options, sort_keys=True)),
+                )
+                conn.execute(
+                    'INSERT INTO outputs(job_id,role,path) VALUES (?,?,?)',
+                    (job_id, 'Generated PDF', path),
+                )
+                conn.execute(
+                    'INSERT INTO steps(job_id,at,message) VALUES (?,?,?)',
+                    (job_id, now, f'Generated PDF queued: {pages} page(s)'),
+                )
+                created = True
+
+            if immediate:
+                command = IMMEDIATE_JOB_PREFIX + str(job_id)
+                if not conn.execute('SELECT 1 FROM commands WHERE name=?', (command,)).fetchone():
+                    conn.execute('INSERT INTO commands(name,created) VALUES (?,?)', (command, now))
+                conn.execute(
+                    'INSERT INTO steps(job_id,at,message) VALUES (?,?,?)',
+                    (job_id, now, 'Immediate print requested; this job goes before waiting software-queue jobs.'),
+                )
+            return int(job_id), created
+
+    def enqueue_generated_pdf(self, identity: str, path, pages: int, options: dict, now: float) -> tuple[int, bool]:
+        """Queue one already-rendered PDF exactly once for a durable identity."""
+        return self._enqueue_generated_pdf(
+            identity, path, pages, options, now, immediate=False
+        )
+
+    def enqueue_immediate_generated_pdf(
+        self, identity: str, path, pages: int, options: dict, now: float
+    ) -> tuple[int, bool]:
+        """Queue a generated PDF and mark it for worker-first submission."""
+        return self._enqueue_generated_pdf(
+            identity, path, pages, options, now, immediate=True
+        )
+
+    def immediate_jobs(self, now: float) -> list[dict]:
+        """Return due immediate jobs ahead of normal queue ordering.
+
+        The durable command remains until the job reaches a terminal state, so
+        CUPS reconciliation for this one-off print keeps its front-of-queue behavior.
+        """
+        jobs = []
+        with self.db.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            commands = list(conn.execute(
+                'SELECT id,name FROM commands WHERE name LIKE ? ORDER BY id',
+                (IMMEDIATE_JOB_PREFIX + '%',),
+            ))
+            for command in commands:
+                raw_id = command['name'][len(IMMEDIATE_JOB_PREFIX):]
+                if not raw_id.isdecimal():
+                    conn.execute('DELETE FROM commands WHERE id=?', (command['id'],))
+                    continue
+                job = conn.execute('SELECT * FROM jobs WHERE id=?', (int(raw_id),)).fetchone()
+                if job is None or job['status'] not in IMMEDIATE_JOB_STATUSES:
+                    conn.execute('DELETE FROM commands WHERE id=?', (command['id'],))
+                    continue
+                if float(job['next_attempt'] or 0) <= now:
+                    jobs.append(dict(job))
+            return jobs[:5]
 
     def job_status(self, job_id: int) -> dict | None:
         return self.db.one(
