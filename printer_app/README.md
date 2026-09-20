@@ -75,8 +75,10 @@ it is not a guarantee that all paper has finished printing at that exact second.
 
 **MOD Sheets** is the manual Manager On Duty page. **MOD Settings** is a
 separate permanent configuration page for automatic printing. Save the market,
-product/source filters and removal/color choices there once; the automatic job
-uses those saved choices without persisting either date field.
+product/source filters, removal/color choices and MOD-only paper/orientation/
+color/sides/copies/PDF-scaling options there once. These print settings belong
+only to MOD Sheets and never reuse the normal report print settings. The
+automatic job uses the saved choices without persisting either date field.
 
 The worker runs the automatic MOD job **Monday through Friday at 7:00 AM** in
 `PRINTER_TIMEZONE`. Start Date and End Date are always that current local day.
@@ -92,6 +94,14 @@ queue, whose normal CUPS receipt/recovery behavior owns printer failures.
 Generated MOD PDFs are stored under
 `~/.local/share/printer-app/mod-sheets/`. Daily queue identity is durable, so a
 worker restart cannot enqueue a second automatic MOD PDF for the same date.
+
+**Test Print Now** uses the values currently visible on MOD Settings, including
+unsaved filters and MOD-only print options. It does not save them and does not
+mark the 7:00 AM automatic run complete. The generated test PDF is handed to the
+same durable CUPS receipt/recovery path, but the worker submits it before waiting
+software-queue jobs and gives it CUPS priority 100. That moves it ahead of
+lower-priority queued jobs without interrupting a job already printing.
+
 Source-specific Salesforce CLI/SOQL behavior remains inside the Salesforce
 adapter; MOD scheduling, settings, rendering and workflow use normalized
 contracts under `printer_app/mod_sheets/`.
