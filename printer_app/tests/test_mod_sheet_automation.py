@@ -10,9 +10,11 @@ from printer_app.mod_sheets.policy import (
 from printer_app.mod_sheets.repository import ModSheetAutomationRepository, SETTINGS_KEY
 from printer_app.mod_sheets.service import (
     DailyModSheetService,
+    ModSheetReferenceDeliveryService,
     ModSheetSettingsService,
     ModSheetTestPrintService,
 )
+from printer_app.mod_sheet_contract import ModSheetRecord
 from printer_app.print_options import PrintOptions
 from printer_app.print_queue_repository import PrintQueueRepository
 
@@ -43,6 +45,19 @@ class FakeSource:
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+
+class FakeReferenceSink:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.published = []
+
+    def publish(self, day, kind, records, captured):
+        if self.fail:
+            raise RuntimeError('reference sink unavailable')
+        records = tuple(records)
+        self.published.append((day, kind, records, captured))
+        return {'day': day, 'kind': kind, 'count': len(records), 'enriched': 0}
 
 
 class FakeQueue:
@@ -114,7 +129,10 @@ def test_daily_schedule_is_weekdays_at_seven_and_catches_up_same_day():
 
 def test_daily_run_uses_current_day_and_mod_owned_print_settings(tmp_path):
     clock = MutableClock(_stamp(2026, 9, 21, 7, 0))
-    source = FakeSource([('record-1', 'record-2', 'record-3', 'record-4')])
+    source = FakeSource([tuple(
+        ModSheetRecord(source_id=f'source-{index}', work_order_number=f'{index:04d}')
+        for index in range(1, 5)
+    )])
     service, repository, queue = _service(tmp_path, source, clock)
 
     state = service.run_due()
@@ -327,6 +345,121 @@ def test_immediate_generated_pdf_is_selected_before_older_normal_queue_jobs(tmp_
         (102.0, 102.0, immediate_id),
     )
     assert queue.immediate_jobs(102.0) == []
+
+
+def test_morning_reference_is_delivered_only_after_mod_job_prints(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 21, 7, 0))
+    records = (
+        ModSheetRecord(source_id='source-1', work_order_number='0001', lead_name='Jordan'),
+    )
+    source = FakeSource([records])
+    daily, repository, queue = _service(tmp_path, source, clock)
+    state = daily.run_due()
+    sink = FakeReferenceSink()
+    delivery = ModSheetReferenceDeliveryService(
+        repository,
+        FakeSource([]),
+        queue,
+        sink,
+        'America/Los_Angeles',
+        clock=clock,
+    )
+
+    queue.statuses[state['job_id']] = {'id': state['job_id'], 'status': 'READY'}
+    assert delivery.deliver_printed_mornings() == 0
+    assert sink.published == []
+
+    queue.statuses[state['job_id']] = {'id': state['job_id'], 'status': 'PRINTED'}
+    assert delivery.deliver_printed_mornings() == 1
+    assert sink.published[0][0:2] == ('2026-09-21', 'morning')
+    assert sink.published[0][2] == records
+    assert delivery.deliver_printed_mornings() == 0
+    assert len(sink.published) == 1
+
+
+def test_morning_reference_failure_never_breaks_print_state(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 21, 7, 0))
+    records = (ModSheetRecord(source_id='source-1', work_order_number='0001'),)
+    daily, repository, queue = _service(tmp_path, FakeSource([records]), clock)
+    state = daily.run_due()
+    queue.statuses[state['job_id']] = {'id': state['job_id'], 'status': 'PRINTED'}
+    delivery = ModSheetReferenceDeliveryService(
+        repository,
+        FakeSource([]),
+        queue,
+        FakeReferenceSink(fail=True),
+        'America/Los_Angeles',
+        clock=clock,
+    )
+
+    assert delivery.deliver_printed_mornings() == 0
+    assert repository.state()['status'] == 'queued'
+    assert repository.pending_morning_references()
+
+
+def test_final_reference_pull_runs_at_1120_pm_and_uses_current_day(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 21, 23, 19))
+    db = Database(tmp_path / 'printer.db')
+    repository = ModSheetAutomationRepository(db)
+    repository.save_settings(ModSheetAutomationSettings(
+        market_segment='Olympia',
+        product_category='All',
+        source_type='All',
+        remove_canceled=True,
+        remove_unconfirmed=True,
+    ))
+    final_records = (
+        ModSheetRecord(
+            source_id='source-final',
+            work_order_number='0009',
+            lead_name='Jordan Example',
+            assigned_service_resources=('Final Rep',),
+        ),
+    )
+    source = FakeSource([final_records])
+    sink = FakeReferenceSink()
+    delivery = ModSheetReferenceDeliveryService(
+        repository,
+        source,
+        FakeQueue(),
+        sink,
+        'America/Los_Angeles',
+        clock=clock,
+    )
+
+    assert delivery.final_due() is False
+    clock.value = _stamp(2026, 9, 21, 23, 20)
+    assert delivery.final_due() is True
+    state = delivery.run_final()
+
+    assert state['status'] == 'complete'
+    assert state['appointments'] == 1
+    assert source.calls[0]['start_date'] == '9/21/2026'
+    assert source.calls[0]['end_date'] == '9/21/2026'
+    assert sink.published[0][0:2] == ('2026-09-21', 'final')
+    assert sink.published[0][2] == final_records
+    assert delivery.final_due() is False
+
+
+def test_final_reference_failure_leaves_gallery_optional(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 21, 23, 20))
+    db = Database(tmp_path / 'printer.db')
+    repository = ModSheetAutomationRepository(db)
+    repository.save_settings(ModSheetAutomationSettings())
+    delivery = ModSheetReferenceDeliveryService(
+        repository,
+        FakeSource([RuntimeError('source unavailable')]),
+        FakeQueue(),
+        FakeReferenceSink(),
+        'America/Los_Angeles',
+        clock=clock,
+    )
+
+    state = delivery.run_final()
+
+    assert state['status'] == 'failed'
+    assert 'source unavailable' in state['error']
+    assert delivery.final_due() is False
 
 
 def test_settings_status_shows_due_now_after_seven_until_today_is_handled(tmp_path):
