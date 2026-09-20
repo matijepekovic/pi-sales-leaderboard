@@ -117,11 +117,6 @@ class DailyModSheetService:
             os.fsync(stream.fileno())
         temporary.chmod(0o600)
         temporary.replace(target)
-        directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
         return target
 
     def run_due(self, stamp=None) -> dict:
