@@ -81,7 +81,7 @@ def test_lead_name_ocr_receives_only_value_lane_not_label_or_grid_residue():
     # Simulate scan residue from the printed label/top-left grid. This is outside
     # the label mask used by the old whole-cell approach, but it is not customer
     # data and must never enter name OCR.
-    cv2.rectangle(image, (left + 45, top + 8), (left + 90, top + 13), 0, -1)
+    cv2.rectangle(image, (left + 45, top + 8), (left + 90, top + 9), 0, -1)
 
     # Simulate the actual printed lead-name value immediately after the label.
     value_left = label_right + 6
