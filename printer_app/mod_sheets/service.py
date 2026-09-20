@@ -16,6 +16,34 @@ log = logging.getLogger(__name__)
 TERMINAL = frozenset({'queued', 'no_appointments', 'failed'})
 
 
+class ModSheetSettingsService:
+    """Permanent automatic MOD settings and display status."""
+
+    def __init__(self, repository, queue):
+        self.repository = repository
+        self.queue = queue
+
+    def save(self, settings: ModSheetAutomationSettings) -> None:
+        self.repository.save_settings(settings)
+
+    def snapshot(self, timezone: str, stamp=None) -> dict:
+        now = time.time() if stamp is None else float(stamp)
+        settings = self.repository.settings()
+        state = self.repository.state()
+        queue_state = None
+        if state.get('job_id'):
+            queue_state = self.queue.job_status(int(state['job_id']))
+        schedule = DailyModSheetSchedule(timezone)
+        return {
+            'configured': settings is not None,
+            'settings': settings or ModSheetAutomationSettings(),
+            'schedule': schedule.description(),
+            'next_run': schedule.next_after(now),
+            'state': state,
+            'queue_state': queue_state,
+        }
+
+
 class DailyModSheetService:
     def __init__(
         self,
@@ -36,25 +64,6 @@ class DailyModSheetService:
         self.schedule = DailyModSheetSchedule(timezone)
         self.print_options = print_options
         self.clock = clock or time.time
-
-    def save_settings(self, settings: ModSheetAutomationSettings) -> None:
-        self.repository.save_settings(settings)
-
-    def snapshot(self, stamp=None) -> dict:
-        now = self.clock() if stamp is None else float(stamp)
-        settings = self.repository.settings()
-        state = self.repository.state()
-        queue_state = None
-        if state.get('job_id'):
-            queue_state = self.queue.job_status(int(state['job_id']))
-        return {
-            'configured': settings is not None,
-            'settings': settings,
-            'schedule': self.schedule.description(),
-            'next_run': self.schedule.next_after(now),
-            'state': state,
-            'queue_state': queue_state,
-        }
 
     def due(self, stamp=None) -> bool:
         now = self.clock() if stamp is None else float(stamp)
