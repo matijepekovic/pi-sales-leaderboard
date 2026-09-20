@@ -3,7 +3,7 @@
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='salesforce_sandbox.css') }}"><script src="{{ url_for('static', filename='salesforce_sandbox.js') }}" defer></script>{% endblock %}
 {% block content %}
 
-<div class="sf-beta-row" id="sfSandboxState" data-metadata-url="{{ url_for('salesforce_sandbox.metadata', org=snapshot.selected_org) }}">
+<div class="sf-beta-row" id="sfSandboxState" data-metadata-url="{{ url_for('salesforce_sandbox.metadata') }}">
   <div class="status-line">
     Salesforce Sandbox · <strong id="sfConnectionStatus">Checking Salesforce…</strong>
     <span id="sfConnectionUser"></span>
@@ -14,7 +14,6 @@
 <div class="mod-portal">
 <p id="sfConnectionError" class="notice error page-message" hidden></p>
 <form method="get" action="{{ url_for('salesforce_sandbox.mod_sheet') }}" target="_blank" autocomplete="off">
-  <input type="hidden" name="org" value="{{ snapshot.selected_org }}">
   <div class="container">
     <h1>Manager On Duty Sheet</h1>
     <div class="settings">

@@ -18,18 +18,11 @@ def blueprint(service):
 
     @bp.get('/salesforce-sandbox')
     def page():
-        target = request.args.get('org', '')
-        if len(target) > 254:
-            target = ''
-        snapshot = service.portal(target)
-        return render_template('salesforce_sandbox.html', snapshot=snapshot)
+        return render_template('salesforce_sandbox.html', snapshot=service.portal())
 
     @bp.get('/salesforce-sandbox/api/metadata')
     def metadata():
-        target = request.args.get('org', '')
-        if len(target) > 254:
-            target = ''
-        snapshot = service.metadata(target)
+        snapshot = service.metadata()
         if snapshot.error:
             return jsonify(ok=False, error=snapshot.error), 503
         return jsonify(
@@ -44,11 +37,7 @@ def blueprint(service):
 
     @bp.get('/salesforce-sandbox/mod-sheet')
     def mod_sheet():
-        target = request.args.get('org', '')
-        if len(target) > 254:
-            target = ''
         snapshot = service.generate(
-            target,
             start_date=request.args.get('startdate', ''),
             end_date=request.args.get('enddate', ''),
             market_segment=request.args.get('marketsegment', ''),

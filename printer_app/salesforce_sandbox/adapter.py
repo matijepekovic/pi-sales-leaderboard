@@ -72,11 +72,10 @@ def _address(work_order):
 class SalesforceCliAdapter:
     """Read-only Salesforce source using the Pi user's existing sf CLI login."""
 
-    def __init__(self, runner=subprocess.run, executable='/usr/bin/sf', default_org='work'):
+    def __init__(self, runner=subprocess.run, executable='/usr/bin/sf'):
         self._runner = runner
         self._executable = str(executable or '/usr/bin/sf')
-        self.default_org = str(default_org or 'work')
-        self._portal_fields_cache = {}
+        self._portal_fields_cache = None
 
     def _run(self, args, timeout=30):
         executable = self._executable
@@ -123,24 +122,10 @@ class SalesforceCliAdapter:
             )
         return payload.get('result') or {}
 
-    def _target_args(self, target_org):
-        target = str(target_org or self.default_org).strip()
-        if not target:
-            return []
-        if len(target) > 254 or any(not c.isprintable() for c in target):
-            raise SalesforceAdapterError('Invalid Salesforce org selection.')
-        return ['--target-org', target]
-
-    def orgs(self):
-        """The sandbox intentionally uses the already-authenticated `work` org."""
-        return [{
-            'value': self.default_org,
-            'label': self.default_org,
-            'default': True,
-        }]
-
-    def status(self, target_org=''):
-        result = self._run(['org', 'display', *self._target_args(target_org)], timeout=20)
+    def status(self):
+        # No target org is supplied here. Salesforce CLI resolves its own saved
+        # target-org/default authorization exactly as it would in the scoreboard shell.
+        result = self._run(['org', 'display'], timeout=20)
         # sf org display includes accessToken in JSON. Deliberately copy only
         # non-secret connection metadata into the application contract.
         username = str(result.get('username') or '')
@@ -155,9 +140,9 @@ class SalesforceCliAdapter:
             detail=('Org ' + org_id[-8:]) if org_id else 'Authenticated through Salesforce CLI',
         )
 
-    def _describe(self, sobject, target_org=''):
+    def _describe(self, sobject):
         return self._run(
-            ['sobject', 'describe', '--sobject', sobject, *self._target_args(target_org)],
+            ['sobject', 'describe', '--sobject', sobject],
             timeout=30,
         )
 
@@ -169,7 +154,7 @@ class SalesforceCliAdapter:
                 return field
         return None
 
-    def _distinct_values(self, path, target_org=''):
+    def _distinct_values(self, path):
         if not path:
             return ()
         query = (
@@ -178,7 +163,7 @@ class SalesforceCliAdapter:
         )
         try:
             result = self._run(
-                ['data', 'query', '--query', query, *self._target_args(target_org)],
+                ['data', 'query', '--query', query],
                 timeout=45,
             )
         except SalesforceAdapterError:
@@ -190,12 +175,10 @@ class SalesforceCliAdapter:
                 values.append(value)
         return tuple(values)
 
-    def portal_fields(self, target_org=''):
-        """Resolve portal controls once per org, then reuse metadata for Generate."""
-        cache_key = str(target_org or self.default_org).strip()
-        cached = self._portal_fields_cache.get(cache_key)
-        if cached is not None:
-            return cached
+    def portal_fields(self):
+        """Resolve portal controls once, then reuse metadata for Generate."""
+        if self._portal_fields_cache is not None:
+            return self._portal_fields_cache
 
         scopes = (
             ('ServiceAppointment', ''),
@@ -205,7 +188,7 @@ class SalesforceCliAdapter:
         descriptions = []
         for sobject, prefix in scopes:
             try:
-                descriptions.append((prefix, self._describe(sobject, target_org)))
+                descriptions.append((prefix, self._describe(sobject)))
             except SalesforceAdapterError:
                 continue
 
@@ -228,11 +211,11 @@ class SalesforceCliAdapter:
                         if value and value not in values:
                             values.append(value)
                 if not values:
-                    values.extend(self._distinct_values(path, target_org))
+                    values.extend(self._distinct_values(path))
                 resolved = PortalField(label, path, tuple(values))
                 break
             result[key] = resolved
-        self._portal_fields_cache[cache_key] = result
+        self._portal_fields_cache = result
         return result
 
     @staticmethod
@@ -247,7 +230,6 @@ class SalesforceCliAdapter:
 
     def mod_sheets(
         self,
-        target_org='',
         *,
         start_date='',
         end_date='',
@@ -265,7 +247,7 @@ class SalesforceCliAdapter:
         if (end - start).days > 366:
             raise SalesforceAdapterError('Choose a date range of 367 days or less.')
         limit = max(1, min(int(limit), 1000))
-        portal_fields = self.portal_fields(target_org)
+        portal_fields = self.portal_fields()
 
         dynamic_paths = [
             portal_fields[key].path
@@ -310,7 +292,7 @@ class SalesforceCliAdapter:
             + ' LIMIT 2000'
         )
         result = self._run(
-            ['data', 'query', '--query', query, *self._target_args(target_org)],
+            ['data', 'query', '--query', query],
             timeout=60,
         )
         records = result.get('records', []) if isinstance(result, dict) else []
@@ -351,7 +333,7 @@ class SalesforceCliAdapter:
                 break
 
         appointment_ids = [str(item.get('Id') or '') for item in filtered if item.get('Id')]
-        resources = self._assigned_resources(appointment_ids, target_org)
+        resources = self._assigned_resources(appointment_ids)
 
         normalized = []
         for item in filtered:
@@ -377,7 +359,7 @@ class SalesforceCliAdapter:
             ))
         return normalized
 
-    def _assigned_resources(self, appointment_ids, target_org=''):
+    def _assigned_resources(self, appointment_ids):
         if not appointment_ids:
             return {}
         safe_ids = [value for value in appointment_ids
@@ -390,7 +372,7 @@ FROM AssignedResource
 WHERE ServiceAppointmentId IN ({ids})
 ORDER BY ServiceAppointmentId, CreatedDate"""
         result = self._run(
-            ['data', 'query', '--query', query, *self._target_args(target_org)],
+            ['data', 'query', '--query', query],
             timeout=45,
         )
         output = {}
