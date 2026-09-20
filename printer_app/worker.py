@@ -130,7 +130,7 @@ class Engine:
         self.db.step(job_id, reason + '; automatic retry/reconciliation scheduled')
         log.warning('Job %s: %s', job_id, reason)
 
-    def advance(self, job: dict) -> None:
+    def advance(self, job: dict, *, immediate=False) -> None:
         if not self.dispatch.allow(job):
             return  # No CUPS submission (including error sheets) before release.
         jid = job['id']
@@ -156,7 +156,8 @@ class Engine:
                         cups_id, result, command = self.printer.hold(Path(job['printable']), attempt['token'],
                             self.job_options(job).error_sheet() if job['is_error'] else self.job_options(job),
                             received_pdf=bool(job['is_error']) or job['group_key'] == 'pdf'
-                            or job['group_key'].startswith('pdf:'))
+                            or job['group_key'].startswith('pdf:'),
+                            high_priority=immediate)
                     except SubmissionRejected as exc:
                         self.db.execute("UPDATE print_attempts SET state='FAILED',result=?,updated=? WHERE id=?",
                                         (str(exc), time.time(), aid))
@@ -302,7 +303,6 @@ def main():
                 render_mod_pdf,
                 captured.data_dir,
                 captured.timezone,
-                captured.print_options,
             )
 
         daily_mod_sheets = make_daily_mod_sheets(cfg)
@@ -360,6 +360,12 @@ def main():
                     for row in commands:
                         if row['name'] == 'test-print':
                             engine.test_print()
+
+                    # One-off immediate generated PDFs stay ahead of waiting
+                    # software-queue jobs while preserving the same CUPS receipt
+                    # and reconciliation path as every other print.
+                    for job in engine.queue.immediate_jobs(now):
+                        engine.advance(job, immediate=True)
                     if polling is not None and polling.done():
                         finished, polling = polling, None
                         try:

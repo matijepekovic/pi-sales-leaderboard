@@ -7,6 +7,7 @@
   const error = document.getElementById('modSourceError');
   const retry = document.getElementById('modSourceRetry');
   const submit = document.getElementById('modSubmit');
+  const testPrint = document.getElementById('modTestPrint');
   const shell = document.getElementById('modSourceLog');
   const clearActivity = document.getElementById('modSourceClear');
   const form = document.getElementById('modSheetForm');
@@ -119,6 +120,7 @@
     error.hidden = true;
     retry.hidden = true;
     if (requireConnection) submit.disabled = true;
+    if (testPrint) testPrint.disabled = true;
     if (mode === 'manual') {
       for (const item of fields) setPlaceholder(item.select, 'Waiting for connection…');
     }
@@ -134,6 +136,7 @@
       const fieldResults = await Promise.all(fields.map(loadField));
       const fieldError = fieldResults.some(ok => !ok);
       submit.disabled = false;
+      if (testPrint) testPrint.disabled = false;
       if (fieldError) {
         error.textContent = mode === 'settings'
           ? 'Connected to the MOD source, but one or more filter lists could not refresh. Your saved values are still available.'

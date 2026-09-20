@@ -31,8 +31,9 @@ from .https_adapter import GalleryHttpsAdapter
 from .salesforce_sandbox.adapter import SalesforceCliAdapter
 from .salesforce_sandbox.service import SalesforceSandboxService
 from .salesforce_sandbox.web import blueprint as salesforce_sandbox_blueprint
+from .mod_sheets.pdf_renderer import render_mod_pdf
 from .mod_sheets.repository import ModSheetAutomationRepository
-from .mod_sheets.service import ModSheetSettingsService
+from .mod_sheets.service import ModSheetSettingsService, ModSheetTestPrintService
 from .mod_sheets.web import blueprint as mod_sheets_blueprint
 
 
@@ -86,12 +87,21 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.extensions['salesforce_sandbox'] = salesforce_sandbox
     app.register_blueprint(salesforce_sandbox_blueprint(salesforce_sandbox))
 
+    mod_sheet_repository = ModSheetAutomationRepository(db)
     mod_sheet_settings = ModSheetSettingsService(
-        ModSheetAutomationRepository(db),
+        mod_sheet_repository,
         print_queue,
     )
+    mod_sheet_test_print = ModSheetTestPrintService(
+        mod_sheet_repository,
+        salesforce_sandbox,
+        print_queue,
+        render_mod_pdf,
+        cfg.data_dir,
+    )
     app.extensions['mod_sheet_settings'] = mod_sheet_settings
-    app.register_blueprint(mod_sheets_blueprint(mod_sheet_settings))
+    app.extensions['mod_sheet_test_print'] = mod_sheet_test_print
+    app.register_blueprint(mod_sheets_blueprint(mod_sheet_settings, mod_sheet_test_print))
 
     @app.template_filter('localtime')
     def localtime(value):

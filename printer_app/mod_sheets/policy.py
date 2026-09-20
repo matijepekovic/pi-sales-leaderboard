@@ -1,9 +1,11 @@
 """Permanent daily MOD-sheet settings and fixed weekday schedule."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
+
+from ..print_options import PrintOptions
 
 
 WEEKDAYS = frozenset({0, 1, 2, 3, 4})
@@ -19,14 +21,28 @@ class ModSheetAutomationSettings:
     remove_canceled: bool = True
     remove_unconfirmed: bool = True
     color_code: bool = True
+    print_options: PrintOptions = field(default_factory=PrintOptions)
 
     def __post_init__(self):
         for value in (self.market_segment, self.product_category, self.source_type):
             if not isinstance(value, str) or len(value) > 128 or any(not c.isprintable() for c in value):
                 raise ValueError('MOD Sheet settings must be short single-line values.')
+        if not isinstance(self.print_options, PrintOptions):
+            raise ValueError('MOD Sheet print settings are invalid.')
 
     def as_dict(self):
-        return asdict(self)
+        value = asdict(self)
+        value['print_options'] = self.print_options.snapshot()
+        return value
+
+    @classmethod
+    def from_dict(cls, value):
+        if not isinstance(value, dict):
+            raise ValueError('MOD Sheet settings are invalid.')
+        data = dict(value)
+        raw_print = data.pop('print_options', None)
+        print_options = PrintOptions(**raw_print) if isinstance(raw_print, dict) else PrintOptions()
+        return cls(print_options=print_options, **data)
 
 
 @dataclass(frozen=True)

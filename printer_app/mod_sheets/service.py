@@ -1,10 +1,12 @@
-"""Daily MOD-sheet workflow: current-day source -> PDF -> existing print queue."""
+"""MOD-sheet settings, automatic workflow, and one-off test printing."""
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 import os
 import time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .policy import (
     DailyModSheetSchedule,
@@ -15,6 +17,20 @@ from .policy import (
 
 log = logging.getLogger(__name__)
 TERMINAL = frozenset({'queued', 'no_appointments', 'failed'})
+
+
+def _write_pdf(data_dir: Path, filename: str, payload: bytes) -> Path:
+    directory = Path(data_dir) / 'mod-sheets'
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target = directory / filename
+    temporary = directory / ('.' + filename + '.tmp')
+    with temporary.open('wb') as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.chmod(0o600)
+    temporary.replace(target)
+    return target
 
 
 class ModSheetSettingsService:
@@ -34,6 +50,12 @@ class ModSheetSettingsService:
         queue_state = None
         if state.get('job_id'):
             queue_state = self.queue.job_status(int(state['job_id']))
+
+        test_state = self.repository.test_state()
+        test_queue_state = None
+        if test_state.get('job_id'):
+            test_queue_state = self.queue.job_status(int(test_state['job_id']))
+
         schedule = DailyModSheetSchedule(timezone)
         occurrence = schedule.occurrence_due(now)
         due_now = False
@@ -53,7 +75,93 @@ class ModSheetSettingsService:
             'due_now': due_now,
             'state': state,
             'queue_state': queue_state,
+            'test_state': test_state,
+            'test_queue_state': test_queue_state,
         }
+
+
+class ModSheetTestPrintService:
+    """Generate today's MOD PDF and request worker-first printing once."""
+
+    def __init__(self, repository, source, queue, renderer, data_dir: Path, clock=None):
+        self.repository = repository
+        self.source = source
+        self.queue = queue
+        self.renderer = renderer
+        self.data_dir = Path(data_dir)
+        self.clock = clock or time.time
+
+    def _state(self, *, status, now, **extra):
+        state = {'status': status, 'updated': now}
+        state.update(extra)
+        return self.repository.save_test_state(state)
+
+    def run(self, settings: ModSheetAutomationSettings, timezone: str, token: str) -> dict:
+        now = self.clock()
+        local_day = datetime.fromtimestamp(now, ZoneInfo(timezone)).date()
+        day = local_day.isoformat()
+        display_date = local_day.strftime('%-m/%-d/%Y')
+        self._state(
+            status='running',
+            now=now,
+            day=day,
+            message='Generating test MOD Sheet',
+        )
+        try:
+            records = tuple(self.source.records(
+                start_date=display_date,
+                end_date=display_date,
+                market_segment=settings.market_segment,
+                product_category=settings.product_category,
+                source_type=settings.source_type,
+                remove_canceled=settings.remove_canceled,
+                remove_unconfirmed=settings.remove_unconfirmed,
+                limit=1000,
+            ))
+            finished = self.clock()
+            if not records:
+                return self._state(
+                    status='no_appointments',
+                    now=finished,
+                    day=day,
+                    appointments=0,
+                    message='No appointments',
+                )
+
+            payload = self.renderer(records, color_code=settings.color_code)
+            target = _write_pdf(
+                self.data_dir,
+                f'MOD-Sheet-test-{token}.pdf',
+                payload,
+            )
+            pages = (len(records) + 2) // 3
+            job_id, created = self.queue.enqueue_immediate_generated_pdf(
+                f'pdf:mod-test:{token}',
+                target,
+                pages,
+                settings.print_options.snapshot(),
+                finished,
+            )
+            return self._state(
+                status='queued',
+                now=self.clock(),
+                day=day,
+                appointments=len(records),
+                pages=pages,
+                job_id=job_id,
+                created=created,
+                message='Test print queued for immediate printing',
+            )
+        except Exception as exc:
+            detail = str(exc).strip()[:500] or type(exc).__name__
+            log.warning('MOD Sheet test print failed: %s', type(exc).__name__)
+            return self._state(
+                status='failed',
+                now=self.clock(),
+                day=day,
+                message='Test print failed',
+                error=detail,
+            )
 
 
 class DailyModSheetService:
@@ -65,7 +173,6 @@ class DailyModSheetService:
         renderer,
         data_dir: Path,
         timezone: str,
-        print_options,
         clock=None,
     ):
         self.repository = repository
@@ -74,7 +181,6 @@ class DailyModSheetService:
         self.renderer = renderer
         self.data_dir = Path(data_dir)
         self.schedule = DailyModSheetSchedule(timezone)
-        self.print_options = print_options
         self.clock = clock or time.time
 
     def due(self, stamp=None) -> bool:
@@ -92,7 +198,6 @@ class DailyModSheetService:
             return False
         if status == 'retry_wait':
             return now >= float(state.get('next_attempt') or 0)
-        # Recover an interrupted in-process attempt without creating a duplicate.
         return True
 
     def _state(self, occurrence, *, status, attempt, now, **extra):
@@ -105,19 +210,6 @@ class DailyModSheetService:
         }
         state.update(extra)
         return self.repository.save_state(state)
-
-    def _write_pdf(self, day: str, payload: bytes) -> Path:
-        directory = self.data_dir / 'mod-sheets'
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        target = directory / f'MOD-Sheet-{day}.pdf'
-        temporary = directory / f'.MOD-Sheet-{day}.tmp'
-        with temporary.open('wb') as stream:
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        temporary.chmod(0o600)
-        temporary.replace(target)
-        return target
 
     def run_due(self, stamp=None) -> dict:
         now = self.clock() if stamp is None else float(stamp)
@@ -164,13 +256,17 @@ class DailyModSheetService:
                 )
 
             payload = self.renderer(records, color_code=settings.color_code)
-            target = self._write_pdf(occurrence.day, payload)
+            target = _write_pdf(
+                self.data_dir,
+                f'MOD-Sheet-{occurrence.day}.pdf',
+                payload,
+            )
             pages = (len(records) + 2) // 3
             job_id, created = self.queue.enqueue_generated_pdf(
                 f'pdf:daily-mod:{occurrence.day}',
                 target,
                 pages,
-                self.print_options.snapshot(),
+                settings.print_options.snapshot(),
                 finished,
             )
             log.info(
