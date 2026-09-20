@@ -1,5 +1,6 @@
 """Salesforce Sandbox reproduces the MOD portal without coupling Gallery/printing."""
 import json
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -101,6 +102,37 @@ def _salesforce_runner(calls):
             ]}})
         raise AssertionError(query)
     return runner
+
+
+def test_node_crash_surfaces_underlying_sf_error_without_tokens():
+    def runner(command, **kwargs):
+        return SimpleNamespace(
+            stdout='',
+            stderr="""node:events:505
+      throw er; // Unhandled 'error' event
+      ^
+Error: spawn secret-tool ENOENT
+    at Process.ChildProcess._handle.onexit (node:internal/child_process:283:19)
+{
+  code: 'ENOENT',
+  syscall: 'spawn secret-tool',
+  path: 'secret-tool',
+  accessToken=DO_NOT_SHOW
+}
+""",
+            returncode=1,
+        )
+
+    adapter = SalesforceCliAdapter(runner=runner, executable='/usr/bin/sf')
+    with pytest.raises(SalesforceAdapterError) as exc:
+        adapter.status('work')
+    message = str(exc.value)
+    assert 'node:events:505' not in message
+    assert 'Error: spawn secret-tool ENOENT' in message
+    assert "code: 'ENOENT'" in message
+    assert 'spawn secret-tool' in message
+    assert 'DO_NOT_SHOW' not in message
+    assert '[REDACTED]' in message
 
 
 def test_printer_service_uses_scoreboard_sf_work_login():
