@@ -203,6 +203,40 @@ def test_completed_attachment_restart_does_not_reprint(rig, tmp_path):
     assert len(printer.printed) == 1 and len(db.recent()) == 1
 
 
+def test_printer_one_sided_uses_verified_konica_print_type(tmp_path):
+    cfg = Config(data_dir=tmp_path, queue='konicaa')
+    printer = Printer(cfg)
+    path = pdf(tmp_path / 'one-sided.pdf')
+    printer.run = lambda command: 'request id is konicaa-1 (1 file(s))'
+
+    _, _, command = printer.hold(
+        path,
+        'one-sided-test',
+        PrintOptions(sides='one-sided'),
+        received_pdf=True,
+    )
+
+    pairs = list(zip(command, command[1:]))
+    assert ('-o', 'sides=one-sided') in pairs
+    assert ('-o', 'KMDuplex=1Sided') in pairs
+
+
+def test_printer_does_not_invent_konica_binding_for_two_sided_modes(tmp_path):
+    cfg = Config(data_dir=tmp_path, queue='konicaa')
+    printer = Printer(cfg)
+    path = pdf(tmp_path / 'two-sided.pdf')
+    printer.run = lambda command: 'request id is konicaa-1 (1 file(s))'
+
+    for sides in ('two-sided-long-edge', 'two-sided-short-edge'):
+        _, _, command = printer.hold(
+            path,
+            'two-sided-test',
+            PrintOptions(sides=sides),
+            received_pdf=True,
+        )
+        assert 'KMDuplex=1Sided' not in command
+
+
 def test_printer_high_priority_maps_to_cups_priority_100(tmp_path):
     cfg = Config(data_dir=tmp_path, queue='konicaa')
     printer = Printer(cfg)
