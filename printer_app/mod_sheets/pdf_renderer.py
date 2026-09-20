@@ -31,12 +31,12 @@ PAGE_NUMBER_X = letter[0] - PAGE_MARGIN_X
 PAGE_NUMBER_Y = 0.22 * cm
 PAGE_NUMBER_FONT_SIZE = 8
 
-# Measured from the reference Salesforce Visualforce PDF supplied for parity.
+# Measured from the reference MOD Sheet PDF supplied for parity.
 # The Visualforce renderer does not end up using twelve equal visible columns;
 # its resolved grid is ten equal columns across a 571.65pt table.
-VISUALFORCE_TABLE_WIDTH = 571.65
-VISUALFORCE_COLUMNS = 10
-VISUALFORCE_ROW_HEIGHTS = (
+MOD_TABLE_WIDTH = 571.65
+MOD_COLUMNS = 10
+MOD_ROW_HEIGHTS = (
     13.5,   # one-row-height
     25.5,   # two-row-height
     25.5,
@@ -68,7 +68,7 @@ FIT_VALUE_SIZES = (9, 8.5, 8, 7.5, 7)
 
 
 def _content_height(*rows):
-    return sum(VISUALFORCE_ROW_HEIGHTS[row] for row in rows) - CELL_VERTICAL_PADDING
+    return sum(MOD_ROW_HEIGHTS[row] for row in rows) - CELL_VERTICAL_PADDING
 
 
 class _FitClipParagraph(Flowable):
@@ -156,7 +156,7 @@ def _fit(label, value, *rows, value_background=''):
 
 
 class _PowerQuestions(Flowable):
-    """Match the narrow two-line Visualforce label plus unchecked box."""
+    """Match the narrow two-line reference label plus unchecked box."""
 
     def wrap(self, availWidth, availHeight):
         self.width = availWidth
@@ -216,10 +216,10 @@ def _mod_table(record, color_code):
         spaceBefore=0,
     )
 
-    rows = len(VISUALFORCE_ROW_HEIGHTS)
-    data = [['' for _ in range(VISUALFORCE_COLUMNS)] for _ in range(rows)]
+    rows = len(MOD_ROW_HEIGHTS)
+    data = [['' for _ in range(MOD_COLUMNS)] for _ in range(rows)]
 
-    # Row 1: resolved by Salesforce's PDF renderer as 3 / 4 / 3 columns.
+    # Row 1: resolved by the reference PDF renderer as 3 / 4 / 3 columns.
     data[0][0] = _fit('Work Order Number: ', record.work_order_number, 0)
     data[0][3] = _fit('Local Scheduled Start Time: ', record.local_scheduled_start_time, 0)
     data[0][7] = _canvass(style, record.canvass_set_by, color_code)
@@ -264,11 +264,11 @@ def _mod_table(record, color_code):
     data[10][0] = _p(style, '90 Min:')
     data[10][1] = _p(style, 'Want:')
 
-    col_widths = [VISUALFORCE_TABLE_WIDTH / VISUALFORCE_COLUMNS] * VISUALFORCE_COLUMNS
+    col_widths = [MOD_TABLE_WIDTH / MOD_COLUMNS] * MOD_COLUMNS
     table = Table(
         data,
         colWidths=col_widths,
-        rowHeights=list(VISUALFORCE_ROW_HEIGHTS),
+        rowHeights=list(MOD_ROW_HEIGHTS),
         hAlign='CENTER',
     )
 
@@ -322,7 +322,7 @@ def render_mod_pdf(records, *, color_code=False):
         topMargin=PAGE_MARGIN_Y,
         bottomMargin=PAGE_MARGIN_Y,
         title='MOD Sheet',
-        author='Stats Salesforce Sandbox',
+        author='Stats MOD Sheets',
     )
     story = []
     records = tuple(records)
