@@ -274,8 +274,8 @@ def test_connection_check_is_separate_from_filter_loading():
 def test_portal_ui_preserves_controller_all_semantics_and_black_shell():
     root = Path(__file__).resolve().parents[1]
     portal = (root / 'templates/salesforce_sandbox.html').read_text()
-    js = (root / 'static/salesforce_sandbox.js').read_text()
-    css = (root / 'static/salesforce_sandbox.css').read_text()
+    js = (root / 'static/mod_sheets/runtime.js').read_text()
+    css = (root / 'static/mod_sheets/shared.css').read_text()
 
     assert "product_category', label: 'Product Category', allValue: 'All'" in js
     assert "source_type', label: 'Source Type', allValue: 'All'" in js
@@ -287,10 +287,10 @@ def test_portal_ui_preserves_controller_all_semantics_and_black_shell():
 
 def test_pdf_renderer_keeps_original_mod_labels_and_normalized_contract():
     from printer_app.mod_sheet_contract import ModSheetRecord
-    from printer_app.salesforce_sandbox.pdf_renderer import render_mod_pdf
+    from printer_app.mod_sheets.pdf_renderer import render_mod_pdf
 
     root = Path(__file__).resolve().parents[1]
-    renderer = (root / 'salesforce_sandbox/pdf_renderer.py').read_text()
+    renderer = (root / 'mod_sheets/pdf_renderer.py').read_text()
     for label in (
         'Work Order Number:', 'Local Scheduled Start Time:', 'Canvass Set By:',
         'Lead Name:', 'Address:', 'Phone:', 'Power Questions',
@@ -318,7 +318,7 @@ def test_pdf_renderer_keeps_original_mod_labels_and_normalized_contract():
 
 def test_pdf_renderer_matches_reference_visualforce_grid():
     from printer_app.mod_sheet_contract import ModSheetRecord
-    from printer_app.salesforce_sandbox.pdf_renderer import (
+    from printer_app.mod_sheets.pdf_renderer import (
         VISUALFORCE_COLUMNS,
         VISUALFORCE_ROW_HEIGHTS,
         VISUALFORCE_TABLE_WIDTH,
@@ -346,7 +346,7 @@ def test_mod_pdf_fits_three_cards_per_page_deterministically():
     from pypdf import PdfReader
 
     from printer_app.mod_sheet_contract import ModSheetRecord
-    from printer_app.salesforce_sandbox.pdf_renderer import render_mod_pdf
+    from printer_app.mod_sheets.pdf_renderer import render_mod_pdf
 
     def records(count):
         return [
@@ -367,7 +367,7 @@ def test_mod_pdf_fits_three_cards_per_page_deterministically():
 
 
 def test_variable_mod_text_shrinks_then_clips_at_seven_points():
-    from printer_app.salesforce_sandbox.pdf_renderer import _FitClipParagraph
+    from printer_app.mod_sheets.pdf_renderer import _FitClipParagraph
 
     moderate = _FitClipParagraph(
         'Address: ',
@@ -391,7 +391,7 @@ def test_variable_mod_text_shrinks_then_clips_at_seven_points():
 
 
 def test_mod_pdf_draws_plain_page_number_in_bottom_right_corner():
-    from printer_app.salesforce_sandbox.pdf_renderer import (
+    from printer_app.mod_sheets.pdf_renderer import (
         PAGE_NUMBER_FONT_SIZE,
         PAGE_NUMBER_X,
         PAGE_NUMBER_Y,
@@ -431,7 +431,6 @@ def test_salesforce_stays_isolated_from_gallery_printing_and_ocr():
     root = Path(__file__).resolve().parents[1]
     for path in list((root / 'gallery').glob('*.py')) + [
         root / 'printer.py',
-        root / 'worker.py',
         root / 'print_dispatch.py',
         root / 'print_queue_repository.py',
     ]:
@@ -439,6 +438,9 @@ def test_salesforce_stays_isolated_from_gallery_printing_and_ocr():
 
     adapter = (root / 'salesforce_sandbox/adapter.py').read_text()
     app = (root / 'app.py').read_text()
+    worker = (root / 'worker.py').read_text()
     assert 'FSSK__FSK_Work_Order__r' in adapter
     assert 'FSSK__FSK_Work_Order__r' not in app
+    assert 'FSSK__FSK_Work_Order__r' not in worker
+    assert 'Lead__r' not in worker
     assert 'ocr' not in adapter.lower()
