@@ -19,6 +19,30 @@ class SalesforceAdapterError(RuntimeError):
     pass
 
 
+def _safe_cli_detail(value):
+    """Return the useful Node/Salesforce error without leaking credential values."""
+    text = str(value or '')
+    text = re.sub(
+        r'(?i)(accessToken|sfdxAuthUrl|authorization|bearer)\s*[:=]\s*[^\s,;]+',
+        r'\1=[REDACTED]',
+        text,
+    )
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    useful = []
+    for line in lines:
+        lower = line.lower()
+        if lower.startswith('node:events:') or line in ('^', "throw er; // Unhandled 'error' event"):
+            continue
+        if lower.startswith('at ') or lower.startswith("emitted 'error' event"):
+            continue
+        if (line.startswith('Error:') or 'code:' in line or 'syscall:' in line
+                or 'path:' in line or 'errno:' in line):
+            useful.append(line)
+    if not useful:
+        useful = [line for line in lines if not line.startswith('at ')][:3]
+    return ' | '.join(useful[:4])[:700]
+
+
 @dataclass(frozen=True)
 class PortalField:
     label: str
@@ -73,21 +97,28 @@ class SalesforceCliAdapter:
         try:
             payload = json.loads(result.stdout or '{}')
         except json.JSONDecodeError as exc:
-            raise SalesforceAdapterError('Salesforce CLI returned an unreadable response.') from exc
+            detail = _safe_cli_detail(getattr(result, 'stderr', ''))
+            user = getpass.getuser() or 'unknown'
+            raise SalesforceAdapterError(
+                f'Salesforce CLI failed for Linux user {user}: '
+                + (detail or 'CLI returned non-JSON output')
+            ) from exc
 
         if result.returncode or payload.get('status') not in (0, None):
             message = str(payload.get('message') or '').strip()
             if not message and isinstance(payload.get('result'), dict):
                 message = str(payload['result'].get('message') or '').strip()
-            if not message:
-                message = str(getattr(result, 'stderr', '') or '').strip().splitlines()[0:1]
-                message = message[0] if message else ''
-            # Never reflect obvious credential-bearing values from CLI diagnostics.
-            message = re.sub(r'(?i)(accessToken|sfdxAuthUrl|authorization)\s*[:=]\s*\S+',
-                             r'\1=[REDACTED]', message)
+            detail = _safe_cli_detail(getattr(result, 'stderr', ''))
+            # "node:events:NNN" is only Node's generic crash header; the useful
+            # cause is normally on the following Error/code/syscall lines.
+            if not message or message.lower().startswith('node:events:'):
+                message = detail
+            else:
+                message = _safe_cli_detail(message) or detail
             user = getpass.getuser() or 'unknown'
+            command = ' '.join(str(part) for part in args[:2])
             raise SalesforceAdapterError(
-                f'Salesforce CLI failed for Linux user {user}: '
+                f'Salesforce CLI {command} failed for Linux user {user}: '
                 + (message or 'no authenticated/default org was available')
             )
         return payload.get('result') or {}
