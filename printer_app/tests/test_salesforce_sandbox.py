@@ -280,7 +280,7 @@ def test_portal_ui_preserves_controller_all_semantics_and_black_shell():
     assert "product_category', label: 'Product Category', allValue: 'All'" in js
     assert "source_type', label: 'Source Type', allValue: 'All'" in js
     assert "market_segment', label: 'Market Segment', allValue: ''" in js
-    assert 'sfShellLog' in portal
+    assert 'modSourceLog' in portal
     assert 'background:#000' in css
     assert 'color:#fff' in css
 
