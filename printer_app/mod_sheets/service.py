@@ -34,11 +34,22 @@ class ModSheetSettingsService:
         if state.get('job_id'):
             queue_state = self.queue.job_status(int(state['job_id']))
         schedule = DailyModSheetSchedule(timezone)
+        occurrence = schedule.occurrence_due(now)
+        due_now = False
+        next_run = schedule.next_after(now)
+        if settings is not None and occurrence is not None:
+            same_day = state.get('day') == occurrence.day
+            status = state.get('status', '') if same_day else ''
+            if status == 'retry_wait' and now < float(state.get('next_attempt') or 0):
+                next_run = float(state['next_attempt'])
+            elif status not in TERMINAL:
+                due_now = True
         return {
             'configured': settings is not None,
             'settings': settings or ModSheetAutomationSettings(),
             'schedule': schedule.description(),
-            'next_run': schedule.next_after(now),
+            'next_run': next_run,
+            'due_now': due_now,
             'state': state,
             'queue_state': queue_state,
         }
