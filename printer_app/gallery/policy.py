@@ -132,6 +132,53 @@ def address_key(value):
     return ' '.join(re.findall(r'[a-z0-9]+', value))
 
 
+def printed_work_order_number(text):
+    """Read the explicit Work Order Number field from normalized OCR text."""
+    readings = []
+    boundary = (
+        r'(?=\s*(?:\||\n)|\s+(?:Local\s+Scheduled\s+Start\s+Time|'
+        r'Canvass\s+Set\s+By|Lead\s+Name|Address|Phone)\s*:?[ \t]*|$)'
+    )
+    for match in re.finditer(
+            r'\bWork\s+Order\s+Number\s*[:;]?[ \t]*([^\n|]+?)' + boundary,
+            str(text or ''), re.I):
+        value = ''.join(re.findall(r'[A-Za-z0-9-]+', match[1]))
+        if value and len(value) <= 80:
+            readings.append(value)
+    normalized = {value.casefold() for value in readings}
+    return readings[0] if readings and len(normalized) == 1 else ''
+
+
+def work_order_key(value):
+    return ''.join(re.findall(r'[a-z0-9]+', str(value or '').casefold()))
+
+
+ASSIGNED_RESOURCE_BOUNDARY = (
+    r'(?=\s*(?:\||\n)|\s+(?:Set\s+By|T\s+Close|Work\s+Type|'
+    r'Product\s+Interest|Source|Sub\s+Source|Hover\s*/\s*Flir|'
+    r'Lead\s+Description)\s*:?[ \t]*|$)'
+)
+
+
+def authoritative_assigned_resource_text(text, value):
+    """Replace only the Assigned Service Resource field with reference data.
+
+    Other recognized ink stays untouched. If the field was not recognized at all,
+    append the authoritative value so search still receives the structured rep.
+    """
+    source = str(text or '')
+    clean = ' '.join(str(value or '').split())
+    replacement = 'Assigned Service Resource:' + ((' ' + clean) if clean else '')
+    pattern = (
+        r'\bAssigned\s+Service\s+Resource\s*[:;]?[ \t]*'
+        r'([^\n|]+?)' + ASSIGNED_RESOURCE_BOUNDARY
+    )
+    updated, count = re.subn(pattern, replacement, source, count=1, flags=re.I)
+    if count:
+        return updated
+    return (source.rstrip() + ('\n' if source.strip() else '') + replacement)[:100000]
+
+
 def related_name_key(value):
     """Letters-only identity key for Related; ignore digits, punctuation and symbols."""
     value = unicodedata.normalize('NFKD', lead_key(value)).casefold()
