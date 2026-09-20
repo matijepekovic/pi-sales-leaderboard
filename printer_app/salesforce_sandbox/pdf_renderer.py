@@ -16,6 +16,7 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import (
     Flowable,
     KeepTogether,
+    PageBreak,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -57,6 +58,98 @@ PRODUCT_COLORS = (
     ('walk-in tubs', 'Walk-In Tubs', '#FF69B4'),
     ('solar', 'Solar', '#FFF200'),
 )
+
+
+CELL_VERTICAL_PADDING = 1.68
+FIT_VALUE_SIZES = (9, 8.5, 8, 7.5, 7)
+
+
+def _content_height(*rows):
+    return sum(VISUALFORCE_ROW_HEIGHTS[row] for row in rows) - CELL_VERTICAL_PADDING
+
+
+class _FitClipParagraph(Flowable):
+    """Shrink only the value text to fit a fixed Visualforce cell, then clip."""
+
+    def __init__(self, label, value, *, max_height, value_background=''):
+        super().__init__()
+        self.label = str(label or '')
+        self.value = str(value or '')
+        self.max_height = float(max_height)
+        self.value_background = str(value_background or '')
+        self.value_font_size = FIT_VALUE_SIZES[0]
+        self.clipped = False
+        self._paragraph = None
+        self._paragraph_height = 0
+
+    def _paragraph_for(self, value_size):
+        style = ParagraphStyle(
+            'mod-fit-cell',
+            fontName='Times-Roman',
+            fontSize=9,
+            leading=10,
+            textColor=colors.black,
+            spaceAfter=0,
+            spaceBefore=0,
+        )
+        escaped_value = escape(self.value)
+        if self.value_background and escaped_value:
+            value_markup = (
+                f'<font size="{value_size}" backColor="{self.value_background}">'
+                f'{escaped_value}</font>'
+            )
+        else:
+            value_markup = f'<font size="{value_size}">{escaped_value}</font>'
+        return Paragraph(
+            f'<b>{escape(self.label)}</b>{value_markup}',
+            style,
+        )
+
+    def wrap(self, availWidth, availHeight):
+        self.width = max(0, availWidth)
+        chosen = None
+        chosen_height = 0
+        for value_size in FIT_VALUE_SIZES:
+            paragraph = self._paragraph_for(value_size)
+            _, paragraph_height = paragraph.wrap(self.width, 10000)
+            chosen = paragraph
+            chosen_height = paragraph_height
+            self.value_font_size = value_size
+            if paragraph_height <= self.max_height:
+                self.clipped = False
+                break
+        else:
+            self.clipped = True
+
+        self._paragraph = chosen
+        self._paragraph_height = chosen_height
+        self.height = min(chosen_height, self.max_height)
+        return self.width, self.height
+
+    def draw(self):
+        if self._paragraph is None:
+            self.wrap(self.width, self.max_height)
+
+        canv = self.canv
+        canv.saveState()
+        path = canv.beginPath()
+        path.rect(0, 0, self.width, self.height)
+        canv.clipPath(path, stroke=0, fill=0)
+        self._paragraph.drawOn(
+            canv,
+            0,
+            self.height - self._paragraph_height,
+        )
+        canv.restoreState()
+
+
+def _fit(label, value, *rows, value_background=''):
+    return _FitClipParagraph(
+        label,
+        value,
+        max_height=_content_height(*rows),
+        value_background=value_background,
+    )
 
 
 class _PowerQuestions(Flowable):
@@ -101,10 +194,12 @@ def _product(style, value, color_code):
 
 
 def _canvass(style, value, color_code):
-    value = escape(str(value or ''))
-    if color_code and value:
-        value = f'<font backColor="#FFF200">{value}</font>'
-    return Paragraph('<b>Canvass Set By: </b>' + value, style)
+    return _fit(
+        'Canvass Set By: ',
+        value,
+        0,
+        value_background='#FFF200' if color_code else '',
+    )
 
 
 def _mod_table(record, color_code):
@@ -122,35 +217,35 @@ def _mod_table(record, color_code):
     data = [['' for _ in range(VISUALFORCE_COLUMNS)] for _ in range(rows)]
 
     # Row 1: resolved by Salesforce's PDF renderer as 3 / 4 / 3 columns.
-    data[0][0] = _p(style, 'Work Order Number: ', record.work_order_number)
-    data[0][3] = _p(style, 'Local Scheduled Start Time: ', record.local_scheduled_start_time)
+    data[0][0] = _fit('Work Order Number: ', record.work_order_number, 0)
+    data[0][3] = _fit('Local Scheduled Start Time: ', record.local_scheduled_start_time, 0)
     data[0][7] = _canvass(style, record.canvass_set_by, color_code)
 
     # Row 2: 3 / 4 / 2 / 1.
-    data[1][0] = _p(style, 'Lead Name: ', record.lead_name)
-    data[1][3] = _p(style, 'Address: ', record.address)
-    data[1][7] = _p(style, 'Phone: ', record.phone)
+    data[1][0] = _fit('Lead Name: ', record.lead_name, 1)
+    data[1][3] = _fit('Address: ', record.address, 1)
+    data[1][7] = _fit('Phone: ', record.phone, 1)
     data[1][9] = _PowerQuestions()
 
     # Row 3: 2 / 5 / 2 / 1.
-    data[2][0] = _p(style, 'Scheduled Start: ', record.scheduled_start)
-    data[2][2] = _p(
-        style,
+    data[2][0] = _fit('Scheduled Start: ', record.scheduled_start, 2)
+    data[2][2] = _fit(
         'Assigned Service Resource: ',
         ', '.join(record.assigned_service_resources),
+        2,
     )
-    data[2][7] = _p(style, 'Set By: ', record.set_by)
+    data[2][7] = _fit('Set By: ', record.set_by, 2)
     data[2][9] = _p(style, 'T Close:')
 
     # Row 4: 2 / 3 / 2 / 2 / 1.
-    data[3][0] = _p(style, 'Work Type: ', record.work_type)
+    data[3][0] = _fit('Work Type: ', record.work_type, 3)
     data[3][2] = _product(style, record.product_interest, color_code)
-    data[3][5] = _p(style, 'Source: ', record.source)
-    data[3][7] = _p(style, 'Sub Source: ', record.sub_source)
+    data[3][5] = _fit('Source: ', record.source, 3)
+    data[3][7] = _fit('Sub Source: ', record.sub_source, 3)
     data[3][9] = _p(style, 'Hover / Flir:')
 
     # Lower worksheet.
-    data[4][0] = _p(style, 'Lead Description: ', record.lead_description)
+    data[4][0] = _fit('Lead Description: ', record.lead_description, 4, 5)
     data[4][4] = _p(style, 'Start Price:')
     data[4][6] = _p(style, 'Final Price:')
     data[4][8] = _p(style, 'Deposit/Payment:')
@@ -225,9 +320,11 @@ def render_mod_pdf(records, *, color_code=False):
         story.append(Paragraph('No appointments matched the selected MOD Sheet filters.', style))
     else:
         for index, record in enumerate(records):
-            block = [_mod_table(record, color_code)]
+            story.append(KeepTogether([_mod_table(record, color_code)]))
             if index + 1 < len(records):
-                block.append(Spacer(1, 18))
-            story.append(KeepTogether(block))
+                if (index + 1) % 3 == 0:
+                    story.append(PageBreak())
+                else:
+                    story.append(Spacer(1, 18))
     doc.build(story)
     return stream.getvalue()
