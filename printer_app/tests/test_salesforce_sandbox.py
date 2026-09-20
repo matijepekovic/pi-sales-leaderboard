@@ -293,7 +293,7 @@ def test_pdf_renderer_keeps_original_mod_labels_and_normalized_contract():
     renderer = (root / 'mod_sheets/pdf_renderer.py').read_text()
     for label in (
         'Work Order Number:', 'Local Scheduled Start Time:', 'Canvass Set By:',
-        'Lead Name:', 'Address:', 'Phone:', 'Power Questions',
+        'Lead Name:', 'Address:', 'Phone:',
         'Scheduled Start:', 'Assigned Service Resource:', 'Set By:', 'T Close:',
         'Work Type:', 'Product Interest:', 'Source:', 'Sub Source:', 'Hover / Flir:',
         'Lead Description:', 'Start Price:', 'Final Price:', 'Deposit/Payment:',
@@ -301,6 +301,8 @@ def test_pdf_renderer_keeps_original_mod_labels_and_normalized_contract():
         'Call 1:', 'Call 2:', '90 Min:', 'Need:', 'Want:',
     ):
         assert label in renderer
+    assert "'Power'" in renderer
+    assert "'Questions'" in renderer
 
     pdf = render_mod_pdf([
         ModSheetRecord(
