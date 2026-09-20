@@ -1,5 +1,5 @@
 [Unit]
-Description=Independent Gmail and CUPS printer worker
+Description=Independent printer automation worker
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=120
