@@ -61,7 +61,14 @@
       option.textContent = value;
       select.appendChild(option);
     }
-    const choices = Array.from(select.options).map(option => option.value);
+    let choices = Array.from(select.options).map(option => option.value);
+    if (selected && !choices.includes(selected)) {
+      const saved = document.createElement('option');
+      saved.value = selected;
+      saved.textContent = selected;
+      select.appendChild(saved);
+      choices = [...choices, selected];
+    }
     select.value = choices.includes(selected) ? selected : item.allValue;
     select.dataset.selected = select.value;
     select.disabled = false;
