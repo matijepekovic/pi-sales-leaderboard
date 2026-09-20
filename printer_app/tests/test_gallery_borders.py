@@ -75,3 +75,57 @@ def test_large_template_page_uses_same_card_count_as_normal_scale():
 
     large = cv2.resize(base, (2800, 3600), interpolation=cv2.INTER_NEAREST)
     assert len(list(cut_forms(base))) == len(list(cut_forms(large))) == 3
+
+
+def test_upside_down_template_page_is_rotated_before_cropping():
+    cv2 = pytest.importorskip('cv2')
+    np = pytest.importorskip('numpy')
+    from printer_app.gallery.cropper import cut_forms, orient_work_order_page
+    from printer_app.gallery.form_template import TEMPLATE_ASPECT_HEIGHT, TEMPLATE_HORIZONTAL
+
+    image = np.full((980, 1000, 3), 255, np.uint8)
+    left, right = 50, 950
+    width = right - left
+    height = int(round(width * TEMPLATE_ASPECT_HEIGHT))
+    tops = (45, 505)
+
+    for top in tops:
+        bottom = top + height
+        cv2.line(image, (left, top), (right, top), (0, 0, 0), 3)
+        cv2.line(image, (left, bottom), (right, bottom), (0, 0, 0), 3)
+        cv2.line(image, (left, top), (left, bottom), (0, 0, 0), 3)
+        cv2.line(image, (right, top), (right, bottom), (0, 0, 0), 3)
+        for ratio in TEMPLATE_HORIZONTAL[1:-1]:
+            y = top + int(round(ratio * height))
+            cv2.line(image, (left, y), (right, y), (0, 0, 0), 2)
+        # Header partition exists only near the real top, so a 180-degree page
+        # cannot accidentally score as the same orientation.
+        cv2.line(
+            image,
+            (430, top),
+            (430, top + int(height * .20)),
+            (0, 0, 0),
+            2,
+        )
+
+    assert len(list(cut_forms(image))) == 2
+
+    upside_down = np.rot90(image, 2).copy()
+    corrected = orient_work_order_page(upside_down)
+
+    assert np.array_equal(corrected, image)
+    assert len(list(cut_forms(corrected))) == 2
+
+
+def test_orientation_check_leaves_non_template_gallery_pages_unchanged():
+    cv2 = pytest.importorskip('cv2')
+    np = pytest.importorskip('numpy')
+    from printer_app.gallery.cropper import orient_work_order_page
+
+    image = np.full((700, 900, 3), 255, np.uint8)
+    cv2.putText(
+        image, 'LEGACY PAGE', (120, 350), cv2.FONT_HERSHEY_SIMPLEX,
+        2.0, (0, 0, 0), 4, cv2.LINE_AA,
+    )
+
+    assert orient_work_order_page(image) is image
