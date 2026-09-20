@@ -32,8 +32,7 @@ PAGE_NUMBER_Y = 0.22 * cm
 PAGE_NUMBER_FONT_SIZE = 8
 
 # Measured from the reference MOD Sheet PDF supplied for parity.
-# The Visualforce renderer does not end up using twelve equal visible columns;
-# its resolved grid is ten equal columns across a 571.65pt table.
+# The supplied reference resolves to ten equal visible columns across a 571.65pt table.
 MOD_TABLE_WIDTH = 571.65
 MOD_COLUMNS = 10
 MOD_ROW_HEIGHTS = (
@@ -72,7 +71,7 @@ def _content_height(*rows):
 
 
 class _FitClipParagraph(Flowable):
-    """Shrink only the value text to fit a fixed Visualforce cell, then clip."""
+    """Shrink only the value text to fit a fixed MOD cell, then clip."""
 
     def __init__(self, label, value, *, max_height, value_background=''):
         super().__init__()
