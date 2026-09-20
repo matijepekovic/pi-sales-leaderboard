@@ -58,7 +58,8 @@ def _appointment(
 
 
 def _salesforce_runner(calls, *, appointment_records=None):
-    appointment_records = appointment_records or [_appointment('08p000000000001AAA')]
+    if appointment_records is None:
+        appointment_records = [_appointment('08p000000000001AAA')]
 
     def runner(command, **kwargs):
         calls.append(command)
