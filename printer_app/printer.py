@@ -103,6 +103,15 @@ class Printer:
             command += ['-o', 'print-color-mode=' + options.color]
         if options.sides != 'default':
             command += ['-o', 'sides=' + options.sides]
+            # The installed Konica PPD uses the legacy Duplex option. Keep the
+            # standard IPP "sides" attribute for modern queues, and also set
+            # the PPD value so single-sided truly overrides a duplex printer default.
+            duplex = {
+                'one-sided': 'None',
+                'two-sided-long-edge': 'DuplexNoTumble',
+                'two-sided-short-edge': 'DuplexTumble',
+            }[options.sides]
+            command += ['-o', 'Duplex=' + duplex]
         if received_pdf and options.pdf_scaling != 'default':
             command += ['-o', 'print-scaling=' + ('fit' if options.pdf_scaling == 'fit' else 'none'),
                         '-o', 'fit-to-page=' + ('true' if options.pdf_scaling == 'fit' else 'false')]
