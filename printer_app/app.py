@@ -31,6 +31,9 @@ from .https_adapter import GalleryHttpsAdapter
 from .salesforce_sandbox.adapter import SalesforceCliAdapter
 from .salesforce_sandbox.service import SalesforceSandboxService
 from .salesforce_sandbox.web import blueprint as salesforce_sandbox_blueprint
+from .mod_sheets.repository import ModSheetAutomationRepository
+from .mod_sheets.service import ModSheetSettingsService
+from .mod_sheets.web import blueprint as mod_sheets_blueprint
 
 
 def create_app(cfg: Config | None = None, settings_service: SettingsService | None = None) -> Flask:
@@ -47,6 +50,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         MAX_CONTENT_LENGTH=16384, MAX_FORM_MEMORY_SIZE=16384, MAX_FORM_PARTS=64)
     db = Database(cfg.db_path)
     admin_auth = AdminAuthService(AdminAuthRepository(db))
+    print_queue = PrintQueueRepository(db)
 
     def request_command(name):
         with db.connect() as conn:
@@ -81,6 +85,13 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     )
     app.extensions['salesforce_sandbox'] = salesforce_sandbox
     app.register_blueprint(salesforce_sandbox_blueprint(salesforce_sandbox))
+
+    mod_sheet_settings = ModSheetSettingsService(
+        ModSheetAutomationRepository(db),
+        print_queue,
+    )
+    app.extensions['mod_sheet_settings'] = mod_sheet_settings
+    app.register_blueprint(mod_sheets_blueprint(mod_sheet_settings))
 
     @app.template_filter('localtime')
     def localtime(value):
@@ -191,7 +202,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
 
     def dispatch():
         current = getattr(g, 'printer_config', cfg)
-        return PrintDispatchService(PrintQueueRepository(db), current.print_schedule, current.timezone)
+        return PrintDispatchService(print_queue, current.print_schedule, current.timezone)
 
     def settings_form():
         # Distinct checkbox names keep the duplicate-field protection intact;
