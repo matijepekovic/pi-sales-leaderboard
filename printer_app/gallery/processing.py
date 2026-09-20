@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 
 # Executed as a script, deliberately without loading the printer package/runtime.
-from cropper import cut_forms, deskew_page, is_dense_grid_page
+from cropper import cut_forms, deskew_page, is_dense_grid_page, orient_work_order_page
 from recognition import recognize
 from processing_contract import RETRYABLE_EXIT
 
@@ -182,8 +182,10 @@ def process(source, output, budget):
             with Image.open(pagefile) as image:
                 raster = np.array(image.convert('RGB'))
 
-            # Normalize printed rule geometry before form detection.
+            # Normalize small scan skew, then use the known form geometry
+            # to correct a full 180-degree upside-down scan before cropping/OCR.
             raster = deskew_page(raster)
+            raster = orient_work_order_page(raster)
             report_progress(output, 'crop', page, pages, len(manifest['items']))
 
             if is_dense_grid_page(raster):
