@@ -209,6 +209,17 @@ def test_settings_status_shows_due_now_after_seven_until_today_is_handled(tmp_pa
     assert handled['state']['message'] == 'No appointments'
 
 
+
+def test_mod_sheet_automation_has_no_salesforce_field_structures():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for path in (root / 'mod_sheets').glob('*.py'):
+        text = path.read_text()
+        assert 'FSSK__' not in text, str(path)
+        assert 'Lead__r' not in text, str(path)
+
+
 def test_mod_settings_page_is_separate_and_dates_are_not_persisted():
     from pathlib import Path
 
