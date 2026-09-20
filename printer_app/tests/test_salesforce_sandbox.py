@@ -138,12 +138,22 @@ def test_adapter_resolves_fields_and_normalizes_mod_records_read_only():
         remove_unconfirmed=True,
     )
 
+    assert market.path == 'FSSK__FSK_Work_Order__r.Lead__r.Market__c'
+    assert product.path == 'FSSK__FSK_Work_Order__r.Product_Interest__c'
+    assert source.path == 'FSSK__FSK_Work_Order__r.Lead__r.LeadSource'
     assert market.values == ('Retail',)
     assert product.values == ('Windows',)
-    assert source.values == ('Canvass',)
-    describe_calls = [call for call in calls if call[1:3] == ['sobject', 'describe']]
-    assert len(describe_calls) == 2
-    assert [call[call.index('--sobject') + 1] for call in describe_calls] == ['WorkOrder', 'Lead']
+    assert source.values == (
+        'Canvass', 'Flyer', 'Internet', 'Other', 'Previous Customer',
+        'Referral', 'Self Generated Lead', 'Telemarketing', 'Shows',
+    )
+    option_queries = [
+        call for call in calls
+        if call[1:3] == ['data', 'query']
+        and call[call.index('--query') + 1].startswith('SELECT FSSK__FSK_Work_Order__r')
+        and 'LIMIT 1000' in call[call.index('--query') + 1]
+    ]
+    assert len(option_queries) == 2
     assert len(records) == 1
     assert records[0].work_order_number == '00012345'
     assert records[0].lead_name == 'Jordan Example'
@@ -177,12 +187,12 @@ def test_connection_check_is_separate_from_slow_field_loading():
     source = service.field('source_type')
     assert market.field.values == ('Retail',)
     assert product.field.values == ('Windows',)
-    assert source.field.values == ('Canvass',)
+    assert source.field.values[0] == 'Canvass'
     assert market.trace and product.trace and source.trace
-    assert len([call for call in calls if call[1:3] == ['sobject', 'describe']]) == 2
+    assert not any(call[1:3] == ['sobject', 'describe'] for call in calls)
 
 
-def test_parallel_field_requests_share_describe_cache():
+def test_parallel_field_requests_use_exact_controller_contracts():
     calls = []
     adapter = SalesforceCliAdapter(runner=_salesforce_runner(calls), executable='/fake/sf')
 
@@ -196,8 +206,12 @@ def test_parallel_field_requests_share_describe_cache():
     assert [field.label for field in resolved] == [
         'Market Segment', 'Product Category', 'Source Type',
     ]
-    describe_calls = [call for call in calls if call[1:3] == ['sobject', 'describe']]
-    assert sorted(call[call.index('--sobject') + 1] for call in describe_calls) == ['Lead', 'WorkOrder']
+    assert [field.path for field in resolved] == [
+        'FSSK__FSK_Work_Order__r.Lead__r.Market__c',
+        'FSSK__FSK_Work_Order__r.Product_Interest__c',
+        'FSSK__FSK_Work_Order__r.Lead__r.LeadSource',
+    ]
+    assert not any(call[1:3] == ['sobject', 'describe'] for call in calls)
 
 
 def test_connection_failure_preserves_trace_for_side_panel():
@@ -246,6 +260,7 @@ def test_portal_ui_loads_connection_then_fields_and_has_cli_panel():
     assert '/salesforce-sandbox/api/connection' in web
     assert '/salesforce-sandbox/api/field/<key>' in web
     assert 'sf-workspace' in css and 'sf-shell' in css
+    assert 'background:#000' in css and 'color:#fff' in css
     assert 'name="org"' not in portal
     for name in (
         'startdate', 'enddate', 'marketsegment', 'productCategory',

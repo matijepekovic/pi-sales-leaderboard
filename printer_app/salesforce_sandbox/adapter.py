@@ -12,7 +12,6 @@ import getpass
 import re
 import shlex
 import subprocess
-import threading
 
 from ..mod_sheet_contract import ModSheetRecord, SourceStatus
 
@@ -94,12 +93,6 @@ class SalesforceCliAdapter:
         if not self.target_org:
             raise ValueError('Salesforce target org alias is required.')
         self._portal_fields_cache = {}
-        self._description_cache = {}
-        self._description_locks = {
-            'ServiceAppointment': threading.Lock(),
-            'WorkOrder': threading.Lock(),
-            'Lead': threading.Lock(),
-        }
 
     def _run(self, args, timeout=30, trace=None):
         executable = self._executable
@@ -197,41 +190,10 @@ class SalesforceCliAdapter:
             detail=('Org ' + org_id[-8:]) if org_id else 'Authenticated through Salesforce CLI',
         )
 
-    def _describe(self, sobject, trace=None):
-        if sobject in self._description_cache:
-            _trace_note(trace, f'# cached describe {sobject}', 'cache hit')
-            return self._description_cache[sobject]
-
-        lock = self._description_locks[sobject]
-        with lock:
-            if sobject in self._description_cache:
-                _trace_note(trace, f'# cached describe {sobject}', 'cache hit')
-                return self._description_cache[sobject]
-            description = self._run(
-                ['sobject', 'describe', '--sobject', sobject, *self._target_args()],
-                timeout=30,
-                trace=trace,
-            )
-            self._description_cache[sobject] = description
-            if trace:
-                trace[-1]['result'] = f"status 0 · {len(description.get('fields', []) or [])} fields"
-            return description
-
-    @staticmethod
-    def _field_by_label(description, label):
-        wanted = label.casefold()
-        for field in description.get('fields', []) if isinstance(description, dict) else []:
-            if str(field.get('label') or '').casefold() == wanted:
-                return field
-        return None
-
     def _distinct_values(self, path, trace=None):
         if not path:
             return ()
-        query = (
-            f'SELECT {path} FROM ServiceAppointment'
-            f' WHERE {path} != null GROUP BY {path} ORDER BY {path} LIMIT 200'
-        )
+        query = f'SELECT {path} FROM ServiceAppointment LIMIT 1000'
         try:
             result = self._run(
                 ['data', 'query', '--query', query, *self._target_args()],
@@ -242,73 +204,61 @@ class SalesforceCliAdapter:
             return ()
         values = []
         for row in result.get('records', []) if isinstance(result, dict) else []:
-            value = _nested(row, path).strip()
-            if value and value not in values:
-                values.append(value)
+            raw = _nested(row, path).strip()
+            for value in (part.strip() for part in raw.split(';')):
+                if value and value not in values:
+                    values.append(value)
+        values.sort(key=str.casefold)
         if trace:
             trace[-1]['result'] = 'status 0 · values ' + json.dumps(values)
         return tuple(values)
 
     def portal_field(self, key, trace=None):
-        """Resolve one portal control so the UI can load each field independently."""
-        labels = {
-            'market_segment': 'Market Segment',
-            'product_category': 'Product Category',
-            'source_type': 'Source Type',
+        """Return one MOD portal filter using the Salesforce fields used by the Apex report."""
+        contracts = {
+            'market_segment': PortalField(
+                'Market Segment',
+                'FSSK__FSK_Work_Order__r.Lead__r.Market__c',
+                (),
+            ),
+            'product_category': PortalField(
+                'Product Category',
+                'FSSK__FSK_Work_Order__r.Product_Interest__c',
+                (),
+            ),
+            'source_type': PortalField(
+                'Source Type',
+                'FSSK__FSK_Work_Order__r.Lead__r.LeadSource',
+                (
+                    'Canvass',
+                    'Flyer',
+                    'Internet',
+                    'Other',
+                    'Previous Customer',
+                    'Referral',
+                    'Self Generated Lead',
+                    'Telemarketing',
+                    'Shows',
+                ),
+            ),
         }
-        if key not in labels:
+        if key not in contracts:
             raise SalesforceAdapterError(f'Unknown Salesforce portal field: {key}')
         cached = self._portal_fields_cache.get(key)
         if cached is not None:
-            _trace_note(trace, f'# cached field {labels[key]}', 'cache hit')
+            _trace_note(trace, f'# cached field {cached.label}', 'cache hit')
             return cached
 
-        scopes_by_key = {
-            'market_segment': (
-                ('WorkOrder', 'FSSK__FSK_Work_Order__r.'),
-                ('ServiceAppointment', ''),
-                ('Lead', 'FSSK__FSK_Work_Order__r.Lead__r.'),
-            ),
-            'product_category': (
-                ('WorkOrder', 'FSSK__FSK_Work_Order__r.'),
-                ('ServiceAppointment', ''),
-                ('Lead', 'FSSK__FSK_Work_Order__r.Lead__r.'),
-            ),
-            'source_type': (
-                ('Lead', 'FSSK__FSK_Work_Order__r.Lead__r.'),
-                ('WorkOrder', 'FSSK__FSK_Work_Order__r.'),
-                ('ServiceAppointment', ''),
-            ),
-        }
-        scopes = scopes_by_key[key]
-        label = labels[key]
-        resolved = PortalField(label, '', ())
-        for sobject, prefix in scopes:
-            try:
-                description = self._describe(sobject, trace=trace)
-            except SalesforceAdapterError:
-                continue
-            field = self._field_by_label(description, label)
-            if not field:
-                continue
-            path = prefix + str(field.get('name') or '')
-            values = []
-            for option in field.get('picklistValues', []) or []:
-                if option.get('active', True):
-                    value = str(option.get('value') or option.get('label') or '').strip()
-                    if value and value not in values:
-                        values.append(value)
-            if not values:
-                values.extend(self._distinct_values(path, trace=trace))
-            resolved = PortalField(label, path, tuple(values))
-            break
-
+        contract = contracts[key]
+        values = contract.values or self._distinct_values(contract.path, trace=trace)
+        resolved = PortalField(contract.label, contract.path, tuple(values))
         self._portal_fields_cache[key] = resolved
-        result = (
-            f'{resolved.path or "not found"} · '
-            + (json.dumps(list(resolved.values)) if resolved.values else 'no options')
+        _trace_note(
+            trace,
+            f'# resolve {resolved.label}',
+            f'{resolved.path} · ' + json.dumps(list(resolved.values)),
+            ok=True,
         )
-        _trace_note(trace, f'# resolve {label}', result, ok=bool(resolved.path))
         return resolved
 
     def portal_fields(self):
@@ -423,7 +373,13 @@ class SalesforceCliAdapter:
                 if not wanted:
                     continue
                 path = portal_fields[key].path
-                if not path or _nested(item, path).casefold() != wanted.casefold():
+                actual = _nested(item, path)
+                if key == 'product_category':
+                    choices = [part.strip().casefold() for part in actual.split(';') if part.strip()]
+                    matched = wanted.casefold() in choices
+                else:
+                    matched = actual.casefold() == wanted.casefold()
+                if not path or not matched:
                     rejected = True
                     break
             if rejected:
