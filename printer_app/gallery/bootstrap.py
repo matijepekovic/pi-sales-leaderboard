@@ -35,3 +35,6 @@ class GalleryReferenceInbox:
 
     def publish(self, day, kind, records, captured):
         return self.service.publish_reference_snapshot(day, kind, records, captured)
+
+    def dates(self):
+        return self.service.reference_dates()

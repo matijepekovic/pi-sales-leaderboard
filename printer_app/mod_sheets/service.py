@@ -320,7 +320,7 @@ class ModSheetReferenceDeliveryService:
     """Deliver normalized MOD references without making Gallery a print dependency."""
 
     FINAL_HOUR = 23
-    FINAL_MINUTE = 20
+    FINAL_MINUTE = 0
 
     def __init__(self, repository, source, queue, reference_sink, timezone, clock=None):
         self.repository = repository
@@ -359,11 +359,9 @@ class ModSheetReferenceDeliveryService:
 
     def final_due(self, stamp=None):
         now = self.clock() if stamp is None else float(stamp)
-        if self.reference_sink is None or self.repository.settings() is None:
+        if self.reference_sink is None:
             return False
         local = datetime.fromtimestamp(now, self.zone)
-        if local.weekday() > 4:
-            return False
         if (local.hour, local.minute) < (self.FINAL_HOUR, self.FINAL_MINUTE):
             return False
         state = self.repository.final_reference_state()
@@ -373,13 +371,44 @@ class ModSheetReferenceDeliveryService:
         # interrupted run once the worker is back; completed/failed days stay terminal.
         return state.get('status') == 'running'
 
+    def _publish_day(self, day):
+        # Card references cover the whole day, independently of print filters.
+        records = tuple(self.source.records(
+            start_date=day,
+            end_date=day,
+            market_segment='',
+            product_category='',
+            source_type='',
+            remove_canceled=False,
+            remove_unconfirmed=False,
+            limit=None,
+        ))
+        result = self.reference_sink.publish(day, 'final', records, self.clock())
+        enriched = int(result.get('enriched', 0)) if isinstance(result, dict) else 0
+        return {'appointments': len(records), 'enriched': enriched}
+
+    def backfill_existing(self):
+        """Fill existing cards once on upgrade, using the same daily snapshot path."""
+        if self.reference_sink is None or self.repository.reference_backfill_complete():
+            return
+        today = datetime.fromtimestamp(self.clock(), self.zone).date().isoformat()
+        complete = True
+        for day in self.reference_sink.dates():
+            if day > today:
+                continue
+            try:
+                self._publish_day(day)
+            except Exception:
+                complete = False
+                log.warning('Card reference lookup failed for %s; will retry on restart.', day)
+        if complete:
+            self.repository.complete_reference_backfill()
+
     def run_final(self, stamp=None):
         now = self.clock() if stamp is None else float(stamp)
         local = datetime.fromtimestamp(now, self.zone)
         day = local.date().isoformat()
-        display_date = local.date().strftime('%-m/%-d/%Y')
-        settings = self.repository.settings()
-        if settings is None or self.reference_sink is None:
+        if self.reference_sink is None:
             return self.repository.final_reference_state()
         if not self.final_due(now):
             return self.repository.final_reference_state()
@@ -390,26 +419,12 @@ class ModSheetReferenceDeliveryService:
             'updated': now,
         })
         try:
-            records = tuple(self.source.records(
-                start_date=display_date,
-                end_date=display_date,
-                market_segment=settings.market_segment,
-                product_category=settings.product_category,
-                source_type=settings.source_type,
-                remove_canceled=settings.remove_canceled,
-                remove_unconfirmed=settings.remove_unconfirmed,
-                limit=1000,
-            ))
-            captured = self.clock()
-            result = self.reference_sink.publish(
-                day, 'final', records, captured
-            )
+            result = self._publish_day(day)
             return self.repository.save_final_reference_state({
                 'day': day,
                 'status': 'complete',
                 'updated': self.clock(),
-                'appointments': len(records),
-                'enriched': int(result.get('enriched', 0)) if isinstance(result, dict) else 0,
+                **result,
             })
         except Exception as exc:
             detail = str(exc).strip()[:500] or type(exc).__name__

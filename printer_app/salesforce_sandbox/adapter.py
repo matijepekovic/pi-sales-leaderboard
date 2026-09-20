@@ -347,12 +347,16 @@ class SalesforceCliAdapter:
         remove_unconfirmed=True,
         limit=1000,
     ):
+        """Read normalized sheets; limit=None fetches every matching appointment."""
         start = self._parse_date(start_date)
         end = self._parse_date(end_date)
         if end < start:
             raise SalesforceAdapterError('End Date must be on or after Start Date.')
-        limit = max(1, min(int(limit), 1000))
+        if limit is not None:
+            limit = max(1, min(int(limit), 1000))
         user_zone = self._salesforce_timezone()
+        start_local = datetime.combine(start, time.min, tzinfo=user_zone)
+        end_local = datetime.combine(end + timedelta(days=1), time.min, tzinfo=user_zone)
 
         select_fields = [
             'Id',
@@ -380,12 +384,12 @@ class SalesforceCliAdapter:
             'FSSK__FSK_Work_Order__r.Lead__r.Canvass_Set_By__r.Name',
         ]
 
-        query_start = start - timedelta(days=1)
-        query_end = end + timedelta(days=2)
+        query_start = start_local.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        query_end = end_local.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         conditions = [
             "WorkType.Name LIKE '%Sales%'",
-            f'SchedStartTime >= {query_start.isoformat()}T00:00:00Z',
-            f'SchedStartTime < {query_end.isoformat()}T00:00:00Z',
+            f'SchedStartTime >= {query_start}',
+            f'SchedStartTime < {query_end}',
         ]
 
         market_segment = str(market_segment or '').strip()
@@ -418,23 +422,48 @@ class SalesforceCliAdapter:
         if remove_unconfirmed:
             conditions.append('FSSK__FSK_Work_Order__r.Lead__r.LastModifiedDate != null')
 
-        query = (
-            'SELECT ' + ', '.join(select_fields)
-            + ' FROM ServiceAppointment WHERE '
-            + ' AND '.join(conditions)
-            + ' ORDER BY SchedStartTime, FSSK__FSK_Work_Order__r.Lead__r.Name ASC'
-            + f' LIMIT {limit}'
-        )
-        result = self._run(
-            ['data', 'query', '--query', query, *self._target_args()],
-            timeout=60,
-        )
-        records = result.get('records', []) if isinstance(result, dict) else []
+        records = []
+        cursor = ''
+        seen_ids = set()
+        while True:
+            page_conditions = conditions + ([f'Id > {_soql_literal(cursor)}'] if cursor else [])
+            query = (
+                'SELECT ' + ', '.join(select_fields)
+                + ' FROM ServiceAppointment WHERE '
+                + ' AND '.join(page_conditions)
+                + (' ORDER BY Id ASC' if limit is None else
+                   ' ORDER BY SchedStartTime, FSSK__FSK_Work_Order__r.Lead__r.Name ASC')
+                + f' LIMIT {1000 if limit is None else limit}'
+            )
+            result = self._run(
+                ['data', 'query', '--query', query, *self._target_args()],
+                timeout=60,
+            )
+            page = result.get('records') if isinstance(result, dict) else None
+            if not isinstance(page, list):
+                raise SalesforceAdapterError('Salesforce query returned an invalid records page.')
+            if limit is not None:
+                records = page
+                break
+            if not page:
+                if result.get('done') is False or result.get('totalSize', 0):
+                    raise SalesforceAdapterError('Salesforce query returned an incomplete records page.')
+                break
+
+            page_ids = [str(item.get('Id') or '') if isinstance(item, dict) else '' for item in page]
+            if (any(not re.fullmatch(r'[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?', value)
+                    for value in page_ids)
+                    or len(set(page_ids)) != len(page_ids)
+                    or seen_ids.intersection(page_ids)):
+                raise SalesforceAdapterError('Salesforce query pagination did not advance safely.')
+            records.extend(page)
+            seen_ids.update(page_ids)
+            cursor = page_ids[-1]
+            # A short response can still have more rows; only an empty query ends the read.
+
         if not records:
             raise SalesforceAdapterError('No Records Found for Selected Criteria')
 
-        start_local = datetime.combine(start, time.min, tzinfo=user_zone)
-        end_local = datetime.combine(end, time(23, 59), tzinfo=user_zone)
         grouped = {}
         order = []
 
@@ -443,7 +472,7 @@ class SalesforceCliAdapter:
             if scheduled is None:
                 continue
             local_start = scheduled.astimezone(user_zone)
-            if not (start_local <= local_start <= end_local):
+            if not (start_local <= local_start < end_local):
                 continue
 
             work_order_id = str(item.get('FSSK__FSK_Work_Order__c') or '').strip()

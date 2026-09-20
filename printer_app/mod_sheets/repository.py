@@ -12,6 +12,7 @@ STATE_KEY = 'daily_mod_sheet_state'
 TEST_STATE_KEY = 'daily_mod_sheet_test_state'
 REFERENCE_OUTBOX_KEY = 'daily_mod_sheet_reference_outbox'
 FINAL_REFERENCE_STATE_KEY = 'daily_mod_sheet_final_reference_state'
+REFERENCE_BACKFILL_KEY = 'gallery_reference_backfill_complete'
 
 
 class ModSheetAutomationRepository:
@@ -115,3 +116,9 @@ class ModSheetAutomationRepository:
         value = dict(state)
         self.db.set(FINAL_REFERENCE_STATE_KEY, value)
         return value
+
+    def reference_backfill_complete(self):
+        return bool(self.db.get(REFERENCE_BACKFILL_KEY, False))
+
+    def complete_reference_backfill(self):
+        self.db.set(REFERENCE_BACKFILL_KEY, True)

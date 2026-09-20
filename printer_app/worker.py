@@ -330,7 +330,8 @@ def main():
         # overlap, but only this main loop submits/releases CUPS jobs.
         # The process lock still prevents a second worker from double-printing.
         background = ThreadPoolExecutor(max_workers=4, thread_name_prefix='printer-work')
-        polling, preparing, cleaning, daily_mod_task, mod_reference_task = None, None, None, None, None
+        polling, preparing, cleaning, daily_mod_task = None, None, None, None
+        mod_reference_task = background.submit(mod_references.backfill_existing)
         next_poll, next_status = 0, 0
         active_revision = None
         log.info('Independent printer worker started, queue=%s', cfg.queue)
