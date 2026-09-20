@@ -33,6 +33,18 @@ SOURCE_TYPE_ALL = (
     'Shows',
 )
 
+PRODUCT_CATEGORY_OPTIONS = (
+    'Roofing',
+    'Siding',
+    'Bath',
+    'Gutters',
+    'Windows',
+    'Doors',
+    'Other',
+    'Walk-In Tubs',
+    'Solar',
+)
+
 PORTAL_FIELDS = {
     'market_segment': ('Market Segment', 'FSSK__FSK_Work_Order__r.Lead__r.Market__c'),
     'product_category': ('Product Category', 'FSSK__FSK_Work_Order__r.Product_Interest__c'),
@@ -291,7 +303,12 @@ class SalesforceCliAdapter:
             return cached
 
         label, path = PORTAL_FIELDS[key]
-        values = SOURCE_TYPE_ALL if key == 'source_type' else self._distinct_values(path, trace)
+        if key == 'source_type':
+            values = SOURCE_TYPE_ALL
+        elif key == 'product_category':
+            values = PRODUCT_CATEGORY_OPTIONS
+        else:
+            values = self._distinct_values(path, trace)
         resolved = PortalField(label, path, tuple(values))
         self._portal_fields_cache[key] = resolved
         _trace_note(
