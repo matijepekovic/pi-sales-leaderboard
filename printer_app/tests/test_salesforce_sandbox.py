@@ -1,5 +1,6 @@
 """Salesforce Sandbox stays isolated, read-only, and observable."""
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -140,7 +141,9 @@ def test_adapter_resolves_fields_and_normalizes_mod_records_read_only():
     assert market.values == ('Retail',)
     assert product.values == ('Windows',)
     assert source.values == ('Canvass',)
-    assert len([call for call in calls if call[1:3] == ['sobject', 'describe']]) == 3
+    describe_calls = [call for call in calls if call[1:3] == ['sobject', 'describe']]
+    assert len(describe_calls) == 2
+    assert [call[call.index('--sobject') + 1] for call in describe_calls] == ['WorkOrder', 'Lead']
     assert len(records) == 1
     assert records[0].work_order_number == '00012345'
     assert records[0].assigned_service_resources == ('Sales Rep One',)
@@ -172,7 +175,25 @@ def test_connection_check_is_separate_from_slow_field_loading():
     assert product.field.values == ('Windows',)
     assert source.field.values == ('Canvass',)
     assert market.trace and product.trace and source.trace
-    assert len([call for call in calls if call[1:3] == ['sobject', 'describe']]) == 3
+    assert len([call for call in calls if call[1:3] == ['sobject', 'describe']]) == 2
+
+
+def test_parallel_field_requests_share_describe_cache():
+    calls = []
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner(calls), executable='/fake/sf')
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = [
+            pool.submit(adapter.portal_field, key)
+            for key in ('market_segment', 'product_category', 'source_type')
+        ]
+        resolved = [future.result() for future in futures]
+
+    assert [field.label for field in resolved] == [
+        'Market Segment', 'Product Category', 'Source Type',
+    ]
+    describe_calls = [call for call in calls if call[1:3] == ['sobject', 'describe']]
+    assert sorted(call[call.index('--sobject') + 1] for call in describe_calls) == ['Lead', 'WorkOrder']
 
 
 def test_connection_failure_preserves_trace_for_side_panel():
@@ -217,7 +238,7 @@ def test_portal_ui_loads_connection_then_fields_and_has_cli_panel():
     assert 'state.dataset.connectionUrl' in js
     assert 'state.dataset.fieldUrl' in js
     assert '25000' in js and '100000' in js
-    assert "for (const item of fields)" in js
+    assert 'Promise.all(fields.map(loadField))' in js
     assert '/salesforce-sandbox/api/connection' in web
     assert '/salesforce-sandbox/api/field/<key>' in web
     assert 'sf-workspace' in css and 'sf-shell' in css
