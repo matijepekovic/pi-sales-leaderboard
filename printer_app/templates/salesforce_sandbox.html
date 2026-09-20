@@ -1,22 +1,22 @@
 {% extends 'base.html' %}
-{% block title %}Salesforce Sandbox{% endblock %}
-{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='salesforce_sandbox.css') }}"><script src="{{ url_for('static', filename='salesforce_sandbox.js') }}" defer></script>{% endblock %}
+{% block title %}MOD Sheets{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='mod_sheets/shared.css') }}"><script src="{{ url_for('static', filename='mod_sheets/runtime.js') }}" defer></script>{% endblock %}
 {% block content %}
 
-<div class="sf-beta-row" id="sfSandboxState"
+<div class="mod-source-row" id="modSourceState" data-mod-sheet-runtime
      data-connection-url="{{ url_for('salesforce_sandbox.connection') }}"
      data-field-url="{{ url_for('salesforce_sandbox.field', key='__FIELD__') }}">
   <div class="status-line">
-    Salesforce Sandbox · <strong id="sfConnectionStatus">Checking Salesforce…</strong>
-    <span id="sfConnectionUser"></span>
+    MOD Sheets · Source <strong id="modSourceStatus">Checking source…</strong>
+    <span id="modSourceUser"></span>
   </div>
-  <button type="button" id="sfRetry" hidden>Retry connection</button>
+  <button type="button" id="modSourceRetry" hidden>Retry connection</button>
 </div>
 
-<div class="sf-workspace">
+<div class="mod-workspace">
 <div class="mod-portal">
-<p id="sfConnectionError" class="notice error page-message" hidden></p>
-<form id="sfModForm" method="get" action="{{ url_for('salesforce_sandbox.mod_sheet') }}" target="_blank" autocomplete="off">
+<p id="modSourceError" class="notice error page-message" hidden></p>
+<form id="modSheetForm" data-mode="manual" data-require-connection="true" method="get" action="{{ url_for('salesforce_sandbox.mod_sheet') }}" target="_blank" autocomplete="off">
   <div class="container">
     <h1>Manager On Duty Sheet</h1>
     <div class="settings">
@@ -33,21 +33,21 @@
       <br>
       <div class="setting">
         <span>Market Segment:</span>
-        <select id="marketSegment" name="marketsegment" disabled>
+        <select id="marketSegment" name="marketsegment" data-selected="" disabled>
           <option value="">Waiting for connection…</option>
         </select>
       </div>
       <br>
       <div class="setting">
         <span>Product Category:</span>
-        <select id="productCategory" name="productCategory" disabled>
+        <select id="productCategory" name="productCategory" data-selected="All" disabled>
           <option value="">Waiting for connection…</option>
         </select>
       </div>
       <br>
       <div class="setting">
         <span>Source Type:</span>
-        <select id="srcType" name="sourceType" disabled>
+        <select id="srcType" name="sourceType" data-selected="All" disabled>
           <option value="">Waiting for connection…</option>
         </select>
       </div>
@@ -68,7 +68,7 @@
       </div>
       <br>
       <div>
-        <button type="submit" id="generate" disabled>Generate</button>
+        <button type="submit" id="modSubmit" disabled>Generate</button>
       </div>
       <br>
       <p class="limit">*A maximum of 1000 appointments will be displayed</p>
@@ -77,12 +77,12 @@
 </form>
 </div>
 
-<aside class="sf-shell" aria-label="Salesforce CLI activity">
-  <div class="sf-shell-head">
-    <strong>Salesforce CLI</strong>
-    <button type="button" id="sfShellClear">Clear</button>
+<aside class="mod-source-log" aria-label="MOD source activity">
+  <div class="mod-source-head">
+    <strong>Source Activity</strong>
+    <button type="button" id="modSourceClear">Clear</button>
   </div>
-  <pre id="sfShellLog" aria-live="polite">waiting for Salesforce connection…</pre>
+  <pre id="modSourceLog" aria-live="polite">waiting for MOD source connection…</pre>
 </aside>
 </div>
 {% endblock %}

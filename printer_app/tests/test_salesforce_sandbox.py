@@ -274,26 +274,26 @@ def test_connection_check_is_separate_from_filter_loading():
 def test_portal_ui_preserves_controller_all_semantics_and_black_shell():
     root = Path(__file__).resolve().parents[1]
     portal = (root / 'templates/salesforce_sandbox.html').read_text()
-    js = (root / 'static/salesforce_sandbox.js').read_text()
-    css = (root / 'static/salesforce_sandbox.css').read_text()
+    js = (root / 'static/mod_sheets/runtime.js').read_text()
+    css = (root / 'static/mod_sheets/shared.css').read_text()
 
     assert "product_category', label: 'Product Category', allValue: 'All'" in js
     assert "source_type', label: 'Source Type', allValue: 'All'" in js
     assert "market_segment', label: 'Market Segment', allValue: ''" in js
-    assert 'sfShellLog' in portal
+    assert 'modSourceLog' in portal
     assert 'background:#000' in css
     assert 'color:#fff' in css
 
 
 def test_pdf_renderer_keeps_original_mod_labels_and_normalized_contract():
     from printer_app.mod_sheet_contract import ModSheetRecord
-    from printer_app.salesforce_sandbox.pdf_renderer import render_mod_pdf
+    from printer_app.mod_sheets.pdf_renderer import render_mod_pdf
 
     root = Path(__file__).resolve().parents[1]
-    renderer = (root / 'salesforce_sandbox/pdf_renderer.py').read_text()
+    renderer = (root / 'mod_sheets/pdf_renderer.py').read_text()
     for label in (
         'Work Order Number:', 'Local Scheduled Start Time:', 'Canvass Set By:',
-        'Lead Name:', 'Address:', 'Phone:', 'Power Questions',
+        'Lead Name:', 'Address:', 'Phone:',
         'Scheduled Start:', 'Assigned Service Resource:', 'Set By:', 'T Close:',
         'Work Type:', 'Product Interest:', 'Source:', 'Sub Source:', 'Hover / Flir:',
         'Lead Description:', 'Start Price:', 'Final Price:', 'Deposit/Payment:',
@@ -301,6 +301,8 @@ def test_pdf_renderer_keeps_original_mod_labels_and_normalized_contract():
         'Call 1:', 'Call 2:', '90 Min:', 'Need:', 'Want:',
     ):
         assert label in renderer
+    assert "'Power'" in renderer
+    assert "'Questions'" in renderer
 
     pdf = render_mod_pdf([
         ModSheetRecord(
@@ -316,22 +318,22 @@ def test_pdf_renderer_keeps_original_mod_labels_and_normalized_contract():
 
 
 
-def test_pdf_renderer_matches_reference_visualforce_grid():
+def test_pdf_renderer_matches_reference_mod_grid():
     from printer_app.mod_sheet_contract import ModSheetRecord
-    from printer_app.salesforce_sandbox.pdf_renderer import (
-        VISUALFORCE_COLUMNS,
-        VISUALFORCE_ROW_HEIGHTS,
-        VISUALFORCE_TABLE_WIDTH,
+    from printer_app.mod_sheets.pdf_renderer import (
+        MOD_COLUMNS,
+        MOD_ROW_HEIGHTS,
+        MOD_TABLE_WIDTH,
         _mod_table,
     )
 
     table = _mod_table(ModSheetRecord(source_id='0WO1'), color_code=False)
 
-    assert VISUALFORCE_COLUMNS == 10
-    assert VISUALFORCE_TABLE_WIDTH == pytest.approx(571.65)
-    assert tuple(table._argH) == VISUALFORCE_ROW_HEIGHTS
+    assert MOD_COLUMNS == 10
+    assert MOD_TABLE_WIDTH == pytest.approx(571.65)
+    assert tuple(table._argH) == MOD_ROW_HEIGHTS
     assert len(table._argW) == 10
-    assert sum(table._argW) == pytest.approx(VISUALFORCE_TABLE_WIDTH)
+    assert sum(table._argW) == pytest.approx(MOD_TABLE_WIDTH)
     assert table._cellvalues[0][0].label == 'Work Order Number: '
     assert ('SPAN', (0, 0), (2, 0)) in table._spanCmds
     assert ('SPAN', (3, 0), (6, 0)) in table._spanCmds
@@ -346,7 +348,7 @@ def test_mod_pdf_fits_three_cards_per_page_deterministically():
     from pypdf import PdfReader
 
     from printer_app.mod_sheet_contract import ModSheetRecord
-    from printer_app.salesforce_sandbox.pdf_renderer import render_mod_pdf
+    from printer_app.mod_sheets.pdf_renderer import render_mod_pdf
 
     def records(count):
         return [
@@ -367,7 +369,7 @@ def test_mod_pdf_fits_three_cards_per_page_deterministically():
 
 
 def test_variable_mod_text_shrinks_then_clips_at_seven_points():
-    from printer_app.salesforce_sandbox.pdf_renderer import _FitClipParagraph
+    from printer_app.mod_sheets.pdf_renderer import _FitClipParagraph
 
     moderate = _FitClipParagraph(
         'Address: ',
@@ -391,7 +393,7 @@ def test_variable_mod_text_shrinks_then_clips_at_seven_points():
 
 
 def test_mod_pdf_draws_plain_page_number_in_bottom_right_corner():
-    from printer_app.salesforce_sandbox.pdf_renderer import (
+    from printer_app.mod_sheets.pdf_renderer import (
         PAGE_NUMBER_FONT_SIZE,
         PAGE_NUMBER_X,
         PAGE_NUMBER_Y,
@@ -431,7 +433,6 @@ def test_salesforce_stays_isolated_from_gallery_printing_and_ocr():
     root = Path(__file__).resolve().parents[1]
     for path in list((root / 'gallery').glob('*.py')) + [
         root / 'printer.py',
-        root / 'worker.py',
         root / 'print_dispatch.py',
         root / 'print_queue_repository.py',
     ]:
@@ -439,6 +440,9 @@ def test_salesforce_stays_isolated_from_gallery_printing_and_ocr():
 
     adapter = (root / 'salesforce_sandbox/adapter.py').read_text()
     app = (root / 'app.py').read_text()
+    worker = (root / 'worker.py').read_text()
     assert 'FSSK__FSK_Work_Order__r' in adapter
     assert 'FSSK__FSK_Work_Order__r' not in app
+    assert 'FSSK__FSK_Work_Order__r' not in worker
+    assert 'Lead__r' not in worker
     assert 'ocr' not in adapter.lower()

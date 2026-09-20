@@ -14,6 +14,47 @@ class PrintQueueRepository:
     def __init__(self, db: Database):
         self.db = db
 
+    def enqueue_generated_pdf(self, identity: str, path, pages: int, options: dict, now: float) -> tuple[int, bool]:
+        """Queue one already-rendered PDF exactly once for a durable identity."""
+        if not identity.startswith('pdf:'):
+            raise ValueError('Generated PDF identity must use the pdf: namespace.')
+        if type(pages) is not int or pages < 1:
+            raise ValueError('Generated PDF must contain at least one page.')
+        path = str(path)
+        with self.db.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            existing = conn.execute(
+                'SELECT id FROM jobs WHERE attachment_id IS NULL AND group_key=? ORDER BY id LIMIT 1',
+                (identity,),
+            ).fetchone()
+            if existing:
+                return int(existing['id']), False
+            job_id = conn.execute(
+                """INSERT INTO jobs(
+                    attachment_id,group_key,status,printable,page_count,tabloid,next_attempt,created,updated
+                ) VALUES (NULL,?,'READY',?,?,0,0,?,?)""",
+                (identity, path, pages, now, now),
+            ).lastrowid
+            conn.execute(
+                'INSERT INTO meta(key,value) VALUES (?,?)',
+                ('job_print_settings:' + str(job_id), json.dumps(options, sort_keys=True)),
+            )
+            conn.execute(
+                'INSERT INTO outputs(job_id,role,path) VALUES (?,?,?)',
+                (job_id, 'Generated PDF', path),
+            )
+            conn.execute(
+                'INSERT INTO steps(job_id,at,message) VALUES (?,?,?)',
+                (job_id, now, f'Generated PDF queued: {pages} page(s)'),
+            )
+            return int(job_id), True
+
+    def job_status(self, job_id: int) -> dict | None:
+        return self.db.one(
+            'SELECT id,status,error,page_count,completed,updated FROM jobs WHERE id=?',
+            (int(job_id),),
+        )
+
     @staticmethod
     def _state(conn):
         row = conn.execute('SELECT value FROM meta WHERE key=?', (STATE_KEY,)).fetchone()

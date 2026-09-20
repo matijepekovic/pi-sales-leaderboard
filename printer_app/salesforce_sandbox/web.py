@@ -3,7 +3,7 @@ from io import BytesIO
 
 from flask import Blueprint, jsonify, render_template, request, send_file
 
-from .pdf_renderer import render_mod_pdf
+from ..mod_sheets.pdf_renderer import render_mod_pdf
 
 
 def _bool_arg(name, default=False):

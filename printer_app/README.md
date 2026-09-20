@@ -71,6 +71,31 @@ it is not a guarantee that all paper has finished printing at that exact second.
 | `PRINT_SCHEDULE_TIME` | Local `HH:MM`; default `09:00` |
 | `PRINTER_TIMEZONE` | Existing timezone setting; default `America/Los_Angeles` |
 
+## Daily MOD Sheets
+
+**MOD Sheets** is the manual Manager On Duty page. **MOD Settings** is a
+separate permanent configuration page for automatic printing. Save the market,
+product/source filters and removal/color choices there once; the automatic job
+uses those saved choices without persisting either date field.
+
+The worker runs the automatic MOD job **Monday through Friday at 7:00 AM** in
+`PRINTER_TIMEZONE`. Start Date and End Date are always that current local day.
+If the worker starts later that weekday and the day has not been handled yet, it
+catches up using the current day only; it never prints a prior date.
+
+If the source has no matching appointments, no PDF enters the print queue and
+the MOD status is recorded as **No appointments**. A source/render/generation
+failure is tried once more after two minutes; a second failure is recorded and
+stops for that day. Once a PDF is generated it enters the existing durable print
+queue, whose normal CUPS receipt/recovery behavior owns printer failures.
+
+Generated MOD PDFs are stored under
+`~/.local/share/printer-app/mod-sheets/`. Daily queue identity is durable, so a
+worker restart cannot enqueue a second automatic MOD PDF for the same date.
+Source-specific Salesforce CLI/SOQL behavior remains inside the Salesforce
+adapter; MOD scheduling, settings, rendering and workflow use normalized
+contracts under `printer_app/mod_sheets/`.
+
 ## Embedded email images are not reports
 
 The Gmail attachment selector ignores `image/*` parts marked `inline` and image
