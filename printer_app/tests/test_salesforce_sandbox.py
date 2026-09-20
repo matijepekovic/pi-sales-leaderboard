@@ -332,11 +332,61 @@ def test_pdf_renderer_matches_reference_visualforce_grid():
     assert tuple(table._argH) == VISUALFORCE_ROW_HEIGHTS
     assert len(table._argW) == 10
     assert sum(table._argW) == pytest.approx(VISUALFORCE_TABLE_WIDTH)
-    assert table._cellvalues[0][0].style.fontName == 'Times-Roman'
+    assert table._cellvalues[0][0].label == 'Work Order Number: '
     assert ('SPAN', (0, 0), (2, 0)) in table._spanCmds
     assert ('SPAN', (3, 0), (6, 0)) in table._spanCmds
     assert ('SPAN', (7, 0), (9, 0)) in table._spanCmds
     assert ('SPAN', (4, 5), (9, 10)) in table._spanCmds
+
+
+
+def test_mod_pdf_fits_three_cards_per_page_deterministically():
+    from io import BytesIO
+
+    from pypdf import PdfReader
+
+    from printer_app.mod_sheet_contract import ModSheetRecord
+    from printer_app.salesforce_sandbox.pdf_renderer import render_mod_pdf
+
+    def records(count):
+        return [
+            ModSheetRecord(
+                source_id=f'0WO{index}',
+                work_order_number=f'{index:08d}',
+                lead_name='Example Customer',
+                address='123 Example Street, Lacey, WA, 98503',
+                assigned_service_resources=('Sales Rep One',),
+                lead_description='Short description.',
+            )
+            for index in range(count)
+        ]
+
+    assert len(PdfReader(BytesIO(render_mod_pdf(records(3)))).pages) == 1
+    assert len(PdfReader(BytesIO(render_mod_pdf(records(6)))).pages) == 2
+    assert len(PdfReader(BytesIO(render_mod_pdf(records(7)))).pages) == 3
+
+
+def test_variable_mod_text_shrinks_then_clips_at_seven_points():
+    from printer_app.salesforce_sandbox.pdf_renderer import _FitClipParagraph
+
+    moderate = _FitClipParagraph(
+        'Address: ',
+        '12345 A Very Long Street Name That Needs A Smaller Value Font, Lacey, Washington',
+        max_height=20,
+    )
+    moderate.wrap(150, 100)
+    assert 7 <= moderate.value_font_size <= 9
+
+    extreme = _FitClipParagraph(
+        'Lead Description: ',
+        'very long description ' * 80,
+        max_height=20,
+    )
+    width, height = extreme.wrap(150, 100)
+    assert width == 150
+    assert height <= 20
+    assert extreme.value_font_size == 7
+    assert extreme.clipped is True
 
 
 def test_salesforce_stays_isolated_from_gallery_printing_and_ocr():
