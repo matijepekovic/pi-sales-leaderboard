@@ -16,8 +16,8 @@ from printer_app.print_queue_repository import PrintQueueRepository
 ZONE = ZoneInfo('America/Los_Angeles')
 
 
-def _stamp(year, month, day, hour, minute=0):
-    return datetime(year, month, day, hour, minute, tzinfo=ZONE).timestamp()
+def _stamp(year, month, day, hour, minute=0, second=0):
+    return datetime(year, month, day, hour, minute, second, tzinfo=ZONE).timestamp()
 
 
 class MutableClock:
