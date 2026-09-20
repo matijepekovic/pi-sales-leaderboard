@@ -150,7 +150,7 @@ def test_adapter_resolves_fields_and_normalizes_mod_records_read_only():
     option_queries = [
         call for call in calls
         if call[1:3] == ['data', 'query']
-        and 'WHERE FSSK__FSK_Work_Order__r' in call[call.index('--query') + 1]
+        and call[call.index('--query') + 1].startswith('SELECT FSSK__FSK_Work_Order__r')
         and 'LIMIT 1000' in call[call.index('--query') + 1]
     ]
     assert len(option_queries) == 2
