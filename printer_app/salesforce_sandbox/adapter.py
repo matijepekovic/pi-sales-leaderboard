@@ -193,10 +193,7 @@ class SalesforceCliAdapter:
     def _distinct_values(self, path, trace=None):
         if not path:
             return ()
-        query = (
-            f'SELECT {path} FROM ServiceAppointment'
-            f' WHERE {path} != null LIMIT 1000'
-        )
+        query = f'SELECT {path} FROM ServiceAppointment LIMIT 1000'
         try:
             result = self._run(
                 ['data', 'query', '--query', query, *self._target_args()],
