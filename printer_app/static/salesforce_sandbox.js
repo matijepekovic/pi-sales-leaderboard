@@ -110,10 +110,8 @@
       user.textContent = payload.username ? ' · ' + payload.username : '';
       appendShell('# connected' + (payload.alias ? ' as ' + payload.alias : ''));
 
-      let fieldError = false;
-      for (const item of fields) {
-        if (!(await loadField(item))) fieldError = true;
-      }
+      const fieldResults = await Promise.all(fields.map(loadField));
+      const fieldError = fieldResults.some(ok => !ok);
       generate.disabled = false;
       if (fieldError) {
         error.textContent = 'Connected to Salesforce, but one or more filter lists could not load. Generate still works with the available filters.';
