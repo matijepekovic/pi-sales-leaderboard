@@ -277,3 +277,9 @@ def test_salesforce_stays_isolated_from_gallery_printing_and_ocr():
     assert 'FSSK__FSK_Work_Order__r' in adapter
     assert 'FSSK__FSK_Work_Order__r' not in app
     assert 'ocr' not in adapter.lower()
+
+    base = (root / 'templates/base.html').read_text()
+    control = (root / 'templates/control.html').read_text()
+    assert "url_for('salesforce_sandbox.page')" in base
+    assert "url_for('salesforce_sandbox.page')" in control
+    assert 'Salesforce Sandbox' in control
