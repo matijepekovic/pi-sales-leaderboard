@@ -309,6 +309,30 @@ def test_pdf_renderer_keeps_original_mod_labels_and_normalized_contract():
     assert len(pdf) > 1000
 
 
+
+def test_pdf_renderer_matches_reference_visualforce_grid():
+    from printer_app.mod_sheet_contract import ModSheetRecord
+    from printer_app.salesforce_sandbox.pdf_renderer import (
+        VISUALFORCE_COLUMNS,
+        VISUALFORCE_ROW_HEIGHTS,
+        VISUALFORCE_TABLE_WIDTH,
+        _mod_table,
+    )
+
+    table = _mod_table(ModSheetRecord(source_id='0WO1'), color_code=False)
+
+    assert VISUALFORCE_COLUMNS == 10
+    assert VISUALFORCE_TABLE_WIDTH == pytest.approx(571.65)
+    assert tuple(table._argH) == VISUALFORCE_ROW_HEIGHTS
+    assert len(table._argW) == 10
+    assert sum(table._argW) == pytest.approx(VISUALFORCE_TABLE_WIDTH)
+    assert table._cellvalues[0][0].style.fontName == 'Times-Roman'
+    assert ('SPAN', (0, 0), (2, 0)) in table._spanCmds
+    assert ('SPAN', (3, 0), (6, 0)) in table._spanCmds
+    assert ('SPAN', (7, 0), (9, 0)) in table._spanCmds
+    assert ('SPAN', (4, 5), (9, 10)) in table._spanCmds
+
+
 def test_salesforce_stays_isolated_from_gallery_printing_and_ocr():
     root = Path(__file__).resolve().parents[1]
     for path in list((root / 'gallery').glob('*.py')) + [
