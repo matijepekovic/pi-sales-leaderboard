@@ -146,7 +146,11 @@ def test_adapter_resolves_fields_and_normalizes_mod_records_read_only():
     assert [call[call.index('--sobject') + 1] for call in describe_calls] == ['WorkOrder', 'Lead']
     assert len(records) == 1
     assert records[0].work_order_number == '00012345'
+    assert records[0].lead_name == 'Jordan Example'
+    assert records[0].address == '123 Main St, Lacey, WA, 98503'
     assert records[0].assigned_service_resources == ('Sales Rep One',)
+    assert records[0].product_interest == 'Windows'
+    assert records[0].lead_description == 'Customer description'
     assert all('--target-org' in call and call[call.index('--target-org') + 1] == 'work'
                for call in calls)
     assert not any(word in ('create', 'update', 'delete', 'upsert')
