@@ -216,7 +216,7 @@ def test_portal_ui_loads_connection_then_fields_and_has_cli_panel():
     assert 'Salesforce CLI' in portal
     assert 'state.dataset.connectionUrl' in js
     assert 'state.dataset.fieldUrl' in js
-    assert '25000' in js and '65000' in js
+    assert '25000' in js and '100000' in js
     assert "for (const item of fields)" in js
     assert '/salesforce-sandbox/api/connection' in web
     assert '/salesforce-sandbox/api/field/<key>' in web
