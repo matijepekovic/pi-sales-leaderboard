@@ -63,7 +63,7 @@ class FormRegistration:
 
 @dataclass(frozen=True)
 class TemplateField:
-    """One searchable variable region in normalized outer-frame coordinates."""
+    """One form cell in normalized outer-frame coordinates."""
 
     key: str
     label: str
@@ -73,10 +73,10 @@ class TemplateField:
     date_candidate: bool = False
 
 
-# Cell and printed-label rectangles measured from the blank template. Recognition
-# removes only these constant labels, then OCRs the remaining variable ink. Large
-# free-form cells stay represented here too, so populated notes remain searchable;
-# blank cells are skipped cheaply before Tesseract sees them.
+# Cell and printed-label rectangles measured from the blank template. All cells
+# participate in geometric border detection; recognition owns which values are
+# parsed. In particular, partial lower-form rules must not be mistaken for a
+# neighboring full-width border, even when those lower cells are not parsed.
 TEMPLATE_FIELDS = (
     TemplateField('work_order_number', 'Work Order Number',
                   _box(26, 19, 594, 68.5), _box(37, 34, 324, 56)),
@@ -157,6 +157,166 @@ def map_box(registration, box):
 def _runs(mask, np):
     edges = np.flatnonzero(np.diff(np.r_[False, mask, False].astype(np.int8)))
     return list(zip(edges[::2], edges[1::2]))
+
+
+def _rule_band(mask, expected, span_start, span_stop, radius):
+    """Locate the complete thickness of a nearby long rule.
+
+    The first mask axis is perpendicular to the rule. A small amount of residual
+    scan slope can spread one rule over several rows; coverage across that band
+    must still span most of this cell. Short text strokes cannot supply a border.
+    """
+    import numpy as np
+
+    length, across = mask.shape
+    first = max(0, int(round(expected - radius)))
+    last = min(length, int(round(expected + radius)) + 1)
+    span_start = max(0, min(across, int(span_start)))
+    span_stop = max(0, min(across, int(span_stop)))
+    if last <= first or span_stop <= span_start:
+        return None
+    window = mask[first:last, span_start:span_stop]
+    support = (window > 0).mean(axis=1)
+    candidates = []
+    for start, stop in _runs(support >= .10, np):
+        # A partial/broken rule is useful only when enough of its horizontal
+        # extent survives. Reject broad blocks and clipped search-window bands.
+        if (stop - start > max(3, radius * .95)
+                or (start == 0 and first > 0)
+                or (stop == last - first and last < length)):
+            continue
+        coverage = (window[start:stop] > 0).any(axis=0).mean()
+        if coverage < .65:
+            continue
+        a, b = first + int(start), first + int(stop)
+        distance = abs((a + b - 1) / 2.0 - expected)
+        candidates.append((distance, -float(coverage), a, b))
+    if not candidates:
+        return None
+    _, _, start, stop = min(candidates)
+    return start, stop
+
+
+def _inside_rule(mask, expected, span_start, span_stop, radius, inward, fallback):
+    band = _rule_band(mask, expected, span_start, span_stop, radius)
+    if band is None:
+        return expected + inward * fallback
+    start, stop = band
+    return stop if inward > 0 else start
+
+
+def field_boxes(image, registration):
+    """Return ordered template fields with observed, inside-the-rule bounds.
+
+    Template coordinates identify each cell; shared rule masks refine its edges
+    locally. Bounds use exclusive right/bottom coordinates. A missing rule keeps
+    the expected edge with only a small stroke-width inset, rather than looking
+    farther away and accidentally including a neighboring field. Labels belong
+    to recognition and do not affect this geometric contract.
+    """
+    import cv2
+    import numpy as np
+
+    if image is None or not image.size:
+        return [(field, (0, 0, 0, 0)) for field in TEMPLATE_FIELDS]
+    gray = image if image.ndim == 2 else (
+        cv2.cvtColor(image, cv2.COLOR_RGBA2GRAY)
+        if image.shape[2] == 4 else cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    )
+    height, width = gray.shape
+    frame_width = max(1, registration.right - registration.left)
+    frame_height = max(1, registration.bottom - registration.top)
+    ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+    horizontal = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN,
+        np.ones((1, max(16, int(round(frame_width * .04)))), np.uint8),
+    )
+    vertical = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN,
+        np.ones((max(12, int(round(frame_width * .018))), 1), np.uint8),
+    ).T
+    fallback = max(1, int(round(frame_width * .001)))
+
+    # Some rows divide only one side of the form. Vote over every cell sharing
+    # a template row before refining individual segments, so a nearby partial
+    # rule cannot masquerade as the full-width border above it. For example,
+    # the Start Price/MOD Notes separator is not the bottom of Sub Source.
+    rows = {}
+    expected_boxes = [(field, map_box(registration, field.box)) for field in TEMPLATE_FIELDS]
+    for field, (left, top, right, bottom) in expected_boxes:
+        for ratio, edge in ((field.box[1], top), (field.box[3], bottom)):
+            entry = rows.setdefault(ratio, [edge, left, right, []])
+            entry[1] = min(entry[1], left)
+            entry[2] = max(entry[2], right)
+            entry[3].append(max(1, bottom - top))
+    horizontal_bands = {}
+    anchors = []
+    for ratio, (edge, left, right, _) in sorted(rows.items()):
+        if right - left < frame_width * .90:
+            continue
+        pad = max(2, int(round((right - left) * .025)))
+        band = _rule_band(
+            horizontal, edge, left + pad, right - pad,
+            max(4, frame_height * .075),
+        )
+        horizontal_bands[ratio] = band
+        if band is not None:
+            anchors.append((ratio, (band[0] + band[1] - 1) / 2.0))
+    for ratio, (edge, left, right, cell_heights) in rows.items():
+        if ratio in horizontal_bands:
+            continue
+        # Renderer row heights can differ from the blank template. The observed
+        # full-width rows provide a local y mapping for shorter, partial rules.
+        if len(anchors) >= 2:
+            edge = float(np.interp(ratio, [a[0] for a in anchors], [a[1] for a in anchors]))
+        pad = max(2, int(round((right - left) * .025)))
+        radius = max(3, min(frame_height * .075, min(cell_heights) * .42))
+        horizontal_bands[ratio] = _rule_band(
+            horizontal, edge, left + pad, right - pad, radius,
+        )
+    thicknesses = [band[1] - band[0] for band in horizontal_bands.values() if band]
+    if thicknesses:
+        # A broken edge still has the same printed stroke thickness as nearby
+        # rules. Its fallback should exclude that stroke, not a fixed crop margin.
+        fallback = max(fallback, int(np.ceil(np.median(thicknesses) / 2.0)))
+
+    result = []
+    for field, (left, top, right, bottom) in expected_boxes:
+        cell_width, cell_height = max(1, right - left), max(1, bottom - top)
+        radius_x = max(3, min(frame_width * .04, cell_width * .30))
+        across_pad = max(2, int(round(cell_width * .025)))
+        edges = []
+        for ratio, expected, inward in ((field.box[1], top, 1), (field.box[3], bottom, -1)):
+            band = horizontal_bands[ratio]
+            if band is None:
+                edges.append(expected + inward * fallback)
+                continue
+            center = (band[0] + band[1] - 1) / 2.0
+            # Follow only this identified row. Local thickness can differ, and
+            # a slightly sloped scan may shift its segment by a few pixels.
+            radius = max(5, band[1] - band[0] + frame_width * .003)
+            local = _rule_band(
+                horizontal, center, left + across_pad, right - across_pad, radius,
+            ) or band
+            edges.append(local[1] if inward > 0 else local[0])
+        refined_top, refined_bottom = edges
+        # Horizontal rules are excluded from the vertical vote, including cell
+        # corners. This also lets a short cell retain all ink beside its rules.
+        vertical_pad = max(1, int(round(cell_height * .025)))
+        refined_left = _inside_rule(
+            vertical, left, refined_top + vertical_pad,
+            refined_bottom - vertical_pad, radius_x, 1, fallback,
+        )
+        refined_right = _inside_rule(
+            vertical, right, refined_top + vertical_pad,
+            refined_bottom - vertical_pad, radius_x, -1, fallback,
+        )
+        x0 = max(0, min(width, int(refined_left)))
+        y0 = max(0, min(height, int(refined_top)))
+        x1 = max(x0, min(width, int(refined_right)))
+        y1 = max(y0, min(height, int(refined_bottom)))
+        result.append((field, (x0, y0, x1, y1)))
+    return result
 
 
 def register_form(image):

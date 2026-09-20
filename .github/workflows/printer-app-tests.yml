@@ -40,6 +40,8 @@ jobs:
           python -m pytest \
             printer_app/tests/test_gallery_borders.py \
             printer_app/tests/test_gallery_template_ocr.py \
+            printer_app/tests/test_gallery_field_crops.py \
+            printer_app/tests/test_gallery_field_geometry.py \
             printer_app/tests/test_gallery_recognition.py::test_tsv_quotes_cannot_swallow_rows_or_leak_geometry \
             printer_app/tests/test_gallery_recognition.py::test_header_geometry_works_when_address_label_is_unreadable \
             printer_app/tests/test_gallery_recognition.py::test_new_normalized_header_is_used_without_address_or_number_guessing \

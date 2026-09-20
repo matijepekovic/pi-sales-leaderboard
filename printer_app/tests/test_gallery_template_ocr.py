@@ -3,22 +3,15 @@ from pathlib import Path
 
 import pytest
 
+from printer_app.tests.gallery_form_fixture import form_image
+
 
 def test_blank_template_geometry_is_removed_before_ocr():
     cv2 = pytest.importorskip('cv2')
     np = pytest.importorskip('numpy')
-    from printer_app.gallery.form_template import FormRegistration, TEMPLATE_FIELDS, map_box
     from printer_app.gallery.recognition import template_ocr_canvas
 
-    image = np.full((809, 1942), 255, np.uint8)
-    registration = FormRegistration(1.0, 26, 1916, 19, 787)
-
-    # Synthetic constant form ink: cell borders plus every known printed label.
-    for field in TEMPLATE_FIELDS:
-        left, top, right, bottom = map_box(registration, field.box)
-        cv2.rectangle(image, (left, top), (right, bottom), 0, 4)
-        left, top, right, bottom = map_box(registration, field.label_box)
-        cv2.rectangle(image, (left, top), (right, bottom), 0, -1)
+    image, registration = form_image((cv2, np))
 
     canvas, segments = template_ocr_canvas(image, registration)
     assert canvas is None
@@ -28,26 +21,17 @@ def test_blank_template_geometry_is_removed_before_ocr():
 def test_template_ocr_packs_only_populated_variable_fields():
     cv2 = pytest.importorskip('cv2')
     np = pytest.importorskip('numpy')
-    from printer_app.gallery.form_template import FormRegistration, TEMPLATE_FIELDS, map_box
+    from printer_app.gallery.form_template import TEMPLATE_FIELDS, map_box
     from printer_app.gallery.recognition import template_ocr_canvas
 
-    image = np.full((809, 1942), 255, np.uint8)
-    registration = FormRegistration(1.0, 26, 1916, 19, 787)
+    image, registration = form_image((cv2, np))
     fields = {field.key: field for field in TEMPLATE_FIELDS}
-
-    # Keep the same constant-form noise as the real blank template.
-    for field in TEMPLATE_FIELDS:
-        left, top, right, bottom = map_box(registration, field.box)
-        cv2.rectangle(image, (left, top), (right, bottom), 0, 4)
-        left, top, right, bottom = map_box(registration, field.label_box)
-        cv2.rectangle(image, (left, top), (right, bottom), 0, -1)
 
     for key in ('lead_name', 'address', 'local_scheduled_start_time', 'scheduled_start'):
         field = fields[key]
         left, top, right, bottom = map_box(registration, field.box)
         # Variable ink deliberately lives away from the constant label rectangle.
-        # Lead Name is a one-line value lane beside its label; the other fields
-        # retain the generic whole-cell packing behavior.
+        # Include a same-line name and lower-row values in the other cells.
         if field.lead:
             _, label_top, label_right, label_bottom = map_box(registration, field.label_box)
             x0 = label_right + 10
@@ -76,7 +60,7 @@ def test_template_ocr_packs_only_populated_variable_fields():
     assert 'mod_notes' not in keys  # blank handwriting area never enters OCR
 
 
-def test_lead_name_ocr_receives_only_value_lane_not_label_or_grid_residue():
+def test_lead_name_label_mask_removes_residue_above_the_printed_label():
     cv2 = pytest.importorskip('cv2')
     np = pytest.importorskip('numpy')
     from printer_app.gallery.form_template import FormRegistration, TEMPLATE_FIELDS, map_box
@@ -88,9 +72,12 @@ def test_lead_name_ocr_receives_only_value_lane_not_label_or_grid_residue():
     left, top, right, bottom = map_box(registration, lead.box)
     _, label_top, label_right, label_bottom = map_box(registration, lead.label_box)
 
-    # Simulate scan residue from the printed label/top-left grid. This is outside
-    # the label mask used by the old whole-cell approach, but it is not customer
-    # data and must never enter name OCR.
+    # Include the printed label so its line can be measured. The border-to-border
+    # path deliberately preserves uncertain pixels when no label can be found.
+    label_left, _, _, _ = map_box(registration, lead.label_box)
+    cv2.putText(image, 'Lead Name:', (label_left, label_bottom - 3),
+                cv2.FONT_HERSHEY_SIMPLEX, .7, 0, 1, cv2.LINE_8)
+    # Residue above that label is within the label's excluded upper-left area.
     cv2.rectangle(image, (left + 45, top + 8), (left + 90, top + 9), 0, -1)
 
     # Simulate the actual printed lead-name value immediately after the label.
@@ -120,6 +107,7 @@ def test_template_search_contract_keeps_fields_lead_date_and_each_cards_time():
     from printer_app.gallery.recognition import _template_document_date, _template_search_text
 
     values = {
+        'work_order_number': '002275180',
         'local_scheduled_start_time': '2026-09-19 10:30 AM',
         'lead_name': 'JORDAN EXAMPLE',
         'address': '123 MAIN ST',
@@ -129,7 +117,9 @@ def test_template_search_contract_keeps_fields_lead_date_and_each_cards_time():
     text = _template_search_text(values)
     assert 'Lead Name: JORDAN EXAMPLE' in text
     assert 'Address: 123 MAIN ST' in text
-    assert 'Product Interest: WINDOWS' in text
+    assert 'Work Order Number: 002275180' in text
+    assert 'Product Interest' not in text
+    assert 'WINDOWS' not in text
     assert text.count('10:30 AM') == 2
     assert _template_document_date(values) == ('2026-09-19', 'printed')
 
