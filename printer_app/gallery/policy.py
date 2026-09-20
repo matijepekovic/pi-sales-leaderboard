@@ -153,30 +153,36 @@ def work_order_key(value):
     return ''.join(re.findall(r'[a-z0-9]+', str(value or '').casefold()))
 
 
-ASSIGNED_RESOURCE_BOUNDARY = (
-    r'(?=\s*(?:\||\n)|\s+(?:Set\s+By|T\s+Close|Work\s+Type|'
-    r'Product\s+Interest|Source|Sub\s+Source|Hover\s*/\s*Flir|'
-    r'Lead\s+Description)\s*:?[ \t]*|$)'
+REFERENCE_FIELD_BOUNDARY = (
+    r'(?=[ \t]*\||\s+(?:Work\s+Order\s+Number|'
+    r'Local\s+Scheduled\s+Start\s+Time|Canvass\s+Set\s+By|Lead\s+Name|'
+    r'Address|Phone|Power\s+Questions|Scheduled\s+Start|Assigned\s+Service\s+Resource|'
+    r'Set\s+By|T\s+Close|Work\s+Type|Product\s+Interest|Source|Sub\s+Source|'
+    r'Hover\s*/\s*Flir|Lead\s+Description|Start\s+Price|Final\s+Price|'
+    r'Deposit\s*/\s*Payment|MOD\s+Notes|Fin\s+Checklist|Bid\s+Sheets|Pictures|'
+    r'Dispo|Call\s+[12]|Need|90\s+Min|Want)\b[ \t]*[:;]?|$)'
 )
 
 
-def authoritative_assigned_resource_text(text, value):
-    """Replace only the Assigned Service Resource field with reference data.
+def authoritative_reference_text(text, lead_name='', address='', assigned_resource=''):
+    """Replace supplied reference fields while preserving unrelated recognized ink.
 
-    Other recognized ink stays untouched. If the field was not recognized at all,
-    append the authoritative value so search still receives the structured rep.
+    Empty source fields leave OCR intact. Missing headers are appended, so the
+    same corrected identity and complete assigned-resource list reach search.
     """
     source = str(text or '')
-    clean = ' '.join(str(value or '').split())
-    replacement = 'Assigned Service Resource:' + ((' ' + clean) if clean else '')
-    pattern = (
-        r'\bAssigned\s+Service\s+Resource\s*[:;]?[ \t]*'
-        r'([^\n|]+?)' + ASSIGNED_RESOURCE_BOUNDARY
-    )
-    updated, count = re.subn(pattern, replacement, source, count=1, flags=re.I)
-    if count:
-        return updated
-    return (source.rstrip() + ('\n' if source.strip() else '') + replacement)[:100000]
+    for label, value in (('Lead Name', lead_name), ('Address', address),
+                         ('Assigned Service Resource', assigned_resource)):
+        clean = ' '.join(str(value or '').split())
+        if not clean:
+            continue
+        replacement = label + ': ' + clean
+        pattern = (r'\b' + r'\s+'.join(label.split())
+                   + r'[ \t]*[:;]?[ \t]*[^|]*?' + REFERENCE_FIELD_BOUNDARY)
+        source, count = re.subn(pattern, lambda match: replacement, source, flags=re.I)
+        if not count:
+            source = source.rstrip() + ('\n' if source.strip() else '') + replacement
+    return source
 
 
 def related_name_key(value):

@@ -1,5 +1,6 @@
 """Salesforce Sandbox regressions for the original MOD controller contract."""
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -7,6 +8,7 @@ import pytest
 
 from printer_app.salesforce_sandbox.adapter import SalesforceCliAdapter, SalesforceAdapterError
 from printer_app.salesforce_sandbox.service import SalesforceSandboxService
+from printer_app.mod_sheet_contract import ModSheetSourceError
 
 
 def _result(value, returncode=0, stderr=''):
@@ -90,6 +92,24 @@ def _query_calls(calls):
         for call in calls
         if call[1:3] == ['data', 'query']
     ]
+
+
+def _paged_salesforce_runner(calls, pages):
+    remaining = iter(pages)
+    other_queries = _salesforce_runner(calls)
+
+    def runner(command, **kwargs):
+        if '--query' in command:
+            query = command[command.index('--query') + 1]
+            if 'FROM ServiceAppointment' in query:
+                calls.append(command)
+                page = next(remaining)
+                if isinstance(page, list):
+                    return _result({'status': 0, 'result': {'records': page}})
+                return page
+        return other_queries(command, **kwargs)
+
+    return runner
 
 
 def test_cli_error_surfaces_useful_node_cause():
@@ -243,6 +263,121 @@ def test_empty_controller_result_returns_original_error():
     )
     with pytest.raises(SalesforceAdapterError, match='No Records Found for Selected Criteria'):
         adapter.mod_sheets(start_date='9/19/2026', end_date='9/19/2026')
+
+
+def test_unlimited_records_collect_all_pages_and_resources_without_portal_filters():
+    calls = []
+    first_page = [_appointment(f'08p{index:012d}AAA') for index in range(1, 1001)]
+    second_page = [
+        _appointment('08p000000001001AAA', resource='Second Sales Rep'),
+        _appointment('08p000000001002AAA', work_order_id='0WO000000000002AAA'),
+    ]
+    service = SalesforceSandboxService(SalesforceCliAdapter(
+        runner=_paged_salesforce_runner(calls, [first_page, second_page, []]),
+    ))
+
+    records = service.records(
+        start_date='2026-09-19', end_date='2026-09-19',
+        market_segment='', product_category='', source_type='',
+        remove_canceled=False, remove_unconfirmed=False, limit=None,
+    )
+
+    assert isinstance(records, tuple)
+    assert len(records) == 2
+    assert records[0].assigned_service_resources == ('Sales Rep One', 'Second Sales Rep')
+    assert records[1].source_id == '0WO000000000002AAA'
+    queries = [query for query in _query_calls(calls) if 'FROM ServiceAppointment' in query]
+    assert len(queries) == 3
+    assert ' AND Id > ' not in queries[0]
+    assert " AND Id > '08p000000001000AAA'" in queries[1]
+    assert " AND Id > '08p000000001002AAA'" in queries[2]
+    for query in queries:
+        assert query.endswith('ORDER BY Id ASC LIMIT 1000')
+        assert 'FSSK__FSK_Assigned_Service_Resource__r.Name' in query
+        assert 'Market__c =' not in query
+        assert 'Product_Interest__c INCLUDES' not in query
+        assert 'LeadSource IN (' not in query
+        assert 'LeadSource =' not in query
+        assert "Status != 'Canceled'" not in query
+        assert 'LastModifiedDate != null' not in query
+
+
+def test_unlimited_records_continue_after_short_pages():
+    calls = []
+    service = SalesforceSandboxService(SalesforceCliAdapter(
+        runner=_paged_salesforce_runner(calls, [
+            [_appointment('08p000000000001AAA')],
+            [_appointment('08p000000000002AAA', resource='Second Sales Rep')],
+            [],
+        ]),
+    ))
+    records = service.records(start_date='2026-09-19', end_date='2026-09-19', limit=None)
+    assert records[0].assigned_service_resources == ('Sales Rep One', 'Second Sales Rep')
+
+
+@pytest.mark.parametrize(('day', 'start_utc', 'end_utc'), [
+    ('2026-09-19', '2026-09-19T07:00:00Z', '2026-09-20T07:00:00Z'),
+    ('2026-03-08', '2026-03-08T08:00:00Z', '2026-03-09T07:00:00Z'),
+    ('2026-11-01', '2026-11-01T07:00:00Z', '2026-11-02T08:00:00Z'),
+])
+def test_records_use_exact_local_day_including_last_second(day, start_utc, end_utc):
+    calls = []
+    start = datetime.fromisoformat(start_utc)
+    end = datetime.fromisoformat(end_utc)
+    rows = [
+        _appointment(f'08p{index:012d}AAA', scheduled=stamp.isoformat(), resource=resource)
+        for index, (stamp, resource) in enumerate([
+            (start - timedelta(microseconds=1), 'Previous Day'),
+            (start, 'First Appointment'),
+            (end - timedelta(microseconds=1), 'Last Appointment'),
+            (end, 'Next Day'),
+        ], start=1)
+    ]
+    service = SalesforceSandboxService(SalesforceCliAdapter(
+        runner=_paged_salesforce_runner(calls, [rows, []]),
+    ))
+    records = service.records(start_date=day, end_date=day, limit=None)
+    assert records[0].assigned_service_resources == ('First Appointment', 'Last Appointment')
+    query = next(query for query in _query_calls(calls) if 'FROM ServiceAppointment' in query)
+    assert f'SchedStartTime >= {start_utc}' in query
+    assert f'SchedStartTime < {end_utc}' in query
+
+
+def test_empty_unlimited_records_are_a_valid_empty_source_result():
+    service = SalesforceSandboxService(SalesforceCliAdapter(
+        runner=_paged_salesforce_runner([], [[]]),
+    ))
+    assert service.records(start_date='2026-09-19', end_date='2026-09-19', limit=None) == ()
+
+
+@pytest.mark.parametrize('second_page', [
+    _result({'status': 1, 'message': 'Query unavailable'}, returncode=1),
+    _result({'status': 0, 'result': {}}),
+    _result({'status': 0, 'result': {'records': [], 'done': False, 'totalSize': 1}}),
+    [_appointment('08p000000000001AAA')],
+    [_appointment('invalid-id')],
+])
+def test_later_page_failure_never_returns_partial_records(second_page):
+    calls = []
+    service = SalesforceSandboxService(SalesforceCliAdapter(
+        runner=_paged_salesforce_runner(calls, [
+            [_appointment('08p000000000001AAA')], second_page,
+        ]),
+    ))
+    with pytest.raises(ModSheetSourceError):
+        service.records(start_date='2026-09-19', end_date='2026-09-19', limit=None)
+
+
+@pytest.mark.parametrize(('limit', 'expected'), [(-1, 1), (3, 3), (5000, 1000)])
+def test_finite_limit_keeps_one_query_and_original_ordering(limit, expected):
+    calls = []
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner(calls))
+    adapter.mod_sheets(start_date='2026-09-19', end_date='2026-09-19', limit=limit)
+    queries = [query for query in _query_calls(calls) if 'FROM ServiceAppointment' in query]
+    assert len(queries) == 1
+    assert queries[0].endswith(
+        f'ORDER BY SchedStartTime, FSSK__FSK_Work_Order__r.Lead__r.Name ASC LIMIT {expected}'
+    )
 
 
 def test_connection_check_is_separate_from_filter_loading():

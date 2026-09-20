@@ -643,6 +643,12 @@ class GalleryRepository:
                 FROM items WHERE document_date=? AND state IN ('ACTIVE','REVIEW')
                 ORDER BY created,id""", (day,))]
 
+    def reference_dates(self):
+        with self.connect() as c:
+            return [row['document_date'] for row in c.execute("""SELECT DISTINCT document_date
+                FROM items WHERE state IN ('ACTIVE','REVIEW') AND document_date IS NOT NULL
+                ORDER BY document_date""")]
+
     def reference_item(self, ident):
         with self.connect() as c:
             row = c.execute("""SELECT id,text,document_date,lead_name,lead_key,address,address_key,
@@ -651,8 +657,15 @@ class GalleryRepository:
                 WHERE id=? AND state IN ('ACTIVE','REVIEW')""", (ident,)).fetchone()
             return dict(row) if row else None
 
-    def apply_reference(self, ident, source_id, kind, assigned_resource, text):
+    def apply_reference(self, ident, source_id, kind, assigned_resource, text, name, address):
         with self.connect() as c:
             return c.execute("""UPDATE items SET assigned_service_resource=?,reference_kind=?,
-                reference_source_id=?,text=? WHERE id=? AND state IN ('ACTIVE','REVIEW')""",
-                (assigned_resource, kind, source_id, text, ident)).rowcount
+                reference_source_id=?,text=?,
+                lead_name=CASE WHEN ?='' THEN lead_name ELSE ? END,
+                lead_key=CASE WHEN ?='' THEN lead_key ELSE ? END,
+                lead_status=CASE WHEN ?='' THEN lead_status ELSE 'printed' END,
+                address=CASE WHEN ?='' THEN address ELSE ? END,
+                address_key=CASE WHEN ?='' THEN address_key ELSE ? END
+                WHERE id=? AND state IN ('ACTIVE','REVIEW')""",
+                (assigned_resource, kind, source_id, text, name, name, name, lead_key(name), name,
+                 address, address, address, address_key(address), ident)).rowcount

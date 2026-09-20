@@ -48,9 +48,13 @@ class FakeSource:
 
 
 class FakeReferenceSink:
-    def __init__(self, fail=False):
+    def __init__(self, fail=False, days=()):
         self.fail = fail
+        self.days = days
         self.published = []
+
+    def dates(self):
+        return self.days
 
     def publish(self, day, kind, records, captured):
         if self.fail:
@@ -397,8 +401,8 @@ def test_morning_reference_failure_never_breaks_print_state(tmp_path):
     assert repository.pending_morning_references()
 
 
-def test_final_reference_pull_runs_at_1120_pm_and_uses_current_day(tmp_path):
-    clock = MutableClock(_stamp(2026, 9, 21, 23, 19))
+def test_final_reference_pull_runs_at_11_pm_and_uses_current_day(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 21, 22, 59))
     db = Database(tmp_path / 'printer.db')
     repository = ModSheetAutomationRepository(db)
     repository.save_settings(ModSheetAutomationSettings(
@@ -428,17 +432,79 @@ def test_final_reference_pull_runs_at_1120_pm_and_uses_current_day(tmp_path):
     )
 
     assert delivery.final_due() is False
-    clock.value = _stamp(2026, 9, 21, 23, 20)
+    clock.value = _stamp(2026, 9, 21, 23, 0)
     assert delivery.final_due() is True
     state = delivery.run_final()
 
     assert state['status'] == 'complete'
     assert state['appointments'] == 1
-    assert source.calls[0]['start_date'] == '9/21/2026'
-    assert source.calls[0]['end_date'] == '9/21/2026'
+    assert source.calls == [{
+        'start_date': '2026-09-21', 'end_date': '2026-09-21',
+        'market_segment': '', 'product_category': '', 'source_type': '',
+        'remove_canceled': False, 'remove_unconfirmed': False, 'limit': None,
+    }]
     assert sink.published[0][0:2] == ('2026-09-21', 'final')
     assert sink.published[0][2] == final_records
     assert delivery.final_due() is False
+
+
+def test_references_run_on_weekends_without_print_settings(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 20, 23))
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    sink = FakeReferenceSink()
+    delivery = ModSheetReferenceDeliveryService(
+        repository, FakeSource([()]), FakeQueue(), sink, 'America/Los_Angeles', clock=clock,
+    )
+
+    assert delivery.final_due()
+    assert delivery.run_final()['status'] == 'complete'
+    assert sink.published[0][0] == '2026-09-20'
+
+
+def test_existing_cards_backfill_once_by_card_date_without_querying_tomorrow(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 21, 12))
+    db = Database(tmp_path / 'printer.db')
+    repository = ModSheetAutomationRepository(db)
+    sink = FakeReferenceSink(days=('2026-09-18', '2026-09-21', '2026-09-22'))
+    source = FakeSource([(), ()])
+    delivery = ModSheetReferenceDeliveryService(
+        repository, source, FakeQueue(), sink, 'America/Los_Angeles', clock=clock,
+    )
+
+    delivery.backfill_existing()
+
+    assert [call['start_date'] for call in source.calls] == ['2026-09-18', '2026-09-21']
+    assert [entry[0:2] for entry in sink.published] == [
+        ('2026-09-18', 'final'), ('2026-09-21', 'final'),
+    ]
+    assert repository.reference_backfill_complete()
+    # The completed marker survives a worker restart.
+    restarted = ModSheetReferenceDeliveryService(
+        ModSheetAutomationRepository(Database(tmp_path / 'printer.db')),
+        source, FakeQueue(), sink, 'America/Los_Angeles', clock=clock,
+    )
+    restarted.backfill_existing()
+    assert len(source.calls) == 2
+    # An initial daytime fill must not suppress tonight's final assignments.
+    assert delivery.final_due(_stamp(2026, 9, 21, 23))
+
+
+def test_failed_backfill_keeps_other_dates_and_can_retry_on_restart(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 21, 12))
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    sink = FakeReferenceSink(days=('2026-09-18', '2026-09-19'))
+    source = FakeSource([RuntimeError('unavailable'), ()])
+    delivery = ModSheetReferenceDeliveryService(
+        repository, source, FakeQueue(), sink, 'America/Los_Angeles', clock=clock,
+    )
+
+    delivery.backfill_existing()
+
+    assert not repository.reference_backfill_complete()
+    assert [entry[0] for entry in sink.published] == ['2026-09-19']
+    source.outcomes = [(), ()]
+    delivery.backfill_existing()
+    assert repository.reference_backfill_complete()
 
 
 def test_final_reference_failure_leaves_gallery_optional(tmp_path):

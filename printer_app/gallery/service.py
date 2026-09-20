@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .policy import (
-    address_key, authoritative_assigned_resource_text, checked_date, checked_date_filter,
+    address_key, authoritative_reference_text, checked_date, checked_date_filter,
     checked_lead_name, lead_key, printed_address, printed_lead, printed_work_order_number,
     related_identity, search_expression, work_order_key,
 )
@@ -204,28 +204,12 @@ class GalleryService:
 
     @staticmethod
     def _match_reference(item, references):
-        """Return one unambiguous final-day reference, otherwise no enrichment."""
+        """Only one exact work-order match in the card's day can enrich it."""
         work = work_order_key(item.get('work_order_number', ''))
-        if work:
-            matches = [row for row in references if row.get('work_order_key') == work]
-            if len(matches) == 1:
-                return matches[0]
-
-        address = address_key(item.get('address', ''))
-        if address:
-            matches = [row for row in references if row.get('address_key') == address]
-            if len(matches) == 1:
-                return matches[0]
-
-        name = item.get('lead_name', '')
-        if name:
-            matches = [
-                row for row in references
-                if related_identity(name, '', row.get('lead_name', ''), '')
-            ]
-            if len(matches) == 1:
-                return matches[0]
-        return None
+        if not work:
+            return None
+        matches = [row for row in references if row.get('work_order_key') == work]
+        return matches[0] if len(matches) == 1 else None
 
     def _enrich_reference_item(self, ident):
         item = self.repository.reference_item(ident)
@@ -240,16 +224,35 @@ class GalleryService:
         if match is None:
             return False
 
-        resources = tuple(match.get('assigned_service_resources') or ())
-        assigned = ', '.join(value for value in resources if value)
-        text = authoritative_assigned_resource_text(item.get('text', ''), assigned)
+        resources = {}
+        for value in match.get('assigned_service_resources') or ():
+            clean = ' '.join(str(value or '').split())
+            if clean:
+                resources.setdefault(clean.casefold(), clean)
+        assigned = ', '.join(resources.values())
+        name = ' '.join(str(match.get('lead_name') or '').split())
+        address = ' '.join(str(match.get('address') or '').split())
+        text = authoritative_reference_text(item.get('text', ''), name, address, assigned)
         return bool(self.repository.apply_reference(
             ident,
             match.get('source_id', ''),
             'final',
-            assigned,
+            assigned or item.get('assigned_service_resource', ''),
             text,
+            name,
+            address,
         ))
+
+    def reference_dates(self):
+        """Distinct usable dates of retained cards, for normalized source backfill."""
+        self.initialize()
+        days = set()
+        for value in self.repository.reference_dates():
+            try:
+                days.add(checked_date_filter(value))
+            except (TypeError, ValueError):
+                continue
+        return sorted(day for day in days if day and day != 'undated')
 
     def enrich_reference_day(self, day):
         self.initialize()
