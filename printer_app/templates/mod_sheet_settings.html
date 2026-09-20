@@ -3,20 +3,20 @@
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='mod_sheets/shared.css') }}"><script src="{{ url_for('static', filename='mod_sheets/runtime.js') }}" defer></script>{% endblock %}
 {% block content %}
 
-<div class="sf-beta-row" id="sfSandboxState" data-mod-sheet-runtime
+<div class="mod-source-row" id="modSourceState" data-mod-sheet-runtime
      data-connection-url="{{ url_for('salesforce_sandbox.connection') }}"
      data-field-url="{{ url_for('salesforce_sandbox.field', key='__FIELD__') }}">
   <div class="status-line">
-    Daily MOD Sheets · Salesforce <strong id="sfConnectionStatus">Checking Salesforce…</strong>
-    <span id="sfConnectionUser"></span>
+    Daily MOD Sheets · Source <strong id="modSourceStatus">Checking source…</strong>
+    <span id="modSourceUser"></span>
   </div>
-  <button type="button" id="sfRetry" hidden>Retry connection</button>
+  <button type="button" id="modSourceRetry" hidden>Retry connection</button>
 </div>
 
-<div class="sf-workspace">
+<div class="mod-workspace">
 <div class="mod-portal">
-<p id="sfConnectionError" class="notice error page-message" hidden></p>
-<form id="sfModForm" data-mode="settings" data-require-connection="false" method="post" action="{{ url_for('mod_sheets.settings_page') }}" autocomplete="off">
+<p id="modSourceError" class="notice error page-message" hidden></p>
+<form id="modSheetForm" data-mode="settings" data-require-connection="false" method="post" action="{{ url_for('mod_sheets.settings_page') }}" autocomplete="off">
   <input type="hidden" name="csrf" value="{{ session.csrf }}">
   <div class="container">
     <h1>Manager On Duty Sheet</h1>
@@ -97,12 +97,12 @@
 </form>
 </div>
 
-<aside class="sf-shell" aria-label="Salesforce CLI activity">
-  <div class="sf-shell-head">
-    <strong>Salesforce CLI</strong>
-    <button type="button" id="sfShellClear">Clear</button>
+<aside class="mod-source-log" aria-label="MOD source activity">
+  <div class="mod-source-head">
+    <strong>Source Activity</strong>
+    <button type="button" id="modSourceClear">Clear</button>
   </div>
-  <pre id="sfShellLog" aria-live="polite">waiting for Salesforce connection…</pre>
+  <pre id="modSourceLog" aria-live="polite">waiting for MOD source connection…</pre>
 </aside>
 </div>
 {% endblock %}
