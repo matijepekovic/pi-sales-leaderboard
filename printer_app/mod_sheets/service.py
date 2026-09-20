@@ -119,13 +119,6 @@ class ModSheetTestPrintService:
                 limit=1000,
             ))
             finished = self.clock()
-            if records:
-                # Persist the exact morning source snapshot now. It is delivered
-                # to the optional reference sink only after the print job is
-                # confirmed PRINTED.
-                self.repository.save_morning_reference(
-                    occurrence.day, records, finished
-                )
             if not records:
                 return self._state(
                     status='no_appointments',
@@ -251,6 +244,13 @@ class DailyModSheetService:
                 limit=1000,
             ))
             finished = self.clock()
+            if records:
+                # Persist the exact morning source snapshot now. It is delivered
+                # to the optional reference sink only after the print job is
+                # confirmed PRINTED.
+                self.repository.save_morning_reference(
+                    occurrence.day, records, finished
+                )
             if not records:
                 log.info('Daily MOD Sheet: no appointments for %s', occurrence.day)
                 return self._state(
