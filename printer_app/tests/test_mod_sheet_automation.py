@@ -220,6 +220,11 @@ def test_mod_sheet_automation_has_no_salesforce_field_structures():
         assert 'Lead__r' not in text, str(path)
 
 
+    assert not (root / 'salesforce_sandbox/pdf_renderer.py').exists()
+    assert not (root / 'static/salesforce_sandbox.js').exists()
+    assert not (root / 'static/salesforce_sandbox.css').exists()
+
+
 def test_mod_settings_page_is_separate_and_dates_are_not_persisted():
     from pathlib import Path
 
