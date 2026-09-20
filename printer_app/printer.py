@@ -79,9 +79,21 @@ class Printer:
             raise SubmissionRejected('PRINTER SUBMISSION FAILED: ' + text)
         return text
 
-    def hold(self, path: Path, token: str, options: PrintOptions, *, received_pdf=False) -> tuple[int, str, list[str]]:
+    def hold(
+        self,
+        path: Path,
+        token: str,
+        options: PrintOptions,
+        *,
+        received_pdf=False,
+        high_priority=False,
+    ) -> tuple[int, str, list[str]]:
         # No print can occur until the receipt is persisted and the worker releases it.
         command = ['lp', '-d', self.cfg.queue, '-n', str(options.copies), '-t', token, '-H', 'hold']
+        if high_priority:
+            # CUPS priority 100 moves this job ahead of queued work but never
+            # interrupts a job the printer is already processing.
+            command += ['-q', '100']
         if options.paper != 'source':
             paper = {'tabloid': 'Tabloid', 'letter': 'Letter', 'legal': 'Legal', 'a4': 'A4', 'a3': 'A3'}[options.paper]
             command += ['-o', 'media=' + paper]
