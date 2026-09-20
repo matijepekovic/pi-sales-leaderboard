@@ -30,3 +30,10 @@ class SourceStatus:
     alias: str = ''
     instance_url: str = ''
     detail: str = ''
+
+
+class ModSheetSourceError(RuntimeError):
+    """Normalized failure from the replaceable MOD-sheet source boundary."""
+
+
+NO_MOD_SHEET_RECORDS = 'No Records Found for Selected Criteria'
