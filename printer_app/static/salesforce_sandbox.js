@@ -7,11 +7,38 @@
   const error = document.getElementById('sfConnectionError');
   const retry = document.getElementById('sfRetry');
   const generate = document.getElementById('generate');
-  const selects = {
-    market_segment: document.getElementById('marketSegment'),
-    product_category: document.getElementById('productCategory'),
-    source_type: document.getElementById('srcType'),
-  };
+  const shell = document.getElementById('sfShellLog');
+  const clearShell = document.getElementById('sfShellClear');
+  const form = document.getElementById('sfModForm');
+  const fields = [
+    {key: 'market_segment', label: 'Market Segment', select: document.getElementById('marketSegment')},
+    {key: 'product_category', label: 'Product Category', select: document.getElementById('productCategory')},
+    {key: 'source_type', label: 'Source Type', select: document.getElementById('srcType')},
+  ];
+  let loading = false;
+
+  function appendShell(line = '') {
+    const current = shell.textContent ? shell.textContent + '\n' : '';
+    const lines = (current + line).split('\n');
+    shell.textContent = lines.slice(-300).join('\n');
+    shell.scrollTop = shell.scrollHeight;
+  }
+
+  function appendTrace(trace) {
+    for (const entry of trace || []) {
+      appendShell('$ ' + String(entry.input || ''));
+      appendShell((entry.ok === false ? 'ERR ' : 'OK  ') + String(entry.result || ''));
+    }
+  }
+
+  function setPlaceholder(select, text) {
+    select.replaceChildren();
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = text;
+    select.appendChild(option);
+    select.disabled = true;
+  }
 
   function setOptions(select, values) {
     select.replaceChildren();
@@ -28,43 +55,96 @@
     select.disabled = false;
   }
 
-  async function load() {
-    status.textContent = 'Checking Salesforce…';
-    user.textContent = '';
-    error.hidden = true;
-    retry.hidden = true;
-    generate.disabled = true;
-    for (const select of Object.values(selects)) select.disabled = true;
-
+  async function requestJson(url, timeoutMs) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    appendShell('GET ' + url);
     try {
-      const response = await fetch(state.dataset.metadataUrl, {
+      const response = await fetch(url, {
         signal: controller.signal,
         headers: {'Accept': 'application/json'},
       });
       const payload = await response.json();
+      appendTrace(payload.trace);
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.error || 'Salesforce metadata request failed.');
+        throw new Error(payload.error || 'Salesforce request failed.');
       }
-      status.textContent = 'Connected';
-      user.textContent = payload.username ? ' · ' + payload.username : '';
-      setOptions(selects.market_segment, payload.fields.market_segment);
-      setOptions(selects.product_category, payload.fields.product_category);
-      setOptions(selects.source_type, payload.fields.source_type);
-      generate.disabled = false;
-    } catch (exc) {
-      status.textContent = 'Not connected';
-      error.textContent = exc.name === 'AbortError'
-        ? 'Salesforce connection check timed out. The page is still usable; retry when ready.'
-        : String(exc.message || exc);
-      error.hidden = false;
-      retry.hidden = false;
+      return payload;
     } finally {
       clearTimeout(timer);
     }
   }
 
+  async function loadField(item) {
+    setPlaceholder(item.select, 'Loading…');
+    appendShell('');
+    appendShell('# ' + item.label);
+    const url = state.dataset.fieldUrl.replace('__FIELD__', encodeURIComponent(item.key));
+    try {
+      const payload = await requestJson(url, 100000);
+      setOptions(item.select, payload.field.values);
+      appendShell('# resolved ' + item.label + ': ' + (payload.field.path || 'not found'));
+      return true;
+    } catch (exc) {
+      setPlaceholder(item.select, 'Unavailable');
+      appendShell('ERR ' + item.label + ': ' + String(exc.message || exc));
+      return false;
+    }
+  }
+
+  async function load() {
+    if (loading) return;
+    loading = true;
+    status.textContent = 'Checking Salesforce…';
+    user.textContent = '';
+    error.hidden = true;
+    retry.hidden = true;
+    generate.disabled = true;
+    for (const item of fields) setPlaceholder(item.select, 'Waiting for connection…');
+
+    appendShell('');
+    appendShell('# connection');
+    try {
+      const payload = await requestJson(state.dataset.connectionUrl, 25000);
+      status.textContent = 'Connected';
+      user.textContent = payload.username ? ' · ' + payload.username : '';
+      appendShell('# connected' + (payload.alias ? ' as ' + payload.alias : ''));
+
+      const fieldResults = await Promise.all(fields.map(loadField));
+      const fieldError = fieldResults.some(ok => !ok);
+      generate.disabled = false;
+      if (fieldError) {
+        error.textContent = 'Connected to Salesforce, but one or more filter lists could not load. Generate still works with the available filters.';
+        error.hidden = false;
+        retry.hidden = false;
+      }
+    } catch (exc) {
+      status.textContent = 'Not connected';
+      const message = exc.name === 'AbortError'
+        ? 'Salesforce connection check timed out.'
+        : String(exc.message || exc);
+      error.textContent = message;
+      error.hidden = false;
+      retry.hidden = false;
+      appendShell('ERR ' + message);
+    } finally {
+      loading = false;
+    }
+  }
+
+  clearShell.addEventListener('click', () => {
+    shell.textContent = 'Salesforce CLI activity cleared.';
+  });
+
   retry.addEventListener('click', load);
+
+  form.addEventListener('submit', () => {
+    const values = Object.fromEntries(new FormData(form).entries());
+    appendShell('');
+    appendShell('# Generate MOD PDF');
+    appendShell('INPUT ' + JSON.stringify(values));
+    appendShell('RESULT request opened in a new tab');
+  });
+
   load();
 })();

@@ -17,6 +17,21 @@ class PortalSnapshot:
 
 
 @dataclass(frozen=True)
+class ConnectionSnapshot:
+    status: SourceStatus
+    trace: tuple = field(default_factory=tuple)
+    error: str = ''
+
+
+@dataclass(frozen=True)
+class FieldSnapshot:
+    key: str
+    field: object | None = None
+    trace: tuple = field(default_factory=tuple)
+    error: str = ''
+
+
+@dataclass(frozen=True)
 class GeneratedSnapshot:
     records: tuple = field(default_factory=tuple)
     start_date: str = ''
@@ -42,20 +57,29 @@ class SalesforceSandboxService:
             fields={},
         )
 
-    def metadata(self):
-        """Load the CLI-selected org and filter options after the page renders."""
+    def connection(self):
+        """Check only the saved Salesforce login; do not load filter metadata."""
+        trace = []
         try:
-            status = self.adapter.status()
-            fields = self.adapter.portal_fields()
-            return PortalSnapshot(
-                status=status,
-                today=date.today().strftime('%-m/%-d/%Y'),
-                fields=fields,
-            )
+            status = self.adapter.status(trace=trace)
+            return ConnectionSnapshot(status=status, trace=tuple(trace))
         except SalesforceAdapterError as exc:
-            return PortalSnapshot(
+            return ConnectionSnapshot(
                 status=SourceStatus(connected=False, detail=str(exc)),
-                today=date.today().strftime('%-m/%-d/%Y'),
+                trace=tuple(trace),
+                error=str(exc),
+            )
+
+    def field(self, key):
+        """Resolve one portal filter independently after connection succeeds."""
+        trace = []
+        try:
+            resolved = self.adapter.portal_field(key, trace=trace)
+            return FieldSnapshot(key=key, field=resolved, trace=tuple(trace))
+        except SalesforceAdapterError as exc:
+            return FieldSnapshot(
+                key=key,
+                trace=tuple(trace),
                 error=str(exc),
             )
 

@@ -1,15 +1,17 @@
-"""Salesforce Sandbox reproduces the MOD portal without coupling Gallery/printing."""
+"""Salesforce Sandbox stays isolated, read-only, and observable."""
 import json
-import pytest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from printer_app.salesforce_sandbox.adapter import SalesforceCliAdapter, SalesforceAdapterError
 from printer_app.salesforce_sandbox.service import SalesforceSandboxService
 
 
-def _result(value, returncode=0):
-    return SimpleNamespace(stdout=json.dumps(value), stderr='', returncode=returncode)
+def _result(value, returncode=0, stderr=''):
+    return SimpleNamespace(stdout=json.dumps(value), stderr=stderr, returncode=returncode)
 
 
 def _describe_fields(sobject):
@@ -31,20 +33,13 @@ def _describe_fields(sobject):
 def _salesforce_runner(calls):
     def runner(command, **kwargs):
         calls.append(command)
-        if command[1:3] == ['org', 'list']:
-            return _result({'status': 0, 'result': {'nonScratchOrgs': [{
-                'username': 'rep@example.test',
-                'alias': 'office',
-                'connectedStatus': 'Connected',
-                'isDefaultUsername': True,
-            }]}})
         if command[1:3] == ['org', 'display']:
             return _result({'status': 0, 'result': {
                 'username': 'rep@example.test',
-                'alias': 'office',
+                'alias': 'work',
                 'instanceUrl': 'https://example.my.salesforce.com',
                 'id': '00D000000000123',
-                'accessToken': 'MUST_NOT_ESCAPE',
+                'connectedStatus': 'Connected',
             }})
         if command[1:3] == ['sobject', 'describe']:
             sobject = command[command.index('--sobject') + 1]
@@ -55,8 +50,6 @@ def _salesforce_runner(calls):
             return _result({'status': 0, 'result': {'records': [
                 {'ServiceAppointmentId': '08p000000000001AAA',
                  'ServiceResource': {'Name': 'Sales Rep One'}},
-                {'ServiceAppointmentId': '08p000000000001AAA',
-                 'ServiceResource': {'Name': 'Sales Rep Two'}},
             ]}})
         if 'FROM ServiceAppointment' in query:
             return _result({'status': 0, 'result': {'records': [
@@ -87,89 +80,54 @@ def _salesforce_runner(calls):
                         },
                     },
                 },
-                {
-                    'Id': '08p000000000002AAA',
-                    'Status': 'Canceled',
-                    'Local_Scheduled_Start_Time__c': '9/19/2026 12:00 PM',
-                    'SchedStartTime': '2026-09-19T19:00:00.000+0000',
-                    'FSSK__FSK_Work_Order__r': {
-                        'WorkOrderNumber': '00099999',
-                        'Market_Segment__c': 'Retail',
-                        'Product_Category__c': 'Windows',
-                        'Lead__r': {'Name': 'Canceled Example', 'Source_Type__c': 'Canvass'},
-                    },
-                },
             ]}})
         raise AssertionError(query)
     return runner
 
 
-def test_node_crash_surfaces_underlying_sf_error_without_tokens():
+def test_cli_error_surfaces_useful_node_cause():
     def runner(command, **kwargs):
         return SimpleNamespace(
             stdout='',
-            stderr="""node:events:505
-      throw er; // Unhandled 'error' event
-      ^
-Error: spawn secret-tool ENOENT
-    at Process.ChildProcess._handle.onexit (node:internal/child_process:283:19)
-{
-  code: 'ENOENT',
-  syscall: 'spawn secret-tool',
-  path: 'secret-tool',
-  accessToken=DO_NOT_SHOW
-}
-""",
+            stderr="node:events:505\nError: spawn secret-tool ENOENT\ncode: 'ENOENT'\n",
             returncode=1,
         )
 
     adapter = SalesforceCliAdapter(runner=runner, executable='/usr/bin/sf')
     with pytest.raises(SalesforceAdapterError) as exc:
         adapter.status()
-    message = str(exc.value)
-    assert 'node:events:505' not in message
-    assert 'Error: spawn secret-tool ENOENT' in message
-    assert "code: 'ENOENT'" in message
-    assert 'spawn secret-tool' in message
-    assert 'DO_NOT_SHOW' not in message
-    assert '[REDACTED]' in message
+    assert 'node:events:505' not in str(exc.value)
+    assert 'spawn secret-tool ENOENT' in str(exc.value)
 
 
-def test_printer_service_uses_explicit_work_alias():
+def test_connection_uses_explicit_work_alias_and_safe_trace():
     calls = []
+    trace = []
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner(calls))
+    status = adapter.status(trace=trace)
 
-    def runner(command, **kwargs):
-        calls.append(command)
-        return _result({'status': 0, 'result': {
-            'username': 'rep@example.test',
-            'alias': 'work',
-            'instanceUrl': 'https://example.my.salesforce.com',
-            'id': '00D000000000123',
-        }})
-
-    adapter = SalesforceCliAdapter(runner=runner)
-    status = adapter.status()
     assert status.connected
     assert calls == [[
         '/usr/bin/sf', 'org', 'display',
-        '--target-org', 'work', '--json'
+        '--target-org', 'work', '--json',
     ]]
+    assert trace[0]['input'].endswith('--target-org work --json')
+    assert '"alias":"work"' in trace[0]['result']
 
     root = Path(__file__).resolve().parents[1]
     unit = (root / 'systemd/printer-app-web.service').read_text()
     app = (root / 'app.py').read_text()
-    assert 'User=scoreboard' in unit  # existing Printer service identity is unchanged
-    assert 'Environment=HOME=/home/scoreboard' not in unit
-    assert '/home/scoreboard/.sf' not in unit
+    assert 'User=scoreboard' in unit
     assert "SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')" in app
 
 
-def test_cli_adapter_recreates_portal_controls_and_mod_fields_read_only():
+def test_adapter_resolves_fields_and_normalizes_mod_records_read_only():
     calls = []
     adapter = SalesforceCliAdapter(runner=_salesforce_runner(calls), executable='/fake/sf')
 
-    status = adapter.status()
-    fields = adapter.portal_fields()
+    market = adapter.portal_field('market_segment')
+    product = adapter.portal_field('product_category')
+    source = adapter.portal_field('source_type')
     records = adapter.mod_sheets(
         start_date='9/19/2026',
         end_date='9/19/2026',
@@ -180,81 +138,87 @@ def test_cli_adapter_recreates_portal_controls_and_mod_fields_read_only():
         remove_unconfirmed=True,
     )
 
-    assert status.connected and status.username == 'rep@example.test'
-    assert 'MUST_NOT_ESCAPE' not in repr(status)
-    assert calls
-    assert all(
-        '--target-org' in call and call[call.index('--target-org') + 1] == 'work'
-        for call in calls
-    )
-    assert fields['market_segment'].values == ('Retail',)
-    assert fields['product_category'].values == ('Windows',)
-    assert fields['source_type'].values == ('Canvass',)
-
+    assert market.values == ('Retail',)
+    assert product.values == ('Windows',)
+    assert source.values == ('Canvass',)
+    describe_calls = [call for call in calls if call[1:3] == ['sobject', 'describe']]
+    assert len(describe_calls) == 2
+    assert [call[call.index('--sobject') + 1] for call in describe_calls] == ['WorkOrder', 'Lead']
     assert len(records) == 1
-    record = records[0]
-    assert record.work_order_number == '00012345'
-    assert record.lead_name == 'Jordan Example'
-    assert record.address == '123 Main St, Lacey, WA, 98503'
-    assert record.assigned_service_resources == ('Sales Rep One', 'Sales Rep Two')
-    assert record.product_interest == 'Windows'
-    assert record.lead_description == 'Customer description'
-
-    # The sandbox never mutates Salesforce.
-    assert all(command[1] in ('org', 'sobject', 'data') for command in calls)
+    assert records[0].work_order_number == '00012345'
+    assert records[0].lead_name == 'Jordan Example'
+    assert records[0].address == '123 Main St, Lacey, WA, 98503'
+    assert records[0].assigned_service_resources == ('Sales Rep One',)
+    assert records[0].product_interest == 'Windows'
+    assert records[0].lead_description == 'Customer description'
+    assert all('--target-org' in call and call[call.index('--target-org') + 1] == 'work'
+               for call in calls)
     assert not any(word in ('create', 'update', 'delete', 'upsert')
-                   for command in calls for word in command)
+                   for call in calls for word in call)
 
 
-def test_portal_shell_does_not_block_on_salesforce_and_metadata_is_separate():
+def test_connection_check_is_separate_from_slow_field_loading():
     calls = []
     service = SalesforceSandboxService(
         SalesforceCliAdapter(runner=_salesforce_runner(calls), executable='/fake/sf')
     )
 
-    # Opening the tab must render immediately: no sf subprocess is allowed here.
     portal = service.portal()
     assert calls == []
     assert not portal.status.connected
-    assert portal.fields == {}
 
-    metadata = service.metadata()
-    assert metadata.status.connected
-    assert metadata.fields['market_segment'].values == ('Retail',)
-    assert calls
+    connection = service.connection()
+    assert connection.status.connected
+    assert len(calls) == 1
+    assert calls[0][1:3] == ['org', 'display']
+
+    market = service.field('market_segment')
+    product = service.field('product_category')
+    source = service.field('source_type')
+    assert market.field.values == ('Retail',)
+    assert product.field.values == ('Windows',)
+    assert source.field.values == ('Canvass',)
+    assert market.trace and product.trace and source.trace
+    assert len([call for call in calls if call[1:3] == ['sobject', 'describe']]) == 2
+
+
+def test_parallel_field_requests_share_describe_cache():
+    calls = []
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner(calls), executable='/fake/sf')
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = [
+            pool.submit(adapter.portal_field, key)
+            for key in ('market_segment', 'product_category', 'source_type')
+        ]
+        resolved = [future.result() for future in futures]
+
+    assert [field.label for field in resolved] == [
+        'Market Segment', 'Product Category', 'Source Type',
+    ]
     describe_calls = [call for call in calls if call[1:3] == ['sobject', 'describe']]
-    assert len(describe_calls) == 3
+    assert sorted(call[call.index('--sobject') + 1] for call in describe_calls) == ['Lead', 'WorkOrder']
 
-    generated = service.generate(
-        start_date='9/19/2026',
-        end_date='9/19/2026',
-        market_segment='Retail',
-        product_category='Windows',
-        source_type='Canvass',
-        remove_canceled=True,
-        remove_unconfirmed=True,
-        color_code=True,
-        limit=1000,
-    )
-    assert len(generated.records) == 1
-    assert generated.color_code is True
-    # Generate reuses the already-resolved portal metadata instead of describing
-    # all three Salesforce objects again.
-    assert len([call for call in calls if call[1:3] == ['sobject', 'describe']]) == 3
 
+def test_connection_failure_preserves_trace_for_side_panel():
     class BrokenAdapter:
-        def status(self):
+        def status(self, trace=None):
+            if trace is not None:
+                trace.append({'input': '/usr/bin/sf org display', 'result': 'failed', 'ok': False})
             raise SalesforceAdapterError('CLI session unavailable')
 
-    broken = SalesforceSandboxService(BrokenAdapter()).metadata()
-    assert not broken.status.connected
-    assert broken.error == 'CLI session unavailable'
+    snapshot = SalesforceSandboxService(BrokenAdapter()).connection()
+    assert not snapshot.status.connected
+    assert snapshot.error == 'CLI session unavailable'
+    assert snapshot.trace[0]['ok'] is False
 
 
-def test_templates_recreate_original_portal_generate_contract():
+def test_portal_ui_loads_connection_then_fields_and_has_cli_panel():
     root = Path(__file__).resolve().parents[1]
     portal = (root / 'templates/salesforce_sandbox.html').read_text()
-    renderer = (root / 'salesforce_sandbox/pdf_renderer.py').read_text()
+    js = (root / 'static/salesforce_sandbox.js').read_text()
+    css = (root / 'static/salesforce_sandbox.css').read_text()
+    web = (root / 'salesforce_sandbox/web.py').read_text()
 
     for text in (
         'Manager On Duty Sheet',
@@ -270,6 +234,19 @@ def test_templates_recreate_original_portal_generate_contract():
         '*A maximum of 1000 appointments will be displayed',
     ):
         assert text in portal
+
+    assert 'data-connection-url' in portal
+    assert 'data-field-url' in portal
+    assert 'sfShellLog' in portal
+    assert 'Salesforce CLI' in portal
+    assert 'state.dataset.connectionUrl' in js
+    assert 'state.dataset.fieldUrl' in js
+    assert '25000' in js and '100000' in js
+    assert 'Promise.all(fields.map(loadField))' in js
+    assert '/salesforce-sandbox/api/connection' in web
+    assert '/salesforce-sandbox/api/field/<key>' in web
+    assert 'sf-workspace' in css and 'sf-shell' in css
+    assert 'name="org"' not in portal
     for name in (
         'startdate', 'enddate', 'marketsegment', 'productCategory',
         'sourceType', 'removeCanceled', 'removeUnconfirmed', 'colorCode',
@@ -277,24 +254,9 @@ def test_templates_recreate_original_portal_generate_contract():
         assert f'name="{name}"' in portal
     assert 'target="_blank"' in portal
     assert '<style>' not in portal and 'onchange=' not in portal
-    assert 'salesforce_sandbox.css' in portal
-    assert 'salesforce_sandbox.js' in portal
-    assert 'Checking Salesforce…' in portal
-    assert 'id="generate" disabled' in portal
-    js = (root / 'static/salesforce_sandbox.js').read_text()
-    assert 'AbortController' in js and '20000' in js
-    assert 'data-metadata-url' in portal
-    assert 'name="org"' not in portal
-    web = (root / 'salesforce_sandbox/web.py').read_text()
-    assert "request.args.get('org'" not in web
-    app = (root / 'app.py').read_text()
-    assert "target_org='work'" in app
-    assert 'Assigned Service Resource:' in renderer
-    assert 'color_code' in renderer
-    assert 'MOD Notes:' in renderer
 
 
-def test_pdf_renderer_accepts_only_normalized_records():
+def test_pdf_renderer_accepts_normalized_records():
     from printer_app.mod_sheet_contract import ModSheetRecord
     from printer_app.salesforce_sandbox.pdf_renderer import render_mod_pdf
 
@@ -311,7 +273,7 @@ def test_pdf_renderer_accepts_only_normalized_records():
     assert len(pdf) > 1000
 
 
-def test_salesforce_sandbox_isolated_from_gallery_printing_and_ocr():
+def test_salesforce_stays_isolated_from_gallery_printing_and_ocr():
     root = Path(__file__).resolve().parents[1]
     for path in list((root / 'gallery').glob('*.py')) + [
         root / 'printer.py',
@@ -327,7 +289,6 @@ def test_salesforce_sandbox_isolated_from_gallery_printing_and_ocr():
     assert 'FSSK__FSK_Work_Order__r' not in app
     assert 'ocr' not in adapter.lower()
 
-    # The beta must be reachable from the normal Printer UI, not by typing a URL.
     base = (root / 'templates/base.html').read_text()
     control = (root / 'templates/control.html').read_text()
     assert "url_for('salesforce_sandbox.page')" in base

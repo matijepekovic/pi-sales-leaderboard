@@ -10,7 +10,9 @@ from datetime import date, datetime, timedelta
 import json
 import getpass
 import re
+import shlex
 import subprocess
+import threading
 
 from ..mod_sheet_contract import ModSheetRecord, SourceStatus
 
@@ -69,6 +71,19 @@ def _address(work_order):
     return ', '.join(part.strip() for part in parts if part and part.strip())
 
 
+def _trace_command(parts):
+    return ' '.join(shlex.quote(str(part)) for part in parts)
+
+
+def _trace_note(trace, input_line, result, ok=True):
+    if trace is not None:
+        trace.append({
+            'input': str(input_line),
+            'result': str(result),
+            'ok': bool(ok),
+        })
+
+
 class SalesforceCliAdapter:
     """Read-only Salesforce source using the Pi user's existing sf CLI login."""
 
@@ -78,13 +93,28 @@ class SalesforceCliAdapter:
         self.target_org = str(target_org or '').strip()
         if not self.target_org:
             raise ValueError('Salesforce target org alias is required.')
-        self._portal_fields_cache = None
+        self._portal_fields_cache = {}
+        self._description_cache = {}
+        self._description_locks = {
+            'ServiceAppointment': threading.Lock(),
+            'WorkOrder': threading.Lock(),
+            'Lead': threading.Lock(),
+        }
 
-    def _run(self, args, timeout=30):
+    def _run(self, args, timeout=30, trace=None):
         executable = self._executable
+        command_parts = [executable, *args, '--json']
+        trace_entry = None
+        if trace is not None:
+            trace_entry = {
+                'input': _trace_command(command_parts),
+                'result': 'running…',
+                'ok': True,
+            }
+            trace.append(trace_entry)
         try:
             result = self._runner(
-                [executable, *args, '--json'],
+                command_parts,
                 check=False,
                 capture_output=True,
                 text=True,
@@ -92,19 +122,25 @@ class SalesforceCliAdapter:
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             user = getpass.getuser() or 'unknown'
-            raise SalesforceAdapterError(
-                f'Could not run {executable} as Linux user {user}: {exc}'
-            ) from exc
+            message = f'Could not run {executable} as Linux user {user}: {exc}'
+            if trace_entry is not None:
+                trace_entry['result'] = message
+                trace_entry['ok'] = False
+            raise SalesforceAdapterError(message) from exc
 
         try:
             payload = json.loads(result.stdout or '{}')
         except json.JSONDecodeError as exc:
             detail = _safe_cli_detail(getattr(result, 'stderr', ''))
             user = getpass.getuser() or 'unknown'
-            raise SalesforceAdapterError(
+            message = (
                 f'Salesforce CLI failed for Linux user {user}: '
                 + (detail or 'CLI returned non-JSON output')
-            ) from exc
+            )
+            if trace_entry is not None:
+                trace_entry['result'] = message
+                trace_entry['ok'] = False
+            raise SalesforceAdapterError(message) from exc
 
         if result.returncode or payload.get('status') not in (0, None):
             message = str(payload.get('message') or '').strip()
@@ -119,23 +155,40 @@ class SalesforceCliAdapter:
                 message = _safe_cli_detail(message) or detail
             user = getpass.getuser() or 'unknown'
             command = ' '.join(str(part) for part in args[:2])
-            raise SalesforceAdapterError(
+            full_message = (
                 f'Salesforce CLI {command} failed for Linux user {user}: '
                 + (message or 'no authenticated/default org was available')
             )
+            if trace_entry is not None:
+                trace_entry['result'] = full_message
+                trace_entry['ok'] = False
+            raise SalesforceAdapterError(full_message)
+        if trace_entry is not None:
+            trace_entry['result'] = 'status 0'
         return payload.get('result') or {}
 
     def _target_args(self):
         return ['--target-org', self.target_org]
 
-    def status(self):
-        result = self._run(['org', 'display', *self._target_args()], timeout=20)
+    def status(self, trace=None):
+        result = self._run(
+            ['org', 'display', *self._target_args()],
+            timeout=20,
+            trace=trace,
+        )
         # sf org display includes accessToken in JSON. Deliberately copy only
         # non-secret connection metadata into the application contract.
         username = str(result.get('username') or '')
         alias = str(result.get('alias') or '')
         instance = str(result.get('instanceUrl') or '')
         org_id = str(result.get('id') or '')
+        if trace:
+            trace[-1]['result'] = json.dumps({
+                'connectedStatus': str(result.get('connectedStatus') or 'Connected'),
+                'username': username,
+                'alias': alias,
+                'instanceUrl': instance,
+            }, separators=(',', ':'))
         return SourceStatus(
             connected=True,
             username=username,
@@ -144,11 +197,25 @@ class SalesforceCliAdapter:
             detail=('Org ' + org_id[-8:]) if org_id else 'Authenticated through Salesforce CLI',
         )
 
-    def _describe(self, sobject):
-        return self._run(
-            ['sobject', 'describe', '--sobject', sobject, *self._target_args()],
-            timeout=30,
-        )
+    def _describe(self, sobject, trace=None):
+        if sobject in self._description_cache:
+            _trace_note(trace, f'# cached describe {sobject}', 'cache hit')
+            return self._description_cache[sobject]
+
+        lock = self._description_locks[sobject]
+        with lock:
+            if sobject in self._description_cache:
+                _trace_note(trace, f'# cached describe {sobject}', 'cache hit')
+                return self._description_cache[sobject]
+            description = self._run(
+                ['sobject', 'describe', '--sobject', sobject, *self._target_args()],
+                timeout=30,
+                trace=trace,
+            )
+            self._description_cache[sobject] = description
+            if trace:
+                trace[-1]['result'] = f"status 0 · {len(description.get('fields', []) or [])} fields"
+            return description
 
     @staticmethod
     def _field_by_label(description, label):
@@ -158,7 +225,7 @@ class SalesforceCliAdapter:
                 return field
         return None
 
-    def _distinct_values(self, path):
+    def _distinct_values(self, path, trace=None):
         if not path:
             return ()
         query = (
@@ -169,6 +236,7 @@ class SalesforceCliAdapter:
             result = self._run(
                 ['data', 'query', '--query', query, *self._target_args()],
                 timeout=45,
+                trace=trace,
             )
         except SalesforceAdapterError:
             return ()
@@ -177,50 +245,78 @@ class SalesforceCliAdapter:
             value = _nested(row, path).strip()
             if value and value not in values:
                 values.append(value)
+        if trace:
+            trace[-1]['result'] = 'status 0 · values ' + json.dumps(values)
         return tuple(values)
 
-    def portal_fields(self):
-        """Resolve portal controls once, then reuse metadata for Generate."""
-        if self._portal_fields_cache is not None:
-            return self._portal_fields_cache
+    def portal_field(self, key, trace=None):
+        """Resolve one portal control so the UI can load each field independently."""
+        labels = {
+            'market_segment': 'Market Segment',
+            'product_category': 'Product Category',
+            'source_type': 'Source Type',
+        }
+        if key not in labels:
+            raise SalesforceAdapterError(f'Unknown Salesforce portal field: {key}')
+        cached = self._portal_fields_cache.get(key)
+        if cached is not None:
+            _trace_note(trace, f'# cached field {labels[key]}', 'cache hit')
+            return cached
 
-        scopes = (
-            ('ServiceAppointment', ''),
-            ('WorkOrder', 'FSSK__FSK_Work_Order__r.'),
-            ('Lead', 'FSSK__FSK_Work_Order__r.Lead__r.'),
-        )
-        descriptions = []
+        scopes_by_key = {
+            'market_segment': (
+                ('WorkOrder', 'FSSK__FSK_Work_Order__r.'),
+                ('ServiceAppointment', ''),
+                ('Lead', 'FSSK__FSK_Work_Order__r.Lead__r.'),
+            ),
+            'product_category': (
+                ('WorkOrder', 'FSSK__FSK_Work_Order__r.'),
+                ('ServiceAppointment', ''),
+                ('Lead', 'FSSK__FSK_Work_Order__r.Lead__r.'),
+            ),
+            'source_type': (
+                ('Lead', 'FSSK__FSK_Work_Order__r.Lead__r.'),
+                ('WorkOrder', 'FSSK__FSK_Work_Order__r.'),
+                ('ServiceAppointment', ''),
+            ),
+        }
+        scopes = scopes_by_key[key]
+        label = labels[key]
+        resolved = PortalField(label, '', ())
         for sobject, prefix in scopes:
             try:
-                descriptions.append((prefix, self._describe(sobject)))
+                description = self._describe(sobject, trace=trace)
             except SalesforceAdapterError:
                 continue
+            field = self._field_by_label(description, label)
+            if not field:
+                continue
+            path = prefix + str(field.get('name') or '')
+            values = []
+            for option in field.get('picklistValues', []) or []:
+                if option.get('active', True):
+                    value = str(option.get('value') or option.get('label') or '').strip()
+                    if value and value not in values:
+                        values.append(value)
+            if not values:
+                values.extend(self._distinct_values(path, trace=trace))
+            resolved = PortalField(label, path, tuple(values))
+            break
 
-        result = {}
-        for key, label in (
-            ('market_segment', 'Market Segment'),
-            ('product_category', 'Product Category'),
-            ('source_type', 'Source Type'),
-        ):
-            resolved = PortalField(label, '', ())
-            for prefix, description in descriptions:
-                field = self._field_by_label(description, label)
-                if not field:
-                    continue
-                path = prefix + str(field.get('name') or '')
-                values = []
-                for option in field.get('picklistValues', []) or []:
-                    if option.get('active', True):
-                        value = str(option.get('value') or option.get('label') or '').strip()
-                        if value and value not in values:
-                            values.append(value)
-                if not values:
-                    values.extend(self._distinct_values(path))
-                resolved = PortalField(label, path, tuple(values))
-                break
-            result[key] = resolved
-        self._portal_fields_cache = result
-        return result
+        self._portal_fields_cache[key] = resolved
+        result = (
+            f'{resolved.path or "not found"} · '
+            + (json.dumps(list(resolved.values)) if resolved.values else 'no options')
+        )
+        _trace_note(trace, f'# resolve {label}', result, ok=bool(resolved.path))
+        return resolved
+
+    def portal_fields(self):
+        """Resolve all portal controls for PDF generation, reusing the same cache."""
+        return {
+            key: self.portal_field(key)
+            for key in ('market_segment', 'product_category', 'source_type')
+        }
 
     @staticmethod
     def _parse_date(value):
