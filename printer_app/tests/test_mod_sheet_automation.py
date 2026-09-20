@@ -377,6 +377,40 @@ def test_mod_sheet_automation_has_no_salesforce_field_structures():
     assert 'captured.print_options' not in worker
 
 
+def test_mod_print_form_maps_only_to_mod_print_options():
+    from flask import Flask
+
+    from printer_app.mod_sheets.web import _settings_from_form
+
+    app = Flask(__name__)
+    with app.test_request_context('/mod-sheets/settings', method='POST', data={
+        'marketsegment': 'Olympia',
+        'productCategory': 'Roofing',
+        'sourceType': 'Canvass',
+        'removeCanceled': '1',
+        'removeUnconfirmed': '1',
+        'colorCode': '1',
+        'printPaper': 'letter',
+        'printOrientation': 'portrait',
+        'printColor': 'color',
+        'printSides': 'one-sided',
+        'printCopies': '3',
+        'pdfScaling': 'fit',
+    }):
+        settings = _settings_from_form()
+
+    assert settings.market_segment == 'Olympia'
+    assert settings.product_category == 'Roofing'
+    assert settings.print_options == PrintOptions(
+        paper='letter',
+        orientation='portrait',
+        color='color',
+        sides='one-sided',
+        copies=3,
+        pdf_scaling='fit',
+    )
+
+
 def test_mod_settings_page_has_separate_print_settings_and_immediate_test():
     from pathlib import Path
 
