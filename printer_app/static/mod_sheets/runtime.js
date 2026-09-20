@@ -149,6 +149,12 @@
     }
   }
 
+  for (const item of fields) {
+    item.select.addEventListener('change', () => {
+      item.select.dataset.selected = item.select.value;
+    });
+  }
+
   if (clearShell) {
     clearShell.addEventListener('click', () => {
       shell.textContent = 'Salesforce CLI activity cleared.';
