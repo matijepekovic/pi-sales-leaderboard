@@ -81,13 +81,13 @@ def _nested(record, path):
 
 
 def _address(work_order):
-    parts = [
-        _nested(work_order, 'Street'),
-        _nested(work_order, 'City'),
-        _nested(work_order, 'State'),
-        _nested(work_order, 'PostalCode'),
-    ]
-    return ', '.join(part.strip() for part in parts if part and part.strip())
+    # Match the Visualforce output literally: Street, City, State, PostalCode.
+    return ', '.join([
+        _nested(work_order, 'Street').strip(),
+        _nested(work_order, 'City').strip(),
+        _nested(work_order, 'State').strip(),
+        _nested(work_order, 'PostalCode').strip(),
+    ])
 
 
 def _trace_command(parts):
