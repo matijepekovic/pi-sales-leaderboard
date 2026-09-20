@@ -224,6 +224,11 @@ def test_mod_sheet_automation_has_no_salesforce_field_structures():
     assert not (root / 'static/salesforce_sandbox.js').exists()
     assert not (root / 'static/salesforce_sandbox.css').exists()
 
+    runtime = (root / 'static/mod_sheets/runtime.js').read_text()
+    styles = (root / 'static/mod_sheets/shared.css').read_text()
+    assert 'Salesforce' not in runtime
+    assert '.sf-' not in styles
+
 
 def test_mod_settings_page_is_separate_and_dates_are_not_persisted():
     from pathlib import Path
