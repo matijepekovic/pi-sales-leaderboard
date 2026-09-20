@@ -244,6 +244,13 @@ class DailyModSheetService:
                 limit=1000,
             ))
             finished = self.clock()
+            if records:
+                # Persist the exact morning source snapshot now. It is delivered
+                # to the optional reference sink only after the print job is
+                # confirmed PRINTED.
+                self.repository.save_morning_reference(
+                    occurrence.day, records, finished
+                )
             if not records:
                 log.info('Daily MOD Sheet: no appointments for %s', occurrence.day)
                 return self._state(
@@ -269,6 +276,7 @@ class DailyModSheetService:
                 settings.print_options.snapshot(),
                 finished,
             )
+            self.repository.bind_morning_reference_job(occurrence.day, job_id)
             log.info(
                 'Daily MOD Sheet queued: day=%s appointments=%s pages=%s job=%s created=%s',
                 occurrence.day, len(records), pages, job_id, created,
@@ -306,3 +314,109 @@ class DailyModSheetService:
                 message='Failed after retry',
                 error=detail,
             )
+
+
+class ModSheetReferenceDeliveryService:
+    """Deliver normalized MOD references without making Gallery a print dependency."""
+
+    FINAL_HOUR = 23
+    FINAL_MINUTE = 20
+
+    def __init__(self, repository, source, queue, reference_sink, timezone, clock=None):
+        self.repository = repository
+        self.source = source
+        self.queue = queue
+        self.reference_sink = reference_sink
+        self.timezone = timezone
+        self.zone = ZoneInfo(timezone)
+        self.clock = clock or time.time
+
+    def deliver_printed_mornings(self):
+        if self.reference_sink is None:
+            return 0
+        delivered = 0
+        for entry in self.repository.pending_morning_references():
+            job = self.queue.job_status(entry['job_id'])
+            if not job or job.get('status') != 'PRINTED':
+                continue
+            try:
+                self.reference_sink.publish(
+                    entry['day'],
+                    'morning',
+                    entry['records'],
+                    entry['captured_at'],
+                )
+            except Exception:
+                # Reference delivery is enrichment only. Never turn a Gallery
+                # failure into a printer-worker failure.
+                log.warning('Morning MOD reference delivery failed; printing is unaffected.')
+                continue
+            self.repository.mark_morning_reference_delivered(
+                entry['day'], self.clock()
+            )
+            delivered += 1
+        return delivered
+
+    def final_due(self, stamp=None):
+        now = self.clock() if stamp is None else float(stamp)
+        if self.reference_sink is None or self.repository.settings() is None:
+            return False
+        local = datetime.fromtimestamp(now, self.zone)
+        if local.weekday() > 4:
+            return False
+        if (local.hour, local.minute) < (self.FINAL_HOUR, self.FINAL_MINUTE):
+            return False
+        state = self.repository.final_reference_state()
+        if state.get('day') != local.date().isoformat():
+            return True
+        # A process restart can leave an in-progress pull behind. Retry that
+        # interrupted run once the worker is back; completed/failed days stay terminal.
+        return state.get('status') == 'running'
+
+    def run_final(self, stamp=None):
+        now = self.clock() if stamp is None else float(stamp)
+        local = datetime.fromtimestamp(now, self.zone)
+        day = local.date().isoformat()
+        display_date = local.date().strftime('%-m/%-d/%Y')
+        settings = self.repository.settings()
+        if settings is None or self.reference_sink is None:
+            return self.repository.final_reference_state()
+        if not self.final_due(now):
+            return self.repository.final_reference_state()
+
+        self.repository.save_final_reference_state({
+            'day': day,
+            'status': 'running',
+            'updated': now,
+        })
+        try:
+            records = tuple(self.source.records(
+                start_date=display_date,
+                end_date=display_date,
+                market_segment=settings.market_segment,
+                product_category=settings.product_category,
+                source_type=settings.source_type,
+                remove_canceled=settings.remove_canceled,
+                remove_unconfirmed=settings.remove_unconfirmed,
+                limit=1000,
+            ))
+            captured = self.clock()
+            result = self.reference_sink.publish(
+                day, 'final', records, captured
+            )
+            return self.repository.save_final_reference_state({
+                'day': day,
+                'status': 'complete',
+                'updated': self.clock(),
+                'appointments': len(records),
+                'enriched': int(result.get('enriched', 0)) if isinstance(result, dict) else 0,
+            })
+        except Exception as exc:
+            detail = str(exc).strip()[:500] or type(exc).__name__
+            log.warning('Final MOD reference pull failed; Gallery keeps its existing behavior.')
+            return self.repository.save_final_reference_state({
+                'day': day,
+                'status': 'failed',
+                'updated': self.clock(),
+                'error': detail,
+            })

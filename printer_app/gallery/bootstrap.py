@@ -25,3 +25,13 @@ class GalleryInbox:
 
     def offer(self, filename, payload):
         self.service.offer(filename, payload, self.options)
+
+
+class GalleryReferenceInbox:
+    """Optional normalized appointment-reference sink for Gallery enrichment."""
+
+    def __init__(self, data_dir):
+        self.service = build(data_dir)
+
+    def publish(self, day, kind, records, captured):
+        return self.service.publish_reference_snapshot(day, kind, records, captured)

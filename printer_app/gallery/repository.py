@@ -4,7 +4,10 @@ import sqlite3
 import time
 from contextlib import contextmanager
 
-from .policy import address_key, lead_key, printed_address, printed_lead
+from .policy import (
+    address_key, lead_key, printed_address, printed_lead,
+    printed_work_order_number, work_order_key,
+)
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS imports (
@@ -34,6 +37,25 @@ CREATE TRIGGER IF NOT EXISTS gallery_delete AFTER DELETE ON items BEGIN
 CREATE TRIGGER IF NOT EXISTS gallery_update AFTER UPDATE ON items BEGIN
  INSERT INTO search(search,rowid,text,notes_text,filename) VALUES('delete',old.rowid,old.text,old.notes_text,old.filename);
  INSERT INTO search(rowid,text,notes_text,filename) VALUES(new.rowid,new.text,new.notes_text,new.filename); END;
+CREATE TABLE IF NOT EXISTS appointment_reference_snapshots (
+ day TEXT NOT NULL, kind TEXT NOT NULL, captured REAL NOT NULL, count INTEGER NOT NULL,
+ PRIMARY KEY(day,kind));
+CREATE TABLE IF NOT EXISTS appointment_references (
+ day TEXT NOT NULL, kind TEXT NOT NULL, source_id TEXT NOT NULL,
+ work_order_number TEXT NOT NULL DEFAULT '', work_order_key TEXT NOT NULL DEFAULT '',
+ lead_name TEXT NOT NULL DEFAULT '', lead_key TEXT NOT NULL DEFAULT '',
+ address TEXT NOT NULL DEFAULT '', address_key TEXT NOT NULL DEFAULT '',
+ phone TEXT NOT NULL DEFAULT '', scheduled_start TEXT NOT NULL DEFAULT '',
+ assigned_service_resources TEXT NOT NULL DEFAULT '[]',
+ product_interest TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '',
+ sub_source TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(day,kind,source_id));
+CREATE INDEX IF NOT EXISTS gallery_reference_work_order
+ ON appointment_references(day,kind,work_order_key);
+CREATE INDEX IF NOT EXISTS gallery_reference_address
+ ON appointment_references(day,kind,address_key);
+CREATE INDEX IF NOT EXISTS gallery_reference_lead
+ ON appointment_references(day,kind,lead_key);
 '''
 
 
@@ -89,8 +111,29 @@ class GalleryRepository:
                     address = printed_address(row['text'])
                     c.execute('UPDATE items SET address=?,address_key=? WHERE id=?',
                               (address, address_key(address), row['id']))
+            columns = {row['name'] for row in c.execute('PRAGMA table_info(items)')}
+            for name, definition in (
+                ('work_order_number', "TEXT NOT NULL DEFAULT ''"),
+                ('work_order_key', "TEXT NOT NULL DEFAULT ''"),
+                ('assigned_service_resource', "TEXT NOT NULL DEFAULT ''"),
+                ('reference_kind', "TEXT NOT NULL DEFAULT ''"),
+                ('reference_source_id', "TEXT NOT NULL DEFAULT ''"),
+            ):
+                if name not in columns:
+                    c.execute(f'ALTER TABLE items ADD COLUMN {name} {definition}')
+            if not c.execute("SELECT 1 FROM meta WHERE key='work_order_backfill_v1'").fetchone():
+                for row in list(c.execute("SELECT id,text FROM items WHERE work_order_key=''")):
+                    number = printed_work_order_number(row['text'])
+                    if number:
+                        c.execute(
+                            'UPDATE items SET work_order_number=?,work_order_key=? WHERE id=?',
+                            (number, work_order_key(number), row['id']),
+                        )
+                c.execute("INSERT INTO meta(key,value) VALUES('work_order_backfill_v1','true')")
+
             c.execute('CREATE INDEX IF NOT EXISTS gallery_items_lead ON items(state,lead_key,document_date)')
             c.execute('CREATE INDEX IF NOT EXISTS gallery_items_address ON items(state,address_key,document_date)')
+            c.execute('CREATE INDEX IF NOT EXISTS gallery_items_work_order ON items(state,work_order_key,document_date)')
             if 'lead_name' not in {row['name'] for row in c.execute('PRAGMA table_info(search)')}:
                 # Replace the one search index, not a parallel implementation.
                 for event in ('insert', 'delete', 'update'):
@@ -164,11 +207,19 @@ class GalleryRepository:
                 name = printed_lead(item.get('lead_text') or item['text'])
                 state = 'ACTIVE' if name else 'REVIEW'
                 address = printed_address(item['text'])
-                c.execute('''INSERT OR IGNORE INTO items(id,import_id,page,part,filename,text,document_date,date_status,bytes,created,state,lead_name,lead_key,lead_status,address,address_key,recognition_revision)
-                    VALUES (:id,:import_id,:page,:part,:filename,:text,:document_date,:date_status,:bytes,:created,:state,:lead_name,:lead_key,:lead_status,:address,:address_key,:recognition_revision)''',
+                work_order = printed_work_order_number(item['text'])
+                c.execute('''INSERT OR IGNORE INTO items(
+                    id,import_id,page,part,filename,text,document_date,date_status,bytes,created,state,
+                    lead_name,lead_key,lead_status,address,address_key,work_order_number,work_order_key,
+                    recognition_revision)
+                    VALUES (
+                    :id,:import_id,:page,:part,:filename,:text,:document_date,:date_status,:bytes,:created,:state,
+                    :lead_name,:lead_key,:lead_status,:address,:address_key,:work_order_number,:work_order_key,
+                    :recognition_revision)''',
                     dict(item, state=state, lead_name=name, lead_key=lead_key(name),
                          lead_status='printed' if name else 'needs-name',
                          address=address, address_key=address_key(address),
+                         work_order_number=work_order, work_order_key=work_order_key(work_order),
                          recognition_revision=item.get('recognition_revision', 0)))
             now = time.time()
             c.execute("UPDATE imports SET state='COMPLETE',count=?,error=?,updated=?,completed=? WHERE id=?",
@@ -217,7 +268,8 @@ class GalleryRepository:
     def import_item(self, import_id, item_id):
         with self.connect() as c:
             row = c.execute("""SELECT id,import_id,page,part,bytes,document_date,date_status,
-                    lead_name,lead_status,address,state FROM items
+                    lead_name,lead_status,address,work_order_number,assigned_service_resource,
+                    reference_kind,reference_source_id,state FROM items
                 WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
                 (item_id, import_id)).fetchone()
             return dict(row) if row else None
@@ -322,7 +374,8 @@ class GalleryRepository:
                 clause += ' AND i.document_date=?'
                 params.append(document_date)
             total = c.execute('SELECT count(*) FROM items i ' + clause, params).fetchone()[0]
-            rows = c.execute('''SELECT i.id,i.filename,i.page,i.part,i.document_date,i.date_status,i.bytes,i.lead_name,i.lead_status,i.address,
+            rows = c.execute('''SELECT i.id,i.filename,i.page,i.part,i.document_date,i.date_status,i.bytes,
+               i.lead_name,i.lead_status,i.address,i.work_order_number,i.assigned_service_resource,
                (SELECT count(*) FROM notes n WHERE n.item_id=i.id) AS notes_count FROM items i JOIN imports source ON source.id=i.import_id ''' + clause +
                ' ORDER BY i.document_date IS NULL,i.document_date DESC,source.created,source.id,i.page,i.part,i.id LIMIT 24 OFFSET ?', [*params, offset])
             return dict(total=total, items=[dict(r) for r in rows], dates=buckets)
@@ -333,6 +386,7 @@ class GalleryRepository:
             rows = c.execute(
                 """SELECT i.id,i.filename,i.page,i.part,i.document_date,i.date_status,
                           i.bytes,i.lead_name,i.lead_status,i.address,
+                          i.work_order_number,i.assigned_service_resource,
                           (SELECT count(*) FROM notes n WHERE n.item_id=i.id) AS notes_count
                    FROM items i JOIN imports source ON source.id=i.import_id
                    WHERE i.state='ACTIVE'
@@ -366,6 +420,7 @@ class GalleryRepository:
         with self.connect() as c:
             rows = c.execute("""SELECT i.id,i.filename,i.page,i.part,i.document_date,i.date_status,
                     i.bytes,i.lead_name,i.lead_key,i.lead_status,i.address,i.address_key,
+                    i.work_order_number,i.work_order_key,i.assigned_service_resource,
                     source.created AS source_created,
                     (SELECT count(*) FROM notes n WHERE n.item_id=i.id) AS notes_count
                 FROM items i JOIN imports source ON source.id=i.import_id
@@ -515,20 +570,89 @@ class GalleryRepository:
                 ORDER BY (lead_key!=''),created,id LIMIT 1""", (now,)).fetchone()
             return dict(row) if row else None
 
-    def repair_recognition(self, ident, text, name, key, address, address_normalized):
+    def repair_recognition(
+            self, ident, text, name, key, address, address_normalized,
+            work_order_number='', work_order_normalized=''):
         with self.connect() as c:
             # An edit/expiry during OCR wins. Notes, IDs, images, dates and print
             # receipts are not modified. The existing FTS trigger reindexes text.
             c.execute("""UPDATE items SET text=?,recognition_revision=1,
                 recognition_attempts=0,recognition_retry_at=0,address=?,address_key=?,
+                work_order_number=?,work_order_key=?,
                 lead_name=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_name ELSE ? END,
                 lead_key=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_key ELSE ? END,
                 lead_status=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_status ELSE 'printed' END
                 WHERE id=? AND state='ACTIVE' AND recognition_revision<1""",
-                (text,address,address_normalized,name,name,name,key,name,ident))
+                (text,address,address_normalized,work_order_number,work_order_normalized,
+                 name,name,name,key,name,ident))
 
     def defer_recognition(self, ident, now):
         with self.connect() as c:
             c.execute("""UPDATE items SET recognition_attempts=recognition_attempts+1,
                 recognition_retry_at=? WHERE id=? AND state='ACTIVE' AND recognition_revision<1""",
                 (now+300,ident))
+
+
+    def replace_reference_snapshot(self, day, kind, records, captured):
+        """Replace one normalized snapshot atomically; shrinking is valid."""
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            c.execute('DELETE FROM appointment_references WHERE day=? AND kind=?', (day, kind))
+            for record in records:
+                resources = record.get('assigned_service_resources', ())
+                c.execute("""INSERT INTO appointment_references(
+                    day,kind,source_id,work_order_number,work_order_key,lead_name,lead_key,
+                    address,address_key,phone,scheduled_start,assigned_service_resources,
+                    product_interest,source,sub_source)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+                    day, kind, record.get('source_id',''),
+                    record.get('work_order_number',''), work_order_key(record.get('work_order_number','')),
+                    record.get('lead_name',''), lead_key(record.get('lead_name','')),
+                    record.get('address',''), address_key(record.get('address','')),
+                    record.get('phone',''), record.get('scheduled_start',''),
+                    json.dumps(list(resources)),
+                    record.get('product_interest',''), record.get('source',''), record.get('sub_source',''),
+                ))
+            c.execute("""INSERT INTO appointment_reference_snapshots(day,kind,captured,count)
+                VALUES (?,?,?,?) ON CONFLICT(day,kind) DO UPDATE SET
+                captured=excluded.captured,count=excluded.count""",
+                (day, kind, float(captured), len(records)))
+
+    def reference_snapshot(self, day, kind):
+        with self.connect() as c:
+            snap = c.execute(
+                'SELECT day,kind,captured,count FROM appointment_reference_snapshots WHERE day=? AND kind=?',
+                (day, kind),
+            ).fetchone()
+            rows = c.execute(
+                'SELECT * FROM appointment_references WHERE day=? AND kind=? ORDER BY source_id',
+                (day, kind),
+            )
+            result = []
+            for row in rows:
+                value = dict(row)
+                value['assigned_service_resources'] = tuple(json.loads(value['assigned_service_resources']))
+                result.append(value)
+            return (dict(snap) if snap else None), result
+
+    def reference_items(self, day):
+        with self.connect() as c:
+            return [dict(row) for row in c.execute("""SELECT id,text,document_date,lead_name,lead_key,
+                address,address_key,work_order_number,work_order_key,assigned_service_resource,
+                reference_kind,reference_source_id,state
+                FROM items WHERE document_date=? AND state IN ('ACTIVE','REVIEW')
+                ORDER BY created,id""", (day,))]
+
+    def reference_item(self, ident):
+        with self.connect() as c:
+            row = c.execute("""SELECT id,text,document_date,lead_name,lead_key,address,address_key,
+                work_order_number,work_order_key,assigned_service_resource,reference_kind,
+                reference_source_id,state FROM items
+                WHERE id=? AND state IN ('ACTIVE','REVIEW')""", (ident,)).fetchone()
+            return dict(row) if row else None
+
+    def apply_reference(self, ident, source_id, kind, assigned_resource, text):
+        with self.connect() as c:
+            return c.execute("""UPDATE items SET assigned_service_resource=?,reference_kind=?,
+                reference_source_id=?,text=? WHERE id=? AND state IN ('ACTIVE','REVIEW')""",
+                (assigned_resource, kind, source_id, text, ident)).rowcount
