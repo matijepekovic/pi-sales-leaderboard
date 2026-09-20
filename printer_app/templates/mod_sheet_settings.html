@@ -18,6 +18,7 @@
 <p id="modSourceError" class="notice error page-message" hidden></p>
 <form id="modSheetForm" data-mode="settings" data-require-connection="false" method="post" action="{{ url_for('mod_sheets.settings_page') }}" autocomplete="off">
   <input type="hidden" name="csrf" value="{{ session.csrf }}">
+  <input type="hidden" name="testToken" value="{{ test_token }}">
   <div class="container">
     <h1>Manager On Duty Sheet</h1>
     <div class="settings">
@@ -67,9 +68,62 @@
         <span>Color Code Products:</span>
         <input type="checkbox" id="colorCode" name="colorCode" value="1"{% if snapshot.settings.color_code %} checked{% endif %}>
       </div>
+
+      <h2 class="mod-subhead">MOD Print Settings</h2>
+      <div class="setting">
+        <span>Paper Size:</span>
+        <select name="printPaper">
+          {% for value, label in print_choices.paper %}
+            <option value="{{ value }}"{% if snapshot.settings.print_options.paper == value %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
       <br>
-      <div>
-        <button type="submit" id="modSubmit">Save Settings</button>
+      <div class="setting">
+        <span>Orientation:</span>
+        <select name="printOrientation">
+          {% for value, label in print_choices.orientation %}
+            <option value="{{ value }}"{% if snapshot.settings.print_options.orientation == value %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <br>
+      <div class="setting">
+        <span>Print Color:</span>
+        <select name="printColor">
+          {% for value, label in print_choices.color %}
+            <option value="{{ value }}"{% if snapshot.settings.print_options.color == value %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <br>
+      <div class="setting">
+        <span>Sides:</span>
+        <select name="printSides">
+          {% for value, label in print_choices.sides %}
+            <option value="{{ value }}"{% if snapshot.settings.print_options.sides == value %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <br>
+      <div class="setting">
+        <span>Copies:</span>
+        <input type="number" name="printCopies" value="{{ snapshot.settings.print_options.copies }}" min="{{ copy_range[0] }}" max="{{ copy_range[1] }}" required>
+      </div>
+      <br>
+      <div class="setting">
+        <span>PDF Scaling:</span>
+        <select name="pdfScaling">
+          {% for value, label in print_choices.pdf_scaling %}
+            <option value="{{ value }}"{% if snapshot.settings.print_options.pdf_scaling == value %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <br>
+      <div class="mod-actions">
+        <button type="submit" id="modSubmit" name="action" value="save">Save Settings</button>
+        <button type="submit" id="modTestPrint" name="action" value="test">Test Print Now</button>
       </div>
       <br>
       <p class="limit">*A maximum of 1000 appointments will be displayed</p>
@@ -80,17 +134,29 @@
         {% if snapshot.configured %}
           <p><strong>Next run:</strong> {% if snapshot.due_now %}Due now{% else %}{{ snapshot.next_run|localtime }}{% endif %}</p>
           {% if snapshot.state %}
-            <p><strong>Last run:</strong> {{ snapshot.state.day or '—' }} · {{ snapshot.state.message or snapshot.state.status or '—' }}</p>
+            <p><strong>Last automatic run:</strong> {{ snapshot.state.day or '—' }} · {{ snapshot.state.message or snapshot.state.status or '—' }}</p>
             {% if snapshot.queue_state %}
-              <p><strong>Print queue:</strong> {{ snapshot.queue_state.status }}</p>
+              <p><strong>Automatic print queue:</strong> {{ snapshot.queue_state.status }}</p>
             {% endif %}
           {% else %}
-            <p><strong>Last run:</strong> Not run yet</p>
+            <p><strong>Last automatic run:</strong> Not run yet</p>
           {% endif %}
         {% else %}
           <p><strong>Status:</strong> Not configured — save once to enable the weekday automatic print.</p>
         {% endif %}
-        <p>No appointments = no print. A failed generation retries once after 2 minutes.</p>
+
+        {% if snapshot.test_state %}
+          <p><strong>Last test print:</strong> {{ snapshot.test_state.message or snapshot.test_state.status or '—' }}</p>
+          {% if snapshot.test_queue_state %}
+            <p><strong>Test print status:</strong> {{ snapshot.test_queue_state.status }}</p>
+          {% endif %}
+          {% if snapshot.test_state.error %}
+            <p class="error"><strong>Test error:</strong> {{ snapshot.test_state.error }}</p>
+          {% endif %}
+        {% endif %}
+
+        <p>Test Print Now uses the values currently on this form, does not save them, and goes ahead of waiting software-queue jobs. It does not count as the 7:00 AM run.</p>
+        <p>No appointments = no print. Automatic generation failures retry once after 2 minutes.</p>
       </div>
     </div>
   </div>
