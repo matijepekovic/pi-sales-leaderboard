@@ -367,7 +367,11 @@ class ModSheetReferenceDeliveryService:
         if (local.hour, local.minute) < (self.FINAL_HOUR, self.FINAL_MINUTE):
             return False
         state = self.repository.final_reference_state()
-        return state.get('day') != local.date().isoformat()
+        if state.get('day') != local.date().isoformat():
+            return True
+        # A process restart can leave an in-progress pull behind. Retry that
+        # interrupted run once the worker is back; completed/failed days stay terminal.
+        return state.get('status') == 'running'
 
     def run_final(self, stamp=None):
         now = self.clock() if stamp is None else float(stamp)
