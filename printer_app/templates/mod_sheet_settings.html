@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+{% block title %}MOD Sheet Settings{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='mod_sheets/shared.css') }}"><script src="{{ url_for('static', filename='mod_sheets/runtime.js') }}" defer></script>{% endblock %}
+{% block content %}
+
+<div class="sf-beta-row" id="sfSandboxState" data-mod-sheet-runtime
+     data-connection-url="{{ url_for('salesforce_sandbox.connection') }}"
+     data-field-url="{{ url_for('salesforce_sandbox.field', key='__FIELD__') }}">
+  <div class="status-line">
+    Daily MOD Sheets · Salesforce <strong id="sfConnectionStatus">Checking Salesforce…</strong>
+    <span id="sfConnectionUser"></span>
+  </div>
+  <button type="button" id="sfRetry" hidden>Retry connection</button>
+</div>
+
+<div class="sf-workspace">
+<div class="mod-portal">
+<p id="sfConnectionError" class="notice error page-message" hidden></p>
+<form id="sfModForm" data-mode="settings" data-require-connection="false" method="post" action="{{ url_for('mod_sheets.settings_page') }}" autocomplete="off">
+  <input type="hidden" name="csrf" value="{{ session.csrf }}">
+  <div class="container">
+    <h1>Manager On Duty Sheet</h1>
+    <div class="settings">
+      <br><br>
+      <div class="setting">
+        <span>Start Date:</span>
+        <input id="startDate" value="{{ today }}" readonly aria-readonly="true">
+      </div>
+      <br>
+      <div class="setting">
+        <span>End Date:</span>
+        <input id="endDate" value="{{ today }}" readonly aria-readonly="true">
+      </div>
+      <br>
+      <div class="setting">
+        <span>Market Segment:</span>
+        <select id="marketSegment" name="marketsegment" data-selected="{{ snapshot.settings.market_segment }}">
+          <option value="{{ snapshot.settings.market_segment }}">{{ snapshot.settings.market_segment or 'All' }}</option>
+        </select>
+      </div>
+      <br>
+      <div class="setting">
+        <span>Product Category:</span>
+        <select id="productCategory" name="productCategory" data-selected="{{ snapshot.settings.product_category }}">
+          <option value="{{ snapshot.settings.product_category }}">{{ snapshot.settings.product_category }}</option>
+        </select>
+      </div>
+      <br>
+      <div class="setting">
+        <span>Source Type:</span>
+        <select id="srcType" name="sourceType" data-selected="{{ snapshot.settings.source_type }}">
+          <option value="{{ snapshot.settings.source_type }}">{{ snapshot.settings.source_type }}</option>
+        </select>
+      </div>
+      <br><br>
+      <div class="setting check-setting">
+        <span>Remove Canceled Appointments:</span>
+        <input type="checkbox" id="canceled" name="removeCanceled" value="1"{% if snapshot.settings.remove_canceled %} checked{% endif %}>
+      </div>
+      <br>
+      <div class="setting check-setting">
+        <span>Remove Unconfirmed Appointments:</span>
+        <input type="checkbox" id="unconfirmed" name="removeUnconfirmed" value="1"{% if snapshot.settings.remove_unconfirmed %} checked{% endif %}>
+      </div>
+      <br>
+      <div class="setting check-setting">
+        <span>Color Code Products:</span>
+        <input type="checkbox" id="colorCode" name="colorCode" value="1"{% if snapshot.settings.color_code %} checked{% endif %}>
+      </div>
+      <br>
+      <div>
+        <button type="submit" id="modSubmit">Save Settings</button>
+      </div>
+      <br>
+      <p class="limit">*A maximum of 1000 appointments will be displayed</p>
+
+      <div class="automation-status">
+        <p><strong>Automatic print:</strong> {{ snapshot.schedule }}</p>
+        <p><strong>Date:</strong> always the current day</p>
+        {% if snapshot.configured %}
+          <p><strong>Next run:</strong> {{ snapshot.next_run|localtime }}</p>
+          {% if snapshot.state %}
+            <p><strong>Last run:</strong> {{ snapshot.state.day or '—' }} · {{ snapshot.state.message or snapshot.state.status or '—' }}</p>
+            {% if snapshot.queue_state %}
+              <p><strong>Print queue:</strong> {{ snapshot.queue_state.status }}</p>
+            {% endif %}
+          {% else %}
+            <p><strong>Last run:</strong> Not run yet</p>
+          {% endif %}
+        {% else %}
+          <p><strong>Status:</strong> Not configured — save once to enable the weekday automatic print.</p>
+        {% endif %}
+        <p>No appointments = no print. A failed generation retries once after 2 minutes.</p>
+      </div>
+    </div>
+  </div>
+</form>
+</div>
+
+<aside class="sf-shell" aria-label="Salesforce CLI activity">
+  <div class="sf-shell-head">
+    <strong>Salesforce CLI</strong>
+    <button type="button" id="sfShellClear">Clear</button>
+  </div>
+  <pre id="sfShellLog" aria-live="polite">waiting for Salesforce connection…</pre>
+</aside>
+</div>
+{% endblock %}
