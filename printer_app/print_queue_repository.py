@@ -41,7 +41,7 @@ class PrintQueueRepository:
             )
             conn.execute(
                 'INSERT INTO outputs(job_id,role,path) VALUES (?,?,?)',
-                (job_id, 'Generated MOD Sheet PDF', path),
+                (job_id, 'Generated PDF', path),
             )
             conn.execute(
                 'INSERT INTO steps(job_id,at,message) VALUES (?,?,?)',
