@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 from datetime import date
 
-from ..mod_sheet_contract import SourceStatus
+from ..mod_sheet_contract import ModSheetSourceError, NO_MOD_SHEET_RECORDS, SourceStatus
 from .adapter import SalesforceAdapterError
 
 
@@ -83,10 +83,21 @@ class SalesforceSandboxService:
                 error=str(exc),
             )
 
+    def records(self, **filters):
+        """Return normalized MOD records without leaking Salesforce exceptions."""
+        try:
+            return tuple(self.adapter.mod_sheets(**filters))
+        except SalesforceAdapterError as exc:
+            if str(exc) == NO_MOD_SHEET_RECORDS:
+                return ()
+            raise ModSheetSourceError(str(exc)) from exc
+
     def generate(self, **filters):
         color_code = bool(filters.pop('color_code', False))
         try:
-            records = tuple(self.adapter.mod_sheets(**filters))
+            records = self.records(**filters)
+            if not records:
+                raise ModSheetSourceError(NO_MOD_SHEET_RECORDS)
             return GeneratedSnapshot(
                 records=records,
                 start_date=filters.get('start_date', ''),
@@ -98,7 +109,7 @@ class SalesforceSandboxService:
                 remove_unconfirmed=bool(filters.get('remove_unconfirmed', True)),
                 color_code=color_code,
             )
-        except SalesforceAdapterError as exc:
+        except ModSheetSourceError as exc:
             return GeneratedSnapshot(
                 start_date=filters.get('start_date', ''),
                 end_date=filters.get('end_date', ''),
