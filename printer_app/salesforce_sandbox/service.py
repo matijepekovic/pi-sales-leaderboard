@@ -1,7 +1,7 @@
 """Workflow for the read-only Salesforce MOD portal sandbox."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field as dataclass_field
 from datetime import date
 
 from ..mod_sheet_contract import SourceStatus
@@ -12,14 +12,14 @@ from .adapter import SalesforceAdapterError
 class PortalSnapshot:
     status: SourceStatus
     today: str = ''
-    fields: dict = field(default_factory=dict)
+    fields: dict = dataclass_field(default_factory=dict)
     error: str = ''
 
 
 @dataclass(frozen=True)
 class ConnectionSnapshot:
     status: SourceStatus
-    trace: tuple = field(default_factory=tuple)
+    trace: tuple = dataclass_field(default_factory=tuple)
     error: str = ''
 
 
@@ -27,13 +27,13 @@ class ConnectionSnapshot:
 class FieldSnapshot:
     key: str
     field: object | None = None
-    trace: tuple = field(default_factory=tuple)
+    trace: tuple = dataclass_field(default_factory=tuple)
     error: str = ''
 
 
 @dataclass(frozen=True)
 class GeneratedSnapshot:
-    records: tuple = field(default_factory=tuple)
+    records: tuple = dataclass_field(default_factory=tuple)
     start_date: str = ''
     end_date: str = ''
     market_segment: str = ''
