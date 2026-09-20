@@ -243,6 +243,13 @@ def test_portal_ui_loads_connection_then_fields_and_has_cli_panel():
     assert '/salesforce-sandbox/api/field/<key>' in web
     assert 'sf-workspace' in css and 'sf-shell' in css
     assert 'name="org"' not in portal
+    for name in (
+        'startdate', 'enddate', 'marketsegment', 'productCategory',
+        'sourceType', 'removeCanceled', 'removeUnconfirmed', 'colorCode',
+    ):
+        assert f'name="{name}"' in portal
+    assert 'target="_blank"' in portal
+    assert '<style>' not in portal and 'onchange=' not in portal
 
 
 def test_pdf_renderer_accepts_normalized_records():
