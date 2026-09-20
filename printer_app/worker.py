@@ -22,7 +22,7 @@ from .settings_repository import SettingsRepository, SettingsStorageError
 from .db import Database
 from .error_pages import error_page
 from .gmail_client import GmailClient
-from .gallery.bootstrap import GalleryInbox
+from .gallery.bootstrap import GalleryInbox, GalleryReferenceInbox
 from .printer import MissingJob, Printer, PrinterError, SubmissionRejected
 from .retention import RetentionService
 from .retention_repository import RetentionRepository
@@ -30,7 +30,7 @@ from .retention_files import RetentionFiles
 from .gmail_cleanup import GmailCleanup
 from .mod_sheets.pdf_renderer import render_mod_pdf
 from .mod_sheets.repository import ModSheetAutomationRepository
-from .mod_sheets.service import DailyModSheetService
+from .mod_sheets.service import DailyModSheetService, ModSheetReferenceDeliveryService
 from .salesforce_sandbox.adapter import SalesforceCliAdapter
 from .salesforce_sandbox.service import SalesforceSandboxService
 
@@ -292,20 +292,30 @@ def main():
 
         retention = make_retention(cfg)
 
-        def make_daily_mod_sheets(captured):
+        def make_mod_workflows(captured):
             source = SalesforceSandboxService(
                 SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')
             )
-            return DailyModSheetService(
-                ModSheetAutomationRepository(db),
+            repository = ModSheetAutomationRepository(db)
+            queue = PrintQueueRepository(db)
+            daily = DailyModSheetService(
+                repository,
                 source,
-                PrintQueueRepository(db),
+                queue,
                 render_mod_pdf,
                 captured.data_dir,
                 captured.timezone,
             )
+            references = ModSheetReferenceDeliveryService(
+                repository,
+                source,
+                queue,
+                GalleryReferenceInbox(captured.data_dir),
+                captured.timezone,
+            )
+            return daily, references
 
-        daily_mod_sheets = make_daily_mod_sheets(cfg)
+        daily_mod_sheets, mod_references = make_mod_workflows(cfg)
 
         def heartbeat():
             while not stop.is_set():
@@ -319,8 +329,8 @@ def main():
         # Collection, cleanup, preparation and the daily MOD source request may
         # overlap, but only this main loop submits/releases CUPS jobs.
         # The process lock still prevents a second worker from double-printing.
-        background = ThreadPoolExecutor(max_workers=3, thread_name_prefix='printer-work')
-        polling, preparing, cleaning, daily_mod_task = None, None, None, None
+        background = ThreadPoolExecutor(max_workers=4, thread_name_prefix='printer-work')
+        polling, preparing, cleaning, daily_mod_task, mod_reference_task = None, None, None, None, None
         next_poll, next_status = 0, 0
         active_revision = None
         log.info('Independent printer worker started, queue=%s', cfg.queue)
@@ -339,7 +349,7 @@ def main():
                                 engine = Engine(cfg, db, stop=stop)
                                 gmail = GmailClient(cfg, db, stop=stop, gallery=GalleryInbox(cfg.data_dir, cfg.gallery))
                                 retention = make_retention(cfg)
-                                daily_mod_sheets = make_daily_mod_sheets(cfg)
+                                daily_mod_sheets, mod_references = make_mod_workflows(cfg)
                                 next_poll, next_status = 0, 0
                             active_revision = revision
                             db.set('settings_revision', revision)
@@ -383,6 +393,14 @@ def main():
                     if daily_mod_task is not None and daily_mod_task.done():
                         finished, daily_mod_task = daily_mod_task, None
                         finished.result()
+                    if mod_reference_task is not None and mod_reference_task.done():
+                        finished, mod_reference_task = mod_reference_task, None
+                        finished.result()
+                    # Morning reference delivery is local/fast and retries safely
+                    # until the corresponding MOD print reaches PRINTED.
+                    mod_references.deliver_printed_mornings()
+                    if mod_reference_task is None and mod_references.final_due(now):
+                        mod_reference_task = background.submit(mod_references.run_final)
                     if daily_mod_task is None and daily_mod_sheets.due(now):
                         daily_mod_task = background.submit(daily_mod_sheets.run_due)
                     if cleaning is None and polling is None and retention.due(now):
