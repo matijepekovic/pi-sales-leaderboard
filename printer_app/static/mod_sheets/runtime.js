@@ -2,14 +2,14 @@
   const state = document.querySelector('[data-mod-sheet-runtime]');
   if (!state) return;
 
-  const status = document.getElementById('sfConnectionStatus');
-  const user = document.getElementById('sfConnectionUser');
-  const error = document.getElementById('sfConnectionError');
-  const retry = document.getElementById('sfRetry');
+  const status = document.getElementById('modSourceStatus');
+  const user = document.getElementById('modSourceUser');
+  const error = document.getElementById('modSourceError');
+  const retry = document.getElementById('modSourceRetry');
   const submit = document.getElementById('modSubmit');
-  const shell = document.getElementById('sfShellLog');
-  const clearShell = document.getElementById('sfShellClear');
-  const form = document.getElementById('sfModForm');
+  const shell = document.getElementById('modSourceLog');
+  const clearActivity = document.getElementById('modSourceClear');
+  const form = document.getElementById('modSheetForm');
   const mode = form?.dataset.mode || 'manual';
   const requireConnection = form?.dataset.requireConnection !== 'false';
   const fields = [
@@ -19,7 +19,7 @@
   ];
   let loading = false;
 
-  function appendShell(line = '') {
+  function appendActivity(line = '') {
     if (!shell) return;
     const current = shell.textContent ? shell.textContent + '\n' : '';
     const lines = (current + line).split('\n');
@@ -29,8 +29,8 @@
 
   function appendTrace(trace) {
     for (const entry of trace || []) {
-      appendShell('$ ' + String(entry.input || ''));
-      appendShell((entry.ok === false ? 'ERR ' : 'OK  ') + String(entry.result || ''));
+      appendActivity('$ ' + String(entry.input || ''));
+      appendActivity((entry.ok === false ? 'ERR ' : 'OK  ') + String(entry.result || ''));
     }
   }
 
@@ -77,7 +77,7 @@
   async function requestJson(url, timeoutMs) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    appendShell('GET ' + url);
+    appendActivity('GET ' + url);
     try {
       const response = await fetch(url, {
         signal: controller.signal,
@@ -95,18 +95,18 @@
   }
 
   async function loadField(item) {
-    appendShell('');
-    appendShell('# ' + item.label);
+    appendActivity('');
+    appendActivity('# ' + item.label);
     if (mode === 'manual') setPlaceholder(item.select, 'Loading…');
     const url = state.dataset.fieldUrl.replace('__FIELD__', encodeURIComponent(item.key));
     try {
       const payload = await requestJson(url, 100000);
       setOptions(item, payload.field.values);
-      appendShell('# resolved ' + item.label + ': ' + (payload.field.path || 'not found'));
+      appendActivity('# resolved ' + item.label + ': ' + (payload.field.path || 'not found'));
       return true;
     } catch (exc) {
       if (mode === 'manual') setPlaceholder(item.select, 'Unavailable');
-      appendShell('ERR ' + item.label + ': ' + String(exc.message || exc));
+      appendActivity('ERR ' + item.label + ': ' + String(exc.message || exc));
       return false;
     }
   }
@@ -114,7 +114,7 @@
   async function load() {
     if (loading) return;
     loading = true;
-    status.textContent = 'Checking Salesforce…';
+    status.textContent = 'Checking source…';
     user.textContent = '';
     error.hidden = true;
     retry.hidden = true;
@@ -123,34 +123,34 @@
       for (const item of fields) setPlaceholder(item.select, 'Waiting for connection…');
     }
 
-    appendShell('');
-    appendShell('# connection');
+    appendActivity('');
+    appendActivity('# connection');
     try {
       const payload = await requestJson(state.dataset.connectionUrl, 25000);
       status.textContent = 'Connected';
       user.textContent = payload.username ? ' · ' + payload.username : '';
-      appendShell('# connected' + (payload.alias ? ' as ' + payload.alias : ''));
+      appendActivity('# connected' + (payload.alias ? ' as ' + payload.alias : ''));
 
       const fieldResults = await Promise.all(fields.map(loadField));
       const fieldError = fieldResults.some(ok => !ok);
       submit.disabled = false;
       if (fieldError) {
         error.textContent = mode === 'settings'
-          ? 'Connected to Salesforce, but one or more filter lists could not refresh. Your saved values are still available.'
-          : 'Connected to Salesforce, but one or more filter lists could not load. Generate still works with the available filters.';
+          ? 'Connected to the MOD source, but one or more filter lists could not refresh. Your saved values are still available.'
+          : 'Connected to the MOD source, but one or more filter lists could not load. Generate still works with the available filters.';
         error.hidden = false;
         retry.hidden = false;
       }
     } catch (exc) {
       status.textContent = 'Not connected';
       const message = exc.name === 'AbortError'
-        ? 'Salesforce connection check timed out.'
+        ? 'MOD source connection check timed out.'
         : String(exc.message || exc);
       error.textContent = message;
       error.hidden = false;
       retry.hidden = false;
       if (!requireConnection) submit.disabled = false;
-      appendShell('ERR ' + message);
+      appendActivity('ERR ' + message);
     } finally {
       loading = false;
     }
@@ -162,9 +162,9 @@
     });
   }
 
-  if (clearShell) {
-    clearShell.addEventListener('click', () => {
-      shell.textContent = 'Salesforce CLI activity cleared.';
+  if (clearActivity) {
+    clearActivity.addEventListener('click', () => {
+      shell.textContent = 'Source activity cleared.';
     });
   }
   retry.addEventListener('click', load);
@@ -172,10 +172,10 @@
   form.addEventListener('submit', () => {
     const values = Object.fromEntries(new FormData(form).entries());
     delete values.csrf;
-    appendShell('');
-    appendShell(mode === 'settings' ? '# Save daily MOD settings' : '# Generate MOD PDF');
-    appendShell('INPUT ' + JSON.stringify(values));
-    appendShell(mode === 'settings'
+    appendActivity('');
+    appendActivity(mode === 'settings' ? '# Save daily MOD settings' : '# Generate MOD PDF');
+    appendActivity('INPUT ' + JSON.stringify(values));
+    appendActivity(mode === 'settings'
       ? 'RESULT permanent settings submitted'
       : 'RESULT request opened in a new tab');
   });
