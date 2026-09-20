@@ -1,11 +1,15 @@
 """Gallery workflows through explicit file/repository boundaries; no print actions."""
+from dataclasses import asdict, is_dataclass
 import hashlib
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .policy import (address_key, checked_date, checked_date_filter, checked_lead_name,
-                     search_expression, printed_address, printed_lead, lead_key, related_identity)
+from .policy import (
+    address_key, authoritative_assigned_resource_text, checked_date, checked_date_filter,
+    checked_lead_name, lead_key, printed_address, printed_lead, printed_work_order_number,
+    related_identity, search_expression, work_order_key,
+)
 
 
 class GalleryService:
@@ -182,8 +186,87 @@ class GalleryService:
         if manifest.get('skipped'):
             warnings.append('No recognized form boxes on pages: ' + ', '.join(map(str, manifest['skipped'])))
         self.repository.finish(job['id'], items, '; '.join(warnings))
+        # Reference enrichment is optional. With no matching reference snapshot,
+        # these calls are no-ops and Gallery behaves exactly as before.
+        for item in items:
+            self._enrich_reference_item(item['id'])
         self.files.remove('spool', job['id'])
         self.files.remove('work', job['id'])
+
+    @staticmethod
+    def _reference_record(record):
+        if is_dataclass(record):
+            return asdict(record)
+        if isinstance(record, dict):
+            return dict(record)
+        raise ValueError('Reference records must use the normalized MOD contract.')
+
+    @staticmethod
+    def _match_reference(item, references):
+        """Return one unambiguous final-day reference, otherwise no enrichment."""
+        work = work_order_key(item.get('work_order_number', ''))
+        if work:
+            matches = [row for row in references if row.get('work_order_key') == work]
+            if len(matches) == 1:
+                return matches[0]
+
+        address = address_key(item.get('address', ''))
+        if address:
+            matches = [row for row in references if row.get('address_key') == address]
+            if len(matches) == 1:
+                return matches[0]
+
+        name = item.get('lead_name', '')
+        if name:
+            matches = [
+                row for row in references
+                if related_identity(name, '', row.get('lead_name', ''), '')
+            ]
+            if len(matches) == 1:
+                return matches[0]
+        return None
+
+    def _enrich_reference_item(self, ident):
+        item = self.repository.reference_item(ident)
+        if not item or not item.get('document_date'):
+            return False
+        snapshot, references = self.repository.reference_snapshot(
+            item['document_date'], 'final'
+        )
+        if snapshot is None:
+            return False
+        match = self._match_reference(item, references)
+        if match is None:
+            return False
+
+        resources = tuple(match.get('assigned_service_resources') or ())
+        assigned = ', '.join(value for value in resources if value)
+        text = authoritative_assigned_resource_text(item.get('text', ''), assigned)
+        return bool(self.repository.apply_reference(
+            ident,
+            match.get('source_id', ''),
+            'final',
+            assigned,
+            text,
+        ))
+
+    def enrich_reference_day(self, day):
+        self.initialize()
+        changed = 0
+        for item in self.repository.reference_items(checked_date(day)):
+            changed += int(self._enrich_reference_item(item['id']))
+        return changed
+
+    def publish_reference_snapshot(self, day, kind, records, captured):
+        """Store normalized reference data; it never creates Gallery cards."""
+        self.initialize()
+        day = checked_date(day)
+        if kind not in ('morning', 'final'):
+            raise ValueError('Unknown Gallery reference snapshot kind.')
+        normalized = [self._reference_record(record) for record in records]
+        self.repository.replace_reference_snapshot(day, kind, normalized, captured)
+        changed = self.enrich_reference_day(day) if kind == 'final' else 0
+        return dict(day=day, kind=kind, count=len(normalized), enriched=changed)
 
     def queue(self, state='', offset=0, limit=25):
         self.initialize()
@@ -270,9 +353,12 @@ class GalleryService:
                 raise ValueError('Invalid header text')
             name = printed_lead(header) or printed_lead(text)
             address = printed_address(text)
+            work_order = printed_work_order_number(text)
             self.repository.repair_recognition(
-                item['id'], text, name, lead_key(name), address, address_key(address)
+                item['id'], text, name, lead_key(name), address, address_key(address),
+                work_order, work_order_key(work_order),
             )
+            self._enrich_reference_item(item['id'])
         except (OSError, ValueError):
             self.repository.defer_recognition(item['id'], time.time())
         return True
