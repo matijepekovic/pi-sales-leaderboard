@@ -181,7 +181,7 @@ def test_mod_query_and_grouping_match_original_apex_controller():
 
     report_query = next(query for query in _query_calls(calls) if 'FROM ServiceAppointment' in query
                         and 'Local_Scheduled_Start_Time__c' in query)
-    assert "WorkType.Name LIKE '%Sales%'" in report_query
+    assert "WHERE WorkType.Name LIKE '%Sales%'" in report_query
     assert "Product_Interest__c INCLUDES ('Windows')" in report_query
     assert "Lead__r.Market__c = 'Retail'" in report_query
     assert "Lead__r.LeadSource = 'Canvass'" in report_query
