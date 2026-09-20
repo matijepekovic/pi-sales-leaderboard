@@ -209,7 +209,8 @@ def template_ocr_canvas(source, registration):
             # the label/grid afterward: crop to the actual value lane up front.
             # This removes label remnants and top/left grid artifacts that real
             # scans were turning into prefixes such as quotes, underscores and TM.
-            value_left = max(left, label_right)
+            lead_gap = max(2, int(round(frame_width * .002)))
+            value_left = max(left, label_right + lead_gap)
             value_top = max(top, label_top - label_pad_y)
             value_bottom = min(bottom, label_bottom + label_pad_y)
             if right <= value_left or value_bottom <= value_top:
