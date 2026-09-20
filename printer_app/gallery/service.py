@@ -57,7 +57,8 @@ class GalleryService:
     def _public_related_row(row):
         return {key: row[key] for key in (
             'id','filename','page','part','document_date','date_status','bytes',
-            'lead_name','lead_status','address','notes_count'
+            'lead_name','lead_status','address','work_order_number',
+            'assigned_service_resource','notes_count'
         )}
 
     def related(self, ident, offset=0, document_date=''):
