@@ -35,3 +35,8 @@
 .mod-portal .automation-status{margin:18px 0 4px;padding:10px;border:1px solid #d6d6d6;border-radius:6px;text-align:left;background:#fafafa}
 .mod-portal .automation-status p{font-size:13px;margin:4px 0}
 .mod-portal input[readonly]{background:#f4f4f4;color:#555}
+
+.mod-portal .mod-subhead{font-size:18px;margin:24px 0 14px;padding-top:14px;border-top:1px solid #ddd;text-align:left}
+.mod-portal .mod-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.mod-portal .mod-actions button{min-width:135px}
+.mod-portal .automation-status .error{color:#a43131}
