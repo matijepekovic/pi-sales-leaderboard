@@ -135,7 +135,7 @@ Error: spawn secret-tool ENOENT
     assert '[REDACTED]' in message
 
 
-def test_printer_service_uses_salesforce_cli_default_org():
+def test_printer_service_uses_explicit_work_alias():
     calls = []
 
     def runner(command, **kwargs):
@@ -151,7 +151,8 @@ def test_printer_service_uses_salesforce_cli_default_org():
     status = adapter.status()
     assert status.connected
     assert calls == [[
-        '/usr/bin/sf', 'org', 'display', '--json'
+        '/usr/bin/sf', 'org', 'display',
+        '--target-org', 'work', '--json'
     ]]
 
     root = Path(__file__).resolve().parents[1]
@@ -160,8 +161,7 @@ def test_printer_service_uses_salesforce_cli_default_org():
     assert 'User=scoreboard' in unit  # existing Printer service identity is unchanged
     assert 'Environment=HOME=/home/scoreboard' not in unit
     assert '/home/scoreboard/.sf' not in unit
-    assert "SalesforceCliAdapter(executable='/usr/bin/sf')" in app
-    assert "default_org" not in app
+    assert "SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')" in app
 
 
 def test_cli_adapter_recreates_portal_controls_and_mod_fields_read_only():
@@ -182,7 +182,11 @@ def test_cli_adapter_recreates_portal_controls_and_mod_fields_read_only():
 
     assert status.connected and status.username == 'rep@example.test'
     assert 'MUST_NOT_ESCAPE' not in repr(status)
-    assert all('--target-org' not in call for call in calls)
+    assert calls
+    assert all(
+        '--target-org' in call and call[call.index('--target-org') + 1] == 'work'
+        for call in calls
+    )
     assert fields['market_segment'].values == ('Retail',)
     assert fields['product_category'].values == ('Windows',)
     assert fields['source_type'].values == ('Canvass',)
@@ -283,6 +287,8 @@ def test_templates_recreate_original_portal_generate_contract():
     assert 'name="org"' not in portal
     web = (root / 'salesforce_sandbox/web.py').read_text()
     assert "request.args.get('org'" not in web
+    app = (root / 'app.py').read_text()
+    assert "target_org='work'" in app
     assert 'Assigned Service Resource:' in renderer
     assert 'color_code' in renderer
     assert 'MOD Notes:' in renderer
