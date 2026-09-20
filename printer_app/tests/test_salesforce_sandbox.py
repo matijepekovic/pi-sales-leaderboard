@@ -389,6 +389,44 @@ def test_variable_mod_text_shrinks_then_clips_at_seven_points():
     assert extreme.clipped is True
 
 
+
+def test_mod_pdf_draws_plain_page_number_in_bottom_right_corner():
+    from printer_app.salesforce_sandbox.pdf_renderer import (
+        PAGE_NUMBER_FONT_SIZE,
+        PAGE_NUMBER_X,
+        PAGE_NUMBER_Y,
+        _draw_page_number,
+    )
+
+    class FakeCanvas:
+        def __init__(self):
+            self.calls = []
+
+        def saveState(self):
+            self.calls.append(('save',))
+
+        def setFillColor(self, color):
+            self.calls.append(('fill', color))
+
+        def setFont(self, font, size):
+            self.calls.append(('font', font, size))
+
+        def drawRightString(self, x, y, text):
+            self.calls.append(('draw', x, y, text))
+
+        def getPageNumber(self):
+            return 4
+
+        def restoreState(self):
+            self.calls.append(('restore',))
+
+    canvas = FakeCanvas()
+    _draw_page_number(canvas, None)
+
+    assert ('font', 'Times-Roman', PAGE_NUMBER_FONT_SIZE) in canvas.calls
+    assert ('draw', PAGE_NUMBER_X, PAGE_NUMBER_Y, '4') in canvas.calls
+
+
 def test_salesforce_stays_isolated_from_gallery_printing_and_ocr():
     root = Path(__file__).resolve().parents[1]
     for path in list((root / 'gallery').glob('*.py')) + [
