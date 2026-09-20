@@ -30,6 +30,7 @@ jobs:
             printer_app/tests/test_mod_sheet_automation.py \
             printer_app/tests/test_core.py::test_printer_high_priority_maps_to_cups_priority_100 \
             printer_app/tests/test_core.py::test_immediate_generated_job_uses_high_printer_priority \
+            printer_app/tests/test_core.py::test_printer_sides_sets_ipp_and_konica_duplex_options \
             -v
 
       - name: Gallery template fast-path regressions
