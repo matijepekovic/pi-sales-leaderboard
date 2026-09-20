@@ -43,14 +43,24 @@ def test_template_ocr_packs_only_populated_variable_fields():
         cv2.rectangle(image, (left, top), (right, bottom), 0, -1)
 
     for key in ('lead_name', 'address', 'local_scheduled_start_time', 'scheduled_start'):
-        left, top, right, bottom = map_box(registration, fields[key].box)
+        field = fields[key]
+        left, top, right, bottom = map_box(registration, field.box)
         # Variable ink deliberately lives away from the constant label rectangle.
-        x0 = left + int((right - left) * .62)
-        y0 = top + int((bottom - top) * .62)
+        # Lead Name is a one-line value lane beside its label; the other fields
+        # retain the generic whole-cell packing behavior.
+        if field.lead:
+            _, label_top, label_right, label_bottom = map_box(registration, field.label_box)
+            x0 = label_right + 10
+            y0 = label_top + 3
+            y1 = min(label_bottom + 2, bottom - 8)
+        else:
+            x0 = left + int((right - left) * .62)
+            y0 = top + int((bottom - top) * .62)
+            y1 = min(bottom - 12, y0 + 12)
         cv2.rectangle(
             image,
             (x0, y0),
-            (min(right - 20, x0 + 75), min(bottom - 12, y0 + 12)),
+            (min(right - 20, x0 + 75), y1),
             0,
             -1,
         )
