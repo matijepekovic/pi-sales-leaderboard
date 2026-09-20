@@ -81,7 +81,7 @@
     appendShell('# ' + item.label);
     const url = state.dataset.fieldUrl.replace('__FIELD__', encodeURIComponent(item.key));
     try {
-      const payload = await requestJson(url, 65000);
+      const payload = await requestJson(url, 100000);
       setOptions(item.select, payload.field.values);
       appendShell('# resolved ' + item.label + ': ' + (payload.field.path || 'not found'));
       return true;
