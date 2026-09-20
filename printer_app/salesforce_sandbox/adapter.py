@@ -12,6 +12,7 @@ import getpass
 import re
 import shlex
 import subprocess
+import threading
 
 from ..mod_sheet_contract import ModSheetRecord, SourceStatus
 
@@ -94,6 +95,11 @@ class SalesforceCliAdapter:
             raise ValueError('Salesforce target org alias is required.')
         self._portal_fields_cache = {}
         self._description_cache = {}
+        self._description_locks = {
+            'ServiceAppointment': threading.Lock(),
+            'WorkOrder': threading.Lock(),
+            'Lead': threading.Lock(),
+        }
 
     def _run(self, args, timeout=30, trace=None):
         executable = self._executable
@@ -195,15 +201,21 @@ class SalesforceCliAdapter:
         if sobject in self._description_cache:
             _trace_note(trace, f'# cached describe {sobject}', 'cache hit')
             return self._description_cache[sobject]
-        description = self._run(
-            ['sobject', 'describe', '--sobject', sobject, *self._target_args()],
-            timeout=30,
-            trace=trace,
-        )
-        self._description_cache[sobject] = description
-        if trace:
-            trace[-1]['result'] = f"status 0 · {len(description.get('fields', []) or [])} fields"
-        return description
+
+        lock = self._description_locks[sobject]
+        with lock:
+            if sobject in self._description_cache:
+                _trace_note(trace, f'# cached describe {sobject}', 'cache hit')
+                return self._description_cache[sobject]
+            description = self._run(
+                ['sobject', 'describe', '--sobject', sobject, *self._target_args()],
+                timeout=30,
+                trace=trace,
+            )
+            self._description_cache[sobject] = description
+            if trace:
+                trace[-1]['result'] = f"status 0 · {len(description.get('fields', []) or [])} fields"
+            return description
 
     @staticmethod
     def _field_by_label(description, label):
@@ -251,11 +263,24 @@ class SalesforceCliAdapter:
             _trace_note(trace, f'# cached field {labels[key]}', 'cache hit')
             return cached
 
-        scopes = (
-            ('ServiceAppointment', ''),
-            ('WorkOrder', 'FSSK__FSK_Work_Order__r.'),
-            ('Lead', 'FSSK__FSK_Work_Order__r.Lead__r.'),
-        )
+        scopes_by_key = {
+            'market_segment': (
+                ('WorkOrder', 'FSSK__FSK_Work_Order__r.'),
+                ('ServiceAppointment', ''),
+                ('Lead', 'FSSK__FSK_Work_Order__r.Lead__r.'),
+            ),
+            'product_category': (
+                ('WorkOrder', 'FSSK__FSK_Work_Order__r.'),
+                ('ServiceAppointment', ''),
+                ('Lead', 'FSSK__FSK_Work_Order__r.Lead__r.'),
+            ),
+            'source_type': (
+                ('Lead', 'FSSK__FSK_Work_Order__r.Lead__r.'),
+                ('WorkOrder', 'FSSK__FSK_Work_Order__r.'),
+                ('ServiceAppointment', ''),
+            ),
+        }
+        scopes = scopes_by_key[key]
         label = labels[key]
         resolved = PortalField(label, '', ())
         for sobject, prefix in scopes:
