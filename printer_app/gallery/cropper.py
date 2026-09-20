@@ -286,6 +286,51 @@ def form_tops(image):
     return mapped
 
 
+def _template_orientation_evidence(image):
+    """Return conservative template evidence for one page orientation."""
+    h, w = image.shape[:2]
+    tops = form_tops(image)
+    if not tops:
+        return 0, 0.0
+
+    matches = 0
+    score = 0.0
+    for index, top in enumerate(tops[:4]):
+        bottom = tops[index + 1] if index + 1 < len(tops) else np.full(w, h)
+        if np.any(bottom <= top):
+            continue
+        y0, y1 = int(top.min()), int(bottom.max())
+        if y1 - y0 < max(40, int(w * .20)):
+            continue
+        crop = image[y0:y1].copy()
+        rows = np.arange(y0, y1)[:, None]
+        crop[(rows < top[None, :]) | (rows >= bottom[None, :])] = 255
+        registration = register_form(crop)
+        if registration.matched:
+            matches += 1
+            score += float(registration.score)
+    return matches, score
+
+
+def orient_work_order_page(image):
+    """Turn a page 180 degrees only when the known form proves it is upside down.
+
+    The existing generic/legacy Gallery path is left untouched when neither
+    orientation confidently matches the known template. This prevents an OCR
+    heuristic from rotating unrelated pages or changing older Gallery behavior.
+    """
+    upright_matches, upright_score = _template_orientation_evidence(image)
+    rotated = np.rot90(image, 2).copy()
+    rotated_matches, rotated_score = _template_orientation_evidence(rotated)
+
+    if rotated_matches > upright_matches:
+        return rotated
+    if (rotated_matches == upright_matches and rotated_matches > 0
+            and rotated_score > upright_score + (0.05 * rotated_matches)):
+        return rotated
+    return image
+
+
 def cut_forms(image):
     h, w = image.shape[:2]
     tops = form_tops(image)
