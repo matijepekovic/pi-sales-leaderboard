@@ -260,7 +260,7 @@ class SalesforceCliAdapter:
     def _distinct_values(self, path, trace=None):
         query = (
             f'SELECT {path} FROM ServiceAppointment '
-            "WHERE FSSK__FSK_Work_Order__r.WorkType.Name LIKE '%Sales%' "
+            "WHERE WorkType.Name LIKE '%Sales%' "
             'LIMIT 1000'
         )
         try:
@@ -366,7 +366,7 @@ class SalesforceCliAdapter:
         query_start = start - timedelta(days=1)
         query_end = end + timedelta(days=2)
         conditions = [
-            "FSSK__FSK_Work_Order__r.WorkType.Name LIKE '%Sales%'",
+            "WorkType.Name LIKE '%Sales%'",
             f'SchedStartTime >= {query_start.isoformat()}T00:00:00Z',
             f'SchedStartTime < {query_end.isoformat()}T00:00:00Z',
         ]
