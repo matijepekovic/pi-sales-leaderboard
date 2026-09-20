@@ -139,7 +139,10 @@ def test_portal_fields_use_report_controller_fields_not_guessed_labels():
     assert product.path == 'FSSK__FSK_Work_Order__r.Product_Interest__c'
     assert source.path == 'FSSK__FSK_Work_Order__r.Lead__r.LeadSource'
     assert market.values == ('Retail',)
-    assert product.values == ('Doors', 'Windows')
+    assert product.values == (
+        'Roofing', 'Siding', 'Bath', 'Gutters', 'Windows',
+        'Doors', 'Other', 'Walk-In Tubs', 'Solar',
+    )
     assert source.values == (
         'Canvass', 'Flyer', 'Internet', 'Other', 'Previous Customer',
         'Referral', 'Self Generated Lead', 'Telemarketing', 'Shows',
@@ -261,7 +264,10 @@ def test_connection_check_is_separate_from_filter_loading():
     product = service.field('product_category')
     source = service.field('source_type')
     assert market.field.values == ('Retail',)
-    assert product.field.values == ('Doors', 'Windows')
+    assert product.field.values == (
+        'Roofing', 'Siding', 'Bath', 'Gutters', 'Windows',
+        'Doors', 'Other', 'Walk-In Tubs', 'Solar',
+    )
     assert source.field.values[0] == 'Canvass'
 
 
