@@ -61,8 +61,8 @@ def _mod_table(record, color_code, available_width):
     style = ParagraphStyle(
         'mod-cell',
         fontName='Helvetica',
-        fontSize=8.5,
-        leading=9.4,
+        fontSize=9,
+        leading=10,
         textColor=colors.black,
         spaceAfter=0,
         spaceBefore=0,
@@ -111,8 +111,12 @@ def _mod_table(record, color_code, available_width):
     data[11][2] = _p(style, 'Want:')
 
     col_widths = [available_width / 12.0] * 12
+    # Visualforce uses 12px cell text and the explicit row-height helper
+    # classes shown in the original MOD Sheet. 96dpi CSS pixels convert to
+    # 0.75 PDF points.
     row_heights = [
-        12, 25, 25, 25, 12, 18, 10, 25, 12, 12, 12, 12, 12,
+        10.5, 22.5, 22.5, 22.5, 10.5, 24.75, 9,
+        22.5, 10.5, 10.5, 10.5, 10.5, 9,
     ]
     table = Table(data, colWidths=col_widths, rowHeights=row_heights)
     spans = [
@@ -133,10 +137,10 @@ def _mod_table(record, color_code, available_width):
     commands = [
         ('GRID', (0, 0), (-1, -1), 1.34, colors.black),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 1.0),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 1.0),
-        ('TOPPADDING', (0, 0), (-1, -1), 1.0),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 1.0),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0.84),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0.84),
+        ('TOPPADDING', (0, 0), (-1, -1), 0.84),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0.84),
     ]
     commands.extend(('SPAN', start, end) for start, end in spans)
     table.setStyle(TableStyle(commands))

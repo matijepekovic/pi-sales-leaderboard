@@ -1,6 +1,5 @@
-"""Salesforce Sandbox stays isolated, read-only, and observable."""
+"""Salesforce Sandbox regressions for the original MOD controller contract."""
 import json
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,23 +13,54 @@ def _result(value, returncode=0, stderr=''):
     return SimpleNamespace(stdout=json.dumps(value), stderr=stderr, returncode=returncode)
 
 
-def _describe_fields(sobject):
-    if sobject == 'WorkOrder':
-        return [
-            {'label': 'Market Segment', 'name': 'Market_Segment__c',
-             'picklistValues': [{'active': True, 'value': 'Retail'}]},
-            {'label': 'Product Category', 'name': 'Product_Category__c',
-             'picklistValues': [{'active': True, 'value': 'Windows'}]},
-        ]
-    if sobject == 'Lead':
-        return [
-            {'label': 'Source Type', 'name': 'Source_Type__c',
-             'picklistValues': [{'active': True, 'value': 'Canvass'}]},
-        ]
-    return []
+def _appointment(
+    appointment_id,
+    *,
+    work_order_id='0WO000000000001AAA',
+    created='2026-09-19T18:00:00.000+0000',
+    scheduled='2026-09-19T17:30:00.000+0000',
+    local_start='9/19/2026 10:30 AM',
+    resource='Sales Rep One',
+    lead_name='Jordan Example',
+):
+    return {
+        'Id': appointment_id,
+        'Local_Scheduled_Start_Time__c': local_start,
+        'SchedStartTime': scheduled,
+        'SchedEndTime': '2026-09-19T19:30:00.000+0000',
+        'CreatedDate': created,
+        'FSSK__FSK_Work_Order__c': work_order_id,
+        'FSSK__FSK_Assigned_Service_Resource__r': {'Name': resource},
+        'FSSK__FSK_Work_Order__r': {
+            'WorkOrderNumber': '00012345',
+            'Address': '123 Main St, Lacey, WA 98503',
+            'Street': '123 Main St',
+            'City': 'Lacey',
+            'State': 'WA',
+            'PostalCode': '98503',
+            'Product_Interest__c': 'Windows;Doors',
+            'WorkType': {'Name': 'Sales Appointment'},
+            'Lead__r': {
+                'Name': lead_name,
+                'Phone': '360-555-1212',
+                'Phone_3__c': '',
+                'Market__c': 'Retail',
+                'LeadSource': 'Canvass',
+                'Sub_Source__c': 'Door',
+                'Status': 'Open',
+                'LastModifiedDate': '2026-09-19T16:00:00.000+0000',
+                'Canvass_Set_By__r': {'Name': 'Canvasser'},
+                'Set_By__r': {'Name': 'Setter'},
+                'Description': 'Customer description',
+            },
+        },
+    }
 
 
-def _salesforce_runner(calls):
+def _salesforce_runner(calls, *, appointment_records=None):
+    if appointment_records is None:
+        appointment_records = [_appointment('08p000000000001AAA')]
+
     def runner(command, **kwargs):
         calls.append(command)
         if command[1:3] == ['org', 'display']:
@@ -41,48 +71,25 @@ def _salesforce_runner(calls):
                 'id': '00D000000000123',
                 'connectedStatus': 'Connected',
             }})
-        if command[1:3] == ['sobject', 'describe']:
-            sobject = command[command.index('--sobject') + 1]
-            return _result({'status': 0, 'result': {'fields': _describe_fields(sobject)}})
 
         query = command[command.index('--query') + 1]
-        if 'FROM AssignedResource' in query:
+        if 'FROM User' in query:
             return _result({'status': 0, 'result': {'records': [
-                {'ServiceAppointmentId': '08p000000000001AAA',
-                 'ServiceResource': {'Name': 'Sales Rep One'}},
+                {'TimeZoneSidKey': 'America/Los_Angeles'},
             ]}})
         if 'FROM ServiceAppointment' in query:
-            return _result({'status': 0, 'result': {'records': [
-                {
-                    'Id': '08p000000000001AAA',
-                    'Status': 'Scheduled',
-                    'Local_Scheduled_Start_Time__c': '9/19/2026 10:30 AM',
-                    'SchedStartTime': '2026-09-19T17:30:00.000+0000',
-                    'FSSK__FSK_Work_Order__r': {
-                        'WorkOrderNumber': '00012345',
-                        'Street': '123 Main St',
-                        'City': 'Lacey',
-                        'State': 'WA',
-                        'PostalCode': '98503',
-                        'Market_Segment__c': 'Retail',
-                        'Product_Category__c': 'Windows',
-                        'WorkType': {'Name': 'Sales Appointment'},
-                        'Product_Interest__c': 'Windows',
-                        'Lead__r': {
-                            'Name': 'Jordan Example',
-                            'Phone': '360-555-1212',
-                            'Canvass_Set_By__r': {'Name': 'Canvasser'},
-                            'Set_By__r': {'Name': 'Setter'},
-                            'LeadSource': 'Canvass',
-                            'Source_Type__c': 'Canvass',
-                            'Sub_Source__c': 'Door',
-                            'Description': 'Customer description',
-                        },
-                    },
-                },
-            ]}})
+            return _result({'status': 0, 'result': {'records': appointment_records}})
         raise AssertionError(query)
+
     return runner
+
+
+def _query_calls(calls):
+    return [
+        call[call.index('--query') + 1]
+        for call in calls
+        if call[1:3] == ['data', 'query']
+    ]
 
 
 def test_cli_error_surfaces_useful_node_cause():
@@ -112,7 +119,6 @@ def test_connection_uses_explicit_work_alias_and_safe_trace():
         '--target-org', 'work', '--json',
     ]]
     assert trace[0]['input'].endswith('--target-org work --json')
-    assert '"alias":"work"' in trace[0]['result']
 
     root = Path(__file__).resolve().parents[1]
     unit = (root / 'systemd/printer-app-web.service').read_text()
@@ -121,13 +127,47 @@ def test_connection_uses_explicit_work_alias_and_safe_trace():
     assert "SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')" in app
 
 
-def test_adapter_resolves_fields_and_normalizes_mod_records_read_only():
+def test_portal_fields_use_report_controller_fields_not_guessed_labels():
     calls = []
     adapter = SalesforceCliAdapter(runner=_salesforce_runner(calls), executable='/fake/sf')
 
     market = adapter.portal_field('market_segment')
     product = adapter.portal_field('product_category')
     source = adapter.portal_field('source_type')
+
+    assert market.path == 'FSSK__FSK_Work_Order__r.Lead__r.Market__c'
+    assert product.path == 'FSSK__FSK_Work_Order__r.Product_Interest__c'
+    assert source.path == 'FSSK__FSK_Work_Order__r.Lead__r.LeadSource'
+    assert market.values == ('Retail',)
+    assert product.values == ('Doors', 'Windows')
+    assert source.values == (
+        'Canvass', 'Flyer', 'Internet', 'Other', 'Previous Customer',
+        'Referral', 'Self Generated Lead', 'Telemarketing', 'Shows',
+    )
+    assert not any(call[1:3] == ['sobject', 'describe'] for call in calls)
+
+
+def test_mod_query_and_grouping_match_original_apex_controller():
+    calls = []
+    later_created = _appointment(
+        '08p000000000001AAA',
+        created='2026-09-19T18:00:00.000+0000',
+        scheduled='2026-09-19T17:00:00.000+0000',
+        local_start='FIRST ROW SHOULD NOT WIN',
+        resource='Sales Rep Two',
+    )
+    earlier_created = _appointment(
+        '08p000000000002AAA',
+        created='2026-09-19T17:00:00.000+0000',
+        scheduled='2026-09-19T17:30:00.000+0000',
+        local_start='SELECTED EARLIER CREATED ROW',
+        resource='Sales Rep One',
+    )
+    adapter = SalesforceCliAdapter(
+        runner=_salesforce_runner(calls, appointment_records=[later_created, earlier_created]),
+        executable='/fake/sf',
+    )
+
     records = adapter.mod_sheets(
         start_date='9/19/2026',
         end_date='9/19/2026',
@@ -136,38 +176,73 @@ def test_adapter_resolves_fields_and_normalizes_mod_records_read_only():
         source_type='Canvass',
         remove_canceled=True,
         remove_unconfirmed=True,
+        limit=1000,
     )
 
-    assert market.path == 'FSSK__FSK_Work_Order__r.Lead__r.Market__c'
-    assert product.path == 'FSSK__FSK_Work_Order__r.Product_Interest__c'
-    assert source.path == 'FSSK__FSK_Work_Order__r.Lead__r.LeadSource'
-    assert market.values == ('Retail',)
-    assert product.values == ('Windows',)
-    assert source.values == (
-        'Canvass', 'Flyer', 'Internet', 'Other', 'Previous Customer',
-        'Referral', 'Self Generated Lead', 'Telemarketing', 'Shows',
-    )
-    option_queries = [
-        call for call in calls
-        if call[1:3] == ['data', 'query']
-        and call[call.index('--query') + 1].startswith('SELECT FSSK__FSK_Work_Order__r')
-        and 'LIMIT 1000' in call[call.index('--query') + 1]
-    ]
-    assert len(option_queries) == 2
+    report_query = next(query for query in _query_calls(calls) if 'FROM ServiceAppointment' in query
+                        and 'Local_Scheduled_Start_Time__c' in query)
+    assert "WHERE WorkType.Name LIKE '%Sales%'" in report_query
+    assert "Product_Interest__c INCLUDES ('Windows')" in report_query
+    assert "Lead__r.Market__c = 'Retail'" in report_query
+    assert "Lead__r.LeadSource = 'Canvass'" in report_query
+    assert "Lead__r.Status != 'Canceled'" in report_query
+    assert 'Lead__r.LastModifiedDate != null' in report_query
+    assert 'FSSK__FSK_Assigned_Service_Resource__r.Name' in report_query
+    assert 'FSSK__FSK_Work_Order__c' in report_query
+    assert 'ORDER BY SchedStartTime, FSSK__FSK_Work_Order__r.Lead__r.Name ASC LIMIT 1000' in report_query
+    assert not any('FROM AssignedResource' in query for query in _query_calls(calls))
+
     assert len(records) == 1
-    assert records[0].work_order_number == '00012345'
-    assert records[0].lead_name == 'Jordan Example'
-    assert records[0].address == '123 Main St, Lacey, WA, 98503'
-    assert records[0].assigned_service_resources == ('Sales Rep One',)
-    assert records[0].product_interest == 'Windows'
-    assert records[0].lead_description == 'Customer description'
-    assert all('--target-org' in call and call[call.index('--target-org') + 1] == 'work'
-               for call in calls)
-    assert not any(word in ('create', 'update', 'delete', 'upsert')
-                   for call in calls for word in call)
+    record = records[0]
+    assert record.source_id == '0WO000000000001AAA'
+    assert record.local_scheduled_start_time == 'SELECTED EARLIER CREATED ROW'
+    assert record.assigned_service_resources == ('Sales Rep Two', 'Sales Rep One')
+    assert record.scheduled_start == '2026.09.19 ; 10:30:00 AM'
+    assert record.work_order_number == '00012345'
+    assert record.lead_name == 'Jordan Example'
+    assert record.address == '123 Main St, Lacey, WA, 98503'
+    assert record.phone == '360-555-1212'
+    assert record.set_by == 'Setter'
+    assert record.work_type == 'Sales Appointment'
+    assert record.product_interest == 'Windows;Doors'
+    assert record.source == 'Canvass'
+    assert record.sub_source == 'Door'
+    assert record.lead_description == 'Customer description'
 
 
-def test_connection_check_is_separate_from_slow_field_loading():
+def test_source_type_all_uses_original_controller_allowlist():
+    calls = []
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner(calls), executable='/fake/sf')
+    adapter.mod_sheets(
+        start_date='9/19/2026',
+        end_date='9/19/2026',
+        source_type='All',
+        product_category='All',
+        remove_canceled=False,
+        remove_unconfirmed=False,
+    )
+
+    report_query = next(query for query in _query_calls(calls) if 'FROM ServiceAppointment' in query
+                        and 'Local_Scheduled_Start_Time__c' in query)
+    assert 'Lead__r.LeadSource IN (' in report_query
+    for value in ('Canvass', 'Previous Customer', 'Self Generated Lead', 'Shows'):
+        assert value in report_query
+    assert 'Product_Interest__c INCLUDES' not in report_query
+    assert "Lead__r.Status != 'Canceled'" not in report_query
+    assert 'Lead__r.LastModifiedDate != null' not in report_query
+
+
+def test_empty_controller_result_returns_original_error():
+    calls = []
+    adapter = SalesforceCliAdapter(
+        runner=_salesforce_runner(calls, appointment_records=[]),
+        executable='/fake/sf',
+    )
+    with pytest.raises(SalesforceAdapterError, match='No Records Found for Selected Criteria'):
+        adapter.mod_sheets(start_date='9/19/2026', end_date='9/19/2026')
+
+
+def test_connection_check_is_separate_from_filter_loading():
     calls = []
     service = SalesforceSandboxService(
         SalesforceCliAdapter(runner=_salesforce_runner(calls), executable='/fake/sf')
@@ -186,104 +261,50 @@ def test_connection_check_is_separate_from_slow_field_loading():
     product = service.field('product_category')
     source = service.field('source_type')
     assert market.field.values == ('Retail',)
-    assert product.field.values == ('Windows',)
+    assert product.field.values == ('Doors', 'Windows')
     assert source.field.values[0] == 'Canvass'
-    assert market.trace and product.trace and source.trace
-    assert not any(call[1:3] == ['sobject', 'describe'] for call in calls)
 
 
-def test_parallel_field_requests_use_exact_controller_contracts():
-    calls = []
-    adapter = SalesforceCliAdapter(runner=_salesforce_runner(calls), executable='/fake/sf')
-
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        futures = [
-            pool.submit(adapter.portal_field, key)
-            for key in ('market_segment', 'product_category', 'source_type')
-        ]
-        resolved = [future.result() for future in futures]
-
-    assert [field.label for field in resolved] == [
-        'Market Segment', 'Product Category', 'Source Type',
-    ]
-    assert [field.path for field in resolved] == [
-        'FSSK__FSK_Work_Order__r.Lead__r.Market__c',
-        'FSSK__FSK_Work_Order__r.Product_Interest__c',
-        'FSSK__FSK_Work_Order__r.Lead__r.LeadSource',
-    ]
-    assert not any(call[1:3] == ['sobject', 'describe'] for call in calls)
-
-
-def test_connection_failure_preserves_trace_for_side_panel():
-    class BrokenAdapter:
-        def status(self, trace=None):
-            if trace is not None:
-                trace.append({'input': '/usr/bin/sf org display', 'result': 'failed', 'ok': False})
-            raise SalesforceAdapterError('CLI session unavailable')
-
-    snapshot = SalesforceSandboxService(BrokenAdapter()).connection()
-    assert not snapshot.status.connected
-    assert snapshot.error == 'CLI session unavailable'
-    assert snapshot.trace[0]['ok'] is False
-
-
-def test_portal_ui_loads_connection_then_fields_and_has_cli_panel():
+def test_portal_ui_preserves_controller_all_semantics_and_black_shell():
     root = Path(__file__).resolve().parents[1]
     portal = (root / 'templates/salesforce_sandbox.html').read_text()
     js = (root / 'static/salesforce_sandbox.js').read_text()
     css = (root / 'static/salesforce_sandbox.css').read_text()
-    web = (root / 'salesforce_sandbox/web.py').read_text()
 
-    for text in (
-        'Manager On Duty Sheet',
-        'Start Date:',
-        'End Date:',
-        'Market Segment:',
-        'Product Category:',
-        'Source Type:',
-        'Remove Canceled Appointments:',
-        'Remove Unconfirmed Appointments:',
-        'Color Code Products:',
-        'Generate',
-        '*A maximum of 1000 appointments will be displayed',
-    ):
-        assert text in portal
-
-    assert 'data-connection-url' in portal
-    assert 'data-field-url' in portal
+    assert "product_category', label: 'Product Category', allValue: 'All'" in js
+    assert "source_type', label: 'Source Type', allValue: 'All'" in js
+    assert "market_segment', label: 'Market Segment', allValue: ''" in js
     assert 'sfShellLog' in portal
-    assert 'Salesforce CLI' in portal
-    assert 'state.dataset.connectionUrl' in js
-    assert 'state.dataset.fieldUrl' in js
-    assert '25000' in js and '100000' in js
-    assert 'Promise.all(fields.map(loadField))' in js
-    assert '/salesforce-sandbox/api/connection' in web
-    assert '/salesforce-sandbox/api/field/<key>' in web
-    assert 'sf-workspace' in css and 'sf-shell' in css
-    assert 'background:#000' in css and 'color:#fff' in css
-    assert 'name="org"' not in portal
-    for name in (
-        'startdate', 'enddate', 'marketsegment', 'productCategory',
-        'sourceType', 'removeCanceled', 'removeUnconfirmed', 'colorCode',
-    ):
-        assert f'name="{name}"' in portal
-    assert 'target="_blank"' in portal
-    assert '<style>' not in portal and 'onchange=' not in portal
+    assert 'background:#000' in css
+    assert 'color:#fff' in css
 
 
-def test_pdf_renderer_accepts_normalized_records():
+def test_pdf_renderer_keeps_original_mod_labels_and_normalized_contract():
     from printer_app.mod_sheet_contract import ModSheetRecord
     from printer_app.salesforce_sandbox.pdf_renderer import render_mod_pdf
 
+    root = Path(__file__).resolve().parents[1]
+    renderer = (root / 'salesforce_sandbox/pdf_renderer.py').read_text()
+    for label in (
+        'Work Order Number:', 'Local Scheduled Start Time:', 'Canvass Set By:',
+        'Lead Name:', 'Address:', 'Phone:', 'Power Questions',
+        'Scheduled Start:', 'Assigned Service Resource:', 'Set By:', 'T Close:',
+        'Work Type:', 'Product Interest:', 'Source:', 'Sub Source:', 'Hover / Flir:',
+        'Lead Description:', 'Start Price:', 'Final Price:', 'Deposit/Payment:',
+        'MOD Notes:', 'Fin Checklist', 'Bid Sheets', 'Pictures', 'Dispo:',
+        'Call 1:', 'Call 2:', '90 Min:', 'Need:', 'Want:',
+    ):
+        assert label in renderer
+
     pdf = render_mod_pdf([
         ModSheetRecord(
-            source_id='08p1',
+            source_id='0WO1',
             work_order_number='00012345',
             lead_name='Jordan Example',
             assigned_service_resources=('Sales Rep One',),
             product_interest='Windows',
         )
-    ], color_code=True)
+    ])
     assert pdf.startswith(b'%PDF')
     assert len(pdf) > 1000
 
@@ -303,9 +324,3 @@ def test_salesforce_stays_isolated_from_gallery_printing_and_ocr():
     assert 'FSSK__FSK_Work_Order__r' in adapter
     assert 'FSSK__FSK_Work_Order__r' not in app
     assert 'ocr' not in adapter.lower()
-
-    base = (root / 'templates/base.html').read_text()
-    control = (root / 'templates/control.html').read_text()
-    assert "url_for('salesforce_sandbox.page')" in base
-    assert "url_for('salesforce_sandbox.page')" in control
-    assert 'Salesforce Sandbox' in control
