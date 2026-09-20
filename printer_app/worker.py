@@ -302,7 +302,6 @@ def main():
                 render_mod_pdf,
                 captured.data_dir,
                 captured.timezone,
-                captured.print_options,
             )
 
         daily_mod_sheets = make_daily_mod_sheets(cfg)
@@ -360,6 +359,12 @@ def main():
                     for row in commands:
                         if row['name'] == 'test-print':
                             engine.test_print()
+
+                    # One-off immediate generated PDFs stay ahead of waiting
+                    # software-queue jobs while preserving the same CUPS receipt
+                    # and reconciliation path as every other print.
+                    for job in engine.queue.immediate_jobs(now):
+                        engine.advance(job)
                     if polling is not None and polling.done():
                         finished, polling = polling, None
                         try:
