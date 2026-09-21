@@ -313,8 +313,9 @@ inbox source from cleanup until the gallery copy is durable. Newly discovered ma
 pending downloads so a blocked gallery does not starve new print mail.
 
 Open the searchable image gallery from Print Control on port 5055. The Print Control
-link and Full gallery access QR enroll that browser with full gallery capability. A full-access device can open the Gallery hamburger menu and use Share, Offline
-(when available), or Refresh. Share names a session and creates a single-use QR grant
+link and Full gallery access QR enroll that browser with full gallery capability. A full-access device can open the Gallery hamburger menu and use Share or Refresh.
+Refresh pulls today's assigned reps; offline storage runs automatically on supported secure full-access devices.
+Share names a session and creates a single-use QR grant
 that expires 6 hours after creation. Active sessions are shown by
 name under the QR and can be revoked by the full-access identity that created them;
 revocation also terminates an already-open guest session. Guests can browse and add
@@ -324,7 +325,7 @@ Gallery at port 5055.
 
 The certificate/setup page remains installed but is no longer connected to the Gallery
 UI. Normal HTTP Gallery pages hide Offline and do not redirect into setup. An
-already-secure full-access phone continues to see/use Offline. Caddy remains an optional
+already-secure full-access phone continues to use offline storage automatically. Caddy remains an optional
 isolated local adapter; no cloud server or hosted customer-data copy is introduced.
 The secure Gallery registers its service worker and keeps downloaded work orders in
 phone-local IndexedDB. Runtime availability is based on whether **Stats is reachable**, not whether
@@ -361,6 +362,18 @@ Open an image in the gallery to enlarge it and add a note; other open devices fe
 saved notes within five seconds. Note authors are user-entered, not verified identities.
 Separate notes are append-only with retry-safe IDs, so simultaneous additions do not
 silently overwrite each other. Images are loaded in batches rather than all into RAM.
+
+Inside an opened card, the floating bar contains **Show related, Notes, Dial, Message**.
+Search remains in the main Gallery. Dial opens the phone dialer; Message opens the SMS
+composer with the customer's number. The number comes from the normalized reference
+matched by document date and work order, with an explicit printed Phone field as a
+fallback. Missing, invalid or ambiguous numbers disable the contact actions.
+Returning to the card presents **Called?** or **Text sent?**. Only confirmation saves
+that activity as a shared note with a required, user-entered name and timestamp.
+Cancel adds nothing. On downloaded cards, offline confirmations queue through the
+existing notes outbox. The pending confirmation survives a same-tab reload and remains
+tied to its original card. `static/gallery_contact.js` owns this contact intent/UI;
+the Gallery controller provides dialog navigation and the existing note transport.
 
 **Keep images for** is a separate gallery policy based on the printed document date,
 not download/email age. The two repeated printed header dates must agree with sufficient

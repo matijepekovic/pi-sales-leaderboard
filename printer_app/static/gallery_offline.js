@@ -99,6 +99,18 @@ export class GalleryOffline {
     return 'stats.gallery.offlineEnabled.' + subject;
   }
 
+  savedNoteAuthor(subject = this.subject) {
+    if (!subject) return '';
+    try { return localStorage.getItem('stats.gallery.noteAuthor.' + subject) || ''; }
+    catch (_) { return ''; }
+  }
+
+  rememberNoteAuthor(value, subject = this.subject) {
+    if (!subject) return;
+    try { localStorage.setItem('stats.gallery.noteAuthor.' + subject, String(value ?? '')); }
+    catch (_) { /* A saved note must not depend on storing a convenience preference. */ }
+  }
+
   isEnabled() {
     return Boolean(this.subject) && localStorage.getItem(this.enabledKey()) === '1';
   }
@@ -302,8 +314,17 @@ export class GalleryOffline {
     const pending = tx.objectStore('pendingNotes');
     const card = await requestResult(cards.get(itemId));
     if (!card) throw new Error('This work order has not been downloaded to this phone.');
-    pending.put({id:note.id, item_id:itemId, author:note.author, body:note.body, created:note.created});
-    const detail = {...card.detail, notes:[...(card.detail?.notes || []), note]};
+    if (card.detail?.notes?.some(existing => existing.id === note.id)) {
+      // This ID was already queued or confirmed by the server. A restored
+      // confirmation must not append it again or recreate a delivered outbox row.
+      await transactionDone(tx);
+      return;
+    }
+    const queued = await requestResult(pending.get(note.id));
+    if (queued && queued.item_id !== itemId) throw new Error('Conflicting note. Reload and try again.');
+    const original = queued ? {id:queued.id, author:queued.author, body:queued.body, created:queued.created} : note;
+    if (!queued) pending.put({id:note.id, item_id:itemId, author:note.author, body:note.body, created:note.created});
+    const detail = {...card.detail, notes:[...(card.detail?.notes || []), original]};
     const summary = {...card.summary, notes_count:(card.summary?.notes_count || 0) + 1};
     cards.put({...card, summary, detail, saved_at:Date.now()});
     await transactionDone(tx);
@@ -382,7 +403,10 @@ export class GalleryOffline {
           missingImages++;
         }
 
-        if (!detail || notesChanged || searchChanged) detail = await this.json('/gallery/api/items/' + summary.id);
+        const needsPhone = !Object.prototype.hasOwnProperty.call(detail || {}, 'phone_dial');
+        if (!detail || needsPhone || notesChanged || searchChanged) {
+          detail = await this.json('/gallery/api/items/' + summary.id);
+        }
         else detail = {...detail, ...summary};
 
         if (imageReady) {

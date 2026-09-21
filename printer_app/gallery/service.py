@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from .policy import (
     address_key, authoritative_reference_text, checked_date, checked_date_filter,
     checked_lead_name, lead_key, printed_address, printed_lead, printed_work_order_number,
-    related_identity, search_expression, work_order_key,
+    printed_phone, related_identity, search_expression, usable_phone, work_order_key,
 )
 
 log = logging.getLogger(__name__)
@@ -145,7 +145,17 @@ class GalleryService:
 
     def item(self, ident):
         self.initialize()
-        return self.repository.item(ident)
+        item = self.repository.item(ident)
+        if item:
+            kind, reference = self._reference_for(item.get('document_date'), item.get('work_order_number'))
+            if reference is not None and str(reference.get('phone') or '').strip():
+                phone, dial = usable_phone(reference['phone'])
+            elif kind and reference is None:
+                phone, dial = '', ''  # Ambiguous references must not select a contact.
+            else:
+                phone, dial = printed_phone(item.get('text'))
+            item.update(phone=phone, phone_dial=dial)
+        return item
 
     def note(self, ident, note_id, author, body):
         self.initialize()
@@ -274,7 +284,7 @@ class GalleryService:
                                 match[field] = initial.get(field, '')
                 return kind, match
             if any(row.get('work_order_key') == work_order_key(number) for row in references):
-                return '', None  # An ambiguous final match must not fall back to older data.
+                return kind, None  # Preserve ambiguity; never fall back to older data.
         return '', None
 
     @staticmethod
