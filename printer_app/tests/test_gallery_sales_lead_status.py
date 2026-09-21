@@ -1,4 +1,4 @@
-"""Persist source lead status separately from Gallery name confirmation."""
+"""Work-order identity and one shared Lead status, independent of appointments."""
 import sqlite3
 
 import pytest
@@ -27,16 +27,15 @@ def repository(tmp_path):
     return result
 
 
-def _apply(repository, status='Sold', *, ident='card', lead_source_id='', **guards):
-    row = repository.reference_item(ident)
-    return repository.apply_reference(
-        ident, 'appointment-7', 'final', 'Example Rep', row['text'],
-        row['lead_name'], row['address'], sales_lead_status=status,
-        lead_source_id=lead_source_id, **guards,
-    )
+def _record(number='0007', lead='lead-1', status='Sold'):
+    return dict(work_order_number=number, lead_source_id=lead, sales_lead_status=status)
 
 
-def test_existing_database_migrates_with_blank_status_and_keeps_saved_data(tmp_path):
+def _publish(repository, status='Sold', *, number='0007', lead='lead-1', captured=100):
+    return repository.replace_work_order_lead_statuses([number], [_record(number, lead, status)], captured)
+
+
+def test_existing_database_migrates_without_changing_saved_cards(tmp_path):
     path = tmp_path / 'legacy.db'
     with sqlite3.connect(path) as connection:
         connection.executescript(SCHEMA)
@@ -46,73 +45,30 @@ def test_existing_database_migrates_with_blank_status_and_keeps_saved_data(tmp_p
             document_date,date_status,bytes,created)
             VALUES('card','batch',1,1,'card.png','Lead Name: Jordan Example',
                    '2026-09-21','printed',123,100)""")
-        connection.execute("""INSERT INTO appointment_references(day,kind,source_id,work_order_number)
-            VALUES('2026-09-21','final','appointment-7','0007')""")
-
     repository = GalleryRepository(path)
     repository.initialize()
-    repository.initialize()
-
     item = repository.item('card')
-    assert item['sales_lead_status'] == ''
-    assert item['lead_source_id'] == ''
+    assert item['sales_lead_status'] == item['lead_source_id'] == ''
     assert item['lead_name'] == 'Jordan Example'
     assert item['lead_status'] == 'printed'
     assert item['bytes'] == 123
-    _, references = repository.reference_snapshot(DAY, 'final')
-    assert references[0]['sales_lead_status'] == ''
-    assert references[0]['lead_source_id'] == ''
-    assert references[0]['work_order_number'] == '0007'
+    repository.initialize()
+    assert repository.item('card') == item
 
 
-def test_new_cards_default_to_no_sales_status(repository):
-    assert repository.item('card')['sales_lead_status'] == ''
-    assert repository.item('card')['lead_status'] == 'printed'
-
-
-def test_saved_status_and_name_confirmation_survive_reinitialization(repository):
-    _apply(repository, 'Sold')
-    repository.correct_lead('card', 'Jordan Example')
+def test_existing_displayed_status_survives_until_successful_direct_lookup(repository):
+    with repository.connect() as c:
+        c.execute("UPDATE items SET lead_source_id='legacy-lead',sales_lead_status='Sold' WHERE id='card'")
+        c.execute('DROP TABLE work_order_leads')
+    repository.initialize()
     before = repository.item('card')
-    repository.initialize()
-    repository.initialize()
-    assert repository.item('card') == before
-
-
-def test_reference_snapshots_keep_status_per_date_and_work_order(repository):
-    repository.replace_reference_snapshot(DAY, 'final', [dict(
-        source_id='appointment-7', work_order_number='0007', sales_lead_status='Sold',
-        assigned_service_resources=['Example Rep'],
-    )], 100)
-    repository.replace_reference_snapshot('2026-09-22', 'final', [dict(
-        source_id='appointment-8', work_order_number='0007', sales_lead_status='Open',
-    )], 101)
-    repository.initialize()
-
-    _, references = repository.reference_snapshot(DAY, 'final')
-    assert references[0]['sales_lead_status'] == 'Sold'
-    assert references[0]['assigned_service_resources'] == ('Example Rep',)
-    assert repository.reference_matches(DAY, 'final', '0007')[0]['sales_lead_status'] == 'Sold'
-    assert repository.reference_matches('2026-09-22', 'final', '0007')[0]['sales_lead_status'] == 'Open'
-    assert repository.reference_matches(DAY, 'final', '0008') == []
-
-    repository.replace_reference_snapshot(DAY, 'final', [dict(
-        source_id='appointment-7', work_order_number='0007',
-    )], 102)
-    assert repository.reference_matches(DAY, 'final', '0007')[0]['sales_lead_status'] == ''
-
-
-def test_snapshot_presence_distinguishes_empty_capture_from_missing_day_or_kind(repository):
-    assert not repository.has_reference_snapshot(DAY, 'final')
-    repository.replace_reference_snapshot(DAY, 'morning', [], 100)
-    assert repository.has_reference_snapshot(DAY, 'morning')
-    assert not repository.has_reference_snapshot(DAY, 'final')
-    assert not repository.has_reference_snapshot('2026-09-22', 'morning')
-
-    repository.replace_reference_snapshot(DAY, 'final', [], 101)
-    assert repository.has_reference_snapshot(DAY, 'final')
-    assert not repository.has_reference_snapshot('2026-09-22', 'final')
-    assert repository.reference_snapshot(DAY, 'final')[1] == []
+    assert repository.refresh_sales_lead_status('card') == 0
+    repository.replace_reference_snapshot(DAY, 'final', [], 200)
+    assert repository.item('card')['sales_lead_status'] == 'Sold'
+    assert repository.item('card')['lead_source_id'] == 'legacy-lead'
+    assert repository.replace_work_order_lead_statuses(['0007'], [], 201) == 1
+    assert repository.item('card')['sales_lead_status'] == repository.item('card')['lead_source_id'] == ''
+    assert repository.item('card')['text'] == before['text']
 
 
 @pytest.mark.parametrize('projection', [
@@ -126,17 +82,16 @@ def test_snapshot_presence_distinguishes_empty_capture_from_missing_day_or_kind(
     lambda repository: repository.reference_item('card'),
 ], ids=['detail', 'list', 'offline', 'related', 'import-list', 'import-detail', 'reference-list', 'reference-detail'])
 def test_sales_status_is_available_in_every_card_projection(repository, projection):
-    _apply(repository, 'Sold')
+    _publish(repository)
     assert projection(repository)['sales_lead_status'] == 'Sold'
 
 
-def test_status_only_change_invalidates_offline_data_and_preserves_name_confirmation(repository):
-    _apply(repository, 'Open')
+def test_status_only_change_invalidates_offline_data_and_preserves_card_content(repository):
+    _publish(repository, 'Open')
     repository.correct_lead('card', 'Jordan Example')
     repository.add_note('card', 'note-1', 'Tester', 'Keep this note.')
     before = repository.item('card')
-
-    assert _apply(repository, 'Sold') == 1
+    assert _publish(repository, captured=101) == 1
     after = repository.item('card')
     assert after['sales_lead_status'] == 'Sold'
     assert after['search_revision'] == before['search_revision'] + 1
@@ -144,237 +99,177 @@ def test_status_only_change_invalidates_offline_data_and_preserves_name_confirma
                   'work_order_number', 'notes', 'image_revision'):
         assert after[field] == before[field]
     assert after['lead_status'] == 'confirmed'
-    assert _apply(repository, 'Sold') == 0
-    assert repository.item('card')['search_revision'] == after['search_revision']
-
-
-@pytest.mark.parametrize('explicit_empty', [True, False])
-def test_empty_status_in_matched_reference_replaces_previous_value(repository, explicit_empty):
-    _apply(repository, 'Sold')
-    before = repository.item('card')
-    if explicit_empty:
-        changed = _apply(repository, '')
-    else:
-        changed = repository.apply_reference(
-            'card', 'appointment-7', 'final', 'Example Rep', before['text'],
-            before['lead_name'], before['address'],
-        )
-    assert changed == 1
-    after = repository.item('card')
-    assert after['sales_lead_status'] == ''
-    assert after['search_revision'] == before['search_revision'] + 1
-
-
-@pytest.mark.parametrize('state', ['ACTIVE', 'REVIEW'])
-def test_unmatched_status_clear_is_idempotent_and_preserves_card_data(repository, state):
-    _apply(repository, 'Canceled')
-    repository.correct_lead('card', 'Jordan Example')
-    before = repository.item('card')
-    with repository.connect() as connection:
-        connection.execute('UPDATE items SET state=? WHERE id=?', (state, 'card'))
-
-    assert repository.refresh_sales_lead_status('card') == 1
-    assert repository.refresh_sales_lead_status('card') == 0
-    with repository.connect() as connection:
-        after = dict(connection.execute("SELECT * FROM items WHERE id='card'").fetchone())
-    assert after['sales_lead_status'] == ''
-    assert after['search_revision'] == before['search_revision'] + 1
-    assert after['lead_status'] == 'confirmed'
-    assert after['text'] == before['text']
-    assert after['work_order_number'] == '0007'
-    assert after['state'] == state
-    assert repository.refresh_sales_lead_status('missing') == 0
-
-
-@pytest.mark.parametrize('original_day', [DAY, None])
-def test_date_change_clears_status_before_new_date_can_be_matched(repository, original_day):
-    with repository.connect() as connection:
-        connection.execute('UPDATE items SET document_date=? WHERE id=?', (original_day, 'card'))
-    _apply(repository, 'Sold')
-    repository.correct_lead('card', 'Jordan Example')
-    before = repository.item('card')
-
-    repository.correct_date('card', '2026-09-22')
-    after = repository.item('card')
-    assert after['document_date'] == '2026-09-22'
-    assert after['sales_lead_status'] == ''
-    assert after['search_revision'] == before['search_revision'] + 1
-    assert after['lead_status'] == 'confirmed'
-    assert after['work_order_number'] == before['work_order_number']
-
-
-def test_confirming_same_date_does_not_discard_matched_status(repository):
-    _apply(repository, 'Sold')
-    before = repository.item('card')
-    repository.correct_date('card', DAY)
-    after = repository.item('card')
-    assert after['date_status'] == 'confirmed'
-    assert after['sales_lead_status'] == 'Sold'
-    assert after['search_revision'] == before['search_revision']
-
-
-def _reference(lead_id='lead-1', status='Open', work_order='0007', source_id='appointment-7'):
-    return dict(source_id=source_id, work_order_number=work_order,
-                lead_name='Jordan Example', lead_source_id=lead_id, sales_lead_status=status)
-
-
-def test_status_propagates_across_dates_and_work_orders_only_for_same_source_lead(repository):
-    _seed(repository, day='2026-09-22', ident='second-order', work_order='0008')
-    _seed(repository, day='2026-09-22', ident='same-name-other-lead', work_order='0009')
-    _seed(repository, day='2026-09-22', ident='same-name-unlinked', work_order='0010')
-    repository.replace_reference_snapshot(DAY, 'final', [
-        _reference(), _reference('lead-2', 'New', '0009', 'appointment-9'),
-    ], 100)
-    _apply(repository, lead_source_id='lead-1')
-    _apply(repository, ident='second-order', lead_source_id='lead-1')
-    _apply(repository, ident='same-name-other-lead', lead_source_id='lead-2')
-    before = {ident: repository.item(ident) for ident in (
-        'card', 'second-order', 'same-name-other-lead', 'same-name-unlinked')}
-
-    repository.replace_reference_snapshot('2026-09-23', 'final', [_reference(status='Sold')], 200)
-    for ident in ('card', 'second-order'):
-        after = repository.item(ident)
-        assert after['sales_lead_status'] == 'Sold'
-        assert after['search_revision'] == before[ident]['search_revision'] + 1
-        for field in ('text', 'lead_name', 'lead_status', 'document_date', 'work_order_number'):
-            assert after[field] == before[ident][field]
-    assert repository.item('same-name-other-lead') == before['same-name-other-lead']
-    assert repository.item('same-name-unlinked') == before['same-name-unlinked']
-
-    unchanged = repository.item('second-order')
-    repository.replace_reference_snapshot('2026-09-23', 'final', [_reference(status='Sold')], 201)
-    assert repository.item('second-order') == unchanged
-    assert repository.reference_matches(DAY, 'final', '0007')[0]['lead_source_id'] == 'lead-1'
-    assert repository.reference_items(DAY)[0]['lead_source_id'] == 'lead-1'
-
-
-def test_newest_lead_status_survives_old_captures_and_removal_of_appointment_snapshot(repository):
-    repository.replace_reference_snapshot(DAY, 'morning', [_reference(status='Open')], 100)
-    _apply(repository, lead_source_id='lead-1')
-    repository.replace_reference_snapshot('2026-09-22', 'final', [_reference(status='Sold')], 200)
-    repository.replace_reference_snapshot('2026-09-22', 'final', [], 300)
-    repository.replace_reference_snapshot(DAY, 'morning', [_reference(status='Open')], 150)
-    assert repository.sales_status_for_lead('lead-1') == 'Sold'
-    assert repository.item('card')['sales_lead_status'] == 'Sold'
-    assert repository.sales_status_for_lead('missing') == ''
-    assert repository.sales_status_for_lead('') == ''
+    assert _publish(repository, captured=102) == 0
+    assert repository.item('card') == after
     repository.initialize()
-    assert repository.sales_status_for_lead('lead-1') == 'Sold'
+    assert repository.item('card') == after
 
 
-def test_current_blank_status_clears_every_card_linked_to_the_lead(repository):
-    repository.replace_reference_snapshot(DAY, 'final', [_reference(status='Sold')], 100)
-    _apply(repository, lead_source_id='lead-1')
-    repository.replace_reference_snapshot('2026-09-22', 'final', [_reference(status='')], 200)
-    assert repository.sales_status_for_lead('lead-1') == ''
-    assert repository.item('card')['sales_lead_status'] == ''
-    assert repository.item('card')['lead_source_id'] == 'lead-1'
+def test_status_propagates_across_all_dates_and_orders_of_same_lead_only(repository):
+    for ident, number, day in [('old', '0008', '2020-01-01'), ('future', '0007', '2030-01-01'),
+                               ('undated', '0008', None), ('different-lead', '0009', DAY),
+                               ('unlinked', '0010', DAY)]:
+        _seed(repository, ident=ident, work_order=number, day=day)
+    with repository.connect() as c:
+        c.execute("UPDATE items SET state='REVIEW' WHERE id='undated'")
+    repository.replace_work_order_lead_statuses(['0007', '0008', '0009'], [
+        _record(status='Open'), _record('0008', status='Open'), _record('0009', 'lead-2', 'New'),
+    ], 100)
+    assert _publish(repository, captured=200) == 4
+    for ident in ('card', 'old', 'future', 'undated'):
+        row = repository.reference_item(ident)
+        assert row['sales_lead_status'] == 'Sold'
+        assert row['lead_source_id'] == 'lead-1'
+    assert repository.item('different-lead')['sales_lead_status'] == 'New'
+    assert repository.item('unlinked')['sales_lead_status'] == ''
+    assert repository.item('old')['document_date'] == '2020-01-01'
+
+
+@pytest.mark.parametrize('replacement', ['missing', 'blank-id', 'ambiguous'])
+def test_completed_lookup_clears_unknown_order_mapping_but_not_other_orders(repository, replacement):
+    _seed(repository, ident='other-order', work_order='0008')
+    repository.replace_work_order_lead_statuses(['0007', '0008'], [_record(), _record('0008')], 100)
+    rows = [] if replacement == 'missing' else [_record(lead='')] if replacement == 'blank-id' else [
+        _record(), _record(lead='another-lead')]
+    assert repository.replace_work_order_lead_statuses(['0007'], rows, 200) == 1
+    assert repository.item('card')['lead_source_id'] == repository.item('card')['sales_lead_status'] == ''
+    assert repository.item('other-order')['sales_lead_status'] == 'Sold'
+    assert repository.replace_work_order_lead_statuses(['0007'], rows, 201) == 0
+
+
+def test_blank_current_status_clears_all_cards_but_keeps_lead_identity(repository):
+    _seed(repository, ident='other-order', work_order='0008')
+    repository.replace_work_order_lead_statuses(['0007', '0008'], [_record(), _record('0008')], 100)
+    assert _publish(repository, '', captured=200) == 2
+    for ident in ('card', 'other-order'):
+        assert repository.item(ident)['sales_lead_status'] == ''
+        assert repository.item(ident)['lead_source_id'] == 'lead-1'
+
+
+def test_older_results_cannot_restore_missing_mapping_or_overwrite_current_status(repository):
+    _publish(repository, 'Open', captured=100)
+    _publish(repository, captured=200)
+    assert _publish(repository, 'Open', captured=150) == 0
+    assert repository.item('card')['sales_lead_status'] == 'Sold'
+    repository.replace_work_order_lead_statuses(['0007'], [], 300)
+    assert _publish(repository, captured=250) == 0
+    assert repository.item('card')['lead_source_id'] == repository.item('card')['sales_lead_status'] == ''
+    assert _publish(repository, captured=301) == 1
 
 
 @pytest.mark.parametrize('single_batch', [True, False])
-def test_conflicting_statuses_at_same_capture_remain_unavailable_until_newer_observation(repository, single_batch):
+def test_conflicting_status_at_same_capture_stays_unavailable_until_newer_result(repository, single_batch):
     if single_batch:
-        repository.replace_reference_snapshot(DAY, 'final', [
-            _reference(status='Open'), _reference(status='Sold', source_id='appointment-8'),
-        ], 100)
+        repository.replace_work_order_lead_statuses(['0007'], [_record(status='Open'), _record()], 100)
     else:
-        repository.replace_reference_snapshot(DAY, 'morning', [_reference(status='Open')], 100)
-        repository.replace_reference_snapshot(DAY, 'final', [_reference(status='Sold')], 100)
-    assert repository.sales_status_for_lead('lead-1') == ''
-    repository.replace_reference_snapshot('2026-09-22', 'final', [_reference(status='Sold')], 100)
-    assert repository.sales_status_for_lead('lead-1') == ''
-    repository.replace_reference_snapshot('2026-09-22', 'final', [_reference(status='Sold')], 101)
-    assert repository.sales_status_for_lead('lead-1') == 'Sold'
-
-
-def test_apply_uses_latest_shared_status_inside_transaction_instead_of_earlier_service_read(repository):
-    repository.replace_reference_snapshot(DAY, 'final', [_reference(status='Open')], 100)
-    stale_status = repository.sales_status_for_lead('lead-1')
-    repository.replace_reference_snapshot(DAY, 'final', [_reference(status='Sold')], 200)
-    _apply(repository, stale_status, lead_source_id='lead-1')
+        _publish(repository, 'Open', captured=100)
+        _publish(repository, captured=100)
+    assert repository.item('card')['sales_lead_status'] == ''
+    _publish(repository, captured=100)
+    assert repository.item('card')['sales_lead_status'] == ''
+    _publish(repository, captured=101)
     assert repository.item('card')['sales_lead_status'] == 'Sold'
 
 
-def test_refresh_preserves_confirmed_lead_identity_when_appointment_is_no_longer_present(repository):
-    repository.replace_reference_snapshot(DAY, 'final', [_reference(status='Sold')], 100)
-    _apply(repository, lead_source_id='lead-1')
-    repository.replace_reference_snapshot(DAY, 'final', [], 200)
-    with repository.connect() as connection:
-        connection.execute("UPDATE items SET sales_lead_status='Open' WHERE id='card'")
-    assert repository.refresh_sales_lead_status('card') == 1
+def test_conflicting_mapping_at_same_capture_does_not_guess_an_identity(repository):
+    _publish(repository)
+    _publish(repository, lead='lead-2')
+    assert repository.item('card')['lead_source_id'] == ''
+    _publish(repository)
+    assert repository.item('card')['lead_source_id'] == ''
+    _publish(repository, captured=101)
+    assert repository.item('card')['lead_source_id'] == 'lead-1'
+
+
+def test_unrequested_records_cannot_change_cached_associations(repository):
+    _publish(repository)
+    repository.replace_work_order_lead_statuses(['0008'], [_record(lead='wrong-lead', status='New')], 200)
+    assert repository.item('card')['sales_lead_status'] == 'Sold'
+    assert repository.item('card')['lead_source_id'] == 'lead-1'
+
+
+def test_late_card_uses_cached_mapping_and_latest_shared_status_without_appointment(repository):
+    _publish(repository, 'Open', number='0008')
+    _publish(repository, captured=200)
+    _seed(repository, ident='late', work_order='0008', day=None)
+    assert repository.item('late')['sales_lead_status'] == 'Sold'
+    assert repository.item('late')['lead_source_id'] == 'lead-1'
+
+
+@pytest.mark.parametrize('new_day', ['2026-09-22', DAY, None])
+def test_date_correction_preserves_lead_identity_and_status(repository, new_day):
+    _publish(repository)
+    repository.correct_date('card', new_day)
     assert repository.item('card')['lead_source_id'] == 'lead-1'
     assert repository.item('card')['sales_lead_status'] == 'Sold'
-    assert repository.refresh_sales_lead_status('card') == 0
+    _publish(repository, 'Open', captured=200)
+    assert repository.item('card')['sales_lead_status'] == 'Open'
 
 
-@pytest.mark.parametrize('method', ['apply', 'refresh'])
-@pytest.mark.parametrize('guard', [dict(expected_day='2026-09-20'), dict(expected_work_order_key='0008'),
-                                   dict(expected_day=None)])
-def test_identity_guard_prevents_delayed_status_write_after_card_identity_changed(repository, method, guard):
-    _apply(repository, 'Open')
-    before = repository.item('card')
-    if method == 'apply':
-        changed = _apply(repository, 'Sold', **guard)
-    else:
-        changed = repository.refresh_sales_lead_status('card', **guard)
-    assert changed == 0
-    assert repository.item('card') == before
-
-
-def test_matching_identity_guard_allows_status_update_and_null_date_is_explicit(repository):
-    before = repository.reference_item('card')
-    assert _apply(repository, 'Sold', expected_day=DAY, expected_work_order_key=before['work_order_key']) == 1
-    repository.correct_date('card', None)
-    assert _apply(repository, 'Open', expected_day=None, expected_work_order_key=before['work_order_key']) == 1
-    assert repository.refresh_sales_lead_status(
-        'card', expected_day=None, expected_work_order_key=before['work_order_key']) == 1
-
-
-def test_changing_date_clears_source_lead_association_before_later_status_propagation(repository):
-    repository.replace_reference_snapshot(DAY, 'final', [_reference(status='Sold')], 100)
-    _apply(repository, lead_source_id='lead-1')
-    repository.correct_date('card', '2026-09-22')
-    assert repository.item('card')['lead_source_id'] == ''
-    repository.replace_reference_snapshot(DAY, 'final', [_reference(status='Open')], 200)
-    assert repository.item('card')['sales_lead_status'] == ''
-
-
-@pytest.mark.parametrize('work_order', ['0007', '0008'])
-def test_recognition_work_order_change_clears_lead_association_but_same_identity_preserves_it(repository, work_order):
-    repository.replace_reference_snapshot(DAY, 'final', [_reference(status='Sold')], 100)
-    _apply(repository, lead_source_id='lead-1')
+@pytest.mark.parametrize('work_order,expected_lead,expected_status', [
+    ('0007', 'lead-1', 'Sold'), ('0008', 'lead-2', 'New'), ('0009', '', ''),
+])
+def test_corrected_work_order_reattaches_its_own_cached_lead(repository, work_order, expected_lead, expected_status):
+    _publish(repository)
+    _publish(repository, 'New', number='0008', lead='lead-2')
     repository.correct_lead('card', 'Jordan Example')
     before = repository.item('card')
-    repository.repair_recognition(
-        'card', before['text'].replace('0007', work_order), before['lead_name'], before['lead_key'],
-        before['address'], before['address_key'], work_order, work_order,
-    )
+    repository.repair_recognition('card', before['text'].replace('0007', work_order),
+        before['lead_name'], before['lead_key'], before['address'], before['address_key'], work_order, work_order)
     after = repository.item('card')
-    assert after['work_order_number'] == work_order
+    assert after['lead_source_id'] == expected_lead
+    assert after['sales_lead_status'] == expected_status
     assert after['lead_status'] == 'confirmed'
-    if work_order == '0007':
-        assert after['lead_source_id'] == 'lead-1'
-        assert after['sales_lead_status'] == 'Sold'
-        assert after['search_revision'] == before['search_revision']
-    else:
-        assert after['lead_source_id'] == after['sales_lead_status'] == ''
-        assert after['search_revision'] == before['search_revision'] + 1
-        assert repository.refresh_sales_lead_status('card') == 0
+    _publish(repository, 'Canceled', captured=200)
+    if work_order != '0007':
+        assert repository.item('card')['sales_lead_status'] == expected_status
 
 
-def test_housekeeping_retains_shared_status_for_cards_or_references_and_removes_orphans(repository):
-    repository.replace_reference_snapshot(DAY, 'final', [_reference(status='Sold')], 100)
-    _apply(repository, lead_source_id='lead-1')
-    repository.replace_reference_snapshot(DAY, 'final', [], 200)
+def test_delayed_refresh_guard_ignores_old_work_order_but_never_requires_date(repository):
+    _publish(repository)
+    with repository.connect() as c:
+        c.execute("UPDATE items SET sales_lead_status='Open' WHERE id='card'")
+    assert repository.refresh_sales_lead_status('card', expected_work_order_key='0008') == 0
+    assert repository.item('card')['sales_lead_status'] == 'Open'
+    repository.correct_date('card', None)
+    assert repository.refresh_sales_lead_status('card', expected_work_order_key='0007') == 1
+    assert repository.item('card')['sales_lead_status'] == 'Sold'
+
+
+def test_appointment_snapshots_and_enrichment_cannot_change_shared_lead_status(repository):
+    _publish(repository)
+    repository.replace_reference_snapshot(DAY, 'final', [dict(
+        source_id='appointment', **_record(lead='wrong-lead', status='Open'))], 200)
+    row = repository.reference_item('card')
+    repository.apply_reference('card', 'appointment', 'final', 'Example Rep', row['text'],
+                               row['lead_name'], row['address'], expected_day=DAY, expected_work_order_key='0007')
+    assert repository.item('card')['sales_lead_status'] == 'Sold'
+    assert repository.item('card')['lead_source_id'] == 'lead-1'
+    assert repository.sales_status_for_lead('wrong-lead') == ''
+    assert repository.reference_matches(DAY, 'final', '0007')[0]['sales_lead_status'] == ''
+
+
+def test_requested_work_orders_include_all_retained_cards_but_not_expired_reference_history(repository):
+    _seed(repository, ident='undated', day=None, work_order='0008')
+    _seed(repository, ident='future', day='2030-01-01', work_order='0009')
+    _seed(repository, ident='duplicate', day='2020-01-01', work_order='0007')
+    _seed(repository, ident='deleted', work_order='0010')
+    with repository.connect() as c:
+        c.execute("UPDATE items SET state='REVIEW' WHERE id='undated'")
+        c.execute("UPDATE items SET state='DELETING' WHERE id='deleted'")
+    repository.replace_reference_snapshot('2020-01-01', 'morning', [dict(source_id='ref', work_order_number='0011')], 100)
+    assert repository.work_order_numbers() == ['0007', '0008', '0009']
+
+
+def test_housekeeping_keeps_reference_only_mapping_for_later_scan_and_removes_orphans(repository):
+    _publish(repository)
+    _publish(repository, number='0008')
+    repository.replace_reference_snapshot(DAY, 'morning', [dict(source_id='ref', work_order_number='0008')], 100)
     repository.housekeeping(0)
-    assert repository.sales_status_for_lead('lead-1') == 'Sold'
-
-    repository.replace_reference_snapshot(DAY, 'final', [_reference(status='Sold')], 300)
-    repository.expiring(DAY)
-    repository.forget('card')
-    repository.housekeeping(0)
-    assert repository.sales_status_for_lead('lead-1') == 'Sold'
-
-    repository.replace_reference_snapshot(DAY, 'final', [], 400)
+    _seed(repository, ident='late', work_order='0008')
+    assert repository.item('late')['sales_lead_status'] == 'Sold'
+    repository.replace_reference_snapshot(DAY, 'morning', [], 200)
+    for ident in repository.expiring(DAY):
+        repository.forget(ident)
     repository.housekeeping(0)
     assert repository.sales_status_for_lead('lead-1') == ''

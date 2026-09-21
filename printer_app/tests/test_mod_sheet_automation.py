@@ -43,6 +43,14 @@ class FakeSource:
     def __init__(self, outcomes):
         self.outcomes = list(outcomes)
         self.calls = []
+        self.lead_calls = []
+        self.lead_results = ()
+
+    def lead_statuses(self, work_order_numbers):
+        self.lead_calls.append(tuple(work_order_numbers))
+        if isinstance(self.lead_results, Exception):
+            raise self.lead_results
+        return self.lead_results
 
     def records(self, **filters):
         self.calls.append(filters)
@@ -58,6 +66,17 @@ class FakeReferenceSink:
         self.days = days
         self.published = []
         self.pdf_payloads = []
+        self.numbers = ()
+        self.lead_published = []
+
+    def work_order_numbers(self):
+        return self.numbers
+
+    def publish_lead_statuses(self, work_order_numbers, records, captured):
+        if self.fail:
+            raise RuntimeError('reference sink unavailable')
+        self.lead_published.append((tuple(work_order_numbers), tuple(records), captured))
+        return {'count': len(records), 'enriched': len(records)}
 
     def dates(self):
         return self.days
@@ -865,6 +884,132 @@ def test_existing_cards_backfill_once_by_card_date_without_querying_tomorrow(tmp
     assert len(source.calls) == 2
     # An initial daytime fill must not suppress tonight's final assignments.
     assert delivery.final_due(_stamp(2026, 9, 21, 23))
+
+
+@pytest.mark.parametrize('trigger', ['manual', 'hourly', 'final'])
+@pytest.mark.parametrize('appointment_failure', [False, True])
+def test_card_refresh_resolves_all_work_orders_even_without_appointments(tmp_path, trigger, appointment_failure):
+    from printer_app.mod_sheet_contract import WorkOrderLeadStatus
+
+    clock = MutableClock(_stamp(2026, 9, 21, 23 if trigger == 'final' else 12))
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    source = FakeSource([RuntimeError('appointments unavailable') if appointment_failure else ()])
+    source.lead_results = (WorkOrderLeadStatus('0001', 'lead-one', 'Sold'),
+                           WorkOrderLeadStatus('0002', 'lead-one', 'Sold'))
+    sink = FakeReferenceSink()
+    sink.numbers = ('0001', '0002')  # Scope comes from all retained cards, not today's results.
+    delivery = ModSheetReferenceDeliveryService(repository, source, FakeQueue(), sink,
+                                                'America/Los_Angeles', clock=clock)
+    if trigger == 'manual':
+        delivery.request_refresh()
+        state = delivery.run_requested()
+    else:
+        state = getattr(delivery, 'run_' + trigger)()
+
+    assert source.lead_calls == [('0001', '0002')]
+    assert sink.lead_published == [(sink.numbers, source.lead_results, clock())]
+    assert state['status'] == ('failed' if appointment_failure else 'complete')
+    if not appointment_failure:
+        assert state['lead_statuses'] == state['enriched'] == 2
+    else:
+        assert 'appointments unavailable' in state['error']
+
+
+def test_failed_lead_pull_keeps_status_cache_and_does_not_block_reps(manual_references):
+    service, _ = manual_references
+    service.reference_sink.numbers = ('0001',)
+    service.source.lead_results = RuntimeError('Lead permission denied')
+    service.request_refresh()
+    state = service.run_requested()
+    assert state['status'] == 'failed'
+    assert 'Lead permission denied' in state['error']
+    assert len(service.reference_sink.published) == 1
+    assert service.reference_sink.lead_published == []
+    assert service.source.lead_calls == [('0001', '0011')]
+
+
+def test_startup_status_refresh_ignores_completed_date_backfill_marker(tmp_path):
+    from printer_app.mod_sheet_contract import WorkOrderLeadStatus
+
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    repository.complete_reference_backfill()
+    source = FakeSource([])
+    source.lead_results = (WorkOrderLeadStatus('0003', 'lead-one', 'Sold'),)
+    sink = FakeReferenceSink(days=())  # Undated cards still have work orders.
+    sink.numbers = ('0003',)
+    delivery = ModSheetReferenceDeliveryService(repository, source, FakeQueue(), sink,
+                                                'America/Los_Angeles', clock=lambda: 100)
+    delivery.backfill_existing()
+    delivery.backfill_existing()  # Restart also refreshes current status.
+    assert source.calls == []
+    assert source.lead_calls == [('0003',), ('0003',)]
+    assert len(sink.lead_published) == 2
+
+
+def test_startup_status_failure_retries_in_next_hour_without_clearing_cache(tmp_path):
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    repository.complete_reference_backfill()
+    source = FakeSource([()])
+    source.lead_results = RuntimeError('Lead lookup unavailable')
+    sink = FakeReferenceSink()
+    sink.numbers = ('0004',)
+    delivery = ModSheetReferenceDeliveryService(repository, source, FakeQueue(), sink,
+                                                'America/Los_Angeles', clock=lambda: _stamp(2026, 9, 21, 12))
+    delivery.backfill_existing()
+    assert sink.lead_published == []
+    source.lead_results = ()
+    assert delivery.run_hourly()['status'] == 'complete'
+    assert source.lead_calls == [('0004',), ('0004',)]
+    assert len(sink.lead_published) == 1
+
+
+def test_refresh_links_real_cards_by_work_order_without_any_appointment(tmp_path):
+    from printer_app.gallery.bootstrap import GalleryReferenceInbox
+    from printer_app.mod_sheet_contract import WorkOrderLeadStatus
+    from printer_app.tests.test_gallery_reference import _card
+
+    sink = GalleryReferenceInbox(tmp_path)
+    sink.service.initialize()
+    _card(sink.service, 'older', '0001', day='2026-09-01')
+    _card(sink.service, 'undated', '0002', day=None)
+    _card(sink.service, 'future', '0003', day='2026-09-25')
+    _card(sink.service, 'other-lead-same-name', '0004', day='2026-09-21')
+    source = FakeSource([()])
+    source.lead_results = tuple(WorkOrderLeadStatus(number, 'shared', 'Sold')
+                               for number in ('0001', '0002', '0003')) + (
+        WorkOrderLeadStatus('0004', 'different', 'Open'),)
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    delivery = ModSheetReferenceDeliveryService(repository, source, FakeQueue(), sink,
+                                                'America/Los_Angeles', clock=lambda: _stamp(2026, 9, 21, 12))
+    delivery.request_refresh()
+    result = delivery.run_requested()
+
+    assert result['status'] == 'complete'
+    assert set(source.lead_calls[0]) == {'0001', '0002', '0003', '0004'}
+    for ident in ('older', 'undated', 'future'):
+        assert sink.service.item(ident)['sales_lead_status'] == 'Sold'
+        assert sink.service.item(ident)['lead_source_id'] == 'shared'
+    assert sink.service.item('other-lead-same-name')['sales_lead_status'] == 'Open'
+
+
+def test_refresh_prepares_current_work_order_status_before_scan_arrives(tmp_path):
+    from printer_app.gallery.bootstrap import GalleryReferenceInbox
+    from printer_app.mod_sheet_contract import WorkOrderLeadStatus
+    from printer_app.tests.test_gallery_reference import _card
+
+    sink = GalleryReferenceInbox(tmp_path)
+    sink.service.initialize()
+    # Old references alone must not grow the hourly lookup forever.
+    sink.publish('2026-01-01', 'final', [ModSheetRecord('old', work_order_number='9999')], 1)
+    source = FakeSource([(ModSheetRecord('today', work_order_number='0010'),)])
+    source.lead_results = (WorkOrderLeadStatus('0010', 'shared', 'Sold'),)
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    delivery = ModSheetReferenceDeliveryService(repository, source, FakeQueue(), sink,
+                                                'America/Los_Angeles', clock=lambda: _stamp(2026, 9, 21, 12))
+    assert delivery.run_hourly()['status'] == 'complete'
+    assert source.lead_calls == [('0010',)]
+    _card(sink.service, 'later-scan', '0010', day=None)
+    assert sink.service.item('later-scan')['sales_lead_status'] == 'Sold'
 
 
 @pytest.mark.parametrize('marker', [None, False, True, 'previous-contract', 'full-card-search'])
