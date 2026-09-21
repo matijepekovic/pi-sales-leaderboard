@@ -135,6 +135,14 @@ import { GalleryOffline } from './gallery_offline.js';
   const text = (tag, value, className = '') => { const n = document.createElement(tag); n.textContent = value; n.className = className; return n; };
   const dateLabel = value => value ? new Date(value + 'T12:00:00').toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'}) : 'Date needs checking';
   const cardName = item => item.lead_name || 'Work order';
+  const cardImageUrl = item => item._offline_image_url || '/gallery/image/' + item.id +
+    (item.image_revision ? '?v=' + encodeURIComponent(item.image_revision) : '');
+  const cardOrigin = item => item.origin === 'morning' ? 'Awaiting scan · ' : '';
+  function updateImage(image, item) {
+    const url = cardImageUrl(item);
+    if (image.getAttribute('src') !== url) image.src = url;
+    image.alt = `${cardName(item)} — complete work order, ${dateLabel(item.document_date)}`;
+  }
   async function api(url, options) {
     return network.json(url, options);
   }
@@ -273,20 +281,22 @@ import { GalleryOffline } from './gallery_offline.js';
     cards.forEach(({node, item}) => node.setAttribute('aria-pressed', String(item.id === selected?.id)));
   }
   function cardSubtitle(item) {
-    const base = `Page ${item.page} · work order ${item.part}`;
+    const base = cardOrigin(item) + `Page ${item.page} · work order ${item.part}`;
     return item.assigned_service_resource ? base + ` · Rep: ${item.assigned_service_resource}` : base;
   }
   function updateCard(item) {
     const card = cards.get(item.id);
     if (!card) return;
     Object.assign(card.item, item);
-    card.name.textContent = cardName(item);
-    card.subtitle.textContent = cardSubtitle(item);
+    if (!item._offline_image_url && !offlineMode) delete card.item._offline_image_url;
+    card.name.textContent = cardName(card.item);
+    card.subtitle.textContent = cardSubtitle(card.item);
+    updateImage(card.image, card.item);
     const count = item.notes ? item.notes.length : item.notes_count;
     if (count !== undefined) card.badge.textContent = `${count} ${count === 1 ? 'note' : 'notes'}`;
   }
   function addCard(item) {
-    if (cards.has(item.id)) return;
+    if (cards.has(item.id)) { updateCard(item); return; }
     const key = item.document_date || 'undated';
     if (!groups.has(key)) {
       const section = text('section', '', 'gallery-day'); section.dataset.date = key;
@@ -304,8 +314,7 @@ import { GalleryOffline } from './gallery_offline.js';
     const node = text('button', '', 'gallery-card'); node.type = 'button'; node.dataset.id = item.id;
     const image = document.createElement('img'); image.loading = 'lazy'; image.decoding = 'async';
     // Always use the full stored image. Never crop/cover it or request thumbnails.
-    image.src = item._offline_image_url || '/gallery/image/' + item.id;
-    image.alt = `${cardName(item)} — complete work order, ${dateLabel(item.document_date)}`;
+    updateImage(image, item);
     const meta = text('span', '', 'gallery-card-meta');
     const caption = text('span', ''); const name = text('span', cardName(item), 'gallery-card-name');
     const subtitle = text('span', cardSubtitle(item), 'gallery-card-subtitle');
@@ -313,7 +322,7 @@ import { GalleryOffline } from './gallery_offline.js';
     const badge = text('span', `${item.notes_count} ${item.notes_count === 1 ? 'note' : 'notes'}`, 'gallery-card-badge');
     meta.append(caption, badge); node.append(image, meta);
     node.addEventListener('click', () => openViewer(cards.get(item.id).item));
-    cards.set(item.id, {node, item, name, subtitle, badge}); groups.get(key).append(node);
+    cards.set(item.id, {node, item, image, name, subtitle, badge}); groups.get(key).append(node);
   }
   async function load(reset = true) {
     if (!reset && loading) return;
@@ -396,9 +405,9 @@ import { GalleryOffline } from './gallery_offline.js';
   }
   function renderDetail(item, initial) {
     el('galleryTitle').textContent = cardName(item);
-    if (item._offline_image_url && el('galleryViewer').open) el('galleryFull').src = item._offline_image_url;
+    if (el('galleryViewer').open) updateImage(el('galleryFull'), item);
     el('galleryViewerDate').textContent = dateLabel(item.document_date);
-    el('gallerySource').textContent = `${item.filename} · page ${item.page}, work order ${item.part}` +
+    el('gallerySource').textContent = cardOrigin(item) + `${item.filename} · page ${item.page}, work order ${item.part}` +
       (item.assigned_service_resource ? ` · Rep: ${item.assigned_service_resource}` : '');
     el('galleryNotesContext').textContent = `${cardName(item)} · ${dateLabel(item.document_date)}`;
     const notes = item.notes.map(note => {
@@ -443,9 +452,9 @@ import { GalleryOffline } from './gallery_offline.js';
     if (record) navigation.save();
     selected = item; actions(); el('galleryViewerMessage').textContent = '';
     el('galleryTitle').textContent = cardName(item); el('galleryViewerDate').textContent = dateLabel(item.document_date);
-    el('gallerySource').textContent = `${item.filename} · page ${item.page}, work order ${item.part}` +
+    el('gallerySource').textContent = cardOrigin(item) + `${item.filename} · page ${item.page}, work order ${item.part}` +
       (item.assigned_service_resource ? ` · Rep: ${item.assigned_service_resource}` : '');
-    el('galleryFull').src = item._offline_image_url || '/gallery/image/' + item.id;
+    updateImage(el('galleryFull'), item);
     showDialog('galleryViewer', false); el('galleryViewer').scrollTop = 0;
     el('galleryViewer').querySelector('[data-close]').focus({preventScroll:true});
     if (record) navigation.push();

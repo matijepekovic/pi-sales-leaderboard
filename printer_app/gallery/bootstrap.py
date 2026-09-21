@@ -4,6 +4,7 @@ from .access_service import GalleryAccessService
 from .files import GalleryFiles
 from .repository import GalleryRepository
 from .service import GalleryService
+from .policy import GalleryOptions
 
 
 def build_access(data_dir):
@@ -30,11 +31,15 @@ class GalleryInbox:
 class GalleryReferenceInbox:
     """Optional normalized appointment-reference sink for Gallery enrichment."""
 
-    def __init__(self, data_dir):
+    def __init__(self, data_dir, options=None):
         self.service = build(data_dir)
+        self.options = options or GalleryOptions()
 
-    def publish(self, day, kind, records, captured):
-        return self.service.publish_reference_snapshot(day, kind, records, captured)
+    def publish(self, day, kind, records, captured, *, pdf_payload=None):
+        result = self.service.publish_reference_snapshot(day, kind, records, captured)
+        if kind == 'morning' and pdf_payload is not None:
+            self.service.offer_morning(day, f'MOD-Sheet-{day}.pdf', pdf_payload, self.options)
+        return result
 
     def dates(self):
         return self.service.reference_dates()

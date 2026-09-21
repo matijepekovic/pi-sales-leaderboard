@@ -1,13 +1,18 @@
 """Daily MOD Sheet automation and immediate test-print regressions."""
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
+
+import pytest
 
 from printer_app.db import Database
 from printer_app.mod_sheets.policy import (
     DailyModSheetSchedule,
     ModSheetAutomationSettings,
 )
-from printer_app.mod_sheets.repository import ModSheetAutomationRepository, SETTINGS_KEY
+from printer_app.mod_sheets.repository import (
+    ModSheetAutomationRepository, REFERENCE_BACKFILL_KEY, REFERENCE_OUTBOX_KEY, SETTINGS_KEY,
+)
 from printer_app.mod_sheets.service import (
     DailyModSheetService,
     ModSheetReferenceDeliveryService,
@@ -52,15 +57,17 @@ class FakeReferenceSink:
         self.fail = fail
         self.days = days
         self.published = []
+        self.pdf_payloads = []
 
     def dates(self):
         return self.days
 
-    def publish(self, day, kind, records, captured):
+    def publish(self, day, kind, records, captured, *, pdf_payload=None):
         if self.fail:
             raise RuntimeError('reference sink unavailable')
         records = tuple(records)
         self.published.append((day, kind, records, captured))
+        self.pdf_payloads.append(pdf_payload)
         return {'day': day, 'kind': kind, 'count': len(records), 'enriched': 0}
 
 
@@ -271,6 +278,7 @@ def test_test_print_uses_unsaved_values_today_and_does_not_change_daily_settings
     assert queue.immediate[0][1].read_bytes() == b'%PDF-test'
     assert repository.settings() == saved
     assert repository.state() == {}
+    assert repository.db.get(REFERENCE_OUTBOX_KEY) is None
     assert repository.test_state()['message'] == 'Test print queued for immediate printing'
 
 
@@ -351,14 +359,35 @@ def test_immediate_generated_pdf_is_selected_before_older_normal_queue_jobs(tmp_
     assert queue.immediate_jobs(102.0) == []
 
 
+def test_failed_morning_document_write_does_not_save_reference_handoff(tmp_path, monkeypatch):
+    clock = MutableClock(_stamp(2026, 9, 21, 7, 0))
+    records = (ModSheetRecord(source_id='source-1', work_order_number='0001'),)
+    daily, repository, queue = _service(tmp_path, FakeSource([records]), clock)
+
+    def failed_write(*args, **kwargs):
+        raise OSError('temporary storage failure')
+
+    monkeypatch.setattr('printer_app.mod_sheets.service._write_pdf', failed_write)
+    assert daily.run_due()['status'] == 'retry_wait'
+    assert repository.db.get(REFERENCE_OUTBOX_KEY) is None
+    assert queue.enqueued == []
+
+
 def test_morning_reference_is_delivered_only_after_mod_job_prints(tmp_path):
     clock = MutableClock(_stamp(2026, 9, 21, 7, 0))
     records = (
         ModSheetRecord(source_id='source-1', work_order_number='0001', lead_name='Jordan'),
     )
     source = FakeSource([records])
-    daily, repository, queue = _service(tmp_path, source, clock)
+    payload = b'%PDF-exact-morning-document'
+    daily, repository, queue = _service(
+        tmp_path, source, clock, renderer=lambda records, color_code=False: payload,
+    )
     state = daily.run_due()
+    # The document path and source records must survive a process restart.
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    pending = repository.pending_morning_references()
+    assert Path(pending[0]['pdf_path']) == queue.enqueued[0][1]
     sink = FakeReferenceSink()
     delivery = ModSheetReferenceDeliveryService(
         repository,
@@ -377,6 +406,7 @@ def test_morning_reference_is_delivered_only_after_mod_job_prints(tmp_path):
     assert delivery.deliver_printed_mornings() == 1
     assert sink.published[0][0:2] == ('2026-09-21', 'morning')
     assert sink.published[0][2] == records
+    assert sink.pdf_payloads == [payload]
     assert delivery.deliver_printed_mornings() == 0
     assert len(sink.published) == 1
 
@@ -387,11 +417,12 @@ def test_morning_reference_failure_never_breaks_print_state(tmp_path):
     daily, repository, queue = _service(tmp_path, FakeSource([records]), clock)
     state = daily.run_due()
     queue.statuses[state['job_id']] = {'id': state['job_id'], 'status': 'PRINTED'}
+    sink = FakeReferenceSink(fail=True)
     delivery = ModSheetReferenceDeliveryService(
         repository,
         FakeSource([]),
         queue,
-        FakeReferenceSink(fail=True),
+        sink,
         'America/Los_Angeles',
         clock=clock,
     )
@@ -399,6 +430,64 @@ def test_morning_reference_failure_never_breaks_print_state(tmp_path):
     assert delivery.deliver_printed_mornings() == 0
     assert repository.state()['status'] == 'queued'
     assert repository.pending_morning_references()
+    sink.fail = False
+    assert delivery.deliver_printed_mornings() == 1
+    assert sink.pdf_payloads == [b'%PDF-fake']
+    assert repository.pending_morning_references() == []
+
+
+@pytest.mark.parametrize('failure', ['missing', 'unreadable'])
+def test_morning_document_read_failure_remains_pending_for_retry(tmp_path, monkeypatch, failure):
+    clock = MutableClock(_stamp(2026, 9, 21, 7, 0))
+    records = (ModSheetRecord(source_id='source-1', work_order_number='0001'),)
+    daily, repository, queue = _service(tmp_path, FakeSource([records]), clock)
+    state = daily.run_due()
+    queue.statuses[state['job_id']] = {'id': state['job_id'], 'status': 'PRINTED'}
+    path = queue.enqueued[0][1]
+    sink = FakeReferenceSink()
+    delivery = ModSheetReferenceDeliveryService(
+        repository, FakeSource([]), queue, sink, 'America/Los_Angeles', clock=clock,
+    )
+    with monkeypatch.context() as patch:
+        if failure == 'missing':
+            path.unlink()
+        else:
+            original_read = Path.read_bytes
+
+            def unreadable(target):
+                if target == path:
+                    raise PermissionError('document temporarily unreadable')
+                return original_read(target)
+
+            patch.setattr(Path, 'read_bytes', unreadable)
+        assert delivery.deliver_printed_mornings() == 0
+    assert sink.published == []
+    assert repository.pending_morning_references()
+    assert repository.state()['status'] == 'queued'
+
+    path.write_bytes(b'%PDF-fake')
+    assert delivery.deliver_printed_mornings() == 1
+    assert sink.pdf_payloads == [b'%PDF-fake']
+
+
+def test_legacy_morning_outbox_without_document_still_delivers_reference_data(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 21, 7, 0))
+    records = (ModSheetRecord(source_id='source-1', work_order_number='0001'),)
+    daily, repository, queue = _service(tmp_path, FakeSource([records]), clock)
+    state = daily.run_due()
+    outbox = repository.db.get(REFERENCE_OUTBOX_KEY)
+    del outbox['2026-09-21']['pdf_path']
+    repository.db.set(REFERENCE_OUTBOX_KEY, outbox)
+    queue.statuses[state['job_id']] = {'id': state['job_id'], 'status': 'PRINTED'}
+    sink = FakeReferenceSink()
+    delivery = ModSheetReferenceDeliveryService(
+        repository, FakeSource([]), queue, sink, 'America/Los_Angeles', clock=clock,
+    )
+
+    assert delivery.deliver_printed_mornings() == 1
+    assert sink.published[0][2] == records
+    assert sink.pdf_payloads == [None]
+    assert repository.pending_morning_references() == []
 
 
 def test_final_reference_pull_runs_at_11_pm_and_uses_current_day(tmp_path):
@@ -465,6 +554,7 @@ def test_existing_cards_backfill_once_by_card_date_without_querying_tomorrow(tmp
     clock = MutableClock(_stamp(2026, 9, 21, 12))
     db = Database(tmp_path / 'printer.db')
     repository = ModSheetAutomationRepository(db)
+    db.set(REFERENCE_BACKFILL_KEY, True)  # Earlier releases cached only limited fields.
     sink = FakeReferenceSink(days=('2026-09-18', '2026-09-21', '2026-09-22'))
     source = FakeSource([(), ()])
     delivery = ModSheetReferenceDeliveryService(
@@ -478,6 +568,7 @@ def test_existing_cards_backfill_once_by_card_date_without_querying_tomorrow(tmp
         ('2026-09-18', 'final'), ('2026-09-21', 'final'),
     ]
     assert repository.reference_backfill_complete()
+    assert db.get(REFERENCE_BACKFILL_KEY) == 'full-card-search'
     # The completed marker survives a worker restart.
     restarted = ModSheetReferenceDeliveryService(
         ModSheetAutomationRepository(Database(tmp_path / 'printer.db')),
@@ -487,6 +578,17 @@ def test_existing_cards_backfill_once_by_card_date_without_querying_tomorrow(tmp
     assert len(source.calls) == 2
     # An initial daytime fill must not suppress tonight's final assignments.
     assert delivery.final_due(_stamp(2026, 9, 21, 23))
+
+
+@pytest.mark.parametrize('marker', [None, False, True, 'previous-contract'])
+def test_backfill_requires_the_current_full_search_contract(tmp_path, marker):
+    db = Database(tmp_path / 'printer.db')
+    db.set(REFERENCE_BACKFILL_KEY, marker)
+    repository = ModSheetAutomationRepository(db)
+    assert not repository.reference_backfill_complete()
+    repository.complete_reference_backfill()
+    assert repository.reference_backfill_complete()
+    assert db.get(REFERENCE_BACKFILL_KEY) == 'full-card-search'
 
 
 def test_failed_backfill_keeps_other_dates_and_can_retry_on_restart(tmp_path):

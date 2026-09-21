@@ -13,6 +13,7 @@ TEST_STATE_KEY = 'daily_mod_sheet_test_state'
 REFERENCE_OUTBOX_KEY = 'daily_mod_sheet_reference_outbox'
 FINAL_REFERENCE_STATE_KEY = 'daily_mod_sheet_final_reference_state'
 REFERENCE_BACKFILL_KEY = 'gallery_reference_backfill_complete'
+REFERENCE_BACKFILL_CONTRACT = 'full-card-search'
 
 
 class ModSheetAutomationRepository:
@@ -55,12 +56,13 @@ class ModSheetAutomationRepository:
         value = self.db.get(REFERENCE_OUTBOX_KEY, {})
         return dict(value) if isinstance(value, dict) else {}
 
-    def save_morning_reference(self, day, records, captured_at):
+    def save_morning_reference(self, day, records, captured_at, pdf_path=None):
         outbox = self._reference_outbox()
         outbox[day] = {
             'day': day,
             'captured_at': float(captured_at),
             'records': [asdict(record) for record in records],
+            'pdf_path': str(pdf_path) if pdf_path is not None else '',
             'job_id': None,
             'delivered_at': None,
         }
@@ -118,7 +120,7 @@ class ModSheetAutomationRepository:
         return value
 
     def reference_backfill_complete(self):
-        return bool(self.db.get(REFERENCE_BACKFILL_KEY, False))
+        return self.db.get(REFERENCE_BACKFILL_KEY) == REFERENCE_BACKFILL_CONTRACT
 
     def complete_reference_backfill(self):
-        self.db.set(REFERENCE_BACKFILL_KEY, True)
+        self.db.set(REFERENCE_BACKFILL_KEY, REFERENCE_BACKFILL_CONTRACT)
