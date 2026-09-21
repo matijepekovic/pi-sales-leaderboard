@@ -157,6 +157,31 @@ def work_order_key(value):
     return ''.join(re.findall(r'[a-z0-9]+', str(value or '').casefold()))
 
 
+def usable_phone(value):
+    """Return one display/dial pair without guessing a number or URI parameters."""
+    if not isinstance(value, str):
+        return '', ''
+    display = ' '.join(value.split())
+    if len(display) > 80 or not re.fullmatch(r'\+?[0-9() .-]+', display):
+        return '', ''
+    digits = re.sub(r'[^0-9]', '', display)
+    international = display.startswith('+')
+    valid = (8 <= len(digits) <= 15 and not digits.startswith('0')) if international else (
+        len(digits) == 10 or (len(digits) == 11 and digits.startswith('1')))
+    if not valid or len(set(digits)) < 2:
+        return '', ''
+    return display, ('+' if international else '') + digits
+
+
+def printed_phone(text):
+    """Accept only an explicit, complete Phone field, never digits in free text."""
+    readings = [usable_phone(match[1]) for match in re.finditer(
+        r'(?:^|[\n|])[ \t]*Phone[ \t]*:[ \t]*([^\n|]*)', str(text or ''), re.I)]
+    if not readings or any(not number for _, number in readings):
+        return '', ''
+    return readings[0] if len({number for _, number in readings}) == 1 else ('', '')
+
+
 REFERENCE_FIELD_LABELS = (
     'Work Order Number', 'Appointment Date', 'Local Scheduled Start Time', 'Canvass Set By', 'Lead Name',
     'Address', 'Phone', 'Power Questions', 'Scheduled Start', 'Assigned Service Resource',

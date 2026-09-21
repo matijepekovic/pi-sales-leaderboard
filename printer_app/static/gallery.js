@@ -3,6 +3,7 @@ import { GalleryFocus } from './gallery_focus.js';
 import { GalleryNavigation } from './gallery_navigation.js';
 import { GalleryNetwork } from './gallery_network.js';
 import { GalleryOffline } from './gallery_offline.js';
+import { GalleryContact } from './gallery_contact.js';
 
 'use strict';
 (() => {
@@ -49,7 +50,7 @@ import { GalleryOffline } from './gallery_offline.js';
   });
   const navigation = new GalleryNavigation({
     capture: captureView, restore: restoreView,
-    changed: () => { updateNavigation(); focus.reset(); },
+    changed: () => { updateNavigation(); actions(); focus.reset(); },
   });
   function updateNavigation() {
     const context = Boolean(relatedId || query || searchOpen);
@@ -81,6 +82,7 @@ import { GalleryOffline } from './gallery_offline.js';
   }
   async function restoreView(view) {
     if (!view) return;
+    if (el('galleryContactSheet')?.open && !(view.dialogs || []).includes('galleryContactSheet')) contact.cancel();
     clearTimeout(searchTimer); searchTimer = null;
     chooseLatest = false;
     const restoredField = checkedSearchField(view.searchField);
@@ -134,6 +136,7 @@ import { GalleryOffline } from './gallery_offline.js';
         el(id).scrollTop = view.viewerScroll || 0;
       }
       else if (id === 'galleryNotesSheet' && selected) await openNotes(false);
+      else if (id === 'galleryContactSheet') contact.openPending();
       else if (id === 'galleryLeadSheet' && selected && editIdentityCapability()) openLeadEditor(false);
       else if (id === 'galleryDateSheet') dates.open();
       else if (id === 'galleryMenuSheet') openMenu(false);
@@ -151,6 +154,22 @@ import { GalleryOffline } from './gallery_offline.js';
     return selected;
   }
   const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+  const savedAuthor = () => offline.savedNoteAuthor(access?.subject || offline.subject);
+  const rememberAuthor = value => offline.rememberNoteAuthor(value, access?.subject || offline.subject);
+  const contact = new GalleryContact({
+    openDialog: () => { if (!el('galleryContactSheet')?.open) showDialog('galleryContactSheet'); },
+    closeDialog: () => { if (el('galleryContactSheet')?.open) requestClose('galleryContactSheet'); },
+    saveNote, getAuthor:savedAuthor, rememberAuthor,
+    onSaved: async (itemId, result) => {
+      galleryDirty = true;
+      if (selected?.id === itemId) {
+        await detail(true).catch(() => {});
+        el('galleryViewerMessage').textContent = result?.offline
+          ? 'Activity saved offline. It will sync when Stats is reachable again.'
+          : 'Activity saved in notes.';
+      }
+    },
+  });
   const mb = bytes => (bytes / 1048576).toFixed(1) + ' MB';
   const text = (tag, value, className = '') => { const n = document.createElement(tag); n.textContent = value; n.className = className; return n; };
   const dateLabel = value => value ? new Date(value + 'T12:00:00').toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'}) : 'Date needs checking';
@@ -273,6 +292,7 @@ import { GalleryOffline } from './gallery_offline.js';
     try {
       access = await api('/gallery/api/access');
       await offline.configure(access);
+      contact.configure(access.subject);
       offlineMode = false;
       accessControls(access);
       const automaticOffline = window.isSecureContext && access.role === 'full' &&
@@ -287,6 +307,7 @@ import { GalleryOffline } from './gallery_offline.js';
       if ((!error.status || error.status >= 500) && await offline.resume()) {
         access = null;
         offlineMode = true;
+        contact.configure(offline.subject);
         accessControls(null, true);
         el('galleryOfflineStatus').textContent = 'Offline · showing cards stored on this phone';
         return false;
@@ -295,9 +316,10 @@ import { GalleryOffline } from './gallery_offline.js';
     }
   }
   function actions() {
-    document.querySelectorAll('[data-action]').forEach(button => {
+    document.querySelectorAll('button[data-action]').forEach(button => {
       button.disabled = button.dataset.action !== 'search' && (!selected || actionPending);
     });
+    contact.update(selected, Boolean(el('galleryViewer').open && !actionPending && !navigation.restoring));
     cards.forEach(({node, item}) => node.setAttribute('aria-pressed', String(item.id === selected?.id)));
   }
   function cardSubtitle(item) {
@@ -486,7 +508,7 @@ import { GalleryOffline } from './gallery_offline.js';
   async function openNotes(record = true) {
     if (!currentCard()) return;
     if (record) navigation.save();
-    const saved = drafts.get(selected.id) || {author:'', body:'', noteId:randomId()};
+    const saved = drafts.get(selected.id) || {author:savedAuthor(), body:'', noteId:randomId()};
     drafts.set(selected.id, saved);
     el('galleryNote').dataset.itemId = selected.id;
     el('galleryNote').elements.author.value = saved.author; el('galleryNote').elements.body.value = saved.body;
@@ -588,15 +610,20 @@ import { GalleryOffline } from './gallery_offline.js';
     }
   };
   document.querySelectorAll('[data-action]').forEach(button => {
-    button.addEventListener('click', () => ({related, notes:openNotes, search:openSearch})[button.dataset.action]());
+    const action = {related, notes:openNotes, search:openSearch}[button.dataset.action];
+    if (action) button.addEventListener('click', () => action());
   });
-  document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => requestClose(button.dataset.close)));
+  function dismissDialog(id) {
+    if (id === 'galleryContactSheet') contact.cancel();
+    else requestClose(id);
+  }
+  document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => dismissDialog(button.dataset.close)));
   document.querySelectorAll('dialog').forEach(dialog => {
     dialog.addEventListener('click', event => { if (event.target === dialog) {
       const box = dialog.getBoundingClientRect();
-      if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) requestClose(dialog.id);
+      if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dismissDialog(dialog.id);
     }});
-    dialog.addEventListener('cancel', event => { event.preventDefault(); requestClose(dialog.id); });
+    dialog.addEventListener('cancel', event => { event.preventDefault(); dismissDialog(dialog.id); });
     dialog.addEventListener('close', () => {
       if (galleryDirty && !navigation.restoring && !document.querySelector('dialog[open]')) { galleryDirty = false; load(); }
       if (searchOpen && !navigation.restoring && !document.querySelector('dialog[open]') &&
@@ -724,6 +751,22 @@ import { GalleryOffline } from './gallery_offline.js';
   el('gallerySearch').onsubmit = async event => {
     event.preventDefault(); await searchNow();
   };
+  async function saveNote({itemId, noteId, author, body}) {
+    const data = new FormData();
+    data.set('csrf', access?.csrf || el('galleryNote').elements.csrf.value);
+    data.set('note_id', noteId); data.set('author', author); data.set('body', body);
+    try {
+      if (offlineMode && !network.isReachable()) throw new Error('Stats is unreachable from this network.');
+      await api(`/gallery/api/items/${itemId}/notes`, {method:'POST', body:data});
+      return {offline:false};
+    } catch (error) {
+      if (error.status || !offline.isEnabled()) throw error;
+      await offline.queueNote(itemId, {
+        id:noteId, author:author.trim() || 'Anonymous', body:body.trim(), created:Date.now()/1000,
+      });
+      return {offline:true};
+    }
+  }
   el('galleryNote').addEventListener('input', draft);
   el('galleryNote').onsubmit = async event => {
     event.preventDefault();
@@ -733,35 +776,23 @@ import { GalleryOffline } from './gallery_offline.js';
     const data = new FormData(form); data.set('note_id', drafts.get(id).noteId);
     saving.add(id); noteControls(); el('galleryNoteMessage').textContent = 'Saving…';
     try {
-      await api(`/gallery/api/items/${id}/notes`, {method:'POST', body:data});
+      const result = await saveNote({itemId:id, noteId:String(data.get('note_id')),
+        author:String(data.get('author') || ''), body:String(data.get('body') || '')});
+      rememberAuthor(String(data.get('author') || '').trim());
       drafts.set(id, {author:data.get('author'), body:'', noteId:randomId()});
       if (selected?.id === id) {
-        form.elements.body.value = ''; el('galleryNoteMessage').textContent = 'Saved. Other open devices update within five seconds.';
-        await detail().catch(() => { el('galleryNoteMessage').textContent = 'Saved. Reopen notes to refresh the list.'; });
+        form.elements.body.value = '';
+        if (result.offline) {
+          const cached = await offline.detail(id);
+          if (cached && selected?.id === id) { selected = cached; renderDetail(cached, true); actions(); }
+          el('galleryNoteMessage').textContent = 'Saved offline. It will sync when Stats is reachable again.';
+        } else {
+          el('galleryNoteMessage').textContent = 'Saved. Other open devices update within five seconds.';
+          await detail().catch(() => { el('galleryNoteMessage').textContent = 'Saved. Reopen notes to refresh the list.'; });
+        }
       }
     } catch (error) {
-      if (selected?.id === id && offline.isEnabled() && !error.status) {
-        try {
-          const note = {
-            id:String(data.get('note_id')),
-            author:String(data.get('author') || '').trim() || 'Anonymous',
-            body:String(data.get('body') || '').trim(),
-            created:Date.now()/1000,
-          };
-          await offline.queueNote(id, note);
-          drafts.set(id, {author:note.author === 'Anonymous' ? '' : note.author, body:'', noteId:randomId()});
-          form.elements.body.value = '';
-          const cached = await offline.detail(id);
-          if (cached && selected?.id === id) {
-            selected = cached; renderDetail(cached, true); actions();
-          }
-          el('galleryNoteMessage').textContent = 'Saved offline. It will sync when Stats is reachable again.';
-        } catch (offlineError) {
-          el('galleryNoteMessage').textContent = 'Not saved: ' + offlineError.message;
-        }
-      } else if (selected?.id === id) {
-        el('galleryNoteMessage').textContent = 'Not saved: ' + error.message;
-      }
+      if (selected?.id === id) el('galleryNoteMessage').textContent = 'Not saved: ' + error.message;
     }
     finally { saving.delete(id); noteControls(); }
   };
@@ -819,8 +850,10 @@ import { GalleryOffline } from './gallery_offline.js';
     actions();
     if (initialView) {
       navigation.restoring = true;
-      restoreView(initialView).finally(() => { navigation.restoring = false; updateNavigation(); focus.reset(); });
-    } else load().then(() => navigation.save());
+      try { await restoreView(initialView); }
+      finally { navigation.restoring = false; updateNavigation(); actions(); focus.reset(); }
+    } else { await load(); navigation.save(); }
+    contact.restore();
   }
   start();
 })();

@@ -20,7 +20,8 @@
 <div class="gallery-actions" role="toolbar" aria-label="Work order controls">
 <button type="button" data-action="related" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="14" height="14" rx="3"/><path d="M16 3H6a3 3 0 0 0-3 3v10"/></svg><span>Show related</span></button>
 <button type="button" data-action="notes" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span>Notes</span></button>
-<button type="button" data-action="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search</span></button>
+<a data-action="dial" role="link" aria-disabled="true" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 3 3 5-3 3c2 3 3 4 6 6l3-3 5 3-1 4C10 23 1 14 3 4Z"/></svg><span>Dial</span></a>
+<a data-action="message" role="link" aria-disabled="true" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11a9 9 0 0 1-9 9 10 10 0 0 1-4-1l-5 2 2-5a10 10 0 0 1-1-4 8 8 0 0 1 8-9 9 9 0 0 1 9 8Z"/><path d="M8 9h8M8 13h5"/></svg><span>Message</span></a>
 </div>
 {% endmacro %}
 <h1 id="galleryHeading" class="sr-only">Gallery</h1>
@@ -74,6 +75,18 @@
 <button type="submit" class="primary">Save note</button>
 </form>
 <p id="galleryNoteMessage" class="gallery-message" role="status"></p>
+</dialog>
+
+<dialog id="galleryContactSheet" class="gallery-sheet" aria-labelledby="galleryContactTitle">
+<div class="sheet-handle" aria-hidden="true"></div>
+<div class="sheet-heading"><h2 id="galleryContactTitle">Called?</h2><button type="button" class="circle-button" data-close="galleryContactSheet" aria-label="Close contact confirmation">×</button></div>
+<p id="galleryContactContext" class="sheet-context"></p>
+<p class="muted">Confirm after you finish to add this activity to the card’s shared notes.</p>
+<form id="galleryContactForm">
+<label>Your name <span class="muted">(not verified)</span><input name="author" maxlength="80" autocomplete="name" required></label>
+<div class="gallery-contact-actions"><button id="galleryContactCancel" type="button">Cancel</button><button id="galleryContactConfirm" type="submit" class="primary">Called</button></div>
+</form>
+<p id="galleryContactMessage" class="gallery-message" role="status"></p>
 </dialog>
 
 <dialog id="galleryLeadSheet" class="gallery-sheet" aria-labelledby="galleryLeadEditTitle">

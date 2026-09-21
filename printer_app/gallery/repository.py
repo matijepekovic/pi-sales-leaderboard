@@ -679,6 +679,10 @@ class GalleryRepository:
                 VALUES (?,?,?,?) ON CONFLICT(day,kind) DO UPDATE SET
                 captured=excluded.captured,count=excluded.count""",
                 (day, kind, float(captured), len(records)))
+            # Reference-derived contact data can change without changing OCR
+            # text (for example, an exact match becoming ambiguous).
+            c.execute("""UPDATE items SET search_revision=search_revision+1
+                WHERE document_date=? AND state IN ('ACTIVE','REVIEW')""", (day,))
 
     def reference_snapshot(self, day, kind):
         with self.connect() as c:

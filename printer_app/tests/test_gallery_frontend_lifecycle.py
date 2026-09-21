@@ -46,7 +46,7 @@ records.set('retained-scan', {id:'retained-scan',summary:{id:'retained-scan',ori
 records.set('removed-morning', {id:'removed-morning',summary:{id:'removed-morning',origin:'morning'},
   detail:{id:'removed-morning',notes:[]}});
 let summaries = [{...morning,search_revision:2,lead_name:'Updated Customer'}];
-let responseDetail = {...summaries[0],text:'new phone product and assigned reps',notes:[]};
+let responseDetail = {...summaries[0],text:'new phone product and assigned reps',phone_dial:'',notes:[]};
 let failDownload = false;
 const detailRequests = [], imageRequests = [];
 const pending = [{id:'unsent-note',item_id:'removed-morning',body:'Keep this pending note'}];
@@ -94,7 +94,7 @@ assert.ok(await cache.match(offline.imagePath('retained-scan')));
 assert.equal(pending.length,1,'Queued notes survive placeholder cleanup');
 
 summaries = [{...morning,origin:'scan',image_revision:'scan-2',search_revision:3,lead_name:'Corrected Customer'}];
-responseDetail = {...summaries[0],text:'corrected searchable scan',notes:[]};
+responseDetail = {...summaries[0],text:'corrected searchable scan',phone_dial:'',notes:[]};
 failDownload = true;
 await offline.sync();
 assert.equal(records.get('card').summary.image_revision,'scan-2');
@@ -119,6 +119,34 @@ assert.equal((await offline.list({q:'Corrected Customer',field:'lead_name'})).to
 assert.equal((await offline.list({q:'Old Customer',field:'lead_name'})).total,0);
 assert.equal((await offline.detail('card')).text,'corrected searchable scan');
 assert.equal((await offline.detail('card')).origin,'scan');
+
+// An already downloaded card upgrades its contact contract once, without an
+// unrelated note, search, or image change.
+delete records.get('card').detail.phone_dial;
+responseDetail.phone_dial = '+13605550100';
+await offline.sync();
+assert.equal(detailRequests.length,3,'Legacy detail acquires the contact fields');
+assert.equal((await offline.detail('card')).phone_dial,'+13605550100');
+await offline.sync();
+assert.equal(detailRequests.length,3,'Upgraded contact detail is retained');
+
+// Conflicting references can disable a number without changing searchable text.
+// Snapshot replacement advances the existing search revision for that date.
+summaries[0].search_revision++;
+responseDetail.search_revision = summaries[0].search_revision;
+responseDetail.phone_dial = '';
+await offline.sync();
+assert.equal(detailRequests.length,4,'Reference-only changes refresh contact detail');
+assert.equal((await offline.detail('card')).phone_dial,'');
+summaries[0].search_revision++;
+responseDetail.search_revision = summaries[0].search_revision;
+responseDetail.phone_dial = '+13605550100';
+await offline.sync();
+assert.equal(detailRequests.length,5,'Resolved references restore the contact number');
+assert.equal((await offline.detail('card')).phone_dial,'+13605550100');
+await offline.sync();
+assert.equal(detailRequests.length,5,'Unchanged snapshots do not refetch detail');
+assert.equal(imageRequests.length,2,'Contact updates never redownload unchanged images');
 console.log('offline lifecycle passed');
 '''
     result = subprocess.run(

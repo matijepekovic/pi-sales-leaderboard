@@ -221,7 +221,9 @@ def test_missing_final_match_and_empty_morning_resources_preserve_saved_reps(tmp
     before = gallery.item(ident)
 
     gallery.publish_reference_snapshot(DAY, 'final', [_reference('different-order', '')], 101.0)
-    assert gallery.item(ident) == before
+    after = gallery.item(ident)
+    assert after['search_revision'] > before['search_revision']
+    assert after == dict(before, search_revision=after['search_revision'])
     gallery.publish_reference_snapshot(DAY, 'morning', [_reference('0007', '')], 102.0)
     item = gallery.item(ident)
     assert item['assigned_service_resource'] == 'Known Rep'
@@ -237,7 +239,9 @@ def test_same_name_or_address_never_substitutes_for_work_order_match(tmp_path, w
     result = gallery.publish_reference_snapshot(DAY, 'final', [_reference('1234', 'Other Rep')], 100.0)
 
     assert result['enriched'] == 0
-    assert gallery.item('card-no-fuzzy') == before
+    after = gallery.item('card-no-fuzzy')
+    assert after['search_revision'] > before['search_revision']
+    assert after == dict(before, search_revision=after['search_revision'])
 
 
 def test_identical_work_order_on_another_date_does_not_match(tmp_path):
@@ -263,7 +267,9 @@ def test_duplicate_normalized_work_order_is_ambiguous_even_when_name_matches_one
     result = gallery.publish_reference_snapshot(DAY, 'final', references, 100.0)
 
     assert result['enriched'] == 0
-    assert gallery.item('card-duplicate-order') == before
+    after = gallery.item('card-duplicate-order')
+    assert after['search_revision'] > before['search_revision']
+    assert after == dict(before, search_revision=after['search_revision'])
 
 
 def test_existing_review_card_gets_reference_identity_without_being_approved(tmp_path):
