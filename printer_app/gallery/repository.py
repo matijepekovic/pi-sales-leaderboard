@@ -704,6 +704,19 @@ class GalleryRepository:
                 FROM items WHERE document_date=? AND state IN ('ACTIVE','REVIEW')
                 ORDER BY created,id""", (day,))]
 
+    def reference_matches(self, day, kind, number):
+        """Read only the indexed date/work-order candidates, including ambiguity."""
+        with self.connect() as c:
+            rows = c.execute("""SELECT * FROM appointment_references
+                WHERE day=? AND kind=? AND work_order_key=? LIMIT 2""",
+                (day, kind, work_order_key(number)))
+            result = []
+            for row in rows:
+                value = dict(row)
+                value['assigned_service_resources'] = tuple(json.loads(value['assigned_service_resources']))
+                result.append(value)
+            return result
+
     def reference_dates(self):
         with self.connect() as c:
             return [row['document_date'] for row in c.execute("""SELECT DISTINCT document_date

@@ -270,6 +270,55 @@ def test_later_scan_prefers_final_assignments_over_saved_morning_data(gallery):
     assert gallery.search('First Resource', 0)['total'] == 0
 
 
+def test_scan_keeps_morning_identity_when_final_source_fields_are_blank(gallery):
+    gallery.publish_reference_snapshot(DAY, 'morning', [_record()], 1.0)
+    _publish(gallery, 'morning', [('0011', DAY)], morning=True)
+    ident = _row(gallery, '0011')['id']
+    final = _record(
+        lead_name='', address='', phone='', canvass_set_by='', lead_description='',
+        assigned_service_resources=('Final Resource',),
+    )
+    gallery.publish_reference_snapshot(DAY, 'final', [final], 2.0)
+
+    _publish(gallery, 'scan-after-blank-final', [('0011', DAY)])
+    item = gallery.item(ident)
+
+    assert item['origin'] == 'scan'
+    assert item['reference_kind'] == 'final'
+    assert item['lead_name'] == 'Reference Customer'
+    assert item['address'] == '101 Reference Street'
+    assert item['assigned_service_resource'] == 'Final Resource'
+    for query in ('Reference Customer', 'Reference Street', '5551234567',
+                  'Canvasser', 'appointment details', 'Final Resource'):
+        assert gallery.search(query, 0)['total'] == 1, query
+    for query in ('Printed Customer', 'Printed Street', 'First Resource', 'Second Resource'):
+        assert gallery.search(query, 0)['total'] == 0, query
+    assert gallery.files.path('crops', ident).read_bytes() == b'scan-after-blank-final:1'
+
+
+def test_scan_keeps_previous_source_identity_and_resources_without_morning_snapshot(gallery):
+    gallery.publish_reference_snapshot(DAY, 'final', [_record()], 1.0)
+    _publish(gallery, 'original-scan', [('0011', DAY)])
+    ident = _row(gallery, '0011')['id']
+    before = gallery.item(ident)
+    blank = _record(lead_name='', address='', assigned_service_resources=())
+    gallery.publish_reference_snapshot(DAY, 'final', [blank], 2.0)
+    assert gallery.repository.reference_snapshot(DAY, 'morning')[0] is None
+
+    _publish(gallery, 'replacement-scan', [('0011', DAY)])
+    item = gallery.item(ident)
+
+    assert item['lead_name'] == before['lead_name'] == 'Reference Customer'
+    assert item['address'] == before['address'] == '101 Reference Street'
+    assert item['assigned_service_resource'] == before['assigned_service_resource']
+    for query in ('Reference Customer', 'Reference Street', 'First Resource', 'Second Resource'):
+        assert gallery.search(query, 0)['total'] == 1, query
+    for query in ('Printed Customer', 'Printed Street'):
+        assert gallery.search(query, 0)['total'] == 0, query
+    assert item['image_revision'] != before['image_revision']
+    assert gallery.files.path('crops', ident).read_bytes() == b'replacement-scan:1'
+
+
 def test_card_without_work_order_stays_in_review(gallery):
     import_id = _publish(gallery, 'unidentified-scan', [('', DAY)])
     card_id = hashlib.sha256(f'{import_id}:1:1'.encode()).hexdigest()
@@ -294,3 +343,26 @@ def test_yesterdays_morning_cards_remain_until_scans_or_normal_retention(gallery
     assert gallery.files.path('crops', ident).read_bytes() == b'yesterday-morning:1'
     assert gallery.repository.reference_snapshot(EARLIER_DAY, 'morning')[0]['count'] == 1
     assert not gallery.repository.scans_received(EARLIER_DAY)
+
+
+def test_cleanup_failure_does_not_block_scanned_card_and_retries_later(gallery, monkeypatch):
+    gallery.publish_reference_snapshot(DAY, 'final', [_record()], 2.0)
+    _publish(gallery, 'morning', [('0011', DAY), ('0022', DAY)], morning=True)
+    retired = _row(gallery, '0022')['id']
+    remove = gallery.files.remove
+
+    def unavailable(category, ident):
+        if category == 'crops' and ident == retired:
+            raise OSError('Temporary file is busy')
+        return remove(category, ident)
+
+    monkeypatch.setattr(gallery.files, 'remove', unavailable)
+    _publish(gallery, 'scan', [('0011', DAY)])
+
+    assert gallery.search('', 0)['total'] == 1
+    assert gallery.search('Second Resource', 0)['total'] == 1
+    assert gallery.item(retired) is None
+    assert gallery.files.path('crops', retired).exists()
+    monkeypatch.setattr(gallery.files, 'remove', remove)
+    gallery.expire(90, 'America/Los_Angeles')
+    assert not gallery.files.path('crops', retired).exists()

@@ -108,6 +108,14 @@ def _date_readings(text):
             readings.append(date(*map(int, match.groups())).isoformat())
         except ValueError:
             pass
+    # The local appointment box uses M/D/YYYY; the other box uses YYYY.MM.DD.
+    # Normalize both formats before requiring independent agreeing readings.
+    for match in re.finditer(r'\b(\d{1,2})/(\d{1,2})/(20\d{2})\b', text):
+        try:
+            month, day, year = map(int, match.groups())
+            readings.append(date(year, month, day).isoformat())
+        except ValueError:
+            pass
     months = 'jan feb mar apr may jun jul aug sep oct nov dec'.split()
     for match in re.finditer(
             r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+'

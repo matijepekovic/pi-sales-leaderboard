@@ -122,6 +122,70 @@ console.log('offline lifecycle passed');
     assert 'offline lifecycle passed' in result.stdout
 
 
+def test_orphaned_pending_note_does_not_block_later_notes_or_get_discarded():
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node is required to execute the browser module regression.')
+    script = r'''
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const code = readFileSync(process.argv[2], 'utf8');
+const {GalleryOffline} = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+function setup(status) {
+  const pending = new Map([
+    ['orphan-note',{id:'orphan-note',item_id:'removed-morning',author:'User',body:'Keep unsent note'}],
+    ['valid-note',{id:'valid-note',item_id:'retained-scan',author:'User',body:'Sync this note'}],
+  ]);
+  const requests = [], refreshed = [];
+  const runtime = new GalleryOffline({network:{
+    isReachable:() => true,
+    json:async (url, options) => {
+      requests.push({url,note:options.body.get('note_id')});
+      if (url.includes('removed-morning')) throw Object.assign(new Error('Synthetic failure'),{status});
+      return {};
+    },
+  }});
+  runtime.csrf = 'csrf-fixture';
+  runtime.pendingNotes = async () => [...pending.values()];
+  runtime.refreshDetail = async id => refreshed.push(id);
+  runtime.db = {transaction:(store,mode) => {
+    assert.equal(store,'pendingNotes'); assert.equal(mode,'readwrite');
+    const tx = {objectStore:() => ({delete:id => pending.delete(id)})};
+    queueMicrotask(() => tx.oncomplete?.());
+    return tx;
+  }};
+  return {runtime,pending,requests,refreshed};
+}
+const absent = setup(404);
+await absent.runtime.flushPending();
+assert.deepEqual(absent.requests.map(request => request.note),['orphan-note','valid-note']);
+assert.deepEqual([...absent.pending.keys()],['orphan-note'],'The missing card note must remain unsent');
+assert.deepEqual(absent.refreshed,['retained-scan']);
+await absent.runtime.flushPending();
+assert.deepEqual([...absent.pending.keys()],['orphan-note'],'Retry must not silently discard the orphan');
+
+for (const status of [400,401,403]) {
+  const blocked = setup(status);
+  await assert.rejects(blocked.runtime.flushPending(), error => error.status === status);
+  assert.equal(blocked.requests.length,1);
+  assert.equal(blocked.pending.size,2);
+}
+for (const status of [500,undefined]) {
+  const paused = setup(status);
+  await paused.runtime.flushPending();
+  assert.equal(paused.requests.length,1,'Other failures keep the existing stop-and-retry behavior');
+  assert.equal(paused.pending.size,2);
+}
+console.log('pending note lifecycle passed');
+'''
+    result = subprocess.run(
+        [node, '--input-type=module', '-', str(STATIC / 'gallery_offline.js')],
+        input=script, text=True, capture_output=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'pending note lifecycle passed' in result.stdout
+
+
 @pytest.mark.skipif(os.environ.get('PRINTER_BROWSER_TESTS') != '1', reason='CI browser dependencies')
 @pytest.mark.parametrize('engine', ['chromium', 'webkit'])
 def test_visible_morning_card_and_open_viewer_refresh_when_scan_revision_arrives(tmp_path, engine):

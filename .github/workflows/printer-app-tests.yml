@@ -55,6 +55,10 @@ jobs:
             printer_app/tests/test_gallery_recognition.py::test_existing_source_order_is_page_then_part_across_pagination \
             printer_app/tests/test_gallery_recognition.py::test_recognition_and_navigation_have_explicit_owners \
             printer_app/tests/test_gallery_pdf_date.py::test_known_pdf_date_skips_per_card_date_detection \
+            printer_app/tests/test_gallery_pdf_date.py::test_month_first_appointment_dates_are_normalized \
+            printer_app/tests/test_gallery_pdf_date.py::test_invalid_month_first_dates_are_not_readings \
+            printer_app/tests/test_gallery_pdf_date.py::test_template_date_still_requires_two_independent_agreeing_boxes \
+            printer_app/tests/test_gallery_pdf_date.py::test_processor_reuses_first_reliable_day_and_backfills_earlier_card \
             -v -rs
       - name: Isolated CI-only CUPS sink (never a physical printer)
         run: |

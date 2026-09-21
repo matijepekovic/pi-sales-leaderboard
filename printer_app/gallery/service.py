@@ -1,6 +1,7 @@
 """Gallery workflows through explicit file/repository boundaries; no print actions."""
 from dataclasses import asdict, is_dataclass
 import hashlib
+import logging
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -10,6 +11,8 @@ from .policy import (
     checked_lead_name, lead_key, printed_address, printed_lead, printed_work_order_number,
     related_identity, search_expression, work_order_key,
 )
+
+log = logging.getLogger(__name__)
 
 
 class GalleryService:
@@ -205,6 +208,12 @@ class GalleryService:
                 identities[key] = ident
             text = entry['text']
             lead_text = entry.get('lead_text', '')
+            previous = self.repository.reference_item(ident) if existing else None
+            if previous and previous.get('reference_kind'):
+                text = authoritative_reference_text(text, previous['lead_name'], previous['address'],
+                                                    previous['assigned_service_resource'])
+                if previous['lead_name']:
+                    lead_text = 'Lead Name: ' + previous['lead_name']
             _, reference = self._reference_for(day, number)
             if reference:
                 # Typed identity comes from the normalized source; the image is the scan.
@@ -250,9 +259,19 @@ class GalleryService:
         if not day or not work_order_key(number):
             return '', None
         for kind in ('final', 'morning'):
-            _, references = self.repository.reference_snapshot(day, kind)
+            references = self.repository.reference_matches(day, kind, number)
             match = self._match_reference({'work_order_number': number}, references)
             if match is not None:
+                if kind == 'final':
+                    morning = self.repository.reference_matches(day, 'morning', number)
+                    initial = self._match_reference({'work_order_number': number}, morning)
+                    if initial:
+                        match = dict(match)
+                        for field in ('lead_name', 'address', 'phone', 'product_interest', 'work_type',
+                                      'source', 'sub_source', 'set_by', 'canvass_set_by', 'lead_description',
+                                      'local_scheduled_start_time', 'scheduled_start'):
+                            if not str(match.get(field) or '').strip():
+                                match[field] = initial.get(field, '')
                 return kind, match
             if any(row.get('work_order_key') == work_order_key(number) for row in references):
                 return '', None  # An ambiguous final match must not fall back to older data.
@@ -278,7 +297,11 @@ class GalleryService:
 
     def _remove_morning_cards(self):
         for ident in self.repository.retired_morning_cards():
-            self.files.remove('crops', ident)
+            try:
+                self.files.remove('crops', ident)
+            except OSError:
+                log.warning('Temporary card file cleanup will retry; the scanned cards are available.')
+                continue
             self.repository.forget(ident)
 
     def _enrich_reference_item(self, ident):
