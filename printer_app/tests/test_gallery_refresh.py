@@ -253,7 +253,7 @@ def test_menu_refresh_updates_rep_search_and_keeps_failure_visible_without_losin
 
 @pytest.mark.skipif(os.environ.get('PRINTER_BROWSER_TESTS') != '1', reason='CI browser dependencies')
 @pytest.mark.parametrize('engine', ['chromium', 'webkit'])
-def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(web, engine):
+def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(web, engine, tmp_path):
     from playwright.sync_api import sync_playwright, expect
     from werkzeug.serving import make_server
 
@@ -265,12 +265,13 @@ def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(
     origin = f'http://127.0.0.1:{server.server_port}'
     try:
         with sync_playwright() as pw:
-            browser = getattr(pw, engine).launch()
+            context = getattr(pw, engine).launch_persistent_context(
+                str(tmp_path / 'browser-profile'), headless=True,
+                viewport={'width':390, 'height':844}, is_mobile=True, has_touch=True)
             try:
-                # A new context has no previous device preference, database or
-                # service worker. Loopback is a browser-trusted secure context.
-                context = browser.new_context(
-                    viewport={'width':390, 'height':844}, is_mobile=True, has_touch=True)
+                # A fresh normal profile models saved phone storage. Private
+                # browser contexts may discard Cache Storage when a tab closes.
+                # Loopback is a browser-trusted secure context.
                 page = context.new_page()
                 errors = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
@@ -282,6 +283,7 @@ def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(
                 expect(page.locator('#galleryOfflineStatus')).to_contain_text(
                     'Offline ready · 2 cards', timeout=20000)
                 expect(page.locator('#galleryOfflineStatus')).not_to_contain_text('waiting to retry')
+                assert page.evaluate("async () => (await (await caches.open('stats-gallery-images-v1')).keys()).length") == 2
                 page.wait_for_function('Boolean(navigator.serviceWorker.controller)')
                 subject = page.evaluate("localStorage.getItem('stats.gallery.offlineSubject')")
                 assert subject
@@ -358,7 +360,7 @@ def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(
                 assert_no_printing(app)
                 assert not errors
             finally:
-                browser.close()
+                context.close()
     finally:
         if server is not None:
             server.shutdown()

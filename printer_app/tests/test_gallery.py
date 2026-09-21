@@ -195,7 +195,7 @@ def test_gallery_architecture_keeps_ocr_and_sql_out_of_printing():
     service_worker = (root / 'static/gallery_sw.js').read_text()
     assert 'const DB_VERSION = 2;' in offline_runtime
     assert "const IMAGE_CACHE = 'stats-gallery-images-v1';" in offline_runtime
-    assert 'await cache.put(key, response)' in offline_runtime
+    assert 'await cache.put(key,' in offline_runtime
     assert '/gallery/offline-image/' in offline_runtime
     assert "const IMAGE_CACHE = 'stats-gallery-images-v1';" in service_worker
     assert "url.pathname.startsWith('/gallery/offline-image/')" in service_worker
