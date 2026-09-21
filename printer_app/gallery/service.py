@@ -321,25 +321,19 @@ class GalleryService:
         item = self.repository.reference_item(ident)
         if not item:
             return False
+        status_changed = bool(self.repository.refresh_sales_lead_status(
+            ident, expected_work_order_key=item['work_order_key']))
         identity = dict(expected_day=item['document_date'],
                         expected_work_order_key=item['work_order_key'])
         if not item.get('document_date'):
-            return bool(self.repository.refresh_sales_lead_status(ident, **identity))
+            return status_changed
         kind, match = self._reference_for(item['document_date'], item['work_order_number'])
         if match is None:
-            # No new identity can be inferred here. A previously confirmed Lead
-            # association can still use its current shared status.
-            return bool(self.repository.refresh_sales_lead_status(ident, **identity))
+            return status_changed
 
         assigned = self._resource_names(match) if kind == 'final' else ''
         name = ' '.join(str(match.get('lead_name') or '').split())
         address = ' '.join(str(match.get('address') or '').split())
-        lead_source_id = str(match.get('lead_source_id') or '').strip()
-        sales_status = ' '.join(str(match.get('sales_lead_status') or '').split())
-        if not lead_source_id and kind == 'morning' and self.repository.has_reference_snapshot(item['document_date'], 'final'):
-            # Morning identity can still help the scan, but its old sales status
-            # is not authoritative after a completed full-day lookup.
-            sales_status = ''
         text = self._reference_text(item.get('text', ''), match, item['document_date'], include_resources=kind == 'final')
         return bool(self.repository.apply_reference(
             ident,
@@ -349,10 +343,23 @@ class GalleryService:
             text,
             name,
             address,
-            sales_lead_status=sales_status,
-            lead_source_id=lead_source_id,
             **identity,
-        ))
+        )) or status_changed
+
+    def work_order_numbers(self):
+        self.initialize()
+        return self.repository.work_order_numbers()
+
+    def publish_lead_statuses(self, work_order_numbers, records, captured):
+        """Apply a completed normalized work-order lookup independently of appointments."""
+        self.initialize()
+        normalized = []
+        for record in records:
+            value = self._reference_record(record)
+            normalized.append({key: ' '.join(str(value.get(key) or '').split()) for key in (
+                'work_order_number', 'lead_source_id', 'sales_lead_status')})
+        changed = self.repository.replace_work_order_lead_statuses(work_order_numbers, normalized, captured)
+        return dict(count=len(normalized), enriched=changed)
 
     def reference_dates(self):
         """Distinct usable dates of retained cards, for normalized source backfill."""

@@ -111,6 +111,13 @@ class SalesforceSandboxService:
                 return ()
             raise ModSheetSourceError(str(exc)) from exc
 
+    def lead_statuses(self, work_order_numbers):
+        """Resolve current lead statuses without any appointment or date filter."""
+        try:
+            return tuple(self.adapter.lead_statuses(work_order_numbers))
+        except SalesforceAdapterError as exc:
+            raise ModSheetSourceError(str(exc)) from exc
+
     def generate(self, **filters):
         color_code = bool(filters.pop('color_code', False))
         try:

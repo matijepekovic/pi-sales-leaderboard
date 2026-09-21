@@ -18,7 +18,7 @@ from threading import Lock
 from time import monotonic
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from ..mod_sheet_contract import ModSheetRecord, SourceStatus
+from ..mod_sheet_contract import ModSheetRecord, SourceStatus, WorkOrderLeadStatus
 from . import explorer
 
 
@@ -156,6 +156,7 @@ class SalesforceCliAdapter:
         self._timezone = None
         self._explorer_cache = OrderedDict()
         self._explorer_cache_lock = Lock()
+        self._lead_status_schema_cache = None
 
     def _run(self, args, timeout=30, trace=None):
         executable = self._executable
@@ -224,6 +225,133 @@ class SalesforceCliAdapter:
 
     def _target_args(self):
         return ['--target-org', self.target_org]
+
+    def _lead_status_fields(self):
+        """Discover the existing work-order and Lead links; never guess the object."""
+        with self._explorer_cache_lock:
+            cached = self._lead_status_schema_cache
+            if cached is not None and monotonic() - cached[0] < 600:
+                return cached[1]
+
+        def describe(name):
+            raw = self._run(['sobject', 'describe', '--sobject', name, *self._target_args()])
+            try:
+                schema = explorer.describe_metadata(raw, name)
+            except ValueError as exc:
+                raise SalesforceAdapterError(str(exc)) from exc
+            if not schema['object']['queryable']:
+                raise SalesforceAdapterError(f'Salesforce object {name} cannot be queried.')
+            return raw, {field['name']: field for field in schema['fields']}
+
+        _, appointment_fields = describe('ServiceAppointment')
+        work_order = appointment_fields.get('FSSK__FSK_Work_Order__c')
+        if (not work_order or work_order['type'] != 'reference'
+                or len(work_order['reference_to']) != 1):
+            raise SalesforceAdapterError('The Salesforce appointment work-order link is unavailable or ambiguous.')
+        work_order_object = work_order['reference_to'][0]
+        raw, fields = describe(work_order_object)
+        number_field = fields.get('WorkOrderNumber')
+        id_field = fields.get('Id')
+        if (not number_field or not number_field['filterable'] or not id_field
+                or not id_field['filterable'] or not id_field['sortable']):
+            raise SalesforceAdapterError('Salesforce work orders cannot be searched safely by number.')
+        lead_fields = [
+            fields[field['name']] for field in raw['fields']
+            if field.get('relationshipName') == 'Lead__r' and field.get('name') in fields
+        ]
+        if (len(lead_fields) != 1 or lead_fields[0]['type'] != 'reference'
+                or lead_fields[0]['reference_to'] != ['Lead']):
+            raise SalesforceAdapterError('The Salesforce work-order Lead link is unavailable or ambiguous.')
+        resolved = (work_order_object, lead_fields[0]['name'])
+        with self._explorer_cache_lock:
+            self._lead_status_schema_cache = (monotonic(), resolved)
+        return resolved
+
+    def _lead_status_query(self, fields, object_name, condition):
+        """Read a scoped query fully, including CLI/server pages shorter than LIMIT."""
+        cursor = ''
+        seen = set()
+        while True:
+            query = (
+                'SELECT ' + ', '.join(fields) + f' FROM {object_name} WHERE ' + condition
+                + (f' AND Id > {_soql_literal(cursor)}' if cursor else '')
+                + ' ORDER BY Id ASC LIMIT 1000'
+            )
+            result = self._run(['data', 'query', '--query', query, *self._target_args()], timeout=60)
+            rows = result.get('records') if isinstance(result, dict) else None
+            if not isinstance(rows, list) or len(rows) > 1000:
+                raise SalesforceAdapterError('Salesforce lead-status query returned an invalid records page.')
+            if not rows:
+                if result.get('done') is False or result.get('totalSize', 0):
+                    raise SalesforceAdapterError('Salesforce lead-status query returned an incomplete records page.')
+                return
+            try:
+                ids = [explorer.record_id(row.get('Id') if isinstance(row, dict) else None) for row in rows]
+            except ValueError as exc:
+                raise SalesforceAdapterError('Salesforce lead-status query returned an invalid record ID.') from exc
+            if len(set(ids)) != len(ids) or seen.intersection(ids):
+                raise SalesforceAdapterError('Salesforce lead-status pagination did not advance safely.')
+            seen.update(ids)
+            yield from rows
+            if (result.get('done') is True and len(rows) < 1000
+                    and result.get('totalSize', len(rows)) == len(rows)):
+                return
+            cursor = ids[-1]
+
+    def lead_statuses(self, work_order_numbers):
+        """Resolve work-order numbers to Lead IDs, then fetch each Lead status once.
+
+        Missing or ambiguous links return blank identities. A failed lookup raises
+        instead, so callers can preserve the last successful shared status.
+        """
+        if isinstance(work_order_numbers, (str, bytes)):
+            raise SalesforceAdapterError('Supply a collection of work-order numbers.')
+        numbers = {}
+        for value in work_order_numbers:
+            if value is None or value == '':
+                continue
+            if not isinstance(value, str) or len(value) > 255 or any(ord(char) < 32 for char in value):
+                raise SalesforceAdapterError('A work-order number is invalid.')
+            value = value.strip()
+            if value:
+                numbers.setdefault(value.casefold(), value)
+        if not numbers:
+            return ()
+
+        object_name, lead_field = self._lead_status_fields()
+        links = {key: set() for key in numbers}
+        requested = list(numbers.values())
+        for offset in range(0, len(requested), 100):
+            batch = requested[offset:offset + 100]
+            keys = {value.casefold() for value in batch}
+            condition = 'WorkOrderNumber IN (' + ', '.join(_soql_literal(value) for value in batch) + ')'
+            for row in self._lead_status_query(('Id', 'WorkOrderNumber', lead_field), object_name, condition):
+                number = str(row.get('WorkOrderNumber') or '').strip().casefold()
+                if number not in keys or lead_field not in row:
+                    raise SalesforceAdapterError('Salesforce returned an unexpected work-order link.')
+                lead_id = row[lead_field]
+                if lead_id is not None and lead_id != '':
+                    try:
+                        lead_id = explorer.record_id(lead_id)
+                    except ValueError as exc:
+                        raise SalesforceAdapterError('Salesforce returned an invalid Lead ID.') from exc
+                links[number].add(lead_id or '')
+
+        resolved = {key: next(iter(values)) if len(values) == 1 else '' for key, values in links.items()}
+        lead_ids = sorted({lead_id for lead_id in resolved.values() if lead_id})
+        statuses = {}
+        for offset in range(0, len(lead_ids), 100):
+            batch = lead_ids[offset:offset + 100]
+            condition = 'Id IN (' + ', '.join(_soql_literal(value) for value in batch) + ')'
+            for row in self._lead_status_query(('Id', 'Status'), 'Lead', condition):
+                if row['Id'] not in batch or 'Status' not in row:
+                    raise SalesforceAdapterError('Salesforce returned an unexpected Lead status.')
+                value = row['Status']
+                if value is not None and not isinstance(value, str):
+                    raise SalesforceAdapterError('Salesforce returned an invalid Lead status.')
+                statuses[row['Id']] = (value or '').strip()
+        return tuple(WorkOrderLeadStatus(number, resolved[key], statuses.get(resolved[key], ''))
+                     for key, number in numbers.items())
 
     def explorer_objects(self):
         """List only names; opening the explorer never describes or queries objects."""

@@ -25,6 +25,9 @@ class ReferenceSource:
         self.calls = []
         self.error = None
 
+    def lead_statuses(self, work_order_numbers):
+        return ()
+
     def records(self, **filters):
         self.calls.append(filters)
         if self.error:

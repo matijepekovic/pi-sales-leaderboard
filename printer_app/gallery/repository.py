@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS appointment_reference_snapshots (
 CREATE TABLE IF NOT EXISTS lead_status_snapshots (
  lead_source_id TEXT PRIMARY KEY, sales_lead_status TEXT NOT NULL DEFAULT '',
  captured REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS work_order_leads (
+ work_order_key TEXT PRIMARY KEY, lead_source_id TEXT NOT NULL DEFAULT '',
+ captured REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS gallery_work_order_lead ON work_order_leads(lead_source_id);
 CREATE TABLE IF NOT EXISTS appointment_references (
  day TEXT NOT NULL, kind TEXT NOT NULL, source_id TEXT NOT NULL,
  work_order_number TEXT NOT NULL DEFAULT '', work_order_key TEXT NOT NULL DEFAULT '',
@@ -256,6 +260,7 @@ class GalleryRepository:
                         image_revision=:image_revision,search_revision=search_revision+1
                         WHERE id=:id AND state IN ('ACTIVE','REVIEW')
                         AND document_date=:document_date AND work_order_key=:work_order_key''', values)
+                    self._refresh_sales_lead_statuses(c, ' AND id=?', (item['id'],))
                     continue
                 c.execute('''INSERT OR IGNORE INTO items(
                     id,import_id,page,part,filename,text,document_date,date_status,bytes,created,state,
@@ -265,6 +270,7 @@ class GalleryRepository:
                     :id,:import_id,:page,:part,:filename,:text,:document_date,:date_status,:bytes,:created,:state,
                     :lead_name,:lead_key,:lead_status,:address,:address_key,:work_order_number,:work_order_key,
                     :recognition_revision,:origin,:image_revision)''', values)
+                self._refresh_sales_lead_statuses(c, ' AND id=?', (item['id'],))
             now = time.time()
             for day in {item.get('document_date') for item in items
                         if item.get('origin', 'scan') == 'scan' and item.get('document_date')}:
@@ -531,11 +537,9 @@ class GalleryRepository:
     def correct_date(self, ident, value):
         with self.connect() as c:
             if not c.execute("""UPDATE items SET
-                    sales_lead_status=CASE WHEN document_date IS NOT ? THEN '' ELSE sales_lead_status END,
-                    lead_source_id=CASE WHEN document_date IS NOT ? THEN '' ELSE lead_source_id END,
                     search_revision=search_revision+CASE WHEN document_date IS NOT ? THEN 1 ELSE 0 END,
                     document_date=?,date_status='confirmed'
-                    WHERE id=? AND state='ACTIVE'""", (value, value, value, value, ident)).rowcount:
+                    WHERE id=? AND state='ACTIVE'""", (value, value, ident)).rowcount:
                 raise LookupError('This image has expired or is unavailable.')
 
     def expiring(self, cutoff):
@@ -564,10 +568,14 @@ class GalleryRepository:
                 WHERE updated<? AND state IN ('COMPLETE','ERROR')
                 AND NOT EXISTS(SELECT 1 FROM items WHERE import_id=imports.id))''', (cutoff,))
             c.execute("UPDATE imports SET filename='',error='',progress='{}' WHERE updated<? AND state IN ('COMPLETE','ERROR') AND NOT EXISTS(SELECT 1 FROM items WHERE import_id=imports.id)", (cutoff,))
+            c.execute("""DELETE FROM work_order_leads
+                WHERE NOT EXISTS(SELECT 1 FROM items WHERE items.work_order_key=work_order_leads.work_order_key)
+                AND NOT EXISTS(SELECT 1 FROM appointment_references
+                    WHERE appointment_references.work_order_key=work_order_leads.work_order_key)""")
             c.execute("""DELETE FROM lead_status_snapshots
                 WHERE NOT EXISTS(SELECT 1 FROM items WHERE items.lead_source_id=lead_status_snapshots.lead_source_id)
-                AND NOT EXISTS(SELECT 1 FROM appointment_references
-                    WHERE appointment_references.lead_source_id=lead_status_snapshots.lead_source_id)""")
+                AND NOT EXISTS(SELECT 1 FROM work_order_leads
+                    WHERE work_order_leads.lead_source_id=lead_status_snapshots.lead_source_id)""")
         with self.connect() as c:
             c.execute('PRAGMA wal_checkpoint(PASSIVE)')
 
@@ -652,6 +660,7 @@ class GalleryRepository:
             self, ident, text, name, key, address, address_normalized,
             work_order_number='', work_order_normalized=''):
         with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
             # An edit/expiry during OCR wins. Notes, IDs, images, dates and print
             # receipts are not modified. The existing FTS trigger reindexes text.
             c.execute("""UPDATE items SET text=?,recognition_revision=1,
@@ -667,6 +676,7 @@ class GalleryRepository:
                 (text,address,address_normalized,work_order_normalized,work_order_normalized,work_order_normalized,
                  work_order_number,work_order_normalized,
                  name,name,name,key,name,ident))
+            self._refresh_sales_lead_statuses(c, ' AND id=?', (ident,))
 
     def defer_recognition(self, ident, now):
         with self.connect() as c:
@@ -686,8 +696,8 @@ class GalleryRepository:
                     day,kind,source_id,work_order_number,work_order_key,lead_name,lead_key,
                     address,address_key,phone,scheduled_start,assigned_service_resources,
                     product_interest,source,sub_source,local_scheduled_start_time,canvass_set_by,
-                    set_by,work_type,lead_description,sales_lead_status,lead_source_id)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+                    set_by,work_type,lead_description)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
                     day, kind, record.get('source_id',''),
                     record.get('work_order_number',''), work_order_key(record.get('work_order_number','')),
                     record.get('lead_name',''), lead_key(record.get('lead_name','')),
@@ -697,39 +707,11 @@ class GalleryRepository:
                     record.get('product_interest',''), record.get('source',''), record.get('sub_source',''),
                     record.get('local_scheduled_start_time',''), record.get('canvass_set_by',''),
                     record.get('set_by',''), record.get('work_type',''), record.get('lead_description',''),
-                    record.get('sales_lead_status',''),
-                    record.get('lead_source_id',''),
                 ))
             c.execute("""INSERT INTO appointment_reference_snapshots(day,kind,captured,count)
                 VALUES (?,?,?,?) ON CONFLICT(day,kind) DO UPDATE SET
                 captured=excluded.captured,count=excluded.count""",
                 (day, kind, float(captured), len(records)))
-            lead_statuses = {}
-            for record in records:
-                lead_id = record.get('lead_source_id', '')
-                if lead_id:
-                    lead_statuses.setdefault(lead_id, set()).add(record.get('sales_lead_status', ''))
-            for lead_id, statuses in lead_statuses.items():
-                status = next(iter(statuses)) if len(statuses) == 1 else ''
-                # A status belongs to the source Lead, independently of the
-                # appointment snapshots that first established its identity.
-                # Conflicting observations at the same capture stay unavailable.
-                c.execute("""INSERT INTO lead_status_snapshots(lead_source_id,sales_lead_status,captured)
-                    VALUES (?,?,?) ON CONFLICT(lead_source_id) DO UPDATE SET
-                    sales_lead_status=CASE
-                        WHEN excluded.captured>lead_status_snapshots.captured THEN excluded.sales_lead_status
-                        WHEN excluded.sales_lead_status=lead_status_snapshots.sales_lead_status
-                            THEN lead_status_snapshots.sales_lead_status
-                        ELSE '' END,
-                    captured=excluded.captured
-                    WHERE excluded.captured>=lead_status_snapshots.captured""",
-                    (lead_id, status, float(captured)))
-                c.execute("""UPDATE items SET
-                    sales_lead_status=(SELECT sales_lead_status FROM lead_status_snapshots WHERE lead_source_id=?),
-                    search_revision=search_revision+1
-                    WHERE lead_source_id=? AND state IN ('ACTIVE','REVIEW')
-                    AND sales_lead_status!=(SELECT sales_lead_status FROM lead_status_snapshots WHERE lead_source_id=?)""",
-                    (lead_id, lead_id, lead_id))
             # Reference-derived contact data can change without changing OCR
             # text (for example, an exact match becoming ambiguous).
             c.execute("""UPDATE items SET search_revision=search_revision+1
@@ -801,8 +783,70 @@ class GalleryRepository:
                             (lead_source_id,)).fetchone()
             return row['sales_lead_status'] if row else ''
 
+    def work_order_numbers(self):
+        """All retained cards, with no appointment date requirement."""
+        with self.connect() as c:
+            rows = c.execute("""SELECT work_order_key,min(work_order_number) AS number FROM (
+                SELECT work_order_key,work_order_number FROM items WHERE state IN ('ACTIVE','REVIEW')
+                )
+                WHERE work_order_key!='' GROUP BY work_order_key ORDER BY work_order_key""")
+            return [row['number'] for row in rows]
+
+    def replace_work_order_lead_statuses(self, work_order_numbers, records, captured):
+        """Publish one completed direct lookup; absent or ambiguous orders lose their mapping."""
+        requested = {work_order_key(number) for number in work_order_numbers} - {''}
+        matches = {key: [] for key in requested}
+        for record in records:
+            key = work_order_key(record.get('work_order_number', ''))
+            if key in matches:
+                matches[key].append(record)
+        captured = float(captured)
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            statuses_by_lead = {}
+            for key, rows in matches.items():
+                lead_ids = {row.get('lead_source_id', '') for row in rows}
+                lead_id = next(iter(lead_ids)) if len(lead_ids) == 1 else ''
+                c.execute("""INSERT INTO work_order_leads(work_order_key,lead_source_id,captured)
+                    VALUES (?,?,?) ON CONFLICT(work_order_key) DO UPDATE SET
+                    lead_source_id=CASE
+                        WHEN excluded.captured>work_order_leads.captured THEN excluded.lead_source_id
+                        WHEN excluded.lead_source_id=work_order_leads.lead_source_id
+                            THEN work_order_leads.lead_source_id
+                        ELSE '' END,
+                    captured=excluded.captured
+                    WHERE excluded.captured>=work_order_leads.captured""", (key, lead_id, captured))
+                if lead_id:
+                    statuses_by_lead.setdefault(lead_id, set()).update(
+                        row.get('sales_lead_status', '') for row in rows)
+            for lead_id, statuses in statuses_by_lead.items():
+                status = next(iter(statuses)) if len(statuses) == 1 else ''
+                c.execute("""INSERT INTO lead_status_snapshots(lead_source_id,sales_lead_status,captured)
+                    VALUES (?,?,?) ON CONFLICT(lead_source_id) DO UPDATE SET
+                    sales_lead_status=CASE
+                        WHEN excluded.captured>lead_status_snapshots.captured THEN excluded.sales_lead_status
+                        WHEN excluded.sales_lead_status=lead_status_snapshots.sales_lead_status
+                            THEN lead_status_snapshots.sales_lead_status
+                        ELSE '' END,
+                    captured=excluded.captured
+                    WHERE excluded.captured>=lead_status_snapshots.captured""", (lead_id, status, captured))
+            return self._refresh_sales_lead_statuses(c)
+
+    @staticmethod
+    def _refresh_sales_lead_statuses(c, guard='', parameters=()):
+        # A cached empty mapping is authoritative. No cache entry preserves the
+        # legacy association until its first successful direct lookup completes.
+        lead = """coalesce((SELECT lead_source_id FROM work_order_leads
+            WHERE work_order_key=items.work_order_key),items.lead_source_id)"""
+        status = f"""coalesce((SELECT sales_lead_status FROM lead_status_snapshots
+            WHERE lead_source_id={lead}),CASE WHEN EXISTS(SELECT 1 FROM work_order_leads
+                WHERE work_order_key=items.work_order_key) THEN '' ELSE items.sales_lead_status END)"""
+        return c.execute(f"""UPDATE items SET lead_source_id={lead},sales_lead_status={status},
+            search_revision=search_revision+1 WHERE state IN ('ACTIVE','REVIEW')
+            AND (lead_source_id!={lead} OR sales_lead_status!={status})""" + guard, parameters).rowcount
+
     def apply_reference(self, ident, source_id, kind, assigned_resource, text, name, address,
-                        sales_lead_status='', lead_source_id='', *, expected_day=_UNSET,
+                        *, expected_day=_UNSET,
                         expected_work_order_key=_UNSET):
         guard, parameters = '', []
         if expected_day is not _UNSET:
@@ -813,41 +857,29 @@ class GalleryRepository:
             parameters.append(expected_work_order_key)
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
-            if lead_source_id:
-                row = c.execute('SELECT sales_lead_status FROM lead_status_snapshots WHERE lead_source_id=?',
-                                (lead_source_id,)).fetchone()
-                sales_lead_status = row['sales_lead_status'] if row else ''
             return c.execute("""UPDATE items SET
-                search_revision=search_revision+CASE WHEN text!=? OR sales_lead_status!=? THEN 1 ELSE 0 END,
+                search_revision=search_revision+CASE WHEN text!=? THEN 1 ELSE 0 END,
                 assigned_service_resource=?,reference_kind=?,
-                reference_source_id=?,text=?,sales_lead_status=?,lead_source_id=?,
+                reference_source_id=?,text=?,
                 lead_name=CASE WHEN ?='' THEN lead_name ELSE ? END,
                 lead_key=CASE WHEN ?='' THEN lead_key ELSE ? END,
                 lead_status=CASE WHEN ?='' OR lead_name=? THEN lead_status ELSE 'printed' END,
                 address=CASE WHEN ?='' THEN address ELSE ? END,
                 address_key=CASE WHEN ?='' THEN address_key ELSE ? END
                 WHERE id=? AND state IN ('ACTIVE','REVIEW')
-                AND (text!=? OR sales_lead_status!=? OR lead_source_id!=? OR assigned_service_resource!=? OR reference_kind!=? OR reference_source_id!=?
+                AND (text!=? OR assigned_service_resource!=? OR reference_kind!=? OR reference_source_id!=?
                      OR (?!='' AND lead_name!=?) OR (?!='' AND address!=?))""" + guard,
-                (text, sales_lead_status, assigned_resource, kind, source_id, text, sales_lead_status, lead_source_id,
+                (text, assigned_resource, kind, source_id, text,
                  name, name, name, lead_key(name), name, name,
                  address, address, address, address_key(address), ident,
-                 text, sales_lead_status, lead_source_id, assigned_resource, kind, source_id, name, name, address, address,
+                 text, assigned_resource, kind, source_id, name, name, address, address,
                  *parameters)).rowcount
 
-    def refresh_sales_lead_status(self, ident, *, expected_day=_UNSET, expected_work_order_key=_UNSET):
-        """Refresh a previously identified Lead without guessing a new association."""
-        guard, parameters = '', []
-        if expected_day is not _UNSET:
-            guard += ' AND document_date IS ?'
-            parameters.append(expected_day)
+    def refresh_sales_lead_status(self, ident, *, expected_work_order_key=_UNSET):
+        """Attach the current work order's cached Lead and latest shared status."""
+        guard, parameters = ' AND id=?', [ident]
         if expected_work_order_key is not _UNSET:
             guard += ' AND work_order_key=?'
             parameters.append(expected_work_order_key)
         with self.connect() as c:
-            return c.execute("""UPDATE items SET sales_lead_status=coalesce(
-                    (SELECT sales_lead_status FROM lead_status_snapshots WHERE lead_source_id=items.lead_source_id),''),
-                search_revision=search_revision+1
-                WHERE id=? AND state IN ('ACTIVE','REVIEW') AND sales_lead_status!=coalesce(
-                    (SELECT sales_lead_status FROM lead_status_snapshots WHERE lead_source_id=items.lead_source_id),'')""" + guard,
-                (ident, *parameters)).rowcount
+            return self._refresh_sales_lead_statuses(c, guard, parameters)

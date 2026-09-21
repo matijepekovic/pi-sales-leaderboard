@@ -356,7 +356,7 @@ class ModSheetReferenceDeliveryService:
         try:
             if self.reference_sink is None:
                 raise RuntimeError('Card refresh is unavailable.')
-            result = self._publish_day(state['day'])
+            result = self._refresh_cards(state['day'])
             return self.repository.save_reference_refresh_state(dict(
                 state, status='complete', updated=self.clock(), **result,
             ))
@@ -438,7 +438,7 @@ class ModSheetReferenceDeliveryService:
         }
         self.repository.save_hourly_reference_state(state)
         try:
-            result = self._publish_day(state['day'])
+            result = self._refresh_cards(state['day'])
             return self.repository.save_hourly_reference_state(dict(
                 state, status='complete', updated=self.clock(), **result,
             ))
@@ -448,6 +448,38 @@ class ModSheetReferenceDeliveryService:
             return self.repository.save_hourly_reference_state(dict(
                 state, status='failed', updated=self.clock(), error=detail,
             ))
+
+    def _refresh_lead_statuses(self, current_work_orders=()):
+        """Resolve retained work orders independently of appointment dates."""
+        numbers = tuple(dict.fromkeys((*self.reference_sink.work_order_numbers(), *current_work_orders)))
+        if not numbers:
+            return {'lead_statuses': 0, 'enriched': 0}
+        captured = self.clock()
+        records = tuple(self.source.lead_statuses(numbers))
+        result = self.reference_sink.publish_lead_statuses(numbers, records, captured)
+        return {'lead_statuses': len(records), 'enriched': int(result.get('enriched', 0))}
+
+    def _refresh_cards(self, day):
+        # Each lookup must still run when the other fails. An unavailable
+        # appointment cannot prevent its work order from finding a Lead.
+        result = {'appointments': 0, 'lead_statuses': 0, 'enriched': 0}
+        errors = []
+        current_work_orders = ()
+        try:
+            appointments = self._publish_day(day)
+            current_work_orders = appointments.pop('work_order_numbers')
+            result.update(appointments)
+        except Exception as exc:
+            errors.append('Appointments: ' + (str(exc).strip() or type(exc).__name__))
+        try:
+            statuses = self._refresh_lead_statuses(current_work_orders)
+            result['lead_statuses'] = statuses['lead_statuses']
+            result['enriched'] += statuses['enriched']
+        except Exception as exc:
+            errors.append('Lead status: ' + (str(exc).strip() or type(exc).__name__))
+        if errors:
+            raise RuntimeError('; '.join(errors))
+        return result
 
     def _publish_day(self, day):
         # Card references cover this day, independently of print filters. The
@@ -466,11 +498,19 @@ class ModSheetReferenceDeliveryService:
         # snapshot, which also supplies assignments for scans uploaded later.
         result = self.reference_sink.publish(day, 'final', records, self.clock())
         enriched = int(result.get('enriched', 0)) if isinstance(result, dict) else 0
-        return {'appointments': len(records), 'enriched': enriched}
+        return {'appointments': len(records), 'enriched': enriched,
+                'work_order_numbers': tuple(record.work_order_number for record in records
+                                            if record.work_order_number)}
 
     def backfill_existing(self):
-        """Fill existing cards once on upgrade, using the same daily snapshot path."""
-        if self.reference_sink is None or self.repository.reference_backfill_complete():
+        """Refresh Lead status on startup; fill dated references once on upgrade."""
+        if self.reference_sink is None:
+            return
+        try:
+            self._refresh_lead_statuses()
+        except Exception as exc:
+            log.warning('Card Lead status lookup failed; hourly refresh will retry: %s', exc)
+        if self.repository.reference_backfill_complete():
             return
         today = datetime.fromtimestamp(self.clock(), self.zone).date().isoformat()
         complete = True
@@ -500,7 +540,7 @@ class ModSheetReferenceDeliveryService:
             'updated': now,
         })
         try:
-            result = self._publish_day(day)
+            result = self._refresh_cards(day)
             return self.repository.save_final_reference_state({
                 'day': day,
                 'status': 'complete',

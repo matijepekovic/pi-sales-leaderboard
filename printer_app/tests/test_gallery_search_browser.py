@@ -12,7 +12,7 @@ DAY = '2026-09-21'
 
 def _seed_gallery(service):
     from PIL import Image
-    from printer_app.mod_sheet_contract import ModSheetRecord
+    from printer_app.mod_sheet_contract import ModSheetRecord, WorkOrderLeadStatus
 
     service.initialize()
     definitions = [
@@ -40,11 +40,12 @@ def _seed_gallery(service):
         references.setdefault(day, []).append(ModSheetRecord(
             source_id=key, work_order_number=order, lead_name=name, address=address,
             assigned_service_resources=(rep,),
-            sales_lead_status='Sold <confirmed>' if key == 'rep' else '',
         ))
         ids[key] = ident
     for day, records in references.items():
         service.publish_reference_snapshot(day, 'final', records, 100.0)
+    service.publish_lead_statuses(['WO-0001'], [
+        WorkOrderLeadStatus('WO-0001', 'lead-one', 'Sold <confirmed>')], 101.0)
     service.note(ids['notes'], 'e' * 32, 'Office', 'José Alvarez appears only in this shared note')
     return ids
 

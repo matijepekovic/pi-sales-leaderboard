@@ -5,6 +5,15 @@ from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
+class WorkOrderLeadStatus:
+    """Current lead status resolved by work-order number, independently of dates."""
+
+    work_order_number: str
+    lead_source_id: str = ''
+    sales_lead_status: str = ''
+
+
+@dataclass(frozen=True)
 class ModSheetRecord:
     source_id: str
     work_order_number: str = ''
