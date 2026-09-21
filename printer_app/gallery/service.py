@@ -72,7 +72,7 @@ class GalleryService:
         return {key: row[key] for key in (
             'id','filename','page','part','document_date','date_status','bytes',
             'lead_name','lead_status','address','work_order_number',
-            'assigned_service_resource','notes_count','origin','image_revision','search_revision'
+            'assigned_service_resource','sales_lead_status','notes_count','origin','image_revision','search_revision'
         )}
 
     def related(self, ident, offset=0, document_date=''):
@@ -167,6 +167,7 @@ class GalleryService:
     def date(self, ident, value):
         self.initialize()
         self.repository.correct_date(ident, checked_date(value))
+        self._enrich_reference_item(ident)
 
     def summary(self, options):
         self.initialize()
@@ -318,15 +319,27 @@ class GalleryService:
 
     def _enrich_reference_item(self, ident):
         item = self.repository.reference_item(ident)
-        if not item or not item.get('document_date'):
+        if not item:
             return False
+        identity = dict(expected_day=item['document_date'],
+                        expected_work_order_key=item['work_order_key'])
+        if not item.get('document_date'):
+            return bool(self.repository.refresh_sales_lead_status(ident, **identity))
         kind, match = self._reference_for(item['document_date'], item['work_order_number'])
         if match is None:
-            return False
+            # No new identity can be inferred here. A previously confirmed Lead
+            # association can still use its current shared status.
+            return bool(self.repository.refresh_sales_lead_status(ident, **identity))
 
         assigned = self._resource_names(match) if kind == 'final' else ''
         name = ' '.join(str(match.get('lead_name') or '').split())
         address = ' '.join(str(match.get('address') or '').split())
+        lead_source_id = str(match.get('lead_source_id') or '').strip()
+        sales_status = ' '.join(str(match.get('sales_lead_status') or '').split())
+        if not lead_source_id and kind == 'morning' and self.repository.has_reference_snapshot(item['document_date'], 'final'):
+            # Morning identity can still help the scan, but its old sales status
+            # is not authoritative after a completed full-day lookup.
+            sales_status = ''
         text = self._reference_text(item.get('text', ''), match, item['document_date'], include_resources=kind == 'final')
         return bool(self.repository.apply_reference(
             ident,
@@ -336,6 +349,9 @@ class GalleryService:
             text,
             name,
             address,
+            sales_lead_status=sales_status,
+            lead_source_id=lead_source_id,
+            **identity,
         ))
 
     def reference_dates(self):

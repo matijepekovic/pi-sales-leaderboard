@@ -106,6 +106,15 @@ Source-specific Salesforce CLI/SOQL behavior remains inside the Salesforce
 adapter; MOD scheduling, settings, rendering and workflow use normalized
 contracts under `printer_app/mod_sheets/`.
 
+Gallery cards show the linked Salesforce Lead's status beneath the image. The
+card's date and work-order number identify its Lead; customer names and addresses
+are not matching keys. Once linked, every card with the same Lead ID shares its
+latest status, including other work orders and dates. A Sold update therefore
+appears on all that Lead's cards without affecting a different Lead with the same
+name. The same-day lookup includes canceled appointments as fallback matches.
+Existing cards are linked once after this update; hourly and manual refreshes
+keep the shared statuses current. The printed MOD sheet layout is unchanged.
+
 ## Salesforce Object Explorer
 
 Open **Object Explorer** from MOD Sheets to inspect the connected Salesforce

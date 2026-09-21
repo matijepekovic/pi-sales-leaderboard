@@ -323,7 +323,8 @@ import { GalleryContact } from './gallery_contact.js';
     cards.forEach(({node, item}) => node.setAttribute('aria-pressed', String(item.id === selected?.id)));
   }
   function cardSubtitle(item) {
-    const base = cardOrigin(item) + `Page ${item.page} · work order ${item.part}`;
+    const status = item.sales_lead_status ? `Lead status: ${item.sales_lead_status}` : 'Lead status unavailable';
+    const base = cardOrigin(item) + status;
     return item.assigned_service_resource ? base + ` · Rep: ${item.assigned_service_resource}` : base;
   }
   function updateCard(item) {
@@ -452,8 +453,7 @@ import { GalleryContact } from './gallery_contact.js';
     el('galleryTitle').textContent = cardName(item);
     if (el('galleryViewer').open) updateImage(el('galleryFull'), item);
     el('galleryViewerDate').textContent = dateLabel(item.document_date);
-    el('gallerySource').textContent = cardOrigin(item) + `${item.filename} · page ${item.page}, work order ${item.part}` +
-      (item.assigned_service_resource ? ` · Rep: ${item.assigned_service_resource}` : '');
+    el('gallerySource').textContent = cardSubtitle(item);
     el('galleryNotesContext').textContent = `${cardName(item)} · ${dateLabel(item.document_date)}`;
     const notes = item.notes.map(note => {
       const article = text('article', ''); const at = new Date(note.created * 1000);
@@ -497,8 +497,7 @@ import { GalleryContact } from './gallery_contact.js';
     if (record) navigation.save();
     selected = item; actions(); el('galleryViewerMessage').textContent = '';
     el('galleryTitle').textContent = cardName(item); el('galleryViewerDate').textContent = dateLabel(item.document_date);
-    el('gallerySource').textContent = cardOrigin(item) + `${item.filename} · page ${item.page}, work order ${item.part}` +
-      (item.assigned_service_resource ? ` · Rep: ${item.assigned_service_resource}` : '');
+    el('gallerySource').textContent = cardSubtitle(item);
     updateImage(el('galleryFull'), item);
     showDialog('galleryViewer', false); el('galleryViewer').scrollTop = 0;
     el('galleryViewer').querySelector('[data-close]').focus({preventScroll:true});

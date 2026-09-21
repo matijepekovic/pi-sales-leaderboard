@@ -295,7 +295,9 @@ def test_existing_review_card_gets_reference_identity_without_being_approved(tmp
 def test_normal_import_uses_cached_reference_for_identity_and_search(tmp_path, resource):
     gallery = _gallery(tmp_path)
     gallery.publish_reference_snapshot(
-        DAY, 'final', [_reference('0011', resource, lead='Cached Customer', address='101 Cachedstreet')],
+        DAY, 'final', [replace(
+            _reference('0011', resource, lead='Cached Customer', address='101 Cachedstreet'),
+            sales_lead_status='Canceled')],
         100.0,
     )
     job = {'id': 'c' * 64, 'filename': 'cards.pdf'}
@@ -315,6 +317,7 @@ def test_normal_import_uses_cached_reference_for_identity_and_search(tmp_path, r
     item = gallery.item(ident)
 
     assert item['lead_name'] == 'Cached Customer'
+    assert item['sales_lead_status'] == 'Canceled'
     assert item['address'] == '101 Cachedstreet'
     assert item['assigned_service_resource'] == resource
     assert gallery.search('Cachedstreet', 0)['total'] == 1
@@ -427,3 +430,145 @@ def test_reference_text_preserves_following_labels_with_missing_colons():
                     'Scheduled Start 9/21/2026 10:30 AM\n'
                     'Assigned Service Resource: New Rep\n'
                     'Set By Old Setter\nLead Description: KEEP NOTES')
+
+
+def test_sales_lead_status_matches_only_work_order_and_card_date(tmp_path):
+    gallery = _gallery(tmp_path)
+    _card(gallery, 'same-customer-different-order', '0012')
+    _card(gallery, 'same-order-different-date', '0011', day='2026-09-20')
+    _card(gallery, 'matched-card', '0011')
+    result = gallery.publish_reference_snapshot(DAY, 'final', [
+        replace(_reference('0011', ''), sales_lead_status='Sold')], 100)
+
+    assert result['enriched'] == 1
+    assert gallery.item('matched-card')['sales_lead_status'] == 'Sold'
+    assert gallery.item('same-customer-different-order')['sales_lead_status'] == ''
+    assert gallery.item('same-order-different-date')['sales_lead_status'] == ''
+    related = {row['id']: row for row in gallery.related('matched-card')['items']}
+    assert related['matched-card']['sales_lead_status'] == 'Sold'
+    assert related['same-customer-different-order']['sales_lead_status'] == ''
+
+    gallery.publish_reference_snapshot(DAY, 'final', [
+        replace(_reference('0011', ''), sales_lead_status='Sold'),
+        replace(_reference('0012', ''), sales_lead_status='Canceled')], 101)
+    assert gallery.item('matched-card')['sales_lead_status'] == 'Sold'
+    assert gallery.item('same-customer-different-order')['sales_lead_status'] == 'Canceled'
+    assert gallery.item('same-order-different-date')['sales_lead_status'] == ''
+
+
+def test_sales_status_refresh_changes_caption_data_without_notes_or_image_changes(tmp_path):
+    gallery = _gallery(tmp_path)
+    ident = 'd' * 64
+    _card(gallery, ident, '0013')
+    image = gallery.files.path('crops', ident)
+    image.write_bytes(b'original-scan')
+    gallery.note(ident, 'b' * 32, 'Office', 'Keep this note')
+    reference = _reference('0013', 'Same Rep')
+    gallery.publish_reference_snapshot(DAY, 'final', [replace(reference, sales_lead_status='Open')], 100)
+    gallery.repository.correct_lead(ident, 'Jordan Example')
+    before = gallery.item(ident)
+
+    gallery.publish_reference_snapshot(DAY, 'final', [replace(reference, sales_lead_status='Sold')], 101)
+    after = gallery.item(ident)
+
+    assert after['sales_lead_status'] == 'Sold'
+    assert after['search_revision'] > before['search_revision']
+    assert after['text'] == before['text']
+    assert after['notes'] == before['notes']
+    assert after['lead_status'] == before['lead_status'] == 'confirmed'
+    assert image.read_bytes() == b'original-scan'
+    assert gallery.search('', 0)['items'][0]['sales_lead_status'] == 'Sold'
+    assert gallery.offline_index()['items'][0]['sales_lead_status'] == 'Sold'
+
+
+@pytest.mark.parametrize('replacement', ['missing', 'ambiguous', 'blank'])
+def test_unmatched_or_unknown_sales_status_does_not_keep_a_stale_status(tmp_path, replacement):
+    gallery = _gallery(tmp_path)
+    ident = 'status-no-longer-known'
+    _card(gallery, ident, '0014')
+    reference = replace(_reference('0014', ''), sales_lead_status='Sold')
+    gallery.publish_reference_snapshot(DAY, 'final', [reference], 100)
+    rows = [] if replacement == 'missing' else [
+        replace(reference, sales_lead_status='') if replacement == 'blank' else reference]
+    if replacement == 'ambiguous':
+        rows.append(replace(reference, source_id='another-source', sales_lead_status='Canceled'))
+
+    gallery.publish_reference_snapshot(DAY, 'final', rows, 101)
+
+    assert gallery.item(ident)['sales_lead_status'] == ''
+    assert gallery.item(ident)['lead_name'] == 'Jordan Example'
+
+
+@pytest.mark.parametrize('missing', [False, True])
+def test_blank_or_missing_final_status_does_not_fall_back_to_old_morning_status(tmp_path, missing):
+    gallery = _gallery(tmp_path)
+    _card(gallery, 'status-morning', '0015')
+    reference = _reference('0015', '')
+    gallery.publish_reference_snapshot(DAY, 'morning', [
+        replace(reference, sales_lead_status='Open')], 100)
+    assert gallery.item('status-morning')['sales_lead_status'] == 'Open'
+
+    gallery.publish_reference_snapshot(DAY, 'final', [] if missing else [reference], 101)
+
+    assert gallery.item('status-morning')['sales_lead_status'] == ''
+
+
+def test_corrected_card_date_rematches_status_only_with_that_work_order_on_new_date(tmp_path):
+    gallery = _gallery(tmp_path)
+    ident = 'status-date-correction'
+    _card(gallery, ident, '0016')
+    reference = _reference('0016', '')
+    gallery.publish_reference_snapshot(DAY, 'final', [replace(reference, sales_lead_status='Sold')], 100)
+    gallery.publish_reference_snapshot('2026-09-20', 'final', [
+        replace(reference, sales_lead_status='Open')], 101)
+
+    gallery.date(ident, '2026-09-20')
+    assert gallery.item(ident)['sales_lead_status'] == 'Open'
+    gallery.date(ident, '2026-09-19')
+    assert gallery.item(ident)['sales_lead_status'] == ''
+
+
+def test_sold_status_copies_to_other_work_orders_and_dates_for_the_same_lead_id(tmp_path):
+    gallery = _gallery(tmp_path)
+    _card(gallery, 'older-work-order', '0101', day='2026-09-20')
+    _card(gallery, 'today-work-order', '0102')
+    _card(gallery, 'different-lead-same-name', '0103')
+    older = replace(_reference('0101', 'Older Rep'), lead_source_id='lead-shared', sales_lead_status='Open')
+    today = replace(_reference('0102', 'Today Rep'), lead_source_id='lead-shared', sales_lead_status='Open')
+    different = replace(_reference('0103', 'Different Rep'), lead_source_id='lead-different', sales_lead_status='Open')
+    gallery.publish_reference_snapshot('2026-09-20', 'final', [older], 100)
+    gallery.publish_reference_snapshot(DAY, 'final', [today, different], 101)
+    before = gallery.item('older-work-order')
+
+    gallery.publish_reference_snapshot(DAY, 'final', [
+        replace(today, sales_lead_status='Sold'), different], 102)
+
+    assert gallery.item('today-work-order')['sales_lead_status'] == 'Sold'
+    after = gallery.item('older-work-order')
+    assert after['sales_lead_status'] == 'Sold'
+    assert after['search_revision'] > before['search_revision']
+    assert after['assigned_service_resource'] == before['assigned_service_resource'] == 'Older Rep'
+    assert after['document_date'] == '2026-09-20'
+    assert gallery.item('different-lead-same-name')['sales_lead_status'] == 'Open'
+    statuses = {row['id']: row['sales_lead_status'] for row in gallery.offline_index()['items']}
+    assert statuses == {'older-work-order': 'Sold', 'today-work-order': 'Sold',
+                        'different-lead-same-name': 'Open'}
+
+    # Dropping an appointment does not erase the confirmed customer identity or
+    # the latest known Sold status shared from that customer's other work order.
+    gallery.publish_reference_snapshot('2026-09-20', 'final', [], 103)
+    assert gallery.item('older-work-order')['sales_lead_status'] == 'Sold'
+
+
+def test_later_card_link_uses_shared_current_status_not_older_work_order_snapshot(tmp_path):
+    gallery = _gallery(tmp_path)
+    reference = replace(_reference('0201', ''), lead_source_id='lead-shared', sales_lead_status='Open')
+    gallery.publish_reference_snapshot('2026-09-20', 'morning', [reference], 100)
+    gallery.publish_reference_snapshot(DAY, 'final', [
+        replace(reference, source_id='other-order', work_order_number='0202', sales_lead_status='Sold')], 101)
+    _card(gallery, 'late-card', '0201', day='2026-09-20')
+
+    gallery._enrich_reference_item('late-card')
+
+    assert gallery.item('late-card')['sales_lead_status'] == 'Sold'
+    assert gallery.item('late-card')['lead_source_id'] == 'lead-shared'

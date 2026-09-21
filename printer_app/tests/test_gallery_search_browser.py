@@ -40,6 +40,7 @@ def _seed_gallery(service):
         references.setdefault(day, []).append(ModSheetRecord(
             source_id=key, work_order_number=order, lead_name=name, address=address,
             assigned_service_resources=(rep,),
+            sales_lead_status='Sold <confirmed>' if key == 'rep' else '',
         ))
         ids[key] = ident
     for day, records in references.items():
@@ -131,6 +132,33 @@ def _type_query(page, query):
 def _item_queries(requests):
     return [parse_qs(urlsplit(url).query, keep_blank_values=True) for url in requests
             if urlsplit(url).path == '/gallery/api/items']
+
+
+def test_card_viewer_and_related_caption_show_sales_status_as_text(gallery_browser):
+    from playwright.sync_api import expect
+
+    page, service, ids, _ = gallery_browser
+    _open_search(page)
+    _type_query(page, 'Lina Example')
+    _expect_ids(page, [ids['rep']])
+    assert service.item(ids['rep'])['lead_status'] == 'printed'
+    card = page.locator('.gallery-card')
+    caption = 'Lead status: Sold <confirmed> · Rep: José Alvarez'
+    expect(card.locator('.gallery-card-subtitle')).to_have_text(caption)
+    expect(card.locator('.gallery-card-subtitle confirmed')).to_have_count(0)
+    card.click()
+    expect(page.locator('#gallerySource')).to_have_text(caption)
+    expect(page.locator('#gallerySource confirmed')).to_have_count(0)
+    page.locator('#galleryViewer [data-action="related"]').click()
+    expect(page.locator('#galleryViewer')).not_to_be_visible()
+    expect(page.locator('#galleryHeading')).to_have_text('Related cards')
+    _expect_ids(page, [ids['rep']])
+    expect(page.locator('.gallery-card-subtitle')).to_have_text(caption)
+
+    _open_search(page)
+    _type_query(page, 'José Moreno')
+    _expect_ids(page, [ids['lead']])
+    expect(page.locator('.gallery-card-subtitle')).to_have_text('Lead status unavailable · Rep: Other Rep')
 
 
 def test_live_search_all_dates_field_isolation_pagination_and_compact_mobile_bar(gallery_browser):

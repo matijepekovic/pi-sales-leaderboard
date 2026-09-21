@@ -16,7 +16,7 @@ FINAL_REFERENCE_STATE_KEY = 'daily_mod_sheet_final_reference_state'
 HOURLY_REFERENCE_STATE_KEY = 'daily_mod_sheet_hourly_reference_state'
 REQUESTED_REFERENCE_STATE_KEY = 'daily_mod_sheet_requested_reference_state'
 REFERENCE_BACKFILL_KEY = 'gallery_reference_backfill_complete'
-REFERENCE_BACKFILL_CONTRACT = 'full-card-search'
+REFERENCE_BACKFILL_CONTRACT = 'work-order-lead-status'
 
 
 class ModSheetAutomationRepository:

@@ -478,6 +478,7 @@ class SalesforceCliAdapter:
 
         select_fields = [
             'Id',
+            'StatusCategory',
             'FSSK__FSK_Work_Order__r.WorkOrderNumber',
             'FSSK__FSK_Work_Order__r.Address',
             'Local_Scheduled_Start_Time__c',
@@ -486,6 +487,8 @@ class SalesforceCliAdapter:
             'FSSK__FSK_Work_Order__r.State',
             'FSSK__FSK_Work_Order__r.PostalCode',
             'FSSK__FSK_Work_Order__r.Lead__r.Name',
+            'FSSK__FSK_Work_Order__r.Lead__r.Id',
+            'FSSK__FSK_Work_Order__r.Lead__r.Status',
             'FSSK__FSK_Work_Order__r.Lead__r.Phone',
             'FSSK__FSK_Work_Order__r.Lead__r.Phone_3__c',
             'SchedStartTime',
@@ -598,18 +601,26 @@ class SalesforceCliAdapter:
                 continue
             resource = _nested(item, 'FSSK__FSK_Assigned_Service_Resource__r.Name').strip()
             created = _sf_datetime(item.get('CreatedDate')) or datetime.max.replace(tzinfo=timezone.utc)
+            canceled = str(item.get('StatusCategory') or '').strip().casefold() == 'canceled'
+            group_key = (work_order_id, local_start.date())
 
-            current = grouped.get(work_order_id)
-            if current is None:
-                order.append(work_order_id)
-                grouped[work_order_id] = {
+            current = grouped.get(group_key)
+            if current is None or (current['canceled'] and not canceled):
+                if current is None:
+                    order.append(group_key)
+                grouped[group_key] = {
                     'item': item,
                     'created': created,
                     'local_start': local_start,
+                    'canceled': canceled,
                     'resources': [resource] if resource else [],
                 }
                 continue
 
+            # A canceled appointment is a fallback for this work order on this
+            # date. It must not replace or add assignments to an active match.
+            if canceled and not current['canceled']:
+                continue
             if resource and resource not in current['resources']:
                 current['resources'].append(resource)
             if created < current['created']:
@@ -621,8 +632,8 @@ class SalesforceCliAdapter:
             raise SalesforceAdapterError('No Records Found for Selected Criteria')
 
         normalized = []
-        for work_order_id in order:
-            grouped_item = grouped[work_order_id]
+        for work_order_id, day in order:
+            grouped_item = grouped[(work_order_id, day)]
             item = grouped_item['item']
             work_order = item.get('FSSK__FSK_Work_Order__r') or {}
             lead = work_order.get('Lead__r') or {} if isinstance(work_order, dict) else {}
@@ -642,5 +653,7 @@ class SalesforceCliAdapter:
                 source=_nested(lead, 'LeadSource'),
                 sub_source=_nested(lead, 'Sub_Source__c'),
                 lead_description=_nested(lead, 'Description'),
+                sales_lead_status=_nested(lead, 'Status'),
+                lead_source_id=_nested(lead, 'Id'),
             ))
         return normalized

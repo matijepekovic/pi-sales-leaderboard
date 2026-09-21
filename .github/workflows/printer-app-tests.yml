@@ -34,6 +34,7 @@ jobs:
             printer_app/tests/test_salesforce_explorer_browser.py \
             printer_app/tests/test_mod_sheet_automation.py \
             printer_app/tests/test_gallery_reference.py \
+            printer_app/tests/test_gallery_sales_lead_status.py \
             printer_app/tests/test_gallery_reference_text.py \
             printer_app/tests/test_gallery_morning_cards.py \
             printer_app/tests/test_gallery_morning_pdf.py \

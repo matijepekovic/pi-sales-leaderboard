@@ -841,7 +841,7 @@ def test_existing_cards_backfill_once_by_card_date_without_querying_tomorrow(tmp
     clock = MutableClock(_stamp(2026, 9, 21, 12))
     db = Database(tmp_path / 'printer.db')
     repository = ModSheetAutomationRepository(db)
-    db.set(REFERENCE_BACKFILL_KEY, True)  # Earlier releases cached only limited fields.
+    db.set(REFERENCE_BACKFILL_KEY, 'full-card-search')  # Earlier cards lack lead status.
     sink = FakeReferenceSink(days=('2026-09-18', '2026-09-21', '2026-09-22'))
     source = FakeSource([(), ()])
     delivery = ModSheetReferenceDeliveryService(
@@ -855,7 +855,7 @@ def test_existing_cards_backfill_once_by_card_date_without_querying_tomorrow(tmp
         ('2026-09-18', 'final'), ('2026-09-21', 'final'),
     ]
     assert repository.reference_backfill_complete()
-    assert db.get(REFERENCE_BACKFILL_KEY) == 'full-card-search'
+    assert db.get(REFERENCE_BACKFILL_KEY) == 'work-order-lead-status'
     # The completed marker survives a worker restart.
     restarted = ModSheetReferenceDeliveryService(
         ModSheetAutomationRepository(Database(tmp_path / 'printer.db')),
@@ -867,7 +867,7 @@ def test_existing_cards_backfill_once_by_card_date_without_querying_tomorrow(tmp
     assert delivery.final_due(_stamp(2026, 9, 21, 23))
 
 
-@pytest.mark.parametrize('marker', [None, False, True, 'previous-contract'])
+@pytest.mark.parametrize('marker', [None, False, True, 'previous-contract', 'full-card-search'])
 def test_backfill_requires_the_current_full_search_contract(tmp_path, marker):
     db = Database(tmp_path / 'printer.db')
     db.set(REFERENCE_BACKFILL_KEY, marker)
@@ -875,7 +875,7 @@ def test_backfill_requires_the_current_full_search_contract(tmp_path, marker):
     assert not repository.reference_backfill_complete()
     repository.complete_reference_backfill()
     assert repository.reference_backfill_complete()
-    assert db.get(REFERENCE_BACKFILL_KEY) == 'full-card-search'
+    assert db.get(REFERENCE_BACKFILL_KEY) == 'work-order-lead-status'
 
 
 def test_failed_backfill_keeps_other_dates_and_can_retry_on_restart(tmp_path):

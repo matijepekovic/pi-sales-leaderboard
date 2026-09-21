@@ -9,6 +9,8 @@ from .policy import (
     printed_work_order_number, work_order_key,
 )
 
+_UNSET = object()
+
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS imports (
  id TEXT PRIMARY KEY, filename TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'WAITING',
@@ -40,6 +42,9 @@ CREATE TRIGGER IF NOT EXISTS gallery_update AFTER UPDATE ON items BEGIN
 CREATE TABLE IF NOT EXISTS appointment_reference_snapshots (
  day TEXT NOT NULL, kind TEXT NOT NULL, captured REAL NOT NULL, count INTEGER NOT NULL,
  PRIMARY KEY(day,kind));
+CREATE TABLE IF NOT EXISTS lead_status_snapshots (
+ lead_source_id TEXT PRIMARY KEY, sales_lead_status TEXT NOT NULL DEFAULT '',
+ captured REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS appointment_references (
  day TEXT NOT NULL, kind TEXT NOT NULL, source_id TEXT NOT NULL,
  work_order_number TEXT NOT NULL DEFAULT '', work_order_key TEXT NOT NULL DEFAULT '',
@@ -119,6 +124,8 @@ class GalleryRepository:
                 ('work_order_number', "TEXT NOT NULL DEFAULT ''"),
                 ('work_order_key', "TEXT NOT NULL DEFAULT ''"),
                 ('assigned_service_resource', "TEXT NOT NULL DEFAULT ''"),
+                ('sales_lead_status', "TEXT NOT NULL DEFAULT ''"),
+                ('lead_source_id', "TEXT NOT NULL DEFAULT ''"),
                 ('reference_kind', "TEXT NOT NULL DEFAULT ''"),
                 ('reference_source_id', "TEXT NOT NULL DEFAULT ''"),
                 ('origin', "TEXT NOT NULL DEFAULT 'scan'"),
@@ -128,7 +135,8 @@ class GalleryRepository:
                 if name not in columns:
                     c.execute(f'ALTER TABLE items ADD COLUMN {name} {definition}')
             reference_columns = {row['name'] for row in c.execute('PRAGMA table_info(appointment_references)')}
-            for name in ('local_scheduled_start_time', 'canvass_set_by', 'set_by', 'work_type', 'lead_description'):
+            for name in ('local_scheduled_start_time', 'canvass_set_by', 'set_by', 'work_type', 'lead_description',
+                         'sales_lead_status', 'lead_source_id'):
                 if name not in reference_columns:
                     c.execute(f"ALTER TABLE appointment_references ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
             c.execute("""INSERT OR IGNORE INTO scan_days(day,reconciled)
@@ -147,6 +155,8 @@ class GalleryRepository:
             c.execute('CREATE INDEX IF NOT EXISTS gallery_items_lead ON items(state,lead_key,document_date)')
             c.execute('CREATE INDEX IF NOT EXISTS gallery_items_address ON items(state,address_key,document_date)')
             c.execute('CREATE INDEX IF NOT EXISTS gallery_items_work_order ON items(state,work_order_key,document_date)')
+            c.execute('CREATE INDEX IF NOT EXISTS gallery_items_source_lead ON items(lead_source_id,state)')
+            c.execute('CREATE INDEX IF NOT EXISTS gallery_reference_source_lead ON appointment_references(lead_source_id)')
             search_columns = {row['name'] for row in c.execute('PRAGMA table_info(search)')}
             if not {'lead_name', 'address', 'assigned_service_resource'} <= search_columns:
                 # Replace the one search index, not a parallel implementation.
@@ -325,7 +335,7 @@ class GalleryRepository:
     def import_item(self, import_id, item_id):
         with self.connect() as c:
             row = c.execute("""SELECT id,import_id,page,part,bytes,document_date,date_status,
-                    lead_name,lead_status,address,work_order_number,assigned_service_resource,
+                    lead_name,lead_status,sales_lead_status,address,work_order_number,assigned_service_resource,
                     reference_kind,reference_source_id,state FROM items
                 WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
                 (item_id, import_id)).fetchone()
@@ -432,7 +442,7 @@ class GalleryRepository:
                 params.append(document_date)
             total = c.execute('SELECT count(*) FROM items i ' + clause, params).fetchone()[0]
             rows = c.execute('''SELECT i.id,i.filename,i.page,i.part,i.document_date,i.date_status,i.bytes,
-               i.lead_name,i.lead_status,i.address,i.work_order_number,i.assigned_service_resource,
+               i.lead_name,i.lead_status,i.sales_lead_status,i.address,i.work_order_number,i.assigned_service_resource,
                i.origin,i.image_revision,i.search_revision,
                (SELECT count(*) FROM notes n WHERE n.item_id=i.id) AS notes_count FROM items i JOIN imports source ON source.id=i.import_id ''' + clause +
                ' ORDER BY i.document_date IS NULL,i.document_date DESC,source.created,source.id,i.page,i.part,i.id LIMIT 24 OFFSET ?', [*params, offset])
@@ -443,7 +453,7 @@ class GalleryRepository:
         with self.connect() as c:
             rows = c.execute(
                 """SELECT i.id,i.filename,i.page,i.part,i.document_date,i.date_status,
-                          i.bytes,i.lead_name,i.lead_status,i.address,
+                          i.bytes,i.lead_name,i.lead_status,i.sales_lead_status,i.address,
                           i.work_order_number,i.assigned_service_resource,i.origin,i.image_revision,i.search_revision,
                           (SELECT count(*) FROM notes n WHERE n.item_id=i.id) AS notes_count
                    FROM items i JOIN imports source ON source.id=i.import_id
@@ -477,7 +487,7 @@ class GalleryRepository:
     def related_candidates(self):
         with self.connect() as c:
             rows = c.execute("""SELECT i.id,i.filename,i.page,i.part,i.document_date,i.date_status,
-                    i.bytes,i.lead_name,i.lead_key,i.lead_status,i.address,i.address_key,
+                    i.bytes,i.lead_name,i.lead_key,i.lead_status,i.sales_lead_status,i.address,i.address_key,
                     i.work_order_number,i.work_order_key,i.assigned_service_resource,
                     i.origin,i.image_revision,i.search_revision,
                     source.created AS source_created,
@@ -520,7 +530,12 @@ class GalleryRepository:
 
     def correct_date(self, ident, value):
         with self.connect() as c:
-            if not c.execute("UPDATE items SET document_date=?,date_status='confirmed' WHERE id=? AND state='ACTIVE'", (value, ident)).rowcount:
+            if not c.execute("""UPDATE items SET
+                    sales_lead_status=CASE WHEN document_date IS NOT ? THEN '' ELSE sales_lead_status END,
+                    lead_source_id=CASE WHEN document_date IS NOT ? THEN '' ELSE lead_source_id END,
+                    search_revision=search_revision+CASE WHEN document_date IS NOT ? THEN 1 ELSE 0 END,
+                    document_date=?,date_status='confirmed'
+                    WHERE id=? AND state='ACTIVE'""", (value, value, value, value, ident)).rowcount:
                 raise LookupError('This image has expired or is unavailable.')
 
     def expiring(self, cutoff):
@@ -549,6 +564,10 @@ class GalleryRepository:
                 WHERE updated<? AND state IN ('COMPLETE','ERROR')
                 AND NOT EXISTS(SELECT 1 FROM items WHERE import_id=imports.id))''', (cutoff,))
             c.execute("UPDATE imports SET filename='',error='',progress='{}' WHERE updated<? AND state IN ('COMPLETE','ERROR') AND NOT EXISTS(SELECT 1 FROM items WHERE import_id=imports.id)", (cutoff,))
+            c.execute("""DELETE FROM lead_status_snapshots
+                WHERE NOT EXISTS(SELECT 1 FROM items WHERE items.lead_source_id=lead_status_snapshots.lead_source_id)
+                AND NOT EXISTS(SELECT 1 FROM appointment_references
+                    WHERE appointment_references.lead_source_id=lead_status_snapshots.lead_source_id)""")
         with self.connect() as c:
             c.execute('PRAGMA wal_checkpoint(PASSIVE)')
 
@@ -615,7 +634,7 @@ class GalleryRepository:
                 "SELECT count(*) FROM items WHERE import_id=? AND state='REVIEW'", (ident,)
             ).fetchone()[0]
             result['retained'] = result['published'] + result['pending_review']
-            result['items'] = [dict(i) for i in c.execute("""SELECT id,page,part,bytes,document_date,date_status,lead_name,state
+            result['items'] = [dict(i) for i in c.execute("""SELECT id,page,part,bytes,document_date,date_status,lead_name,sales_lead_status,state
                 FROM items WHERE import_id=? AND state IN ('ACTIVE','REVIEW')
                 ORDER BY CASE state WHEN 'REVIEW' THEN 0 ELSE 1 END,page,part,id LIMIT 24 OFFSET ?""",
                 (ident,offset))]
@@ -637,12 +656,16 @@ class GalleryRepository:
             # receipts are not modified. The existing FTS trigger reindexes text.
             c.execute("""UPDATE items SET text=?,recognition_revision=1,
                 recognition_attempts=0,recognition_retry_at=0,address=?,address_key=?,
+                lead_source_id=CASE WHEN work_order_key!=? THEN '' ELSE lead_source_id END,
+                sales_lead_status=CASE WHEN work_order_key!=? THEN '' ELSE sales_lead_status END,
+                search_revision=search_revision+CASE WHEN work_order_key!=? THEN 1 ELSE 0 END,
                 work_order_number=?,work_order_key=?,
                 lead_name=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_name ELSE ? END,
                 lead_key=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_key ELSE ? END,
                 lead_status=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_status ELSE 'printed' END
                 WHERE id=? AND state='ACTIVE' AND recognition_revision<1""",
-                (text,address,address_normalized,work_order_number,work_order_normalized,
+                (text,address,address_normalized,work_order_normalized,work_order_normalized,work_order_normalized,
+                 work_order_number,work_order_normalized,
                  name,name,name,key,name,ident))
 
     def defer_recognition(self, ident, now):
@@ -663,8 +686,8 @@ class GalleryRepository:
                     day,kind,source_id,work_order_number,work_order_key,lead_name,lead_key,
                     address,address_key,phone,scheduled_start,assigned_service_resources,
                     product_interest,source,sub_source,local_scheduled_start_time,canvass_set_by,
-                    set_by,work_type,lead_description)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+                    set_by,work_type,lead_description,sales_lead_status,lead_source_id)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
                     day, kind, record.get('source_id',''),
                     record.get('work_order_number',''), work_order_key(record.get('work_order_number','')),
                     record.get('lead_name',''), lead_key(record.get('lead_name','')),
@@ -674,15 +697,51 @@ class GalleryRepository:
                     record.get('product_interest',''), record.get('source',''), record.get('sub_source',''),
                     record.get('local_scheduled_start_time',''), record.get('canvass_set_by',''),
                     record.get('set_by',''), record.get('work_type',''), record.get('lead_description',''),
+                    record.get('sales_lead_status',''),
+                    record.get('lead_source_id',''),
                 ))
             c.execute("""INSERT INTO appointment_reference_snapshots(day,kind,captured,count)
                 VALUES (?,?,?,?) ON CONFLICT(day,kind) DO UPDATE SET
                 captured=excluded.captured,count=excluded.count""",
                 (day, kind, float(captured), len(records)))
+            lead_statuses = {}
+            for record in records:
+                lead_id = record.get('lead_source_id', '')
+                if lead_id:
+                    lead_statuses.setdefault(lead_id, set()).add(record.get('sales_lead_status', ''))
+            for lead_id, statuses in lead_statuses.items():
+                status = next(iter(statuses)) if len(statuses) == 1 else ''
+                # A status belongs to the source Lead, independently of the
+                # appointment snapshots that first established its identity.
+                # Conflicting observations at the same capture stay unavailable.
+                c.execute("""INSERT INTO lead_status_snapshots(lead_source_id,sales_lead_status,captured)
+                    VALUES (?,?,?) ON CONFLICT(lead_source_id) DO UPDATE SET
+                    sales_lead_status=CASE
+                        WHEN excluded.captured>lead_status_snapshots.captured THEN excluded.sales_lead_status
+                        WHEN excluded.sales_lead_status=lead_status_snapshots.sales_lead_status
+                            THEN lead_status_snapshots.sales_lead_status
+                        ELSE '' END,
+                    captured=excluded.captured
+                    WHERE excluded.captured>=lead_status_snapshots.captured""",
+                    (lead_id, status, float(captured)))
+                c.execute("""UPDATE items SET
+                    sales_lead_status=(SELECT sales_lead_status FROM lead_status_snapshots WHERE lead_source_id=?),
+                    search_revision=search_revision+1
+                    WHERE lead_source_id=? AND state IN ('ACTIVE','REVIEW')
+                    AND sales_lead_status!=(SELECT sales_lead_status FROM lead_status_snapshots WHERE lead_source_id=?)""",
+                    (lead_id, lead_id, lead_id))
             # Reference-derived contact data can change without changing OCR
             # text (for example, an exact match becoming ambiguous).
             c.execute("""UPDATE items SET search_revision=search_revision+1
                 WHERE document_date=? AND state IN ('ACTIVE','REVIEW')""", (day,))
+
+    def has_reference_snapshot(self, day, kind):
+        """Distinguish an authoritative empty snapshot from one never received."""
+        with self.connect() as c:
+            return c.execute(
+                'SELECT 1 FROM appointment_reference_snapshots WHERE day=? AND kind=?',
+                (day, kind),
+            ).fetchone() is not None
 
     def reference_snapshot(self, day, kind):
         with self.connect() as c:
@@ -705,7 +764,7 @@ class GalleryRepository:
         with self.connect() as c:
             return [dict(row) for row in c.execute("""SELECT id,text,document_date,lead_name,lead_key,
                 address,address_key,work_order_number,work_order_key,assigned_service_resource,
-                reference_kind,reference_source_id,state
+                reference_kind,reference_source_id,sales_lead_status,lead_source_id,state
                 FROM items WHERE document_date=? AND state IN ('ACTIVE','REVIEW')
                 ORDER BY created,id""", (day,))]
 
@@ -732,23 +791,63 @@ class GalleryRepository:
         with self.connect() as c:
             row = c.execute("""SELECT id,text,document_date,lead_name,lead_key,address,address_key,
                 work_order_number,work_order_key,assigned_service_resource,reference_kind,
-                reference_source_id,state,origin FROM items
+                reference_source_id,sales_lead_status,lead_source_id,state,origin FROM items
                 WHERE id=? AND state IN ('ACTIVE','REVIEW')""", (ident,)).fetchone()
             return dict(row) if row else None
 
-    def apply_reference(self, ident, source_id, kind, assigned_resource, text, name, address):
+    def sales_status_for_lead(self, lead_source_id):
         with self.connect() as c:
-            return c.execute("""UPDATE items SET search_revision=search_revision+CASE WHEN text!=? THEN 1 ELSE 0 END,
+            row = c.execute('SELECT sales_lead_status FROM lead_status_snapshots WHERE lead_source_id=?',
+                            (lead_source_id,)).fetchone()
+            return row['sales_lead_status'] if row else ''
+
+    def apply_reference(self, ident, source_id, kind, assigned_resource, text, name, address,
+                        sales_lead_status='', lead_source_id='', *, expected_day=_UNSET,
+                        expected_work_order_key=_UNSET):
+        guard, parameters = '', []
+        if expected_day is not _UNSET:
+            guard += ' AND document_date IS ?'
+            parameters.append(expected_day)
+        if expected_work_order_key is not _UNSET:
+            guard += ' AND work_order_key=?'
+            parameters.append(expected_work_order_key)
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            if lead_source_id:
+                row = c.execute('SELECT sales_lead_status FROM lead_status_snapshots WHERE lead_source_id=?',
+                                (lead_source_id,)).fetchone()
+                sales_lead_status = row['sales_lead_status'] if row else ''
+            return c.execute("""UPDATE items SET
+                search_revision=search_revision+CASE WHEN text!=? OR sales_lead_status!=? THEN 1 ELSE 0 END,
                 assigned_service_resource=?,reference_kind=?,
-                reference_source_id=?,text=?,
+                reference_source_id=?,text=?,sales_lead_status=?,lead_source_id=?,
                 lead_name=CASE WHEN ?='' THEN lead_name ELSE ? END,
                 lead_key=CASE WHEN ?='' THEN lead_key ELSE ? END,
-                lead_status=CASE WHEN ?='' THEN lead_status ELSE 'printed' END,
+                lead_status=CASE WHEN ?='' OR lead_name=? THEN lead_status ELSE 'printed' END,
                 address=CASE WHEN ?='' THEN address ELSE ? END,
                 address_key=CASE WHEN ?='' THEN address_key ELSE ? END
                 WHERE id=? AND state IN ('ACTIVE','REVIEW')
-                AND (text!=? OR assigned_service_resource!=? OR reference_kind!=? OR reference_source_id!=?
-                     OR (?!='' AND lead_name!=?) OR (?!='' AND address!=?))""",
-                (text, assigned_resource, kind, source_id, text, name, name, name, lead_key(name), name,
+                AND (text!=? OR sales_lead_status!=? OR lead_source_id!=? OR assigned_service_resource!=? OR reference_kind!=? OR reference_source_id!=?
+                     OR (?!='' AND lead_name!=?) OR (?!='' AND address!=?))""" + guard,
+                (text, sales_lead_status, assigned_resource, kind, source_id, text, sales_lead_status, lead_source_id,
+                 name, name, name, lead_key(name), name, name,
                  address, address, address, address_key(address), ident,
-                 text, assigned_resource, kind, source_id, name, name, address, address)).rowcount
+                 text, sales_lead_status, lead_source_id, assigned_resource, kind, source_id, name, name, address, address,
+                 *parameters)).rowcount
+
+    def refresh_sales_lead_status(self, ident, *, expected_day=_UNSET, expected_work_order_key=_UNSET):
+        """Refresh a previously identified Lead without guessing a new association."""
+        guard, parameters = '', []
+        if expected_day is not _UNSET:
+            guard += ' AND document_date IS ?'
+            parameters.append(expected_day)
+        if expected_work_order_key is not _UNSET:
+            guard += ' AND work_order_key=?'
+            parameters.append(expected_work_order_key)
+        with self.connect() as c:
+            return c.execute("""UPDATE items SET sales_lead_status=coalesce(
+                    (SELECT sales_lead_status FROM lead_status_snapshots WHERE lead_source_id=items.lead_source_id),''),
+                search_revision=search_revision+1
+                WHERE id=? AND state IN ('ACTIVE','REVIEW') AND sales_lead_status!=coalesce(
+                    (SELECT sales_lead_status FROM lead_status_snapshots WHERE lead_source_id=items.lead_source_id),'')""" + guard,
+                (ident, *parameters)).rowcount
