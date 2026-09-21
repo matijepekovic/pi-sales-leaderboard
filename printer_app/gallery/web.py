@@ -12,7 +12,8 @@ from flask import (
 ACCESS_COOKIE = 'gallery_access'
 
 
-def blueprint(service, access, intake_reader=None, reprocessor=None, admin_session=None, https_access=None):
+def blueprint(service, access, intake_reader=None, reprocessor=None, admin_session=None, https_access=None,
+              refresh_references=None, reference_refresh_status=None):
     bp = Blueprint('gallery', __name__, url_prefix='/gallery')
 
     public_endpoints = {
@@ -215,6 +216,16 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
     def offline_index():
         require('offline')
         return jsonify(service.offline_index())
+
+    @bp.route('/api/references/refresh', methods=['GET', 'POST'])
+    def refresh_reference_data():
+        require('edit_identity')
+        callback = refresh_references if request.method == 'POST' else reference_refresh_status
+        if callback is None:
+            return jsonify(error='Rep refresh is unavailable.'), 503
+        state = callback()
+        pending = state.get('status') in ('queued', 'running')
+        return jsonify(state), 202 if request.method == 'POST' and pending else 200
 
     @bp.get('/queue')
     def queue_page():

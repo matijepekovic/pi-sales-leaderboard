@@ -682,6 +682,161 @@ def test_hourly_refresh_is_optional_without_gallery_sink(tmp_path):
     assert source.calls == []
 
 
+@pytest.fixture
+def manual_references(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 21, 10, 15))
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    records = (ModSheetRecord(source_id='source-1', work_order_number='0011',
+                              assigned_service_resources=('Current Rep',)),)
+    service = ModSheetReferenceDeliveryService(
+        repository, FakeSource([records, records]), FakeQueue(), FakeReferenceSink(),
+        'America/Los_Angeles', clock=clock,
+    )
+    return service, clock
+
+
+def test_manual_reference_requests_coalesce_concurrent_clicks_and_running_request(manual_references, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from uuid import UUID
+
+    service, clock = manual_references
+    assert service.refresh_status() == {}
+    assert not service.requested_due()
+    assert service.run_requested() == {}
+    barrier = Barrier(6)
+
+    def click(_):
+        barrier.wait()
+        return service.request_refresh()
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        requests = list(executor.map(click, range(6)))
+    queued = requests[0]
+    assert UUID(queued['id'])
+    assert all(request == queued for request in requests)
+    assert queued == {'id': queued['id'], 'status': 'queued', 'day': '2026-09-21', 'updated': clock()}
+    assert service.requested_due()
+    assert service.source.calls == service.reference_sink.published == []
+    source_records = service.source.records
+
+    def records(**filters):
+        running = service.refresh_status()
+        assert running['status'] == 'running'
+        assert running['id'] == queued['id']
+        assert service.request_refresh() == running
+        return source_records(**filters)
+
+    monkeypatch.setattr(service.source, 'records', records)
+    complete = service.run_requested()
+    assert complete['status'] == 'complete'
+    assert complete['id'] == queued['id']
+    assert complete['appointments'] == 1
+    assert complete['enriched'] == 0
+    assert service.refresh_status() == complete
+    assert not service.requested_due()
+    assert service.run_requested() == complete
+    assert len(service.source.calls) == 1
+    assert service.queue.enqueued == service.queue.immediate == []
+    assert service.repository.db.rows('SELECT id FROM jobs') == []
+
+
+@pytest.mark.parametrize(('automatic', 'hour'), [('hourly', 10), ('final', 23)])
+def test_manual_reference_refresh_forces_today_after_automatic_pull(manual_references, automatic, hour):
+    service, clock = manual_references
+    clock.value = _stamp(2026, 9, 21, hour, 15)
+    automatic_state = getattr(service, 'run_' + automatic)()
+    assert automatic_state['status'] == 'complete'
+
+    queued = service.request_refresh()
+    complete = service.run_requested()
+
+    assert complete['status'] == 'complete'
+    assert complete['id'] == queued['id']
+    assert len(service.source.calls) == 2
+    assert all(call == {
+        'start_date': '2026-09-21', 'end_date': '2026-09-21',
+        'market_segment': '', 'product_category': '', 'source_type': '',
+        'remove_canceled': False, 'remove_unconfirmed': False, 'limit': None,
+    } for call in service.source.calls)
+    assert getattr(service.repository, automatic + '_reference_state')() == automatic_state
+    assert not service.hourly_due()
+    assert not service.final_due()
+    assert service.reference_sink.pdf_payloads == [None, None]
+    assert service.queue.enqueued == service.queue.immediate == []
+    assert service.request_refresh()['id'] != complete['id']
+
+
+@pytest.mark.parametrize('status', ['queued', 'running'])
+def test_manual_reference_request_survives_restart_and_uses_execution_day(manual_references, status):
+    service, clock = manual_references
+    clock.value = _stamp(2026, 9, 21, 23, 59)
+    requested = service.request_refresh()
+    if status == 'running':
+        service.repository.save_reference_refresh_state(dict(requested, status='running'))
+    clock.value = _stamp(2026, 9, 22, 0)
+    restarted = ModSheetReferenceDeliveryService(
+        ModSheetAutomationRepository(Database(service.repository.db.path)),
+        service.source, service.queue, service.reference_sink, 'America/Los_Angeles', clock=clock,
+    )
+
+    assert restarted.refresh_status()['status'] == status
+    assert restarted.request_refresh()['id'] == requested['id']
+    assert restarted.requested_due()
+    complete = restarted.run_requested()
+
+    assert complete['id'] == requested['id']
+    assert complete['status'] == 'complete'
+    assert complete['day'] == '2026-09-22'
+    assert complete['updated'] == clock()
+    assert service.source.calls[0]['start_date'] == service.source.calls[0]['end_date'] == '2026-09-22'
+    assert service.reference_sink.published[0][0:2] == ('2026-09-22', 'final')
+    assert service.refresh_status() == complete
+    assert service.repository.hourly_reference_state() == service.repository.final_reference_state() == {}
+
+
+@pytest.mark.parametrize('failure', ['source', 'sink'])
+def test_manual_reference_failure_is_visible_and_new_click_retries(manual_references, failure):
+    service, _ = manual_references
+    if failure == 'source':
+        service.source.outcomes[0] = RuntimeError('Source unavailable')
+    else:
+        service.reference_sink.fail = True
+    requested = service.request_refresh()
+
+    failed = service.run_requested()
+
+    assert failed['id'] == requested['id']
+    assert failed['status'] == 'failed'
+    assert 'unavailable' in failed['error']
+    assert service.refresh_status() == failed
+    assert not service.requested_due()
+    assert service.run_requested() == failed
+    assert len(service.source.calls) == 1
+    service.reference_sink.fail = False
+    retried = service.request_refresh()
+    assert retried['id'] != failed['id']
+    assert retried['status'] == 'queued'
+    assert 'error' not in retried
+    assert service.run_requested()['status'] == 'complete'
+    assert len(service.source.calls) == 2
+    assert service.queue.enqueued == service.queue.immediate == []
+
+
+def test_manual_reference_request_without_sink_finishes_with_visible_error(manual_references):
+    service, _ = manual_references
+    service.reference_sink = None
+    requested = service.request_refresh()
+
+    failed = service.run_requested()
+
+    assert failed['id'] == requested['id']
+    assert failed['status'] == 'failed'
+    assert failed['error'] == 'Card refresh is unavailable.'
+    assert not service.requested_due()
+    assert service.source.calls == []
+
+
 def test_existing_cards_backfill_once_by_card_date_without_querying_tomorrow(tmp_path):
     clock = MutableClock(_stamp(2026, 9, 21, 12))
     db = Database(tmp_path / 'printer.db')

@@ -60,7 +60,8 @@ const network = {
   fetch:async url => {
     imageRequests.push(url);
     if (failDownload) throw new Error('temporary image failure');
-    return new Response('scanned image bytes', {headers:{'Content-Type':'image/png'}});
+    return new Response('scanned image bytes', {headers:{'Content-Type':'image/png',
+      'Vary':'Cookie', 'Cache-Control':'no-store'}});
   },
 };
 const offline = new GalleryOffline({network});
@@ -109,6 +110,10 @@ assert.equal(detailRequests.length,2,'Unchanged search revision does not refetch
 assert.equal(records.get('card').image_revision,'scan-2');
 assert.equal(await offline.imageUrl('card'),offline.imagePath('card','scan-2'));
 assert.equal(await (await cache.match(offline.imagePath('card','scan-2'))).text(),'scanned image bytes');
+const storedImage = await cache.match(offline.imagePath('card','scan-2'));
+assert.equal(storedImage.headers.get('Content-Type'),'image/png');
+assert.equal(storedImage.headers.get('Vary'),null,'Virtual images do not vary by the live session cookie');
+assert.equal(storedImage.headers.get('Cache-Control'),null,'Virtual images do not inherit no-store');
 assert.equal(await cache.match(offline.imagePath('card','morning-1')),undefined,'Obsolete image is removed');
 assert.equal((await offline.list({q:'Corrected Customer',field:'lead_name'})).total,1);
 assert.equal((await offline.list({q:'Old Customer',field:'lead_name'})).total,0);
@@ -122,6 +127,138 @@ console.log('offline lifecycle passed');
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'offline lifecycle passed' in result.stdout
+
+
+def test_offline_sync_coalesces_refresh_after_an_older_index_and_recovers_from_errors():
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node is required to execute the browser module regression.')
+    script = r'''
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const code = readFileSync(process.argv[2], 'utf8');
+const {GalleryOffline} = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+globalThis.window = {isSecureContext:true};
+const deferred = () => {
+  let resolve;
+  const promise = new Promise(done => {resolve = done;});
+  return {promise, resolve};
+};
+function setup(blocked = [1], failures = []) {
+  const gates = new Map(blocked.map(pass => [pass, {started:deferred(), release:deferred()}]));
+  const flags = {enabled:true, reachable:true};
+  const records = new Map();
+  const pending = [{id:'saved-note',item_id:'card',body:'Keep this note'}];
+  let indexes = 0;
+  let current = {id:'card',origin:'scan',lead_name:'Synthetic Customer',
+    assigned_service_resource:'Old Rep',search_revision:1,image_revision:'same-image',
+    document_date:'2026-09-21',notes_count:1,page:1,part:1};
+  const runtime = new GalleryOffline({network:{
+    isReachable:() => flags.reachable,
+    json:async url => {
+      if (url === '/gallery/api/offline/index') {
+        const pass = ++indexes, snapshot = structuredClone(current), gate = gates.get(pass);
+        if (gate) {gate.started.resolve(); await gate.release.promise;}
+        if (failures.includes(pass)) throw new Error('Synthetic index failure');
+        return {items:[snapshot]};
+      }
+      assert.equal(url, '/gallery/api/items/card');
+      return {...structuredClone(current),notes:structuredClone(pending)};
+    },
+  }});
+  runtime.subject = 'same-owner'; runtime.allowed = true;
+  runtime.isEnabled = () => flags.enabled;
+  runtime.flushPending = async () => {};
+  runtime.pendingNotes = async () => structuredClone(pending);
+  runtime.allCards = async () => [...records.values()].map(card => structuredClone(card));
+  runtime.card = async id => structuredClone(records.get(id));
+  runtime.putCard = async card => records.set(card.id, structuredClone(card));
+  runtime.imageCache = async () => ({match:async () => new Response('unchanged image')});
+  runtime.ensureImage = async () => runtime.imagePath('card','same-image');
+  runtime.removeCachedImages = async () => {};
+  runtime.imageUrl = async () => runtime.imagePath('card','same-image');
+  return {runtime, flags, pending, gates, records, indexes:() => indexes,
+    publish:rep => {current = {...current,assigned_service_resource:rep,search_revision:current.search_revision+1};}};
+}
+
+const refreshed = setup();
+const first = refreshed.runtime.sync();
+await refreshed.gates.get(1).started.promise;
+refreshed.publish('Fresh Rep');
+await Promise.all(Array.from({length:6}, () => refreshed.runtime.sync()));
+assert.equal(refreshed.indexes(),1,'Concurrent refreshes must not start overlapping index passes');
+refreshed.gates.get(1).release.resolve();
+await first;
+assert.equal(refreshed.indexes(),2,'Repeated refreshes coalesce into exactly one fresh index pass');
+assert.equal((await refreshed.runtime.list({q:'Fresh',field:'rep'})).total,1);
+assert.equal((await refreshed.runtime.list({q:'Old',field:'rep'})).total,0);
+assert.equal(refreshed.records.get('card').summary.search_revision,2);
+assert.equal(refreshed.records.get('card').image_revision,'same-image');
+assert.equal(refreshed.pending[0].body,'Keep this note');
+assert.equal(refreshed.runtime.subject,'same-owner');
+assert.equal(refreshed.runtime.syncing,false);
+
+// A later publication during the follow-up pass deserves its own fresh pass.
+const later = setup([1,2]);
+const laterSync = later.runtime.sync();
+await later.gates.get(1).started.promise;
+later.publish('Middle Rep');
+await later.runtime.sync();
+later.gates.get(1).release.resolve();
+await later.gates.get(2).started.promise;
+later.publish('Latest Rep');
+await Promise.all([later.runtime.sync(),later.runtime.sync()]);
+later.gates.get(2).release.resolve();
+await laterSync;
+assert.equal(later.indexes(),3);
+assert.equal((await later.runtime.list({q:'Latest',field:'rep'})).total,1);
+
+// Permission/network changes suppress the follow-up without leaving a stale latch.
+for (const guard of ['allowed','enabled','reachable']) {
+  const stopped = setup();
+  const running = stopped.runtime.sync();
+  await stopped.gates.get(1).started.promise;
+  await stopped.runtime.sync();
+  if (guard === 'allowed') stopped.runtime.allowed = false;
+  else stopped.flags[guard] = false;
+  stopped.gates.get(1).release.resolve();
+  await running;
+  assert.equal(stopped.indexes(),1);
+  assert.equal(stopped.runtime.syncing,false);
+  assert.equal(stopped.runtime.syncRequested,false);
+  stopped.runtime.allowed = stopped.flags.enabled = stopped.flags.reachable = true;
+  await stopped.runtime.sync();
+  assert.equal(stopped.indexes(),2,'A later allowed sync still runs normally');
+}
+
+const recovered = setup([1],[1]);
+const recovering = recovered.runtime.sync();
+await recovered.gates.get(1).started.promise;
+recovered.publish('Recovered Rep');
+await recovered.runtime.sync();
+recovered.gates.get(1).release.resolve();
+await recovering;
+assert.equal(recovered.indexes(),2,'The queued fresh pass survives an earlier index error');
+assert.equal((await recovered.runtime.list({q:'Recovered',field:'rep'})).total,1);
+
+const failed = setup([1],[2]);
+const failing = failed.runtime.sync();
+await failed.gates.get(1).started.promise;
+await failed.runtime.sync();
+failed.gates.get(1).release.resolve();
+await assert.rejects(failing,/Synthetic index failure/);
+assert.equal(failed.runtime.syncing,false);
+assert.equal(failed.runtime.syncRequested,false);
+await failed.runtime.sync();
+assert.equal(failed.indexes(),3,'A failed follow-up does not block the next sync');
+console.log('coalesced offline sync passed');
+'''
+    result = subprocess.run(
+        [node, '--input-type=module', '-', str(STATIC / 'gallery_offline.js')],
+        input=script, text=True, capture_output=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'coalesced offline sync passed' in result.stdout
 
 
 def test_orphaned_pending_note_does_not_block_later_notes_or_get_discarded():
@@ -222,7 +359,12 @@ def test_visible_morning_card_and_open_viewer_refresh_when_scan_revision_arrives
         with sync_playwright() as pw:
             browser = getattr(pw, engine).launch()
             try:
-                page = browser.new_page(viewport={'width':390, 'height':844}, is_mobile=True, has_touch=True)
+                # These synthetic responses exist only in page.route. A service
+                # worker would bypass them and query the deliberately empty DB.
+                context = browser.new_context(viewport={'width':390, 'height':844},
+                                              is_mobile=True, has_touch=True,
+                                              service_workers='block')
+                page = context.new_page()
                 page.route('**/gallery/api/items**', api_response)
                 page.route('**/gallery/image/**', lambda route: route.fulfill(
                     status=200, content_type='image/png', body=image,

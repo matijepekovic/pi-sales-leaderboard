@@ -35,6 +35,7 @@ jobs:
             printer_app/tests/test_gallery_morning_cards.py \
             printer_app/tests/test_gallery_morning_pdf.py \
             printer_app/tests/test_gallery_frontend_lifecycle.py \
+            printer_app/tests/test_gallery_refresh.py \
             printer_app/tests/test_gallery_search_fields.py \
             printer_app/tests/test_gallery_search_offline.py \
             printer_app/tests/test_gallery_search_browser.py \
