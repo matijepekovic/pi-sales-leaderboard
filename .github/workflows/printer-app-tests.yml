@@ -24,11 +24,17 @@ jobs:
           python -m pip install -r printer_app/requirements.txt pytest xlwt 'playwright>=1.55,<2' 'opencv-python-headless>=4.10,<5'
           python -m playwright install --with-deps chromium webkit
       - name: MOD Sheet source and automation regressions
+        env:
+          PRINTER_BROWSER_TESTS: '1'
         run: |
           python -m pytest \
             printer_app/tests/test_salesforce_sandbox.py \
             printer_app/tests/test_mod_sheet_automation.py \
             printer_app/tests/test_gallery_reference.py \
+            printer_app/tests/test_gallery_reference_text.py \
+            printer_app/tests/test_gallery_morning_cards.py \
+            printer_app/tests/test_gallery_morning_pdf.py \
+            printer_app/tests/test_gallery_frontend_lifecycle.py \
             printer_app/tests/test_core.py::test_printer_one_sided_uses_verified_konica_print_type \
             printer_app/tests/test_core.py::test_printer_does_not_invent_konica_binding_for_two_sided_modes \
             printer_app/tests/test_core.py::test_printer_high_priority_maps_to_cups_priority_100 \

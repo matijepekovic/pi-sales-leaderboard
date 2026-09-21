@@ -153,36 +153,72 @@ def work_order_key(value):
     return ''.join(re.findall(r'[a-z0-9]+', str(value or '').casefold()))
 
 
-REFERENCE_FIELD_BOUNDARY = (
-    r'(?=[ \t]*\||\s+(?:Work\s+Order\s+Number|'
-    r'Local\s+Scheduled\s+Start\s+Time|Canvass\s+Set\s+By|Lead\s+Name|'
-    r'Address|Phone|Power\s+Questions|Scheduled\s+Start|Assigned\s+Service\s+Resource|'
-    r'Set\s+By|T\s+Close|Work\s+Type|Product\s+Interest|Source|Sub\s+Source|'
-    r'Hover\s*/\s*Flir|Lead\s+Description|Start\s+Price|Final\s+Price|'
-    r'Deposit\s*/\s*Payment|MOD\s+Notes|Fin\s+Checklist|Bid\s+Sheets|Pictures|'
-    r'Dispo|Call\s+[12]|Need|90\s+Min|Want)\b[ \t]*[:;]?|$)'
+REFERENCE_FIELD_LABELS = (
+    'Work Order Number', 'Appointment Date', 'Local Scheduled Start Time', 'Canvass Set By', 'Lead Name',
+    'Address', 'Phone', 'Power Questions', 'Scheduled Start', 'Assigned Service Resource',
+    'Set By', 'T Close', 'Work Type', 'Product Interest', 'Source', 'Sub Source',
+    'Hover / Flir', 'Lead Description', 'Start Price', 'Final Price', 'Deposit/Payment',
+    'MOD Notes', 'Fin Checklist', 'Bid Sheets', 'Pictures', 'Dispo', 'Call 1', 'Call 2',
+    'Need', '90 Min', 'Want',
 )
 
 
-def authoritative_reference_text(text, lead_name='', address='', assigned_resource=''):
+def authoritative_reference_text(
+        text, lead_name='', address='', assigned_resource='', *, work_order_number='', appointment_date='',
+        local_scheduled_start_time='', canvass_set_by='', phone='', scheduled_start='',
+        set_by='', work_type='', product_interest='', source='', sub_source='',
+        lead_description=''):
     """Replace supplied reference fields while preserving unrelated recognized ink.
 
     Empty source fields leave OCR intact. Missing headers are appended, so the
-    same corrected identity and complete assigned-resource list reach search.
+    same normalized source details reach search. Read complete label spans once:
+    Source and Set By must never match inside Sub Source or Canvass Set By.
     """
-    source = str(text or '')
-    for label, value in (('Lead Name', lead_name), ('Address', address),
-                         ('Assigned Service Resource', assigned_resource)):
-        clean = ' '.join(str(value or '').split())
-        if not clean:
-            continue
-        replacement = label + ': ' + clean
-        pattern = (r'\b' + r'\s+'.join(label.split())
-                   + r'[ \t]*[:;]?[ \t]*[^|]*?' + REFERENCE_FIELD_BOUNDARY)
-        source, count = re.subn(pattern, lambda match: replacement, source, flags=re.I)
-        if not count:
-            source = source.rstrip() + ('\n' if source.strip() else '') + replacement
-    return source
+    values = {
+        label: ' '.join(str(value or '').split()) for label, value in (
+            ('Lead Name', lead_name), ('Address', address),
+            ('Assigned Service Resource', assigned_resource),
+            ('Work Order Number', work_order_number),
+            ('Appointment Date', appointment_date),
+            ('Local Scheduled Start Time', local_scheduled_start_time),
+            ('Canvass Set By', canvass_set_by), ('Phone', phone),
+            ('Scheduled Start', scheduled_start), ('Set By', set_by),
+            ('Work Type', work_type), ('Product Interest', product_interest),
+            ('Source', source), ('Sub Source', sub_source),
+            ('Lead Description', lead_description),
+        ) if str(value or '').strip()
+    }
+    original = str(text or '')
+    if not values:
+        return original
+    labels = {re.sub(r'\s+', '', label).casefold(): label for label in REFERENCE_FIELD_LABELS}
+    patterns = [r'\s*/\s*'.join(r'\s+'.join(part.split()) for part in label.split('/'))
+                for label in sorted(REFERENCE_FIELD_LABELS, key=len, reverse=True)]
+    pattern = r'\b(?P<label>' + '|'.join(patterns) + r')\b(?P<colon>[ \t]*[:;])?[ \t]*'
+    matches = [match for match in re.finditer(pattern, original, flags=re.I)
+               if match['colon'] or re.search(r'(?:^|[\n|])[ \t]*$', original[:match.start()])]
+    pieces = []
+    cursor = 0
+    seen = set()
+    for index, match in enumerate(matches):
+        label = labels[re.sub(r'\s+', '', match['label']).casefold()]
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(original)
+        pieces.append(original[cursor:match.start()])
+        if label in values:
+            # Keep the separator before the following label, including pipes,
+            # while removing wrapped old values rather than leaving stale search.
+            separator = re.search(r'[\s|]*$', original[match.end():end])[0]
+            pieces.append(label + ': ' + values[label] + separator)
+            seen.add(label)
+        else:
+            pieces.append(original[match.start():end])
+        cursor = end
+    pieces.append(original[cursor:])
+    result = ''.join(pieces)
+    for label, value in values.items():
+        if label not in seen:
+            result = result.rstrip() + ('\n' if result.strip() else '') + label + ': ' + value
+    return result
 
 
 def related_name_key(value):

@@ -310,7 +310,7 @@ def main():
                 repository,
                 source,
                 queue,
-                GalleryReferenceInbox(captured.data_dir),
+                GalleryReferenceInbox(captured.data_dir, captured.gallery),
                 captured.timezone,
             )
             return daily, references

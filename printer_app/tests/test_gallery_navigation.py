@@ -76,7 +76,8 @@ def test_compact_header_tall_first_card_related_back_and_pinned_notes(tmp_path,e
             expect(page.locator('#galleryNotesSheet')).not_to_be_visible()
             page.locator('#galleryBack').click()
             expect(page.locator('#galleryViewer')).to_be_visible()
-            expect(page.locator('#galleryFull')).to_have_attribute('src','/gallery/image/'+first)
+            expect(page.locator('#galleryFull')).to_have_attribute(
+                'src','/gallery/image/'+first+'?v='+service.item(first)['image_revision'])
             expect(page.locator('#galleryChooseDate')).to_have_text('September 16, 2026 ⌄')
             page.wait_for_function("(expected) => Math.abs(document.getElementById('galleryViewer').scrollTop-expected)<3",arg=viewer_scroll)
             page.go_back();expect(page.locator('#galleryViewer')).not_to_be_visible()

@@ -54,6 +54,8 @@ const imageBytes = card => {
 
 const offlineImagePath = (subject, id) =>
   '/gallery/offline-image/' + encodeURIComponent(subject) + '/' + encodeURIComponent(id);
+const imageRevision = card => String(card?.image_revision ?? card?.summary?.image_revision ?? '');
+const withRevision = (path, revision) => path + (revision ? '?v=' + encodeURIComponent(revision) : '');
 
 export class GalleryOffline {
   constructor({network, onStatus = () => {}} = {}) {
@@ -164,21 +166,21 @@ export class GalleryOffline {
     return caches.open(IMAGE_CACHE);
   }
 
-  imagePath(id) {
-    return offlineImagePath(this.subject, id);
+  imagePath(id, revision = '') {
+    return withRevision(offlineImagePath(this.subject, id), revision);
   }
 
-  async ensureImage(id, legacyCard = null) {
+  async ensureImage(id, legacyCard = null, revision = '') {
     const cache = await this.imageCache();
     if (!cache) throw new Error('Offline image cache is unavailable in this browser.');
-    const key = this.imagePath(id);
+    const key = this.imagePath(id, revision);
     const cached = await cache.match(key);
     if (cached) return key;
 
     try {
       // Image downloads get their own longer timeout; one slow card must not make
       // the whole Offline sync look complete while leaving later images missing.
-      const response = await this.network.fetch('/gallery/image/' + id, {timeoutMs:20000});
+      const response = await this.network.fetch(withRevision('/gallery/image/' + id, revision), {timeoutMs:20000});
       if (!response.ok) throw new Error('Could not download a work-order image.');
       const clone = response.clone();
       const probe = await clone.blob();
@@ -186,7 +188,8 @@ export class GalleryOffline {
       await cache.put(key, response);
       return key;
     } catch (error) {
-      const migrated = await this.migrateLegacyImage(id, legacyCard);
+      const migrated = imageRevision(legacyCard) === revision
+        ? await this.migrateLegacyImage(id, legacyCard) : '';
       if (migrated) return migrated;
       throw error;
     }
@@ -195,7 +198,7 @@ export class GalleryOffline {
   async migrateLegacyImage(id, card) {
     const cache = await this.imageCache();
     if (!cache) return '';
-    const key = this.imagePath(id);
+    const key = this.imagePath(id, imageRevision(card));
     if (await cache.match(key)) return key;
 
     let blob = null;
@@ -231,6 +234,30 @@ export class GalleryOffline {
     await this.open();
     const tx = this.db.transaction('cards', 'readonly');
     return requestResult(tx.objectStore('cards').getAll());
+  }
+
+  async removeCachedImages(id, keep = '') {
+    const cache = await this.imageCache();
+    if (!cache) return;
+    const path = this.imagePath(id);
+    for (const request of await cache.keys()) {
+      const url = new URL(request.url, 'https://offline.invalid');
+      if (url.pathname === path && url.pathname + url.search !== keep) await cache.delete(request);
+    }
+    if (this.urls.has(id)) {
+      URL.revokeObjectURL(this.urls.get(id));
+      this.urls.delete(id);
+    }
+  }
+
+  async removeMorningCard(id) {
+    // Pending notes stay queued independently; an absent morning placeholder
+    // must not remain visible as a phantom work order on this phone.
+    await this.open();
+    const tx = this.db.transaction('cards', 'readwrite');
+    tx.objectStore('cards').delete(id);
+    await transactionDone(tx);
+    await this.removeCachedImages(id);
   }
 
   async pendingNotes() {
@@ -271,6 +298,7 @@ export class GalleryOffline {
         await this.refreshDetail(note.item_id);
       } catch (error) {
         if (error.status === 401 || error.status === 403 || error.status === 400) throw error;
+        if (error.status === 404) continue;
         break;
       }
     }
@@ -290,18 +318,26 @@ export class GalleryOffline {
       this.onStatus('Updating offline cards…');
       await this.flushPending();
       const index = await this.json('/gallery/api/offline/index');
+      if (!Array.isArray(index.items)) throw new Error('Offline card index was incomplete.');
       let downloaded = 0, missingImages = 0;
-      for (const summary of index.items || []) {
+      const indexed = new Set(index.items.map(summary => summary.id));
+      for (const saved of await this.allCards()) {
+        if (saved.summary?.origin === 'morning' && !indexed.has(saved.id)) await this.removeMorningCard(saved.id);
+      }
+      for (const summary of index.items) {
         const saved = await this.card(summary.id);
         let detail = saved?.detail;
         const notesChanged = !saved || (saved.summary?.notes_count ?? -1) !== summary.notes_count;
+        const searchChanged = (saved?.detail?.search_revision ?? saved?.summary?.search_revision ?? 0) !==
+          (summary.search_revision ?? 0);
+        const revision = String(summary.image_revision ?? '');
 
         let imageReady = false;
         try {
           const cache = await this.imageCache();
-          const key = this.imagePath(summary.id);
+          const key = this.imagePath(summary.id, revision);
           const hadImage = Boolean(cache && await cache.match(key));
-          imageReady = Boolean(await this.ensureImage(summary.id, saved));
+          imageReady = Boolean(await this.ensureImage(summary.id, saved, revision));
           if (imageReady && !hadImage) downloaded++;
         } catch (_) {
           // Keep syncing metadata and later images. This card will retry on the
@@ -309,7 +345,7 @@ export class GalleryOffline {
           missingImages++;
         }
 
-        if (!detail || notesChanged) detail = await this.json('/gallery/api/items/' + summary.id);
+        if (!detail || notesChanged || searchChanged) detail = await this.json('/gallery/api/items/' + summary.id);
         else detail = {...detail, ...summary};
 
         if (imageReady) {
@@ -319,8 +355,10 @@ export class GalleryOffline {
             id:summary.id,
             summary,
             detail,
+            image_revision:revision,
             saved_at:Date.now(),
           });
+          await this.removeCachedImages(summary.id, this.imagePath(summary.id, revision));
         } else {
           // Preserve any legacy image bytes until a Cache Storage copy succeeds.
           await this.putCard({
@@ -328,6 +366,7 @@ export class GalleryOffline {
             id:summary.id,
             summary,
             detail,
+            image_revision:imageRevision(saved),
             saved_at:Date.now(),
           });
         }
@@ -352,13 +391,13 @@ export class GalleryOffline {
   }
 
   async imageUrl(id) {
+    const card = await this.card(id);
     const cache = await this.imageCache();
-    const key = this.imagePath(id);
+    const key = this.imagePath(id, imageRevision(card));
     if (cache && await cache.match(key)) return key;
 
     // An old install can still self-migrate readable IndexedDB image bytes while
     // already away from Stats. If that fails, the next live sync downloads it.
-    const card = await this.card(id);
     const migrated = await this.migrateLegacyImage(id, card);
     if (migrated) return migrated;
 

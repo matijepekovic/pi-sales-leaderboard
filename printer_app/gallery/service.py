@@ -32,6 +32,17 @@ class GalleryService:
                 self.repository.enqueue(ident, filename)
         return ident
 
+    def offer_morning(self, day, filename, payload, options):
+        """Stage the already-rendered morning PDF through the existing card worker."""
+        self.initialize()
+        day = checked_date(day)
+        ident = hashlib.sha256(b'morning:' + day.encode() + b':' + payload).hexdigest()
+        with self.files.lock():
+            if not self.repository.imported(ident):
+                self.files.stage(ident, payload, options.max_mb)
+                self.repository.enqueue(ident, filename, origin='morning', reference_day=day)
+        return ident
+
     def search(self, query, offset, document_date=''):
         self.initialize()
         return self.repository.list_items(search_expression(query), max(0, min(offset, 1000000)),
@@ -58,7 +69,7 @@ class GalleryService:
         return {key: row[key] for key in (
             'id','filename','page','part','document_date','date_status','bytes',
             'lead_name','lead_status','address','work_order_number',
-            'assigned_service_resource','notes_count'
+            'assigned_service_resource','notes_count','origin','image_revision','search_revision'
         )}
 
     def related(self, ident, offset=0, document_date=''):
@@ -159,6 +170,7 @@ class GalleryService:
     def expire(self, days, timezone):
         self.initialize()
         today = datetime.now(ZoneInfo(timezone)).date()
+        self._remove_morning_cards()  # Finish any interrupted scan reconciliation.
         cutoff = (today - timedelta(days=days)).isoformat()
         for ident in self.repository.expiring(cutoff):
             self.files.remove('crops', ident)
@@ -175,21 +187,44 @@ class GalleryService:
                     self.files.remove(category, ident)
 
     def publish(self, job, manifest, directory):
-        items = []
+        items = {}
+        identities = {}
+        origin = job.get('origin', 'scan')
         for entry in manifest['items']:
-            ident = hashlib.sha256(f"{job['id']}:{entry['page']}:{entry['part']}".encode()).hexdigest()
+            revision = hashlib.sha256(f"{job['id']}:{entry['page']}:{entry['part']}".encode()).hexdigest()
+            day = job.get('reference_day') if origin == 'morning' else entry['document_date']
+            number = printed_work_order_number(entry['text'])
+            if origin == 'morning' and day and self.repository.scans_received(day):
+                continue
+            key = (day, work_order_key(number))
+            existing = self.repository.card_for_work_order(day, number)
+            if origin == 'morning' and existing:
+                continue
+            ident = existing['id'] if existing else identities.get(key, revision) if all(key) else revision
+            if all(key):
+                identities[key] = ident
+            text = entry['text']
+            lead_text = entry.get('lead_text', '')
+            _, reference = self._reference_for(day, number)
+            if reference:
+                # Typed identity comes from the normalized source; the image is the scan.
+                text = self._reference_text(text, reference, day, include_resources=False)
+                if reference.get('lead_name'):
+                    lead_text = 'Lead Name: ' + reference['lead_name']
             self.files.publish(directory / entry['file'], ident)
-            items.append(dict(id=ident, import_id=job['id'], filename=job['filename'],
-                page=entry['page'], part=entry['part'], bytes=entry['bytes'], text=entry['text'],
-                document_date=entry['document_date'], date_status=entry['date_status'], created=time.time(),
-                lead_text=entry.get('lead_text', ''), recognition_revision=1 if 'lead_text' in entry and entry['text'].strip() else 0))
+            items[ident] = dict(id=ident, import_id=job['id'], filename=job['filename'],
+                page=entry['page'], part=entry['part'], bytes=entry['bytes'], text=text,
+                document_date=day, date_status='reference' if origin == 'morning' else entry['date_status'], created=time.time(),
+                lead_text=lead_text, recognition_revision=1 if 'lead_text' in entry and entry['text'].strip() else 0,
+                origin=origin, image_revision=revision, replace_existing=bool(existing), require_identity=True)
         warnings = manifest.get('warnings', [])
         if manifest.get('skipped'):
             warnings.append('No recognized form boxes on pages: ' + ', '.join(map(str, manifest['skipped'])))
-        self.repository.finish(job['id'], items, '; '.join(warnings))
+        self.repository.finish(job['id'], list(items.values()), '; '.join(warnings))
+        self._remove_morning_cards()
         # Reference enrichment is optional. With no matching reference snapshot,
         # these calls are no-ops and Gallery behaves exactly as before.
-        for item in items:
+        for item in items.values():
             self._enrich_reference_item(item['id'])
         self.files.remove('spool', job['id'])
         self.files.remove('work', job['id'])
@@ -211,32 +246,57 @@ class GalleryService:
         matches = [row for row in references if row.get('work_order_key') == work]
         return matches[0] if len(matches) == 1 else None
 
+    def _reference_for(self, day, number):
+        if not day or not work_order_key(number):
+            return '', None
+        for kind in ('final', 'morning'):
+            _, references = self.repository.reference_snapshot(day, kind)
+            match = self._match_reference({'work_order_number': number}, references)
+            if match is not None:
+                return kind, match
+            if any(row.get('work_order_key') == work_order_key(number) for row in references):
+                return '', None  # An ambiguous final match must not fall back to older data.
+        return '', None
+
+    @staticmethod
+    def _resource_names(reference):
+        names = {}
+        for value in reference.get('assigned_service_resources') or ():
+            clean = ' '.join(str(value or '').split())
+            if clean:
+                names.setdefault(clean.casefold(), clean)
+        return ', '.join(names.values())
+
+    @classmethod
+    def _reference_text(cls, text, reference, day, *, include_resources=True):
+        fields = {key: reference.get(key, '') for key in (
+            'phone', 'product_interest', 'work_type', 'source', 'sub_source', 'set_by',
+            'canvass_set_by', 'lead_description', 'local_scheduled_start_time', 'scheduled_start')}
+        return authoritative_reference_text(
+            text, reference.get('lead_name', ''), reference.get('address', ''),
+            cls._resource_names(reference) if include_resources else '', appointment_date=day, **fields)
+
+    def _remove_morning_cards(self):
+        for ident in self.repository.retired_morning_cards():
+            self.files.remove('crops', ident)
+            self.repository.forget(ident)
+
     def _enrich_reference_item(self, ident):
         item = self.repository.reference_item(ident)
         if not item or not item.get('document_date'):
             return False
-        snapshot, references = self.repository.reference_snapshot(
-            item['document_date'], 'final'
-        )
-        if snapshot is None:
-            return False
-        match = self._match_reference(item, references)
+        kind, match = self._reference_for(item['document_date'], item['work_order_number'])
         if match is None:
             return False
 
-        resources = {}
-        for value in match.get('assigned_service_resources') or ():
-            clean = ' '.join(str(value or '').split())
-            if clean:
-                resources.setdefault(clean.casefold(), clean)
-        assigned = ', '.join(resources.values())
+        assigned = self._resource_names(match) if kind == 'final' else ''
         name = ' '.join(str(match.get('lead_name') or '').split())
         address = ' '.join(str(match.get('address') or '').split())
-        text = authoritative_reference_text(item.get('text', ''), name, address, assigned)
+        text = self._reference_text(item.get('text', ''), match, item['document_date'], include_resources=kind == 'final')
         return bool(self.repository.apply_reference(
             ident,
             match.get('source_id', ''),
-            'final',
+            kind,
             assigned or item.get('assigned_service_resource', ''),
             text,
             name,
@@ -269,7 +329,7 @@ class GalleryService:
             raise ValueError('Unknown Gallery reference snapshot kind.')
         normalized = [self._reference_record(record) for record in records]
         self.repository.replace_reference_snapshot(day, kind, normalized, captured)
-        changed = self.enrich_reference_day(day) if kind == 'final' else 0
+        changed = self.enrich_reference_day(day)
         return dict(day=day, kind=kind, count=len(normalized), enriched=changed)
 
     def queue(self, state='', offset=0, limit=25):

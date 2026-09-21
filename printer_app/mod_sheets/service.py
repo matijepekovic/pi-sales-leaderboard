@@ -244,13 +244,6 @@ class DailyModSheetService:
                 limit=1000,
             ))
             finished = self.clock()
-            if records:
-                # Persist the exact morning source snapshot now. It is delivered
-                # to the optional reference sink only after the print job is
-                # confirmed PRINTED.
-                self.repository.save_morning_reference(
-                    occurrence.day, records, finished
-                )
             if not records:
                 log.info('Daily MOD Sheet: no appointments for %s', occurrence.day)
                 return self._state(
@@ -267,6 +260,11 @@ class DailyModSheetService:
                 self.data_dir,
                 f'MOD-Sheet-{occurrence.day}.pdf',
                 payload,
+            )
+            # Keep the exact rendered document with its normalized source snapshot.
+            # Delivery waits until the linked print job is confirmed PRINTED.
+            self.repository.save_morning_reference(
+                occurrence.day, records, finished, pdf_path=target
             )
             pages = (len(records) + 2) // 3
             job_id, created = self.queue.enqueue_generated_pdf(
@@ -340,14 +338,18 @@ class ModSheetReferenceDeliveryService:
             if not job or job.get('status') != 'PRINTED':
                 continue
             try:
+                document = {}
+                if entry.get('pdf_path'):
+                    document['pdf_payload'] = Path(entry['pdf_path']).read_bytes()
                 self.reference_sink.publish(
                     entry['day'],
                     'morning',
                     entry['records'],
                     entry['captured_at'],
+                    **document,
                 )
             except Exception:
-                # Reference delivery is enrichment only. Never turn a Gallery
+                # Gallery delivery is optional. Never turn a Gallery
                 # failure into a printer-worker failure.
                 log.warning('Morning MOD reference delivery failed; printing is unaffected.')
                 continue
