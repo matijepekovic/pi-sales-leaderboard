@@ -67,11 +67,15 @@ class GalleryOptions:
                     GALLERY_MAX_MB=str(self.max_mb), GALLERY_CROPS_PER_DAY=str(self.crops_per_day))
 
 
-def search_expression(query):
+def search_expression(query, field=None):
+    columns = {'rep': 'assigned_service_resource', 'lead_name': 'lead_name', 'address': 'address'}
+    if field is not None and field not in columns:
+        raise ValueError('Choose Rep, Lead name, or Address.')
     # Literal words/phrases only: never expose FTS operators or SQL to browser input.
     words = re.findall(r'"([^"\n]+)"|(\w+)', query[:300], flags=re.UNICODE)
-    return ' AND '.join('"' + (phrase or word).replace('"', '""') + '"' + ('' if phrase else '*')
-                        for phrase, word in words[:20])
+    expression = ' AND '.join('"' + (phrase or word).replace('"', '""') + '"' + ('' if phrase else '*')
+                              for phrase, word in words[:20])
+    return f'{columns[field]} : ({expression})' if expression and field is not None else expression
 
 
 def checked_date(value):

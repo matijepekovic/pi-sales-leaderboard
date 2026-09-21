@@ -331,7 +331,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
     def items():
         require('browse')
         return jsonify(service.search(request.args.get('q', ''), int(request.args.get('offset', '0')),
-                                      request.args.get('date', '')))
+                                      request.args.get('date', ''), field=request.args.get('field', 'lead_name')))
 
     @bp.get('/api/summary')
     def summary():

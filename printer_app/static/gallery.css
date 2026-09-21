@@ -79,6 +79,12 @@ body:has(dialog[open]){overflow:hidden}
 .search-sheet{min-height:300px}
 #gallerySearch input{border:0;background:#eeeef2}
 #gallerySearch button{width:100%}
+.gallery-search-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;min-width:0;margin:20px 0 16px;padding:4px;border:0;border-radius:12px;background:#eeeef2}
+.gallery-search-fields label{position:relative;min-width:0;margin:0;cursor:pointer}
+#gallerySearch .gallery-search-fields input{position:absolute;opacity:0;width:1px;height:1px;padding:0;margin:0;overflow:hidden}
+.gallery-search-fields span{display:flex;align-items:center;justify-content:center;min-height:44px;padding:8px 4px;border-radius:9px;text-align:center;font-size:14px;line-height:1.2;font-weight:600}
+.gallery-search-fields input:checked+span{background:#fff;color:var(--accent);box-shadow:0 1px 5px #0002}
+.gallery-search-fields input:focus-visible+span{outline:3px solid var(--accent);outline-offset:1px}
 
 @media(min-width:760px){
 #galleryMain{padding-left:24px;padding-right:24px}

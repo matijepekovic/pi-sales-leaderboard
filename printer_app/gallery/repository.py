@@ -147,16 +147,17 @@ class GalleryRepository:
             c.execute('CREATE INDEX IF NOT EXISTS gallery_items_lead ON items(state,lead_key,document_date)')
             c.execute('CREATE INDEX IF NOT EXISTS gallery_items_address ON items(state,address_key,document_date)')
             c.execute('CREATE INDEX IF NOT EXISTS gallery_items_work_order ON items(state,work_order_key,document_date)')
-            if 'lead_name' not in {row['name'] for row in c.execute('PRAGMA table_info(search)')}:
+            search_columns = {row['name'] for row in c.execute('PRAGMA table_info(search)')}
+            if not {'lead_name', 'address', 'assigned_service_resource'} <= search_columns:
                 # Replace the one search index, not a parallel implementation.
                 for event in ('insert', 'delete', 'update'):
                     c.execute('DROP TRIGGER IF EXISTS gallery_' + event)
                 c.execute('DROP TABLE search')
-                c.execute("""CREATE VIRTUAL TABLE search USING fts5(text,notes_text,filename,lead_name,
+                c.execute("""CREATE VIRTUAL TABLE search USING fts5(text,notes_text,filename,lead_name,address,assigned_service_resource,
                     content='items',content_rowid='rowid',
                     tokenize='unicode61 remove_diacritics 2',prefix='2 3 4')""")
-                add = 'INSERT INTO search(rowid,text,notes_text,filename,lead_name) VALUES(new.rowid,new.text,new.notes_text,new.filename,new.lead_name);'
-                remove = "INSERT INTO search(search,rowid,text,notes_text,filename,lead_name) VALUES('delete',old.rowid,old.text,old.notes_text,old.filename,old.lead_name);"
+                add = 'INSERT INTO search(rowid,text,notes_text,filename,lead_name,address,assigned_service_resource) VALUES(new.rowid,new.text,new.notes_text,new.filename,new.lead_name,new.address,new.assigned_service_resource);'
+                remove = "INSERT INTO search(search,rowid,text,notes_text,filename,lead_name,address,assigned_service_resource) VALUES('delete',old.rowid,old.text,old.notes_text,old.filename,old.lead_name,old.address,old.assigned_service_resource);"
                 for event, statement in (('insert', add), ('delete', remove), ('update', remove + add)):
                     c.execute(f'CREATE TRIGGER gallery_{event} AFTER {event} ON items BEGIN {statement} END')
                 c.execute("INSERT INTO search(search) VALUES('rebuild')")

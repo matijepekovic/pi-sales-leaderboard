@@ -35,6 +35,9 @@ jobs:
             printer_app/tests/test_gallery_morning_cards.py \
             printer_app/tests/test_gallery_morning_pdf.py \
             printer_app/tests/test_gallery_frontend_lifecycle.py \
+            printer_app/tests/test_gallery_search_fields.py \
+            printer_app/tests/test_gallery_search_offline.py \
+            printer_app/tests/test_gallery_search_browser.py \
             printer_app/tests/test_core.py::test_printer_one_sided_uses_verified_konica_print_type \
             printer_app/tests/test_core.py::test_printer_does_not_invent_konica_binding_for_two_sided_modes \
             printer_app/tests/test_core.py::test_printer_high_priority_maps_to_cups_priority_100 \
