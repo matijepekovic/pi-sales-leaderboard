@@ -171,10 +171,11 @@ def authoritative_reference_text(
         text, lead_name='', address='', assigned_resource='', *, work_order_number='', appointment_date='',
         local_scheduled_start_time='', canvass_set_by='', phone='', scheduled_start='',
         set_by='', work_type='', product_interest='', source='', sub_source='',
-        lead_description=''):
+        lead_description='', clear_assigned_resource=False):
     """Replace supplied reference fields while preserving unrelated recognized ink.
 
-    Empty source fields leave OCR intact. Missing headers are appended, so the
+    Empty source fields leave OCR intact unless assignments are explicitly
+    cleared by an authoritative lookup. Missing headers are appended, so the
     same normalized source details reach search. Read complete label spans once:
     Source and Set By must never match inside Sub Source or Canvass Set By.
     """
@@ -192,6 +193,8 @@ def authoritative_reference_text(
             ('Lead Description', lead_description),
         ) if str(value or '').strip()
     }
+    if clear_assigned_resource:
+        values.setdefault('Assigned Service Resource', '')
     original = str(text or '')
     if not values:
         return original

@@ -118,6 +118,110 @@ def test_morning_pdf_creates_searchable_cards_with_saved_source_data(gallery):
     assert gallery.files.path('crops', item['id']).read_bytes() == b'morning:1'
 
 
+def test_hourly_reference_refresh_preserves_cards_and_enriches_later_scans(gallery, tmp_path):
+    from types import SimpleNamespace
+
+    from printer_app.db import Database
+    from printer_app.gallery.bootstrap import GalleryReferenceInbox
+    from printer_app.mod_sheets.repository import ModSheetAutomationRepository
+    from printer_app.mod_sheets.service import ModSheetReferenceDeliveryService
+
+    _publish(gallery, 'today-morning', [('0011', DAY), ('0022', DAY)], morning=True)
+    _publish(gallery, 'earlier-morning', [('0011', EARLIER_DAY)], morning=True, day=EARLIER_DAY)
+    matched_id, absent_id = _row(gallery, '0011')['id'], _row(gallery, '0022')['id']
+    earlier_id = _row(gallery, '0011', EARLIER_DAY)['id']
+    gallery.note(matched_id, 'f' * 32, 'Reviewer', 'Keep this manual note')
+    before, earlier = gallery.item(matched_id), gallery.item(earlier_id)
+    calls = []
+    current_records = [_record(), _record('0033', assigned_service_resources=('Cancelled Rep',))]
+    failure = [False]
+
+    def records(**filters):
+        calls.append(filters)
+        if failure[0]:
+            raise RuntimeError('Source unavailable')
+        return tuple(current_records)
+
+    zone = ZoneInfo('America/Los_Angeles')
+    now = [datetime(2026, 9, 21, 12, tzinfo=zone).timestamp()]
+    delivery = ModSheetReferenceDeliveryService(
+        ModSheetAutomationRepository(Database(tmp_path / 'printer.db')),
+        SimpleNamespace(records=records), object(), GalleryReferenceInbox(tmp_path),
+        'America/Los_Angeles', clock=lambda: now[0],
+    )
+
+    assert delivery.run_hourly()['enriched'] == 1
+    item = gallery.item(matched_id)
+    assert item['assigned_service_resource'] == 'First Resource, Second Resource'
+    assert gallery.search('Second Resource', 0, field='rep')['total'] == 1
+    assert item['notes'] == before['notes']
+    assert item['image_revision'] == before['image_revision']
+    assert item['search_revision'] > before['search_revision']
+    assert gallery.files.path('crops', matched_id).read_bytes() == b'today-morning:1'
+    assert gallery.item(earlier_id) == earlier
+    assert gallery.item(absent_id) is not None
+    assert not gallery.repository.scans_received(DAY)
+    assert gallery.repository.claim() is None
+    assert gallery.search('', 0)['total'] == 3
+
+    now[0] = datetime(2026, 9, 21, 13, tzinfo=zone).timestamp()
+    failure[0] = True
+    assert delivery.run_hourly()['status'] == 'failed'
+    assert gallery.item(matched_id) == item
+    failure[0] = False
+    now[0] = datetime(2026, 9, 21, 14, tzinfo=zone).timestamp()
+    current_records[0] = _record(assigned_service_resources=())
+    assert delivery.run_hourly()['status'] == 'complete'
+    unassigned = gallery.item(matched_id)
+    assert unassigned['assigned_service_resource'] == ''
+    assert unassigned['notes'] == before['notes']
+    assert unassigned['image_revision'] == before['image_revision']
+    assert unassigned['search_revision'] > item['search_revision']
+    assert 'First Resource' not in unassigned['text']
+    assert 'Second Resource' not in unassigned['text']
+    for field in (None, 'rep'):
+        assert gallery.search('First Resource', 0, field=field)['total'] == 0
+        assert gallery.search('Second Resource', 0, field=field)['total'] == 0
+    offline = next(row for row in gallery.offline_index()['items'] if row['id'] == matched_id)
+    assert offline['assigned_service_resource'] == ''
+    assert offline['search_revision'] == unassigned['search_revision']
+
+    now[0] = datetime(2026, 9, 21, 15, tzinfo=zone).timestamp()
+    current_records[0] = _record(assigned_service_resources=('Changed Rep', 'Additional Rep'))
+    assert delivery.run_hourly()['status'] == 'complete'
+    assert gallery.item(matched_id)['assigned_service_resource'] == 'Changed Rep, Additional Rep'
+    assert gallery.search('Second Resource', 0, field='rep')['total'] == 0
+    assert gallery.search('Additional Rep', 0, field='rep')['total'] == 1
+    assert gallery.item(absent_id) is not None
+
+    now[0] = datetime(2026, 9, 21, 23, tzinfo=zone).timestamp()
+    current_records[0] = _record(assigned_service_resources=('Final Rep',))
+    assert delivery.run_final()['status'] == 'complete'
+    final_snapshot = gallery.repository.reference_snapshot(DAY, 'final')
+    now[0] = datetime(2026, 9, 22, 0, tzinfo=zone).timestamp()
+    current_records[:] = [_record(assigned_service_resources=('Next Day Rep',))]
+    assert delivery.run_hourly()['status'] == 'complete'
+    assert gallery.repository.reference_snapshot(DAY, 'final') == final_snapshot
+    assert gallery.item(matched_id)['assigned_service_resource'] == 'Final Rep'
+    assert gallery.item(earlier_id) == earlier
+    assert not gallery.repository.scans_received(DAY)
+    assert gallery.repository.claim() is None
+
+    # Only an actual scan reconciles the morning cards. The prior day's final
+    # snapshot still supplies every resource when an appointment arrives later.
+    _publish(gallery, 'late-scan', [('0011', DAY), ('0033', DAY)])
+    assert gallery.item(matched_id)['assigned_service_resource'] == 'Final Rep'
+    assert gallery.item(matched_id)['notes'] == before['notes']
+    assert gallery.item(_row(gallery, '0033')['id'])['assigned_service_resource'] == 'Cancelled Rep'
+    assert gallery.item(absent_id) is None
+    assert gallery.item(earlier_id) == earlier
+    assert gallery.files.path('crops', matched_id).read_bytes() == b'late-scan:1'
+    assert gallery.repository.reference_snapshot(DAY, 'final') == final_snapshot
+    assert [call['start_date'] for call in calls] == [DAY, DAY, DAY, DAY, DAY, '2026-09-22']
+    assert all(call['end_date'] == call['start_date'] and not call['remove_canceled']
+               and not call['remove_unconfirmed'] and call['limit'] is None for call in calls)
+
+
 def test_scan_replaces_morning_image_in_place_and_preserves_saved_notes(gallery):
     gallery.publish_reference_snapshot(DAY, 'morning', [_record()], 1.0)
     _publish(gallery, 'morning', [('0011', DAY)], morning=True)
@@ -296,7 +400,7 @@ def test_scan_keeps_morning_identity_when_final_source_fields_are_blank(gallery)
     assert gallery.files.path('crops', ident).read_bytes() == b'scan-after-blank-final:1'
 
 
-def test_scan_keeps_previous_source_identity_and_resources_without_morning_snapshot(gallery):
+def test_scan_keeps_previous_source_identity_and_clears_confirmed_unassigned_resources(gallery):
     gallery.publish_reference_snapshot(DAY, 'final', [_record()], 1.0)
     _publish(gallery, 'original-scan', [('0011', DAY)])
     ident = _row(gallery, '0011')['id']
@@ -310,10 +414,10 @@ def test_scan_keeps_previous_source_identity_and_resources_without_morning_snaps
 
     assert item['lead_name'] == before['lead_name'] == 'Reference Customer'
     assert item['address'] == before['address'] == '101 Reference Street'
-    assert item['assigned_service_resource'] == before['assigned_service_resource']
-    for query in ('Reference Customer', 'Reference Street', 'First Resource', 'Second Resource'):
+    assert item['assigned_service_resource'] == ''
+    for query in ('Reference Customer', 'Reference Street'):
         assert gallery.search(query, 0)['total'] == 1, query
-    for query in ('Printed Customer', 'Printed Street'):
+    for query in ('Printed Customer', 'Printed Street', 'First Resource', 'Second Resource'):
         assert gallery.search(query, 0)['total'] == 0, query
     assert item['image_revision'] != before['image_revision']
     assert gallery.files.path('crops', ident).read_bytes() == b'replacement-scan:1'

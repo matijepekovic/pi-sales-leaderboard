@@ -329,9 +329,13 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             # Gallery access must never become a dependency of printer control.
             full_invite, full_url = '', url_for('gallery.page')
             gallery_error = gallery_error or 'Gallery access is unavailable. Printing is separate.'
-        return render_template('control.html', state=state(), jobs=[timing.describe_job(j) for j in db.recent()],
+        return render_template('control.html', state=state(), activity=timing.activity(),
             gallery_queue=gallery_queue, gallery_intake=gallery_intake, gallery_error=gallery_error,
             gallery_full_token=full_invite, gallery_full_url=full_url)
+
+    @app.get('/api/print-activity')
+    def print_activity():
+        return render_template('print_activity.html', activity=dispatch().activity())
 
     def settings_view(error='', code=200):
         try:
@@ -398,7 +402,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
 
     @app.get('/jobs/<int:job_id>')
     def job_detail(job_id):
-        job = db.job(job_id)
+        job = print_queue.activity_job(job_id)
         if not job:
             abort(404)
         outputs = db.rows('SELECT * FROM outputs WHERE job_id=? ORDER BY id', (job_id,))

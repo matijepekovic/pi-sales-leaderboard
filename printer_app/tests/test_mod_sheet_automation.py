@@ -550,6 +550,138 @@ def test_references_run_on_weekends_without_print_settings(tmp_path):
     assert sink.published[0][0] == '2026-09-20'
 
 
+def test_hourly_references_use_today_without_print_filters_and_survive_restart(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 20, 10, 15))
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    records = (ModSheetRecord(
+        source_id='source-1', work_order_number='0011',
+        assigned_service_resources=('First Rep', 'Second Rep'),
+    ),)
+    source, queue, sink = FakeSource([records, records]), FakeQueue(), FakeReferenceSink()
+    delivery = ModSheetReferenceDeliveryService(
+        repository, source, queue, sink, 'America/Los_Angeles', clock=clock,
+    )
+
+    assert delivery.hourly_due()
+    assert delivery.run_hourly()['status'] == 'complete'
+    assert source.calls == [{
+        'start_date': '2026-09-20', 'end_date': '2026-09-20',
+        'market_segment': '', 'product_category': '', 'source_type': '',
+        'remove_canceled': False, 'remove_unconfirmed': False, 'limit': None,
+    }]
+    assert sink.published[0][0:3] == ('2026-09-20', 'final', records)
+    assert sink.pdf_payloads == [None]
+    restarted = ModSheetReferenceDeliveryService(
+        ModSheetAutomationRepository(Database(tmp_path / 'printer.db')),
+        source, queue, sink, 'America/Los_Angeles', clock=clock,
+    )
+    clock.value = _stamp(2026, 9, 20, 10, 59)
+    assert not restarted.hourly_due()
+    restarted.run_hourly()
+    assert len(source.calls) == 1
+    clock.value = _stamp(2026, 9, 20, 11)
+    assert restarted.hourly_due()
+    assert restarted.run_hourly()['status'] == 'complete'
+    assert len(source.calls) == 2
+    assert queue.enqueued == queue.immediate == []
+    assert repository.state() == repository.final_reference_state() == {}
+
+
+def test_hourly_refresh_leaves_11_pm_to_final_and_rolls_over_to_current_day(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 21, 22, 59))
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    source, sink = FakeSource([(), (), ()]), FakeReferenceSink()
+    delivery = ModSheetReferenceDeliveryService(
+        repository, source, FakeQueue(), sink, 'America/Los_Angeles', clock=clock,
+    )
+
+    assert delivery.run_hourly()['status'] == 'complete'
+    clock.value = _stamp(2026, 9, 21, 23)
+    assert delivery.final_due()
+    assert not delivery.hourly_due()
+    assert delivery.run_final()['status'] == 'complete'
+    clock.value = _stamp(2026, 9, 21, 23, 59)
+    delivery.run_hourly()
+    assert len(source.calls) == 2
+    assert not delivery.final_due()
+    clock.value = _stamp(2026, 9, 22, 0)
+    assert delivery.hourly_due()
+    assert delivery.run_hourly()['day'] == '2026-09-22'
+    assert [call['start_date'] for call in source.calls] == [
+        '2026-09-21', '2026-09-21', '2026-09-22',
+    ]
+    assert all(call['end_date'] == call['start_date'] for call in source.calls)
+    assert repository.final_reference_state()['day'] == '2026-09-21'
+
+
+@pytest.mark.parametrize('failure', ['source', 'sink'])
+def test_failed_hourly_refresh_retries_next_hour_without_blocking_final(tmp_path, failure):
+    clock = MutableClock(_stamp(2026, 9, 21, 21))
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    source = FakeSource([RuntimeError('unavailable') if failure == 'source' else (), ()])
+    sink = FakeReferenceSink(fail=failure == 'sink')
+    delivery = ModSheetReferenceDeliveryService(
+        repository, source, FakeQueue(), sink, 'America/Los_Angeles', clock=clock,
+    )
+
+    assert delivery.run_hourly()['status'] == 'failed'
+    assert not delivery.hourly_due()
+    delivery.run_hourly()
+    assert len(source.calls) == 1
+    clock.value = _stamp(2026, 9, 21, 22)
+    sink.fail = False
+    assert delivery.hourly_due()
+    assert delivery.run_hourly()['status'] == 'complete'
+    assert delivery.final_due(_stamp(2026, 9, 21, 23))
+
+
+def test_interrupted_hourly_refresh_is_recovered_in_same_hour(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 21, 10, 30))
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    repository.save_hourly_reference_state({
+        'day': '2026-09-21', 'hour': '2026-09-21T10-07:00', 'status': 'running',
+    })
+    source = FakeSource([()])
+    delivery = ModSheetReferenceDeliveryService(
+        repository, source, FakeQueue(), FakeReferenceSink(), 'America/Los_Angeles', clock=clock,
+    )
+
+    assert delivery.hourly_due()
+    assert delivery.run_hourly()['status'] == 'complete'
+    assert not delivery.hourly_due()
+    assert len(source.calls) == 1
+
+
+def test_hourly_refresh_distinguishes_repeated_daylight_saving_hour(tmp_path):
+    clock = MutableClock(datetime(2026, 11, 1, 1, tzinfo=ZONE, fold=0).timestamp())
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    source = FakeSource([(), ()])
+    delivery = ModSheetReferenceDeliveryService(
+        repository, source, FakeQueue(), FakeReferenceSink(), 'America/Los_Angeles', clock=clock,
+    )
+
+    first = delivery.run_hourly()
+    clock.value = datetime(2026, 11, 1, 1, tzinfo=ZONE, fold=1).timestamp()
+    assert delivery.hourly_due()
+    second = delivery.run_hourly()
+    assert first['hour'] != second['hour']
+    assert first['day'] == second['day'] == '2026-11-01'
+    assert len(source.calls) == 2
+
+
+def test_hourly_refresh_is_optional_without_gallery_sink(tmp_path):
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    source = FakeSource([])
+    delivery = ModSheetReferenceDeliveryService(
+        repository, source, FakeQueue(), None, 'America/Los_Angeles',
+        clock=MutableClock(_stamp(2026, 9, 21, 12)),
+    )
+
+    assert not delivery.hourly_due()
+    assert delivery.run_hourly() == {}
+    assert source.calls == []
+
+
 def test_existing_cards_backfill_once_by_card_date_without_querying_tomorrow(tmp_path):
     clock = MutableClock(_stamp(2026, 9, 21, 12))
     db = Database(tmp_path / 'printer.db')

@@ -291,9 +291,11 @@ class GalleryService:
         fields = {key: reference.get(key, '') for key in (
             'phone', 'product_interest', 'work_type', 'source', 'sub_source', 'set_by',
             'canvass_set_by', 'lead_description', 'local_scheduled_start_time', 'scheduled_start')}
+        assigned = cls._resource_names(reference) if include_resources else ''
         return authoritative_reference_text(
             text, reference.get('lead_name', ''), reference.get('address', ''),
-            cls._resource_names(reference) if include_resources else '', appointment_date=day, **fields)
+            assigned, appointment_date=day,
+            clear_assigned_resource=include_resources and not assigned, **fields)
 
     def _remove_morning_cards(self):
         for ident in self.repository.retired_morning_cards():
@@ -320,7 +322,7 @@ class GalleryService:
             ident,
             match.get('source_id', ''),
             kind,
-            assigned or item.get('assigned_service_resource', ''),
+            assigned if kind == 'final' else item.get('assigned_service_resource', ''),
             text,
             name,
             address,
