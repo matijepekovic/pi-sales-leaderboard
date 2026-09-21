@@ -6,8 +6,11 @@ nav{display:flex;gap:20px}nav a{color:#fff;text-decoration:none;font-size:14px}.
 
 .danger{color:#a43131;border-color:#d7a2a2;background:#fff5f5}
 
+.print-activity-counts{display:flex;flex-wrap:wrap;gap:10px 24px;font-size:14px}.print-activity-counts strong{font-size:23px}.print-activity-job{display:grid;grid-template-columns:minmax(180px,1fr) minmax(200px,1fr) 170px;gap:16px;padding:18px 0;border-top:1px solid #e2e8ee}.print-activity-name{overflow-wrap:anywhere}.print-activity-job p{margin:6px 0}.print-result{display:inline-block;padding:5px 9px;border-radius:6px;background:#edf1f5;font-size:14px}.print-result.good{background:#e6f4eb}.print-result.error{background:#fcecec}.print-result.pending{color:#785600;background:#fff3d4}.print-result-detail{font-size:14px;overflow-wrap:anywhere}.print-activity-actions{display:flex;flex-direction:column;gap:12px;font-size:14px}#printActivityLive{text-align:right}#printActivity{scroll-margin-top:16px}@media(max-width:750px){.print-activity-job{grid-template-columns:1fr;gap:6px}.print-activity-actions{flex-direction:row;flex-wrap:wrap}.print-activity-counts{gap:8px 16px}#printActivityLive{max-width:150px;margin-top:0}header nav{flex-wrap:wrap}}
+
 .gallery-job-name-form{display:flex;align-items:flex-end;gap:10px;margin:12px 0 18px;max-width:620px}
 .gallery-job-name-form label{flex:1;margin:0}
 .gallery-job-name-form input{margin-top:6px}
 .gallery-job-name-form button{flex:none;margin-bottom:0}
 @media(max-width:750px){.gallery-job-name-form{align-items:stretch;flex-direction:column}.gallery-job-name-form button{width:100%}}
+.print-activity-list{max-height:520px;overflow:auto;overscroll-behavior:contain;padding-right:8px}@media(max-width:750px){.print-activity-list{max-height:460px}}

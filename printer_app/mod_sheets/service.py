@@ -373,6 +373,44 @@ class ModSheetReferenceDeliveryService:
         # interrupted run once the worker is back; completed/failed days stay terminal.
         return state.get('status') == 'running'
 
+    def hourly_due(self, stamp=None):
+        now = self.clock() if stamp is None else float(stamp)
+        if self.reference_sink is None:
+            return False
+        local = datetime.fromtimestamp(now, self.zone)
+        # The final pull owns 11 PM, so hourly refreshes cannot replace it.
+        if (local.hour, local.minute) >= (self.FINAL_HOUR, self.FINAL_MINUTE):
+            return False
+        state = self.repository.hourly_reference_state()
+        # Include the UTC offset to distinguish the repeated hour when DST ends.
+        if state.get('hour') != local.isoformat(timespec='hours'):
+            return True
+        return state.get('status') == 'running'
+
+    def run_hourly(self, stamp=None):
+        now = self.clock() if stamp is None else float(stamp)
+        if not self.hourly_due(now):
+            return self.repository.hourly_reference_state()
+        local = datetime.fromtimestamp(now, self.zone)
+        state = {
+            'day': local.date().isoformat(),
+            'hour': local.isoformat(timespec='hours'),
+            'status': 'running',
+            'updated': now,
+        }
+        self.repository.save_hourly_reference_state(state)
+        try:
+            result = self._publish_day(state['day'])
+            return self.repository.save_hourly_reference_state(dict(
+                state, status='complete', updated=self.clock(), **result,
+            ))
+        except Exception as exc:
+            detail = str(exc).strip()[:500] or type(exc).__name__
+            log.warning('Hourly MOD reference pull failed; keeping saved card references.')
+            return self.repository.save_hourly_reference_state(dict(
+                state, status='failed', updated=self.clock(), error=detail,
+            ))
+
     def _publish_day(self, day):
         # Card references cover the whole day, independently of print filters.
         records = tuple(self.source.records(
@@ -385,6 +423,8 @@ class ModSheetReferenceDeliveryService:
             remove_unconfirmed=False,
             limit=None,
         ))
+        # Both refreshes and the nightly pull update the saved authoritative
+        # snapshot, which also supplies assignments for scans uploaded later.
         result = self.reference_sink.publish(day, 'final', records, self.clock())
         enriched = int(result.get('enriched', 0)) if isinstance(result, dict) else 0
         return {'appointments': len(records), 'enriched': enriched}

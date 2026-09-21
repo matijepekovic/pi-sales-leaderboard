@@ -12,6 +12,7 @@ STATE_KEY = 'daily_mod_sheet_state'
 TEST_STATE_KEY = 'daily_mod_sheet_test_state'
 REFERENCE_OUTBOX_KEY = 'daily_mod_sheet_reference_outbox'
 FINAL_REFERENCE_STATE_KEY = 'daily_mod_sheet_final_reference_state'
+HOURLY_REFERENCE_STATE_KEY = 'daily_mod_sheet_hourly_reference_state'
 REFERENCE_BACKFILL_KEY = 'gallery_reference_backfill_complete'
 REFERENCE_BACKFILL_CONTRACT = 'full-card-search'
 
@@ -117,6 +118,15 @@ class ModSheetAutomationRepository:
     def save_final_reference_state(self, state):
         value = dict(state)
         self.db.set(FINAL_REFERENCE_STATE_KEY, value)
+        return value
+
+    def hourly_reference_state(self):
+        value = self.db.get(HOURLY_REFERENCE_STATE_KEY, {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def save_hourly_reference_state(self, state):
+        value = dict(state)
+        self.db.set(HOURLY_REFERENCE_STATE_KEY, value)
         return value
 
     def reference_backfill_complete(self):

@@ -191,7 +191,7 @@ def test_reference_corrects_identity_and_all_resource_search_without_changing_ca
     assert image.read_bytes() == b'original-card-image'
 
 
-def test_empty_source_identity_and_resources_keep_existing_values(tmp_path):
+def test_empty_source_identity_is_preserved_but_confirmed_unassignment_clears_old_rep(tmp_path):
     gallery = _gallery(tmp_path)
     ident = 'card-source-blanks'
     _card(gallery, ident, '0007')
@@ -204,9 +204,29 @@ def test_empty_source_identity_and_resources_keep_existing_values(tmp_path):
     )
     item = gallery.item(ident)
 
-    for key in ('lead_name', 'lead_key', 'lead_status', 'address', 'address_key',
-                'assigned_service_resource', 'text'):
+    for key in ('lead_name', 'lead_key', 'lead_status', 'address', 'address_key'):
         assert item[key] == before[key]
+    assert item['assigned_service_resource'] == ''
+    assert 'Known Rep' not in item['text']
+    assert 'Lead Description: KEEP THIS INK' in item['text']
+    assert gallery.search('Known Rep', 0)['total'] == 0
+    assert gallery.search('Known Rep', 0, field='rep')['total'] == 0
+
+
+def test_missing_final_match_and_empty_morning_resources_preserve_saved_reps(tmp_path):
+    gallery = _gallery(tmp_path)
+    ident = 'card-no-current-assignment-match'
+    _card(gallery, ident, '0007')
+    gallery.publish_reference_snapshot(DAY, 'final', [_reference('0007', 'Known Rep')], 100.0)
+    before = gallery.item(ident)
+
+    gallery.publish_reference_snapshot(DAY, 'final', [_reference('different-order', '')], 101.0)
+    assert gallery.item(ident) == before
+    gallery.publish_reference_snapshot(DAY, 'morning', [_reference('0007', '')], 102.0)
+    item = gallery.item(ident)
+    assert item['assigned_service_resource'] == 'Known Rep'
+    assert 'Assigned Service Resource: Known Rep' in item['text']
+    assert gallery.search('Known Rep', 0, field='rep')['total'] == 1
 
 
 @pytest.mark.parametrize('work_order', ['', 'unmatched-order'])
@@ -265,10 +285,11 @@ def test_existing_review_card_gets_reference_identity_without_being_approved(tmp
     assert gallery.item(ident) is None
 
 
-def test_normal_import_uses_cached_reference_for_identity_and_search(tmp_path):
+@pytest.mark.parametrize('resource', ['Cached Rep', ''])
+def test_normal_import_uses_cached_reference_for_identity_and_search(tmp_path, resource):
     gallery = _gallery(tmp_path)
     gallery.publish_reference_snapshot(
-        DAY, 'final', [_reference('0011', 'Cached Rep', lead='Cached Customer', address='101 Cachedstreet')],
+        DAY, 'final', [_reference('0011', resource, lead='Cached Customer', address='101 Cachedstreet')],
         100.0,
     )
     job = {'id': 'c' * 64, 'filename': 'cards.pdf'}
@@ -279,7 +300,7 @@ def test_normal_import_uses_cached_reference_for_identity_and_search(tmp_path):
     manifest = {'items': [{
         'file': 'card.png', 'page': 1, 'part': 1, 'bytes': 21,
         'text': 'Work Order Number: 0011\nLead Name: Oldname\nAddress: Oldstreet\n'
-                'Local Scheduled Start Time: 9/21/2026 10:30 AM',
+                'Local Scheduled Start Time: 9/21/2026 10:30 AM\nAssigned Service Resource: Old Rep',
         'lead_text': 'Lead Name: Oldname', 'document_date': DAY, 'date_status': 'printed',
     }]}
 
@@ -289,9 +310,11 @@ def test_normal_import_uses_cached_reference_for_identity_and_search(tmp_path):
 
     assert item['lead_name'] == 'Cached Customer'
     assert item['address'] == '101 Cachedstreet'
-    assert item['assigned_service_resource'] == 'Cached Rep'
+    assert item['assigned_service_resource'] == resource
     assert gallery.search('Cachedstreet', 0)['total'] == 1
     assert gallery.search('Oldname', 0)['total'] == 0
+    assert gallery.search('Old Rep', 0)['total'] == 0
+    assert gallery.search('Old Rep', 0, field='rep')['total'] == 0
     assert '10:30 AM' in item['text']
     assert gallery.files.path('crops', ident).read_bytes() == b'original-import-image'
 
@@ -326,6 +349,23 @@ def test_reference_text_replaces_flattened_fields_and_preserves_times():
     assert 'Scheduled Start: 9/21/2026 10:30 AM Assigned Service Resource: Rep One, Rep Two' in text
     assert 'Wrongname' not in text and 'Wrongstreet' not in text and 'Wrongrep' not in text
     assert text.endswith('Set By: KEEP SETTER\nLead Description: KEEP NOTES')
+
+
+@pytest.mark.parametrize('separator', ['\n', ' | '])
+def test_confirmed_unassignment_clears_wrapped_rep_text_without_changing_other_fields(separator):
+    from printer_app.gallery.policy import authoritative_reference_text
+
+    original = separator.join([
+        'Lead Name: Keep Customer',
+        'Assigned Service Resource: Former Rep\nSecond Former Rep',
+        'Set By: Keep Setter', 'Lead Description: Keep Notes',
+    ])
+
+    assert authoritative_reference_text(original) == original
+    assert authoritative_reference_text(original, clear_assigned_resource=True) == separator.join([
+        'Lead Name: Keep Customer', 'Assigned Service Resource: ',
+        'Set By: Keep Setter', 'Lead Description: Keep Notes',
+    ])
 
 
 @pytest.mark.parametrize('separator', ['\n', ' | '])

@@ -402,6 +402,8 @@ def main():
                     mod_references.deliver_printed_mornings()
                     if mod_reference_task is None and mod_references.final_due(now):
                         mod_reference_task = background.submit(mod_references.run_final)
+                    elif mod_reference_task is None and mod_references.hourly_due(now):
+                        mod_reference_task = background.submit(mod_references.run_hourly)
                     if daily_mod_task is None and daily_mod_sheets.due(now):
                         daily_mod_task = background.submit(daily_mod_sheets.run_due)
                     if cleaning is None and polling is None and retention.due(now):

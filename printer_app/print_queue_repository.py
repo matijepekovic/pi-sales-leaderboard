@@ -10,6 +10,14 @@ STATE_KEY = 'print_schedule_state'
 UNFINISHED = "('PREPARING','READY','SUBMITTED','PRINTER ERROR')"
 IMMEDIATE_JOB_PREFIX = 'print-job-now:'
 IMMEDIATE_JOB_STATUSES = ('READY', 'SUBMITTED', 'PRINTER ERROR')
+ACTIVITY_SELECT = '''SELECT j.*,a.filename,a.path AS source_path,m.subject,m.sender,
+    (SELECT o.path FROM outputs o WHERE o.job_id=j.id AND o.role='Generated PDF'
+     ORDER BY o.id LIMIT 1) AS generated_filename,
+    p.request_id AS attempt_request_id,p.state AS attempt_state,
+    (SELECT s.message FROM steps s WHERE s.job_id=j.id ORDER BY s.id DESC LIMIT 1) AS latest_step
+    FROM jobs j LEFT JOIN attachments a ON a.id=j.attachment_id
+    LEFT JOIN processed_messages m ON m.id=a.message_id
+    LEFT JOIN print_attempts p ON p.id=(SELECT MAX(id) FROM print_attempts WHERE job_id=j.id)'''
 
 
 class PrintQueueRepository:
@@ -119,6 +127,21 @@ class PrintQueueRepository:
             'SELECT id,status,error,page_count,completed,updated FROM jobs WHERE id=?',
             (int(job_id),),
         )
+
+    def recent_activity(self, limit: int = 200) -> list[dict]:
+        """Recently changed jobs retain receipts after they leave the waiting queue."""
+        return self.db.rows(ACTIVITY_SELECT + ' ORDER BY j.updated DESC,j.id DESC LIMIT ?',
+                            (max(1, min(int(limit), 200)),))
+
+    def activity_job(self, job_id: int) -> dict | None:
+        return self.db.one(ACTIVITY_SELECT + ' WHERE j.id=?', (job_id,))
+
+    def worker_heartbeat(self) -> float:
+        return float(self.db.get('worker_heartbeat', 0) or 0)
+
+    def last_report_printed(self):
+        row = self.db.one("SELECT MAX(completed) AS at FROM jobs WHERE status='PRINTED'")
+        return row['at']
 
     @staticmethod
     def _state(conn):

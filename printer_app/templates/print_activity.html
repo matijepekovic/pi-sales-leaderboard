@@ -1,0 +1,18 @@
+{% if not activity.worker_alive %}<p class="notice error" data-worker-warning>The printer worker is offline. Results below are the last known status; new printing and confirmations are paused.</p>{% endif %}
+<div class="print-activity-counts">
+<span><strong>{{ activity.counts.printed }}</strong> printed</span>
+<span><strong>{{ activity.counts.pending }}</strong> waiting / sent</span>
+<span><strong>{{ activity.counts.attention }}</strong> need attention</span>
+</div>
+<p class="muted">Last report printed: {{ activity.last_report_printed|localtime }}. Showing the latest {{ activity.jobs|length }} jobs, up to 200. Printed means the printer queue confirmed completion.</p>
+<div class="print-activity-list">
+{% for job in activity.jobs %}
+<article class="print-activity-job" data-job-id="{{ job.id }}">
+<div class="print-activity-name"><a href="{{ url_for('job_detail', job_id=job.id) }}"><strong>{{ job.display_name }}</strong></a><p class="muted">{{ job.display_source }}{% if job.substatus %} · {{ job.substatus }}{% endif %}{% if job.page_count is not none %} · {{ job.page_count }} page(s){% endif %}</p></div>
+<div><strong class="print-result {{ job.status_tone }}" data-print-status>{{ job.status_label }}</strong><p class="print-result-detail">{{ job.status_detail }}</p>
+{% if job.error %}<p class="error print-result-detail">{{ job.error }}</p>{% endif %}
+<p class="muted">{{ 'Completed' if job.completed else 'Updated' }} {{ (job.completed or job.updated)|localtime }}{% if job.receipt %}<br>Printer receipt: {{ job.receipt }}{% endif %}</p></div>
+<div class="print-activity-actions"><a href="{{ url_for('job_detail', job_id=job.id) }}">Preview &amp; log</a>{% if job.can_remove %}<a href="{{ url_for('remove_print_queue', attachment_id=job.attachment_id) }}">Remove from print queue</a>{% endif %}</div>
+</article>
+{% else %}<p>No print jobs yet. Collected email attachments appear below while they are being prepared.</p>{% endfor %}
+</div>
