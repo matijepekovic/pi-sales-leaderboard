@@ -1,0 +1,36 @@
+{
+  "cards": [
+    {"id":"rep-card","lead_name":"Morgan Rivera","address":"12 Cedar Avenue","assigned_service_resource":"José Smith, Taylor Reed","document_date":"2026-09-21","text":"Hiddenonly description. Work Order Number: 1001","notes_text":"Noteonly Oak"},
+    {"id":"lead-card","lead_name":"Taylor Reed","address":"500 Maple Road","assigned_service_resource":"Morgan Jones","document_date":"2026-09-21","text":"Hiddenonly description. Work Order Number: 1002","notes_text":"Noteonly Oak"},
+    {"id":"address-card","lead_name":"Sam O’Neil","address":"81 Taylor Street Apt 2","assigned_service_resource":"Alex Chen","document_date":"2026-09-20","text":"Hiddenonly description. Work Order Number: 1003","notes_text":"Noteonly Oak"}
+  ],
+  "cases": [
+    {"field":"rep","q":"Taylor","ids":["rep-card"]},
+    {"field":"lead_name","q":"Taylor","ids":["lead-card"]},
+    {"field":"address","q":"Taylor","ids":["address-card"]},
+    {"field":"rep","q":"SMI joSe","ids":["rep-card"]},
+    {"field":"rep","q":"ree TAY","ids":["rep-card"]},
+    {"field":"lead_name","q":"morg riv","ids":["rep-card"]},
+    {"field":"address","q":"12 ced","ids":["rep-card"]},
+    {"field":"address","q":"81 taylor st","ids":["address-card"]},
+    {"field":"lead_name","q":"O'Neil","ids":["address-card"]},
+    {"field":"rep","q":"\"Taylor Reed\"","ids":["rep-card"]},
+    {"field":"rep","q":"\"Tay Ree\"","ids":[]},
+    {"field":"rep","q":"jose_smi","ids":["rep-card"]},
+    {"field":"rep","q":"smi_jose","ids":[]},
+    {"field":"rep","q":"\"Smith Taylor\"","ids":["rep-card"]},
+    {"field":"rep","q":"\"Reed Taylor\"","ids":[]},
+    {"field":"rep","q":"Taylor Cedar","ids":[]},
+    {"field":"lead_name","q":"Taylor Maple","ids":[]},
+    {"field":"address","q":"Taylor Sam","ids":[]},
+    {"field":"rep","q":"Hiddenonly","ids":[]},
+    {"field":"lead_name","q":"Noteonly","ids":[]},
+    {"field":"address","q":"Hiddenonly","ids":[]},
+    {"field":"rep","q":"Taylor OR Morgan","ids":[]},
+    {"field":"rep","q":"Taylor","date":"2026-09-21","ids":["rep-card"]},
+    {"field":"rep","q":"Taylor","date":"2026-09-20","ids":[]},
+    {"field":"address","q":"Taylor","date":"2026-09-21","ids":[]},
+    {"field":"address","q":"Taylor","date":"2026-09-20","ids":["address-card"]},
+    {"field":"lead_name","q":"","ids":["address-card","lead-card","rep-card"]}
+  ]
+}

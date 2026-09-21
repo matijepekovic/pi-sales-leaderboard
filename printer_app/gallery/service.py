@@ -46,9 +46,9 @@ class GalleryService:
                 self.repository.enqueue(ident, filename, origin='morning', reference_day=day)
         return ident
 
-    def search(self, query, offset, document_date=''):
+    def search(self, query, offset, document_date='', *, field=None):
         self.initialize()
-        return self.repository.list_items(search_expression(query), max(0, min(offset, 1000000)),
+        return self.repository.list_items(search_expression(query, field), max(0, min(offset, 1000000)),
                                           document_date=checked_date_filter(document_date))
 
     def offline_index(self):

@@ -5,6 +5,30 @@ const PAGE_SIZE = 24;
 const MODE_KEY = 'stats.gallery.accessMode';
 const SUBJECT_KEY = 'stats.gallery.offlineSubject';
 const IMAGE_CACHE = 'stats-gallery-images-v1';
+const SEARCH_COLUMNS = Object.freeze({
+  rep:'assigned_service_resource', lead_name:'lead_name', address:'address',
+});
+
+// Match unicode61's Unicode words and Latin accent folding, without broadening
+// selected-field search to notes, filenames, or arbitrary recognized text.
+const searchTokens = value => String(value ?? '')
+  .replace(/\p{Script=Latin}/gu, letter => letter.normalize('NFD').replace(/\p{M}/gu, ''))
+  .toLowerCase().replace(/[\u0300-\u036f]/g, '')
+  .replace(/[\u017f\u00b5\u03c2]/g, letter => ({'ſ':'s', 'µ':'μ', 'ς':'σ'})[letter])
+  .match(/[\p{L}\p{N}\p{Co}]+/gu) || [];
+
+const searchTerms = query => {
+  const limited = Array.from(String(query ?? '')).slice(0, 300).join('');
+  return [...limited.matchAll(/"([^"\n]+)"|([\p{L}\p{N}_]+)/gu)].slice(0, 20)
+    .map(match => ({words:searchTokens(match[1] ?? match[2]), prefix:match[1] === undefined}));
+};
+
+const matchesSearch = (value, terms) => {
+  const tokens = searchTokens(value);
+  return terms.every(({words, prefix}) => words.length && tokens.some((_, start) =>
+    words.every((word, index) => prefix && index === words.length - 1
+      ? tokens[start + index]?.startsWith(word) : tokens[start + index] === word)));
+};
 
 const identityKey = value =>
   String(value || '').normalize('NFKD').toLocaleLowerCase()
@@ -308,7 +332,11 @@ export class GalleryOffline {
     const card = await this.card(id);
     if (!card) return;
     const detail = await this.json('/gallery/api/items/' + id);
-    await this.putCard({...card, detail, summary:{...card.summary, notes_count:detail.notes.length}, saved_at:Date.now()});
+    const summary = {...card.summary, notes_count:detail.notes.length};
+    for (const column of Object.values(SEARCH_COLUMNS)) {
+      if (Object.prototype.hasOwnProperty.call(detail, column)) summary[column] = detail[column];
+    }
+    await this.putCard({...card, detail, summary, saved_at:Date.now()});
   }
 
   async sync() {
@@ -420,11 +448,13 @@ export class GalleryOffline {
     return {...card.detail, _offline_image_url:await this.imageUrl(id)};
   }
 
-  async list({q='', relatedId=null, date='', offset=0} = {}) {
+  async list({q='', field='lead_name', relatedId=null, date='', offset=0} = {}) {
+    if (!Object.prototype.hasOwnProperty.call(SEARCH_COLUMNS, field)) {
+      throw new Error('Choose Rep, Lead name, or Address.');
+    }
     if (!this.isEnabled()) return null;
-    let cards = await this.allCards();
+    let cards = [...await this.allCards()];
     if (!cards.length) return null;
-    const normalized = value => String(value || '').trim().toLocaleLowerCase();
     let relatedName = '', relatedAddress = '';
     if (relatedId) {
       const target = cards.find(card => card.id === relatedId);
@@ -439,13 +469,10 @@ export class GalleryOffline {
           (Boolean(address) && address === candidateAddress);
       }) : [];
     }
-    if (q.trim()) {
-      const needle = normalized(q);
-      cards = cards.filter(card => {
-        const detail = card.detail || {};
-        const notes = (detail.notes || []).map(note => note.author + ' ' + note.body).join(' ');
-        return normalized([detail.text, detail.filename, detail.lead_name, notes].join(' ')).includes(needle);
-      });
+    const terms = searchTerms(q);
+    if (terms.length) {
+      const column = SEARCH_COLUMNS[field];
+      cards = cards.filter(card => matchesSearch(card.summary?.[column] ?? card.detail?.[column] ?? '', terms));
     }
     cards.sort((a,b) => {
       const ad = a.summary?.document_date || '', bd = b.summary?.document_date || '';

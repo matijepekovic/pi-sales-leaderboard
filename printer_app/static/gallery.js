@@ -7,11 +7,18 @@ import { GalleryOffline } from './gallery_offline.js';
 'use strict';
 (() => {
   const el = id => document.getElementById(id);
+  const searchModes = {
+    rep:{label:'Rep', placeholder:'Enter a rep name…', subject:'rep names'},
+    lead_name:{label:'Lead name', placeholder:'Enter a lead name…', subject:'lead names'},
+    address:{label:'Address', placeholder:'Enter a street or address…', subject:'addresses'},
+  };
+  const checkedSearchField = value => Object.hasOwn(searchModes, value) ? value : 'lead_name';
   const initialView = history.state?.gallery?.view;
   let chooseLatest = !initialView;
   const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
   const cards = new Map(), groups = new Map(), drafts = new Map(), saving = new Set();
   let query = '', relatedId = null, selected = null, offset = 0, total = 0, dateFilter = '';
+  let searchField = 'lead_name';
   let generation = 0, detailGeneration = 0, loading = false, galleryDirty = false, actionPending = false, notesVersion = '', pendingDetails = 0;
   let access = null, offlineMode = false;
   let shareQrSessionId = '';
@@ -53,11 +60,11 @@ import { GalleryOffline } from './gallery_offline.js';
     const navBottom = document.querySelector('.gallery-date-nav').getBoundingClientRect().bottom;
     const anchor = [...el('galleryCards').querySelectorAll('.gallery-card')]
       .find(node => node.getBoundingClientRect().bottom > navBottom);
-    return {query, relatedId, dateFilter, count:cards.size, scroll:window.scrollY,
+    return {query, searchField, relatedId, dateFilter, count:cards.size, scroll:window.scrollY,
       anchor:anchor?.dataset.id, anchorTop:anchor?.getBoundingClientRect().top,
       selected:selected?.id, viewerScroll:el('galleryViewer').scrollTop,
       dialogs:[...document.querySelectorAll('dialog[open]')].map(node => node.id),
-      searchDraft:el('query').value};
+      searchDraft:el('query').value, searchDraftField:selectedSearchField()};
   }
   function showDialog(id, record = true) {
     if (record) navigation.save();
@@ -71,13 +78,15 @@ import { GalleryOffline } from './gallery_offline.js';
   async function restoreView(view) {
     if (!view) return;
     chooseLatest = false;
+    const restoredField = checkedSearchField(view.searchField);
     const reload = galleryDirty || query !== view.query || relatedId !== view.relatedId ||
-      dateFilter !== view.dateFilter || !cards.size;
+      dateFilter !== view.dateFilter || searchField !== restoredField || !cards.size;
     galleryDirty = false; detailGeneration++;
     closeDialogs();
     // Native close events must finish saving the old draft before opening a new sheet.
     await nextFrame();
     query = view.query || ''; relatedId = view.relatedId || null; dateFilter = view.dateFilter || '';
+    searchField = restoredField;
     dates.setFilter(dateFilter);
     if (reload) await load();
     while (cards.size < (view.count || 0) && offset < total) {
@@ -119,7 +128,11 @@ import { GalleryOffline } from './gallery_offline.js';
       else if (id === 'galleryDateSheet') dates.open();
       else if (id === 'galleryMenuSheet') openMenu(false);
       else if (id === 'galleryShareSheet' && shareCapability()) await openShare(false);
-      else if (id === 'gallerySearchSheet') { el('query').value = view.searchDraft || ''; showDialog(id, false); }
+      else if (id === 'gallerySearchSheet') {
+        el('query').value = view.searchDraft || '';
+        searchControls(view.searchDraftField || searchField);
+        showDialog(id, false);
+      }
       else if (id === 'galleryInfoSheet') { showDialog(id, false); summary(); }
     }
     actions();
@@ -330,7 +343,7 @@ import { GalleryOffline } from './gallery_offline.js';
     el('galleryDateMessage').textContent = '';
     const token = generation, start = offset, related = relatedId;
     loading = true; dates.busy(true); el('galleryCards').setAttribute('aria-busy', 'true'); el('galleryMore').disabled = true; el('galleryMessage').textContent = reset ? 'Loading cards…' : '';
-    const suffix = `&date=${encodeURIComponent(dateFilter)}`;
+    const suffix = `&date=${encodeURIComponent(dateFilter)}&field=${encodeURIComponent(searchField)}`;
     const url = (related ? `/gallery/api/items/${related}/related?offset=${start}` : `/gallery/api/items?q=${encodeURIComponent(query)}&offset=${start}`) + suffix;
     try {
       let data;
@@ -339,7 +352,7 @@ import { GalleryOffline } from './gallery_offline.js';
         data = await api(url);
         offlineMode = false;
       } catch (networkError) {
-        data = await offline.list({q:query, relatedId:related, date:dateFilter, offset:start});
+        data = await offline.list({q:query, field:searchField, relatedId:related, date:dateFilter, offset:start});
         if (!data) throw networkError;
         offlineMode = true;
         el('galleryOfflineStatus').textContent = 'Stats unreachable · showing cards stored on this phone';
@@ -359,7 +372,8 @@ import { GalleryOffline } from './gallery_offline.js';
       el('galleryCount').textContent = `${total} ${total === 1 ? 'work order' : 'work orders'} · ${dateFilter ? (dateFilter === 'undated' ? 'dates need checking' : dateLabel(dateFilter)) : 'newest dates first'}`;
       el('galleryFilter').hidden = !related && !query;
       el('galleryFilterTitle').textContent = related ? (data.lead_name || data.address || 'Related work orders') : query;
-      el('galleryFilterHint').textContent = related ? 'Name letters within 1 character or exact address · all retained dates' : 'Matching printed text and shared notes';
+      el('galleryFilterHint').textContent = related ? 'Name letters within 1 character or exact address · all retained dates' :
+        'Matching ' + searchModes[searchField].subject + ' only';
       el('galleryMore').hidden = offset >= total;
       el('galleryEmpty').hidden = total !== 0;
       el('galleryEmpty').textContent = dateFilter ? 'No work orders on this date. Choose another date.' : query || related ? 'No matching work orders.' : 'No work orders yet.';
@@ -515,8 +529,27 @@ import { GalleryOffline } from './gallery_offline.js';
     showDialog('galleryMenuSheet', record);
   }
   function openSearch() {
-    el('query').value = query; showDialog('gallerySearchSheet'); el('query').focus();
+    el('query').value = query; searchControls(searchField);
+    showDialog('gallerySearchSheet'); el('query').focus();
   }
+  function selectedSearchField() {
+    return checkedSearchField(el('gallerySearch').querySelector('input[name="field"]:checked')?.value);
+  }
+  function searchControls(field) {
+    const mode = checkedSearchField(field), info = searchModes[mode];
+    el('gallerySearch').querySelectorAll('input[name="field"]').forEach(input => {
+      input.checked = input.value === mode;
+    });
+    el('galleryQueryLabel').textContent = info.label;
+    el('query').placeholder = info.placeholder;
+    el('gallerySearchHint').textContent = 'Searches ' + info.subject +
+      ' only. Use the start of each word, or quotes for a phrase.';
+    el('gallerySearchSubmit').textContent = dateFilter ? 'Search this date' : 'Search cards';
+  }
+  el('gallerySearchFields').addEventListener('change', () => {
+    searchControls(selectedSearchField()); navigation.save();
+  });
+  el('query').addEventListener('input', () => navigation.save());
   document.querySelectorAll('[data-action]').forEach(button => {
     button.addEventListener('click', () => ({related, notes:openNotes, search:openSearch})[button.dataset.action]());
   });
@@ -634,7 +667,8 @@ import { GalleryOffline } from './gallery_offline.js';
   };
   el('galleryRefresh').onclick = () => { galleryDirty = true; requestClose('galleryInfoSheet'); };
   el('gallerySearch').onsubmit = async event => {
-    event.preventDefault(); navigation.save(); chooseLatest = false; query = el('query').value.trim(); relatedId = null; selected = null; dateFilter = ''; dates.setFilter('');
+    event.preventDefault(); navigation.save(); chooseLatest = false;
+    query = el('query').value.trim(); searchField = selectedSearchField(); relatedId = null; selected = null;
     closeDialogs(); actions(); await load(); window.scrollTo({top:0}); navigation.save(); updateNavigation();
   };
   el('galleryNote').addEventListener('input', draft);

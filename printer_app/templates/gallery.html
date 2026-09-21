@@ -115,8 +115,17 @@
 
 <dialog id="gallerySearchSheet" class="gallery-sheet search-sheet" aria-labelledby="gallerySearchTitle">
 <div class="sheet-handle" aria-hidden="true"></div><div class="sheet-heading"><h2 id="gallerySearchTitle">Search</h2><button type="button" class="circle-button" data-close="gallerySearchSheet" aria-label="Close search">×</button></div>
-<form id="gallerySearch" role="search"><label for="query">Anything printed on a card or in shared notes</label><input id="query" type="search" maxlength="300" placeholder="Name, word, phrase, phone number…" enterkeyhint="search"><button type="submit" class="primary">Search all cards</button></form>
-<p class="muted">Search covers all recognized printed text. Unclear printing and handwriting may not be recognized.</p>
+<form id="gallerySearch" role="search">
+<fieldset id="gallerySearchFields" class="gallery-search-fields"><legend class="sr-only">Search field</legend>
+<label><input type="radio" name="field" value="rep"><span>Rep</span></label>
+<label><input type="radio" name="field" value="lead_name" checked><span>Lead name</span></label>
+<label><input type="radio" name="field" value="address"><span>Address</span></label>
+</fieldset>
+<label id="galleryQueryLabel" for="query">Lead name</label>
+<input id="query" type="search" maxlength="300" placeholder="Enter a lead name…" enterkeyhint="search" aria-describedby="gallerySearchHint">
+<button id="gallerySearchSubmit" type="submit" class="primary">Search cards</button>
+</form>
+<p id="gallerySearchHint" class="muted">Searches lead names only. Use the start of each word, or quotes for a phrase.</p>
 </dialog>
 
 <dialog id="galleryInfoSheet" class="gallery-sheet" aria-labelledby="galleryInfoTitle">

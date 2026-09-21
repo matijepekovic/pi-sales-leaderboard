@@ -38,14 +38,14 @@ const cache = {
   delete:async input => images.delete(key(input)),
 };
 const morning = {id:'card',origin:'morning',image_revision:'morning-1',search_revision:1,
-  notes_count:0,document_date:'2026-09-21',page:1,part:1};
+  notes_count:0,document_date:'2026-09-21',page:1,part:1,lead_name:'Old Customer'};
 records.set('card', {id:'card',summary:clone(morning),detail:{...morning,text:'old details',notes:[]},
   image_revision:'morning-1'});
 records.set('retained-scan', {id:'retained-scan',summary:{id:'retained-scan',origin:'scan'},
   detail:{id:'retained-scan',notes:[]}});
 records.set('removed-morning', {id:'removed-morning',summary:{id:'removed-morning',origin:'morning'},
   detail:{id:'removed-morning',notes:[]}});
-let summaries = [{...morning,search_revision:2}];
+let summaries = [{...morning,search_revision:2,lead_name:'Updated Customer'}];
 let responseDetail = {...summaries[0],text:'new phone product and assigned reps',notes:[]};
 let failDownload = false;
 const detailRequests = [], imageRequests = [];
@@ -84,14 +84,15 @@ await cache.put(offline.imagePath('retained-scan'),new Response('retained scan b
 await offline.sync();
 assert.equal(detailRequests.length,1,'Search changes refresh detail even with unchanged note count');
 assert.equal(imageRequests.length,0,'Unchanged images do not download again');
-assert.equal((await offline.list({q:'new phone product'})).total,1);
+assert.equal((await offline.list({q:'Updated Customer',field:'lead_name'})).total,1);
+assert.equal((await offline.detail('card')).text,'new phone product and assigned reps');
 assert.equal(records.has('removed-morning'),false,'Missing morning card must disappear');
 assert.equal(await cache.match(offline.imagePath('removed-morning')),undefined);
 assert.equal(records.has('retained-scan'),true,'Absent saved scans preserve existing offline retention');
 assert.ok(await cache.match(offline.imagePath('retained-scan')));
 assert.equal(pending.length,1,'Queued notes survive placeholder cleanup');
 
-summaries = [{...morning,origin:'scan',image_revision:'scan-2',search_revision:3}];
+summaries = [{...morning,origin:'scan',image_revision:'scan-2',search_revision:3,lead_name:'Corrected Customer'}];
 responseDetail = {...summaries[0],text:'corrected searchable scan',notes:[]};
 failDownload = true;
 await offline.sync();
@@ -109,8 +110,9 @@ assert.equal(records.get('card').image_revision,'scan-2');
 assert.equal(await offline.imageUrl('card'),offline.imagePath('card','scan-2'));
 assert.equal(await (await cache.match(offline.imagePath('card','scan-2'))).text(),'scanned image bytes');
 assert.equal(await cache.match(offline.imagePath('card','morning-1')),undefined,'Obsolete image is removed');
-assert.equal((await offline.list({q:'corrected searchable'})).total,1);
-assert.equal((await offline.list({q:'old details'})).total,0);
+assert.equal((await offline.list({q:'Corrected Customer',field:'lead_name'})).total,1);
+assert.equal((await offline.list({q:'Old Customer',field:'lead_name'})).total,0);
+assert.equal((await offline.detail('card')).text,'corrected searchable scan');
 assert.equal((await offline.detail('card')).origin,'scan');
 console.log('offline lifecycle passed');
 '''
