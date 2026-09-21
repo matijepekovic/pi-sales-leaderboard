@@ -4,6 +4,7 @@ import threading
 import pytest
 
 from printer_app.tests.test_gallery_recognition import seed
+from printer_app.tests.auth_helpers import open_gallery
 
 
 @pytest.mark.skipif(os.environ.get('PRINTER_BROWSER_TESTS')!='1',reason='CI browser dependencies')
@@ -28,7 +29,7 @@ def test_compact_header_tall_first_card_related_back_and_pinned_notes(tmp_path,e
             browser=getattr(pw,engine).launch()
             page=browser.new_page(viewport={'width':390,'height':844},is_mobile=True,has_touch=True)
             errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-            page.goto(f'http://127.0.0.1:{server.server_port}/gallery/')
+            open_gallery(page, app, f'http://127.0.0.1:{server.server_port}')
             expect(page.locator('#galleryChooseDate')).to_have_text('September 16, 2026 ⌄')
             expect(page.locator('.gallery-card')).to_have_count(2)
             card=page.locator('.gallery-card').first

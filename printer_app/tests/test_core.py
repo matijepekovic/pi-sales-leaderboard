@@ -447,5 +447,8 @@ def test_no_stats_imports_or_service_dependencies():
                 assert not any(k.arg == 'shell' and isinstance(k.value, ast.Constant) and k.value.value is True for k in node.keywords)
     for path in (root / 'systemd').glob('*.service'):
         text = path.read_text()
-        assert 'User=scoreboard' in text
+        # The HTTPS proxy has its own restricted service account; printer and
+        # Gallery workers still run under the existing application account.
+        expected_user = 'caddy' if path.name == 'printer-app-https.service' else 'scoreboard'
+        assert [line for line in text.splitlines() if line.startswith('User=')] == [f'User={expected_user}']
         assert not any(name in text for name in ('pi-tableau-leaderboard', 'Requires=', 'BindsTo=', 'PartOf='))

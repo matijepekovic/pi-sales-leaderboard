@@ -183,12 +183,14 @@ def test_cleanup_owners_and_dedup_integration():
 
 def test_browser_cleanup_switches_save_and_uncheck(tmp_path):
     from printer_app.app import create_app
+    from printer_app.tests.auth_helpers import login_admin
     env = tmp_path / 'env'
     env.write_text('EMAIL_USER=fixture@example.test\nEMAIL_APP_PASSWORD=fixture-password\nEMAIL_MAILBOX=INBOX\n')
     cfg = Config(data_dir=tmp_path / 'data', env_file=env, secret_key='s' * 64)
     service = SettingsService(SettingsRepository(env), cfg)
     app = create_app(cfg, service)
     client = app.test_client()
+    login_admin(client)
     for enabled in (True, False):
         assert client.get('/settings').status_code == 200
         current, revision = service.read()

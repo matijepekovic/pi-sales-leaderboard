@@ -10,6 +10,7 @@ import pytest
 from printer_app.db import Database
 from printer_app.gallery.bootstrap import build
 from printer_app.print_queue_repository import PrintQueueRepository
+from printer_app.tests.auth_helpers import login_admin, open_gallery
 
 
 def print_fixture(db, number=1):
@@ -29,7 +30,7 @@ def card(service, number, name, day='2026-09-15', extra=''):
     iid = 'a' * 64
     service.repository.enqueue(iid, 'fixture.pdf')
     service.repository.finish(iid, [dict(id=ident, import_id=iid, filename='fixture.pdf', page=number,
-        part=1, text=f'Work Order Number: {number} Lead Name: {name} Address: Test street\n{extra}',
+        part=1, text=f'Work Order Number: {number} Lead Name: {name} Address: {number} Test street\n{extra}',
         document_date=day, date_status='printed', bytes=10, created=number)])
     return ident
 
@@ -58,7 +59,7 @@ def test_submission_reservation_wins_over_late_removal(tmp_path):
     assert not queue.cancelled(aid)
 
 
-def test_existing_flattened_names_backfill_and_search_all_text_and_notes(tmp_path):
+def test_existing_flattened_names_backfill_and_notes_stay_out_of_related_identity(tmp_path):
     service = build(tmp_path)
     anchor = card(service, 1, 'Jordan Example')
     other = card(service, 2, 'Someone Else', '2026-08-07', 'Jordan Example called')
@@ -71,7 +72,8 @@ def test_existing_flattened_names_backfill_and_search_all_text_and_notes(tmp_pat
     restarted = build(tmp_path)
     assert restarted.item(anchor)['lead_name'] == 'Jordan Example'
     assert restarted.item(other)['lead_name'] == 'User Corrected'
-    assert {i['id'] for i in restarted.related(anchor)['items']} == {anchor, other, note_only}
+    assert {i['id'] for i in restarted.related(anchor)['items']} == {anchor}
+    assert {i['id'] for i in restarted.search('Jordan Example', 0)['items']} == {anchor, other, note_only}
     assert restarted.item(note_only)['notes'][0]['body'] == 'Follow up Jordan Example'
 
 
@@ -81,6 +83,8 @@ def test_web_controls_really_render_and_cancel_with_csrf(tmp_path):
     env = tmp_path / 'env'; env.write_text('EMAIL_ENABLED=0\nPRINT_SCHEDULE_MODE=hold\n')
     app = create_app(Config(data_dir=tmp_path, env_file=env, secret_key='s'*64))
     client = app.test_client(); db = app.extensions['printer_db']
+    assert client.get('/').status_code == 302
+    login_admin(client)
     aid, jid = print_fixture(db)
     service = app.extensions['printer_gallery']
     ident = card(service, 1, 'Jordan Example')
@@ -94,7 +98,9 @@ def test_web_controls_really_render_and_cancel_with_csrf(tmp_path):
     assert client.get('/gallery/queue').status_code == 200
     job_page = client.get('/gallery/jobs/' + 'a'*64)
     assert job_page.status_code == 200 and b'Generated work orders' in job_page.data
-    assert ('/gallery/image/' + ident).encode() in job_page.data
+    admin_image = '/gallery/jobs/' + 'a' * 64 + '/items/' + ident + '/image'
+    assert admin_image.encode() in job_page.data
+    assert client.get(admin_image).data == b'fixture image'
     assert b'Processing log' in job_page.data
     assert client.get('/gallery/jobs/invalid').status_code == 404
     assert client.get('/gallery/queue?offset=bad').status_code == 400
@@ -112,7 +118,8 @@ def test_web_controls_really_render_and_cancel_with_csrf(tmp_path):
     other_aid, other_jid = print_fixture(db, 2)
     PrintQueueRepository(db).reserve_attempt(other_jid, 'reserved', time.time())
     assert client.post(f'/print-queue/{other_aid}/remove', data=form).status_code == 409
-    gallery = client.get('/gallery/').data
+    token = app.extensions['gallery_access'].issue_full_invite()
+    gallery = client.get('/gallery/access/' + token, follow_redirects=True).data
     assert b'Print Control</a>' not in gallery and b'Gallery settings</a>' not in gallery
     assert b'href="/settings' not in gallery and b'href="/system/print-control' not in gallery
 
@@ -152,7 +159,8 @@ def test_browser_one_click_related_and_notes_target_visible_card(tmp_path):
     third = card(service, 3, 'Someone Else', '2026-08-01')
     service.note(third, 'e'*32, 'Desk', 'Jordan Example follow-up')
     for ident in (anchor, older, third):
-        Image.new('RGB', (1200, 420), 'white').save(service.files.path('crops', ident))
+        # Two related cards must create real scroll travel for visible-card focus.
+        Image.new('RGB', (1200, 1400), 'white').save(service.files.path('crops', ident))
     server = make_server('127.0.0.1', 0, app, threaded=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
     origin = f'http://127.0.0.1:{server.server_port}'
@@ -161,7 +169,7 @@ def test_browser_one_click_related_and_notes_target_visible_card(tmp_path):
             browser = pw.chromium.launch()
             context = browser.new_context(viewport={'width':390, 'height':844}, is_mobile=True, has_touch=True)
             page = context.new_page(); errors = []; page.on('pageerror', lambda e: errors.append(str(e)))
-            page.goto(origin + '/gallery/')
+            open_gallery(page, app, origin)
             expect(page.locator(f'.gallery-card[data-id="{anchor}"]')).to_have_attribute('aria-pressed', 'true')
             # Feed controls expose Menu/Notes/Search. Related belongs only to an opened card.
             page.locator('#galleryChooseDate').click()
@@ -176,10 +184,11 @@ def test_browser_one_click_related_and_notes_target_visible_card(tmp_path):
             page.locator('#galleryViewer [data-action="related"]').click()
             expect(page.locator('#galleryHeading')).to_have_text('Related cards')
             expect(page.locator('#galleryFilterTitle')).to_have_text('Jordan Example')
-            expect(page.locator('.gallery-card')).to_have_count(3)
+            expect(page.locator('.gallery-card')).to_have_count(2)
             expect(page.locator('#galleryNotesSheet')).not_to_be_visible()
             # Scroll without tapping a card; actions follow the topmost visible card.
             target = page.locator(f'.gallery-card[data-id="{older}"]')
+            target.locator('img').evaluate('(img) => img.decode()')
             target.evaluate('''(node) => {
                 const rect = node.getBoundingClientRect();
                 window.scrollTo(0, scrollY + rect.top + rect.height / 2 - innerHeight / 2);
@@ -194,11 +203,13 @@ def test_browser_one_click_related_and_notes_target_visible_card(tmp_path):
             assert len(service.item(anchor)['notes']) == 0
             assert service.item(older)['notes'][0]['body'] == 'Visible-card note'
             second = browser.new_page(viewport={'width':390,'height':844})
-            second.goto(origin + '/gallery/')
-            # A fresh gallery opens the latest date. The older card is deliberately
-            # reached through All dates before checking that its shared note persisted.
+            open_gallery(second, app, origin)
+            # A fresh gallery opens the latest date. Choose the older card's month
+            # and date before checking that its shared note persisted.
             second.locator('#galleryChooseDate').click()
-            second.locator('#galleryAllDates').click()
+            second.locator('#galleryCalendarMonth').select_option('2026-08')
+            second.locator('#galleryCalendarDays [data-date="2026-08-07"]').click()
+            expect(second.locator('.gallery-day')).to_have_attribute('data-date', '2026-08-07')
             second.locator(f'.gallery-card[data-id="{older}"]').click()
             second.locator('#galleryViewer [data-action="notes"]').click()
             expect(second.locator('#galleryNotes')).to_contain_text('Visible-card note')

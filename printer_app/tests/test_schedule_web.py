@@ -8,6 +8,7 @@ from printer_app.config import Config
 from printer_app.print_schedule import PrintSchedule
 from printer_app.settings import SettingsService
 from printer_app.settings_repository import SettingsRepository
+from printer_app.tests.auth_helpers import login_admin
 
 
 @pytest.fixture
@@ -15,8 +16,8 @@ def ui(tmp_path):
     env = tmp_path/'env'; env.write_text('EMAIL_USER=fixture@example.test\nEMAIL_APP_PASSWORD=kept-secret\n')
     cfg = Config(data_dir=tmp_path/'data', env_file=env, secret_key='s'*64)
     app = create_app(cfg); app.testing = True
-    client = app.test_client(); client.get('/settings')
-    with client.session_transaction() as session: token = session['csrf']
+    client = app.test_client()
+    token = login_admin(client)
     return app, client, token, env, cfg
 
 

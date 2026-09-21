@@ -450,7 +450,7 @@ export class GalleryOffline {
 
   async list({q='', field='lead_name', relatedId=null, date='', offset=0} = {}) {
     if (!Object.prototype.hasOwnProperty.call(SEARCH_COLUMNS, field)) {
-      throw new Error('Choose Rep, Lead name, or Address.');
+      throw new Error('Choose Rep, H/O, or Address.');
     }
     if (!this.isEnabled()) return null;
     let cards = [...await this.allCards()];

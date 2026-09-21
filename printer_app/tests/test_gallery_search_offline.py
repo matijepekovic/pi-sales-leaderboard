@@ -89,7 +89,7 @@ for (const field of ['lead_name','address','rep']) {
   assert.equal((await runtime.list({q:'needle',field})).total, 0);
 }
 for (const field of ['text','notes','assigned_service_resource','constructor','__proto__','',null]) {
-  await assert.rejects(runtime.list({q:'customer',field}), /^Error: Choose Rep, Lead name, or Address\.$/);
+  await assert.rejects(runtime.list({q:'customer',field}), {message:'Choose Rep, H/O, or Address.'});
 }
 unchanged();
 ''')

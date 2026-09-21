@@ -8,6 +8,7 @@ import pytest
 from printer_app.gallery.bootstrap import build
 from printer_app.gallery.policy import checked_date_filter
 from printer_app.tests.test_gallery_mobile import add, web
+from printer_app.tests.auth_helpers import gallery_client, login_admin, open_gallery
 
 
 def test_dates_cover_all_batches_and_reads_preserve_items(tmp_path):
@@ -61,13 +62,14 @@ def test_date_filter_rejects_invalid_dates(web, value):
     app, _, ids = web
     with pytest.raises(ValueError):
         checked_date_filter(value)
+    client = gallery_client(app)
     for url in ('/gallery/api/items', f'/gallery/api/items/{ids[0]}/related'):
-        assert app.test_client().get(url, query_string={'date': value}).status_code == 400
+        assert client.get(url, query_string={'date': value}).status_code == 400
 
 
 def test_date_browse_is_a_get_not_a_document_edit(web):
     app, service, ids = web
-    client = app.test_client()
+    client = gallery_client(app)
     before = service.item(ids[0])
     response = client.get('/gallery/api/items', query_string={'date':'2026-08-07'})
     assert response.status_code == 200
@@ -76,7 +78,13 @@ def test_date_browse_is_a_get_not_a_document_edit(web):
     assert [item['id'] for item in related.json['items']] == [ids[1]]
     assert client.get('/gallery/api/items?date=undated').json['total'] == 0
     assert service.item(ids[0]) == before
+    with client.session_transaction() as session:
+        csrf = session['csrf']
+    assert client.post(f'/gallery/api/items/{ids[0]}/date',
+                       data={'csrf':csrf, 'date':'2026-08-10'}).status_code == 401
+    login_admin(client)
     assert client.post(f'/gallery/api/items/{ids[0]}/date', data={'date':'2026-08-10'}).status_code == 400
+    assert service.item(ids[0]) == before
     assert app.extensions['printer_db'].rows('SELECT * FROM jobs') == []
 
 
@@ -97,11 +105,11 @@ def phone(web):
             try:
                 context = browser.new_context(viewport={'width':390, 'height':844}, is_mobile=True, has_touch=True)
                 page = context.new_page()
-                page.goto(f'http://127.0.0.1:{server.server_port}/gallery/')
+                open_gallery(page, app, f'http://127.0.0.1:{server.server_port}')
                 from playwright.sync_api import expect
                 expect(page.locator('#galleryCards')).to_have_attribute('aria-busy', 'false')
-                page.locator('#galleryChooseDate').click(); page.locator('#galleryAllDates').click()
-                expect(page.locator('.gallery-day')).to_have_count(3)
+                expect(page.locator('.gallery-day')).to_have_count(1)
+                expect(page.locator('.gallery-day')).to_have_attribute('data-date', '2026-08-11')
                 yield page, context, service, ids
             finally:
                 browser.close()
@@ -112,6 +120,7 @@ def phone(web):
 def choose(page, day):
     from playwright.sync_api import expect
     page.locator('#galleryChooseDate').click()
+    page.locator('#galleryCalendarMonth').select_option(day[:7])
     page.locator(f'#galleryCalendarDays button[data-date="{day}"]').click()
     expect(page.locator('.gallery-day')).to_have_count(1)
     expect(page.locator('.gallery-day')).to_have_attribute('data-date', day)
@@ -143,8 +152,8 @@ def touch_swipe(page, context, direction, vertical=False):
 def test_phone_tappable_dates_swipes_and_full_cards(phone):
     from playwright.sync_api import expect
     page, context, service, ids = phone
-    expect(page.locator('.gallery-day')).to_have_count(3)
-    page.locator('.gallery-day-heading button').first.click()
+    expect(page.locator('.gallery-day')).to_have_count(1)
+    page.locator('#galleryChooseDate').click()
     expect(page.locator('#galleryDateSheet')).to_be_visible()
     expect(page.locator('#galleryCalendarDays button[data-date="2026-08-08"]')).to_be_disabled()
     page.locator('#galleryCalendarDays button[data-date="2026-08-07"]').click()
@@ -174,10 +183,10 @@ def test_phone_tappable_dates_swipes_and_full_cards(phone):
 
 
 @pytest.mark.skipif(os.environ.get('PRINTER_BROWSER_TESTS') != '1', reason='CI-only browser dependencies')
-def test_related_and_search_reset_date_then_offer_scoped_calendar(phone):
+def test_related_scoped_calendar_then_live_search_across_all_dates(phone):
     from playwright.sync_api import expect
     page, _, _, ids = phone
-    expect(page.locator('.gallery-day')).to_have_count(3)
+    expect(page.locator('.gallery-day')).to_have_count(1)
     choose(page, '2026-08-07')
     page.locator('.gallery-card').click()
     page.locator('#galleryViewerDate').click()
@@ -192,15 +201,16 @@ def test_related_and_search_reset_date_then_offer_scoped_calendar(phone):
     page.locator('#galleryCalendarDays button[data-date="2026-08-07"]').click()
     expect(page.locator('.gallery-card')).to_have_count(1)
     page.locator('body > .gallery-dock [data-action="search"]').click()
+    expect(page.locator('#gallerySearchSheet')).to_be_visible()
     page.locator('#query').fill('Jordan')
-    page.locator('#gallerySearch button').click()
+    page.locator('#query').press('Enter')
     expect(page.locator('#galleryCards')).to_have_attribute('aria-busy', 'false')
     expect(page.locator('#galleryHeading')).to_have_text('Search results')
     expect(page.locator('.gallery-card')).to_have_count(2)
-    expect(page.locator('#galleryChooseDate')).to_have_text('All dates ⌄')
-    page.locator('#galleryChooseDate').click(); page.locator('#galleryAllDates').click()
-    expect(page.locator('#galleryHeading')).to_have_text('Search results')
-    expect(page.locator('.gallery-card')).to_have_count(2)
+    expect(page.locator('.gallery-date-nav')).not_to_be_visible()
+    expect(page.locator('#galleryViewer')).not_to_be_visible()
+    expect(page.locator('#gallerySearchSheet')).to_be_visible()
+    assert set(page.locator('.gallery-day').evaluate_all('(nodes) => nodes.map(node => node.dataset.date)')) == {'2026-08-07', '2026-08-10'}
 
 
 def test_date_navigation_owner_boundaries():

@@ -82,15 +82,15 @@ jobs:
           sudo useradd --create-home --shell /bin/bash scoreboard
           sudo mkdir -p /home/scoreboard/source
           sudo cp -R printer_app /home/scoreboard/source/
+          sudo cp tests/printer_admin_smoke.py /home/scoreboard/source/
           sudo chown -R scoreboard:scoreboard /home/scoreboard/source
           echo 'scoreboard ALL=(root) NOPASSWD: /usr/bin/install, /usr/bin/systemctl' | sudo tee /etc/sudoers.d/printer-app-ci
           PYTHON="$(command -v python)"
           sudo -u scoreboard -H bash -c 'cd /home/scoreboard/source; "$1" -m printer_app.bootstrap init' _ "$PYTHON"
           sudo -u scoreboard -H sed -i 's/PRINTER_QUEUE=konicaa/PRINTER_QUEUE=printer_app_ci/' /home/scoreboard/.config/printer-app/env
-          sudo -u scoreboard -H "$PYTHON" /home/scoreboard/source/printer_app/deploy.py install
+          sudo -u scoreboard -H "$PYTHON" /home/scoreboard/source/printer_app/deploy.py install --initial-login-file /home/scoreboard/initial-login.json
           curl --fail http://127.0.0.1:5055/health
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/)" = 200
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/login)" = 404
+          sudo -u scoreboard -H "$PYTHON" /home/scoreboard/source/printer_admin_smoke.py /home/scoreboard/initial-login.json
           sudo systemctl stop printer-app-web.service
           sudo systemctl is-active --quiet printer-app-worker.service
           sudo systemctl start printer-app-web.service

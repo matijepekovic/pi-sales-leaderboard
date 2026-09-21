@@ -185,23 +185,24 @@ def test_log_redaction_updates_after_password_change(configured):
 def ui(configured):
     pytest.importorskip('flask')
     from printer_app.app import create_app
+    from printer_app.tests.auth_helpers import login_admin
     service, env = configured
     app = create_app(service.baseline, settings_service=service)
     app.testing = True
     client = app.test_client()
-    client.get('/settings')
-    with client.session_transaction() as session:
-        csrf = session['csrf']
+    csrf = login_admin(client)
     return service, env, app, client, csrf
 
 
-def test_ui_direct_access_and_password_never_returned(ui):
+def test_authenticated_ui_never_returns_saved_email_password(ui):
     service, _, _, client, csrf = ui
     for route in ('/settings', '/', '/api/status'):
         response = client.get(route)
         assert response.status_code == 200
         assert b'stored-app-password' not in response.data
-    assert client.get('/login').status_code == 404
+    response = client.get('/login')
+    assert response.status_code == 302
+    assert response.headers['Location'] == '/system/print-control'
     response = client.post('/settings', data=form(service, csrf=csrf, EMAIL_APP_PASSWORD='new-secret'), follow_redirects=True)
     assert response.status_code == 200
     assert b'new-secret' not in response.data

@@ -13,9 +13,12 @@ from printer_app.config import Config
 from printer_app.db import Database
 from printer_app.gallery.bootstrap import build
 from printer_app.gallery.policy import GalleryOptions
+from printer_app.tests.auth_helpers import login_admin
 
 
-def item(service, document_date=None, text='Roofing address 12345 Acorn Avenue'):
+def item(service, document_date=None, text=(
+        'Work Order Number: 1001\nLead Name: Synthetic Customer\n'
+        'Address: 12345 Acorn Avenue\nProduct Interest: Roofing')):
     ident, iid = 'a' * 64, 'b' * 64
     service.initialize()
     service.repository.enqueue(iid, 'report.pdf')
@@ -130,8 +133,11 @@ def test_gallery_settings_and_notes_keep_existing_write_security(tmp_path):
     cfg = Config(data_dir=tmp_path, env_file=env, secret_key='s' * 64, email_enabled=False)
     app = create_app(cfg)
     client = app.test_client()
-    assert client.get('/gallery/').status_code == 200
+    assert client.get('/gallery/').status_code == 401
     assert client.get('/gallery/qr.svg').status_code == 200
+    login_admin(client)
+    token = app.extensions['gallery_access'].issue_full_invite()
+    assert client.get('/gallery/access/' + token, follow_redirects=True).status_code == 200
     current, revision = app.extensions['printer_settings'].read()
     with client.session_transaction() as session: csrf = session['csrf']
     form = dict(SettingsService.public_values(current), csrf=csrf, revision=revision,
@@ -147,7 +153,9 @@ def test_gallery_settings_and_notes_keep_existing_write_security(tmp_path):
     assert client.post(f'/gallery/api/items/{ident}/notes', data={'body': 'Unsafe'}).status_code == 400
     assert client.post(f'/gallery/api/items/{ident}/notes', data=note, headers={'Origin': 'http://other.example'}).status_code == 403
     assert client.post(f'/gallery/api/items/{ident}/notes', data=note).status_code == 200
-    assert client.get('/gallery/api/items?q=shared').json['total'] == 1
+    assert client.get('/gallery/api/items?q=Synthetic&field=lead_name').json['total'] == 1
+    assert client.get('/gallery/api/items?q=shared&field=lead_name').json['total'] == 0
+    assert client.get(f'/gallery/api/items/{ident}').json['notes'][0]['body'] == 'Shared note'
 
 
 def test_gallery_architecture_keeps_ocr_and_sql_out_of_printing():

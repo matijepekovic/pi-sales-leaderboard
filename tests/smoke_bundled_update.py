@@ -20,6 +20,8 @@ import time
 import urllib.request
 import zipfile
 
+from printer_admin_smoke import check_public_routes, sign_in
+
 
 def run(*command, **kwargs):
     return subprocess.run(command, check=True, **kwargs)
@@ -108,6 +110,14 @@ def main():
     # worker must reload it while Stats remains stopped. No real Gmail is used.
     cookies = http.cookiejar.CookieJar()
     browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookies))
+    check_public_routes('http://127.0.0.1:5055')
+    credential = delivery.initial_login()
+    assert credential.get('username') == 'admin' and credential.get('password')
+    handoff = Path.home()/'.local/share/leaderboard-distribution/initial-login.json'
+    assert handoff.stat().st_mode & 0o777 == 0o600
+    sign_in(browser, 'http://127.0.0.1:5055', credential)
+    delivery.forget_initial_login()
+    assert not delivery.initial_login()
     with browser.open('http://127.0.0.1:5055/settings') as response:
         page = response.read().decode()
     csrf = re.search(r'name="csrf" value="([^"]+)"', page).group(1)
@@ -160,7 +170,7 @@ def main():
     wait_health(5055)
     assert subprocess.check_output(['systemctl','is-enabled','printer-app-web.service'],text=True).strip() == 'enabled'
     assert subprocess.check_output(['systemctl','is-enabled','printer-app-worker.service'],text=True).strip() == 'enabled'
-    print('PASS: old ZIP updater → detached no-login printer install → independent Stats/printer lifecycles; unchanged update is a no-op.')
+    print('PASS: old ZIP updater → detached authenticated printer install → independent Stats/printer lifecycles; unchanged update is a no-op.')
 
 
 if __name__ == '__main__':

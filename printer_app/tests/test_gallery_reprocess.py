@@ -4,6 +4,7 @@ import time
 
 from printer_app.app import create_app
 from printer_app.config import Config
+from printer_app.tests.auth_helpers import login_admin
 
 
 def seed_source(db, filename, *, message_id=None, sha256='', printed=False):
@@ -53,6 +54,8 @@ def test_gallery_queue_reprocess_deletes_cards_and_queues_original_email_again(t
     attempts_before = db.rows('SELECT * FROM print_attempts ORDER BY id')
 
     client = app.test_client()
+    assert client.get('/gallery/queue').status_code == 302
+    login_admin(client)
     assert client.get('/gallery/queue').status_code == 200
     with client.session_transaction() as session:
         csrf = session['csrf']
@@ -89,7 +92,9 @@ def test_reprocess_refuses_ambiguous_legacy_filename_without_deleting_gallery(tm
     seed_source(db, filename)
     seed_source(db, filename)
 
-    client = app.test_client(); client.get('/gallery/queue')
+    client = app.test_client()
+    login_admin(client)
+    client.get('/gallery/queue')
     with client.session_transaction() as session:
         csrf = session['csrf']
     response = client.post(f'/gallery/jobs/{ident}/reprocess', data={'csrf': csrf})
@@ -109,7 +114,9 @@ def test_queue_page_shows_reprocess_only_for_finished_gallery_jobs(tmp_path):
     ident, _ = seed_gallery(gallery, 'finished.pdf', b'finished')
     waiting = hashlib.sha256(b'waiting').hexdigest()
     gallery.repository.enqueue(waiting, 'waiting.pdf')
-    page = app.test_client().get('/gallery/queue')
+    client = app.test_client()
+    login_admin(client)
+    page = client.get('/gallery/queue')
     assert page.status_code == 200
     assert page.data.count(b'>Reprocess</button>') == 1
     assert f'/gallery/jobs/{ident}/reprocess'.encode() in page.data
