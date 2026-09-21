@@ -10,6 +10,7 @@ from printer_app.app import create_app
 from printer_app.config import Config
 from printer_app.settings import SettingsService
 from printer_app.settings_repository import SettingsRepository
+from printer_app.tests.auth_helpers import browser_login, login_admin
 
 
 @pytest.fixture
@@ -41,10 +42,11 @@ def form(app, client, origin):
                 csrf=csrf, revision=revision, PRINT_PAPER='tabloid', PRINT_COPIES='2')
 
 
-def test_normal_lan_form_save_persists_without_login(web):
+def test_normal_lan_form_save_persists_after_admin_login(web):
     app, cfg, env, _ = web
     origin = 'http://10.40.80.254:5055'
     client = app.test_client()
+    login_admin(client, base_url=origin)
     response = client.post('/settings', base_url=origin, data=form(app, client, origin),
                            headers={'Origin': origin})
     assert response.status_code == 303
@@ -68,6 +70,7 @@ def test_cross_origin_saves_stay_forbidden_even_with_valid_csrf(web, headers):
     app, _, env, _ = web
     origin = 'http://10.40.80.254:5055'
     client = app.test_client()
+    login_admin(client, base_url=origin)
     values = form(app, client, origin)
     before = env.read_bytes()
     assert client.post('/settings', base_url=origin, data=values, headers=headers).status_code == 403
@@ -79,6 +82,7 @@ def test_same_origin_is_not_a_substitute_for_csrf(web, csrf):
     app, _, env, _ = web
     origin = 'http://10.40.80.254:5055'
     client = app.test_client()
+    login_admin(client, base_url=origin)
     values = form(app, client, origin)
     values.pop('csrf')
     if csrf is not None:
@@ -91,7 +95,9 @@ def test_same_origin_is_not_a_substitute_for_csrf(web, csrf):
 
 def test_read_only_navigation_is_not_blocked_as_a_cross_site_write(web):
     app, _, _, _ = web
-    response = app.test_client().get('/settings', headers={'Sec-Fetch-Site': 'cross-site'})
+    client = app.test_client()
+    login_admin(client)
+    response = client.get('/settings', headers={'Sec-Fetch-Site': 'cross-site'})
     assert response.status_code == 200
 
 
@@ -112,7 +118,9 @@ def test_native_browser_save_and_controls(web, javascript, save_button, legacy_p
         if environ['REQUEST_METHOD'] == 'POST':
             observed.append((environ['PATH_INFO'], environ.get('HTTP_ORIGIN')))
         def respond(status, headers, exc_info=None):
-            if legacy_policy:
+            # Authenticate normally first; reproduce the old policy on the
+            # settings page whose native form submission this test diagnoses.
+            if legacy_policy and environ['PATH_INFO'] == '/settings':
                 headers = [(k, 'no-referrer' if k.lower() == 'referrer-policy' else v)
                            for k, v in headers]
             return start_response(status, headers, exc_info)
@@ -130,8 +138,10 @@ def test_native_browser_save_and_controls(web, javascript, save_button, legacy_p
             try:
                 context = browser.new_context(java_script_enabled=javascript)
                 page = context.new_page()
+                browser_login(page, app, origin)
                 assert page.goto(origin + '/settings').status == 200
-                assert page.locator('form').count() == 1
+                assert page.locator('#printerSettings').count() == 1
+                assert page.locator('form[action="/logout"]').count() == 1
                 assert page.locator('#printerSettings [name="csrf"]').count() == 1
                 assert page.locator('#printerSettings [name="revision"]').count() == 1
                 buttons = page.locator('#printerSettings').get_by_role('button', name='Save Settings', exact=True)

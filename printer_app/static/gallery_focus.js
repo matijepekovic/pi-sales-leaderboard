@@ -47,8 +47,10 @@ export class GalleryFocus {
     const viewport = window.visualViewport;
     let top = viewport?.offsetTop || 0;
     let bottom = top + (viewport?.height || window.innerHeight);
-    const nav = document.querySelector('.gallery-date-nav')?.getBoundingClientRect();
-    if (nav && nav.top <= top + 2 && nav.bottom > top) top = nav.bottom;
+    document.querySelectorAll('.gallery-date-nav,.gallery-search-bar:not([hidden])').forEach(node => {
+      const rect = node.getBoundingClientRect();
+      if (rect.height && rect.top <= top + 2 && rect.bottom > top) top = rect.bottom;
+    });
     document.querySelectorAll('.gallery-day-heading').forEach(node => {
       const rect = node.getBoundingClientRect();
       if (rect.height && rect.top <= top + 4 && rect.bottom > top) top = rect.bottom;

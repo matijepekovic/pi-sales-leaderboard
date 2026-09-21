@@ -76,15 +76,19 @@ body:has(dialog[open]){overflow:hidden}
 .gallery-qr{display:block;width:150px;height:150px;margin:12px auto}
 #galleryStorage,#galleryImports{font-size:13px;overflow-wrap:anywhere}
 #galleryImports p{padding-bottom:9px;border-bottom:1px solid #ddd}
-.search-sheet{min-height:300px}
+.gallery-search-bar{position:sticky;top:env(safe-area-inset-top);z-index:4;padding:4px 0;background:rgba(245,245,247,.98)}
+.gallery-search-top{display:flex;align-items:center;gap:8px;margin-bottom:4px}
 #gallerySearch input{border:0;background:#eeeef2}
-#gallerySearch button{width:100%}
-.gallery-search-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;min-width:0;margin:20px 0 16px;padding:4px;border:0;border-radius:12px;background:#eeeef2}
+#gallerySearch #query{display:block;width:100%;height:40px;padding:8px 12px;border-radius:10px;font-size:16px}
+.gallery-search-fields{display:grid;flex:1;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;min-width:0;margin:0;padding:2px;border:0;border-radius:12px;background:#eeeef2}
 .gallery-search-fields label{position:relative;min-width:0;margin:0;cursor:pointer}
 #gallerySearch .gallery-search-fields input{position:absolute;opacity:0;width:1px;height:1px;padding:0;margin:0;overflow:hidden}
 .gallery-search-fields span{display:flex;align-items:center;justify-content:center;min-height:44px;padding:8px 4px;border-radius:9px;text-align:center;font-size:14px;line-height:1.2;font-weight:600}
 .gallery-search-fields input:checked+span{background:#fff;color:var(--accent);box-shadow:0 1px 5px #0002}
 .gallery-search-fields input:focus-visible+span{outline:3px solid var(--accent);outline-offset:1px}
+.gallery-search-status{font-size:11px;line-height:16px;color:var(--muted);margin:2px 4px 0}
+#galleryMain[data-searching=true] .gallery-date-nav{display:none}
+#galleryMain[data-searching=true] .gallery-day-heading{position:static;padding-top:8px;padding-bottom:8px}
 
 @media(min-width:760px){
 #galleryMain{padding-left:24px;padding-right:24px}

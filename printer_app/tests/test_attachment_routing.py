@@ -14,6 +14,7 @@ from printer_app.db import Database
 from printer_app.gallery.policy import GalleryOptions
 from printer_app.gmail_client import GmailClient
 from printer_app.retention_repository import RetentionRepository
+from printer_app.tests.auth_helpers import login_admin
 from printer_app.tests.test_inline_images import leaf, wire
 
 
@@ -225,6 +226,7 @@ def test_settings_save_mode_and_filename_with_no_printer_changes(tmp_path):
     cfg = Config(data_dir=tmp_path, env_file=env, secret_key='s' * 64, email_enabled=False)
     app = create_app(cfg)
     client = app.test_client()
+    login_admin(client)
     page = client.get('/settings')
     assert b'Gallery only' in page.data and b'GALLERY_FILENAME_CONTAINS' in page.data
     service = app.extensions['printer_settings']

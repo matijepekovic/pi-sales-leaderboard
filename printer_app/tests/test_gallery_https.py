@@ -129,9 +129,12 @@ def test_local_https_proxy_scheme_is_accepted_but_spoofed_forwarding_is_not(tmp_
     token = access.issue_full_invite()
     assert client.get('/gallery/access/' + token, base_url='http://10.40.80.254').status_code == 303
     info = client.get('/gallery/api/access', base_url='http://10.40.80.254').get_json()
+    # The browser addresses the public host and sends that host's cookies even
+    # though Caddy connects to the application from loopback. Changing base_url
+    # to 127.0.0.1 would drop the real session/access cookies in this test client.
     response = client.post(
         '/gallery/api/share',
-        base_url='http://127.0.0.1:5055',
+        base_url='http://10.40.80.254',
         data={'csrf': info['csrf'], 'name': 'Proxy test'},
         headers={
             'Origin': origin + ':443',
@@ -157,7 +160,7 @@ def test_local_https_proxy_scheme_is_accepted_but_spoofed_forwarding_is_not(tmp_
 
     response = client.post(
         '/gallery/api/share',
-        base_url='http://127.0.0.1:5055',
+        base_url='http://10.40.80.254',
         data={'csrf': info['csrf'], 'name': 'Wrong secure host'},
         headers={
             'Origin': 'https://evil.example',
@@ -167,6 +170,19 @@ def test_local_https_proxy_scheme_is_accepted_but_spoofed_forwarding_is_not(tmp_
         environ_overrides={'REMOTE_ADDR': '127.0.0.1'},
     )
     assert response.status_code == 403
+
+    response = client.post(
+        '/gallery/api/share',
+        base_url='http://10.40.80.254',
+        data={'csrf': 'wrong-token', 'name': 'Invalid CSRF'},
+        headers={
+            'Origin': origin,
+            'X-Forwarded-Proto': 'https',
+            'X-Forwarded-Host': '10.40.80.254',
+        },
+        environ_overrides={'REMOTE_ADDR': '127.0.0.1'},
+    )
+    assert response.status_code == 400
 
 
 

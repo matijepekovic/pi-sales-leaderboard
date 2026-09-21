@@ -26,6 +26,22 @@
 <h1 id="galleryHeading" class="sr-only">Gallery</h1>
 <p id="galleryCount" class="sr-only"></p>
 <main id="galleryMain">
+<section id="gallerySearchSheet" class="gallery-search-bar" aria-label="Search all dates" hidden>
+<form id="gallerySearch" role="search">
+<div class="gallery-search-top">
+<fieldset id="gallerySearchFields" class="gallery-search-fields"><legend class="sr-only">Search field</legend>
+<label><input type="radio" name="field" value="rep"><span>Rep</span></label>
+<label><input type="radio" name="field" value="lead_name" checked><span>H/O</span></label>
+<label><input type="radio" name="field" value="address"><span>Address</span></label>
+</fieldset>
+<button id="gallerySearchClose" type="button" class="circle-button" aria-label="Close search">×</button>
+</div>
+<label id="galleryQueryLabel" class="sr-only" for="query">H/O</label>
+<input id="query" type="search" maxlength="300" placeholder="Enter H/O name…" enterkeyhint="search" aria-describedby="gallerySearchHint" autocomplete="off">
+<button id="gallerySearchSubmit" type="submit" class="sr-only" tabindex="-1">Search all dates</button>
+</form>
+<p id="gallerySearchHint" class="gallery-search-status" role="status">All dates</p>
+</section>
 <div id="galleryFilter" class="sr-only" hidden><strong id="galleryFilterTitle"></strong><p id="galleryFilterHint"></p></div>
 <nav class="gallery-date-nav" aria-label="Browse document dates">
 <button id="galleryBack" type="button" class="gallery-back" hidden>‹ Back</button>
@@ -111,21 +127,6 @@
 </section>
 <h3>Active sessions</h3>
 <div id="galleryActiveShares" class="gallery-active-shares" aria-live="polite"></div>
-</dialog>
-
-<dialog id="gallerySearchSheet" class="gallery-sheet search-sheet" aria-labelledby="gallerySearchTitle">
-<div class="sheet-handle" aria-hidden="true"></div><div class="sheet-heading"><h2 id="gallerySearchTitle">Search</h2><button type="button" class="circle-button" data-close="gallerySearchSheet" aria-label="Close search">×</button></div>
-<form id="gallerySearch" role="search">
-<fieldset id="gallerySearchFields" class="gallery-search-fields"><legend class="sr-only">Search field</legend>
-<label><input type="radio" name="field" value="rep"><span>Rep</span></label>
-<label><input type="radio" name="field" value="lead_name" checked><span>Lead name</span></label>
-<label><input type="radio" name="field" value="address"><span>Address</span></label>
-</fieldset>
-<label id="galleryQueryLabel" for="query">Lead name</label>
-<input id="query" type="search" maxlength="300" placeholder="Enter a lead name…" enterkeyhint="search" aria-describedby="gallerySearchHint">
-<button id="gallerySearchSubmit" type="submit" class="primary">Search cards</button>
-</form>
-<p id="gallerySearchHint" class="muted">Searches lead names only. Use the start of each word, or quotes for a phrase.</p>
 </dialog>
 
 <dialog id="galleryInfoSheet" class="gallery-sheet" aria-labelledby="galleryInfoTitle">

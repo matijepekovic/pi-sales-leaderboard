@@ -6,6 +6,7 @@ pytest.importorskip('flask')
 
 from printer_app.app import create_app
 from printer_app.config import Config
+from printer_app.tests.auth_helpers import login_admin
 
 
 @pytest.fixture
@@ -17,18 +18,22 @@ def web(tmp_path):
 
 
 def token(client):
-    response = client.get('/system/print-control')
-    assert response.status_code == 200
-    with client.session_transaction() as session:
-        return session['csrf']
+    return login_admin(client)
 
 
-def test_ui_opens_directly_without_login(web):
+def test_admin_pages_require_login_and_open_after_password_change(web):
     app, client = web
+    for route in ('/', '/system/print-control', '/settings'):
+        response = client.get(route)
+        assert response.status_code == 302
+        assert response.headers['Location'].startswith('/login?next=')
+    assert client.get('/api/status').status_code == 401
+    assert client.get('/login').status_code == 200
+    login_admin(client)
     assert client.get('/').status_code == 200
     assert client.get('/system/print-control').status_code == 200
     assert client.get('/api/status').status_code == 200
-    assert client.get('/login').status_code == 404
+    assert client.get('/login').status_code == 302
     assert app.config['SESSION_COOKIE_NAME'] != 'session'
 
 
