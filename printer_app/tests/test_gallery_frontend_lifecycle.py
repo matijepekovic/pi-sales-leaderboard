@@ -354,7 +354,12 @@ def test_visible_morning_card_and_open_viewer_refresh_when_scan_revision_arrives
         with sync_playwright() as pw:
             browser = getattr(pw, engine).launch()
             try:
-                page = browser.new_page(viewport={'width':390, 'height':844}, is_mobile=True, has_touch=True)
+                # These synthetic responses exist only in page.route. A service
+                # worker would bypass them and query the deliberately empty DB.
+                context = browser.new_context(viewport={'width':390, 'height':844},
+                                              is_mobile=True, has_touch=True,
+                                              service_workers='block')
+                page = context.new_page()
                 page.route('**/gallery/api/items**', api_response)
                 page.route('**/gallery/image/**', lambda route: route.fulfill(
                     status=200, content_type='image/png', body=image,
