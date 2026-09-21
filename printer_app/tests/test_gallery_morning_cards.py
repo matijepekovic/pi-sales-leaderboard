@@ -34,7 +34,7 @@ def gallery(tmp_path, monkeypatch):
     return service
 
 
-def _record(work_order='0011', **changes):
+def _record(work_order='00000011', **changes):
     record = ModSheetRecord(
         source_id='source-' + work_order,
         work_order_number=work_order,
@@ -102,8 +102,8 @@ def test_morning_pdf_creates_searchable_cards_with_saved_source_data(gallery):
     reference = _record()
     gallery.publish_reference_snapshot(DAY, 'morning', [reference], 1.0)
 
-    _publish(gallery, 'morning', [('0011', DAY)], morning=True)
-    row = _row(gallery, '0011')
+    _publish(gallery, 'morning', [('00000011', DAY)], morning=True)
+    row = _row(gallery, '00000011')
     item = gallery.item(row['id'])
 
     assert item['origin'] == 'morning'
@@ -126,14 +126,14 @@ def test_hourly_reference_refresh_preserves_cards_and_enriches_later_scans(galle
     from printer_app.mod_sheets.repository import ModSheetAutomationRepository
     from printer_app.mod_sheets.service import ModSheetReferenceDeliveryService
 
-    _publish(gallery, 'today-morning', [('0011', DAY), ('0022', DAY)], morning=True)
-    _publish(gallery, 'earlier-morning', [('0011', EARLIER_DAY)], morning=True, day=EARLIER_DAY)
-    matched_id, absent_id = _row(gallery, '0011')['id'], _row(gallery, '0022')['id']
-    earlier_id = _row(gallery, '0011', EARLIER_DAY)['id']
+    _publish(gallery, 'today-morning', [('00000011', DAY), ('00000022', DAY)], morning=True)
+    _publish(gallery, 'earlier-morning', [('00000011', EARLIER_DAY)], morning=True, day=EARLIER_DAY)
+    matched_id, absent_id = _row(gallery, '00000011')['id'], _row(gallery, '00000022')['id']
+    earlier_id = _row(gallery, '00000011', EARLIER_DAY)['id']
     gallery.note(matched_id, 'f' * 32, 'Reviewer', 'Keep this manual note')
     before, earlier = gallery.item(matched_id), gallery.item(earlier_id)
     calls = []
-    current_records = [_record(), _record('0033', assigned_service_resources=('Cancelled Rep',))]
+    current_records = [_record(), _record('00000033', assigned_service_resources=('Cancelled Rep',))]
     failure = [False]
 
     def records(**filters):
@@ -209,10 +209,10 @@ def test_hourly_reference_refresh_preserves_cards_and_enriches_later_scans(galle
 
     # Only an actual scan reconciles the morning cards. The prior day's final
     # snapshot still supplies every resource when an appointment arrives later.
-    _publish(gallery, 'late-scan', [('0011', DAY), ('0033', DAY)])
+    _publish(gallery, 'late-scan', [('00000011', DAY), ('00000033', DAY)])
     assert gallery.item(matched_id)['assigned_service_resource'] == 'Final Rep'
     assert gallery.item(matched_id)['notes'] == before['notes']
-    assert gallery.item(_row(gallery, '0033')['id'])['assigned_service_resource'] == 'Cancelled Rep'
+    assert gallery.item(_row(gallery, '00000033')['id'])['assigned_service_resource'] == 'Cancelled Rep'
     assert gallery.item(absent_id) is None
     assert gallery.item(earlier_id) == earlier
     assert gallery.files.path('crops', matched_id).read_bytes() == b'late-scan:1'
@@ -224,12 +224,12 @@ def test_hourly_reference_refresh_preserves_cards_and_enriches_later_scans(galle
 
 def test_scan_replaces_morning_image_in_place_and_preserves_saved_notes(gallery):
     gallery.publish_reference_snapshot(DAY, 'morning', [_record()], 1.0)
-    _publish(gallery, 'morning', [('0011', DAY)], morning=True)
-    original_id = _row(gallery, '0011')['id']
+    _publish(gallery, 'morning', [('00000011', DAY)], morning=True)
+    original_id = _row(gallery, '00000011')['id']
     gallery.note(original_id, 'a' * 32, 'Reviewer', 'Keep this manual note')
     before = gallery.item(original_id)
 
-    _publish(gallery, 'scanned', [('0011', DAY)])
+    _publish(gallery, 'scanned', [('00000011', DAY)])
     after = gallery.item(original_id)
 
     assert after is not None
@@ -249,37 +249,37 @@ def test_scan_replaces_morning_image_in_place_and_preserves_saved_notes(gallery)
 
 
 def test_repeated_scan_keeps_one_card_and_its_original_identity(gallery):
-    _publish(gallery, 'first-scan', [('0011', DAY)])
-    original_id = _row(gallery, '0011')['id']
+    _publish(gallery, 'first-scan', [('00000011', DAY)])
+    original_id = _row(gallery, '00000011')['id']
     gallery.note(original_id, 'b' * 32, 'Reviewer', 'Carry this forward')
 
-    _publish(gallery, 'repeat-scan', [('0011', DAY)])
+    _publish(gallery, 'repeat-scan', [('00000011', DAY)])
 
     assert gallery.search('', 0)['total'] == 1
-    assert _row(gallery, '0011')['id'] == original_id
+    assert _row(gallery, '00000011')['id'] == original_id
     assert gallery.files.path('crops', original_id).read_bytes() == b'repeat-scan:1'
     assert gallery.item(original_id)['notes'][0]['body'] == 'Carry this forward'
 
 
 def test_same_work_order_on_different_date_does_not_replace_morning_card(gallery):
-    _publish(gallery, 'morning', [('0011', DAY)], morning=True)
-    morning_id = _row(gallery, '0011')['id']
+    _publish(gallery, 'morning', [('00000011', DAY)], morning=True)
+    morning_id = _row(gallery, '00000011')['id']
 
-    _publish(gallery, 'earlier-scan', [('0011', EARLIER_DAY)])
+    _publish(gallery, 'earlier-scan', [('00000011', EARLIER_DAY)])
 
     assert gallery.item(morning_id)['origin'] == 'morning'
     assert gallery.files.path('crops', morning_id).read_bytes() == b'morning:1'
-    assert _row(gallery, '0011', EARLIER_DAY)['id'] != morning_id
+    assert _row(gallery, '00000011', EARLIER_DAY)['id'] != morning_id
     assert gallery.search('', 0)['total'] == 2
 
 
 def test_different_work_order_is_not_merged_and_unmatched_morning_card_is_removed(gallery):
-    _publish(gallery, 'morning', [('0011', DAY)], morning=True)
-    morning_id = _row(gallery, '0011')['id']
+    _publish(gallery, 'morning', [('00000011', DAY)], morning=True)
+    morning_id = _row(gallery, '00000011')['id']
     gallery.note(morning_id, 'c' * 32, 'Reviewer', 'Belongs to another work order')
 
-    _publish(gallery, 'other-work-order', [('0022', DAY)])
-    scanned = gallery.item(_row(gallery, '0022')['id'])
+    _publish(gallery, 'other-work-order', [('00000022', DAY)])
+    scanned = gallery.item(_row(gallery, '00000022')['id'])
 
     assert scanned['id'] != morning_id
     assert scanned['notes'] == []
@@ -289,14 +289,14 @@ def test_different_work_order_is_not_merged_and_unmatched_morning_card_is_remove
 
 
 def test_scan_reconciles_only_its_dates_and_never_deletes_existing_scans(gallery):
-    _publish(gallery, 'morning', [('0011', DAY), ('0022', DAY)], morning=True)
-    matched_id = _row(gallery, '0011')['id']
-    absent_id = _row(gallery, '0022')['id']
-    _publish(gallery, 'older-scan', [('0033', EARLIER_DAY)])
-    older_scan_id = _row(gallery, '0033', EARLIER_DAY)['id']
+    _publish(gallery, 'morning', [('00000011', DAY), ('00000022', DAY)], morning=True)
+    matched_id = _row(gallery, '00000011')['id']
+    absent_id = _row(gallery, '00000022')['id']
+    _publish(gallery, 'older-scan', [('00000033', EARLIER_DAY)])
+    older_scan_id = _row(gallery, '00000033', EARLIER_DAY)['id']
 
-    _publish(gallery, 'current-scan', [('0011', DAY)])
-    _publish(gallery, 'additional-scan', [('0044', DAY)])
+    _publish(gallery, 'current-scan', [('00000011', DAY)])
+    _publish(gallery, 'additional-scan', [('00000044', DAY)])
 
     assert gallery.item(absent_id) is None
     assert gallery.item(matched_id)['origin'] == 'scan'
@@ -305,23 +305,23 @@ def test_scan_reconciles_only_its_dates_and_never_deletes_existing_scans(gallery
 
 
 def test_completed_day_does_not_recreate_morning_cards(gallery):
-    _publish(gallery, 'scanned-first', [('0011', DAY)])
-    original_id = _row(gallery, '0011')['id']
+    _publish(gallery, 'scanned-first', [('00000011', DAY)])
+    original_id = _row(gallery, '00000011')['id']
 
-    _publish(gallery, 'late-morning', [('0011', DAY), ('0022', DAY)], morning=True)
+    _publish(gallery, 'late-morning', [('00000011', DAY), ('00000022', DAY)], morning=True)
 
     assert gallery.search('', 0)['total'] == 1
-    assert _row(gallery, '0011')['id'] == original_id
+    assert _row(gallery, '00000011')['id'] == original_id
     assert gallery.item(original_id)['origin'] == 'scan'
     assert gallery.files.path('crops', original_id).read_bytes() == b'scanned-first:1'
 
 
 def test_reconciliation_keeps_complete_reference_snapshot_for_later_scans(gallery):
-    records = [_record('0011'), _record('0022', lead_name='Later Customer')]
+    records = [_record('00000011'), _record('00000022', lead_name='Later Customer')]
     gallery.publish_reference_snapshot(DAY, 'morning', records, 1.0)
-    _publish(gallery, 'morning', [('0011', DAY), ('0022', DAY)], morning=True)
-    removed_id = _row(gallery, '0022')['id']
-    _publish(gallery, 'first-scan', [('0011', DAY)])
+    _publish(gallery, 'morning', [('00000011', DAY), ('00000022', DAY)], morning=True)
+    removed_id = _row(gallery, '00000022')['id']
+    _publish(gallery, 'first-scan', [('00000011', DAY)])
     assert gallery.item(removed_id) is None
 
     snapshot, stored = gallery.repository.reference_snapshot(DAY, 'morning')
@@ -330,8 +330,8 @@ def test_reconciliation_keeps_complete_reference_snapshot_for_later_scans(galler
         actual = next(row for row in stored if row['source_id'] == expected.source_id)
         assert {key: actual[key] for key in asdict(expected)} == asdict(expected)
 
-    _publish(gallery, 'later-scan', [('0022', DAY)])
-    item = gallery.item(_row(gallery, '0022')['id'])
+    _publish(gallery, 'later-scan', [('00000022', DAY)])
+    item = gallery.item(_row(gallery, '00000022')['id'])
     assert item['lead_name'] == 'Later Customer'
     assert item['address'] == '101 Reference Street'
     assert item['assigned_service_resource'] == ''
@@ -341,8 +341,8 @@ def test_reconciliation_keeps_complete_reference_snapshot_for_later_scans(galler
 
 def test_final_data_changes_search_revision_without_changing_card_image(gallery):
     gallery.publish_reference_snapshot(DAY, 'morning', [_record()], 1.0)
-    _publish(gallery, 'morning', [('0011', DAY)], morning=True)
-    ident = _row(gallery, '0011')['id']
+    _publish(gallery, 'morning', [('00000011', DAY)], morning=True)
+    ident = _row(gallery, '00000011')['id']
     before = gallery.item(ident)
     image = gallery.files.path('crops', ident).read_bytes()
 
@@ -365,8 +365,8 @@ def test_later_scan_prefers_final_assignments_over_saved_morning_data(gallery):
     final = _record(lead_name='Final Customer', assigned_service_resources=('Final Resource',))
     gallery.publish_reference_snapshot(DAY, 'final', [final], 2.0)
 
-    _publish(gallery, 'late-scan', [('0011', DAY)])
-    item = gallery.item(_row(gallery, '0011')['id'])
+    _publish(gallery, 'late-scan', [('00000011', DAY)])
+    item = gallery.item(_row(gallery, '00000011')['id'])
 
     assert item['reference_kind'] == 'final'
     assert item['lead_name'] == 'Final Customer'
@@ -376,15 +376,15 @@ def test_later_scan_prefers_final_assignments_over_saved_morning_data(gallery):
 
 def test_scan_keeps_morning_identity_when_final_source_fields_are_blank(gallery):
     gallery.publish_reference_snapshot(DAY, 'morning', [_record()], 1.0)
-    _publish(gallery, 'morning', [('0011', DAY)], morning=True)
-    ident = _row(gallery, '0011')['id']
+    _publish(gallery, 'morning', [('00000011', DAY)], morning=True)
+    ident = _row(gallery, '00000011')['id']
     final = _record(
         lead_name='', address='', phone='', canvass_set_by='', lead_description='',
         assigned_service_resources=('Final Resource',),
     )
     gallery.publish_reference_snapshot(DAY, 'final', [final], 2.0)
 
-    _publish(gallery, 'scan-after-blank-final', [('0011', DAY)])
+    _publish(gallery, 'scan-after-blank-final', [('00000011', DAY)])
     item = gallery.item(ident)
 
     assert item['origin'] == 'scan'
@@ -402,14 +402,14 @@ def test_scan_keeps_morning_identity_when_final_source_fields_are_blank(gallery)
 
 def test_scan_keeps_previous_source_identity_and_clears_confirmed_unassigned_resources(gallery):
     gallery.publish_reference_snapshot(DAY, 'final', [_record()], 1.0)
-    _publish(gallery, 'original-scan', [('0011', DAY)])
-    ident = _row(gallery, '0011')['id']
+    _publish(gallery, 'original-scan', [('00000011', DAY)])
+    ident = _row(gallery, '00000011')['id']
     before = gallery.item(ident)
     blank = _record(lead_name='', address='', assigned_service_resources=())
     gallery.publish_reference_snapshot(DAY, 'final', [blank], 2.0)
     assert gallery.repository.reference_snapshot(DAY, 'morning')[0] is None
 
-    _publish(gallery, 'replacement-scan', [('0011', DAY)])
+    _publish(gallery, 'replacement-scan', [('00000011', DAY)])
     item = gallery.item(ident)
 
     assert item['lead_name'] == before['lead_name'] == 'Reference Customer'
@@ -437,9 +437,9 @@ def test_card_without_work_order_stays_in_review(gallery):
 
 def test_yesterdays_morning_cards_remain_until_scans_or_normal_retention(gallery):
     gallery.publish_reference_snapshot(EARLIER_DAY, 'morning', [_record()], 1.0)
-    _publish(gallery, 'yesterday-morning', [('0011', EARLIER_DAY)],
+    _publish(gallery, 'yesterday-morning', [('00000011', EARLIER_DAY)],
              morning=True, day=EARLIER_DAY)
-    ident = _row(gallery, '0011', EARLIER_DAY)['id']
+    ident = _row(gallery, '00000011', EARLIER_DAY)['id']
 
     gallery.expire(90, 'America/Los_Angeles')
 
@@ -451,8 +451,8 @@ def test_yesterdays_morning_cards_remain_until_scans_or_normal_retention(gallery
 
 def test_cleanup_failure_does_not_block_scanned_card_and_retries_later(gallery, monkeypatch):
     gallery.publish_reference_snapshot(DAY, 'final', [_record()], 2.0)
-    _publish(gallery, 'morning', [('0011', DAY), ('0022', DAY)], morning=True)
-    retired = _row(gallery, '0022')['id']
+    _publish(gallery, 'morning', [('00000011', DAY), ('00000022', DAY)], morning=True)
+    retired = _row(gallery, '00000022')['id']
     remove = gallery.files.remove
 
     def unavailable(category, ident):
@@ -461,7 +461,7 @@ def test_cleanup_failure_does_not_block_scanned_card_and_retries_later(gallery, 
         return remove(category, ident)
 
     monkeypatch.setattr(gallery.files, 'remove', unavailable)
-    _publish(gallery, 'scan', [('0011', DAY)])
+    _publish(gallery, 'scan', [('00000011', DAY)])
 
     assert gallery.search('', 0)['total'] == 1
     assert gallery.search('Second Resource', 0)['total'] == 1

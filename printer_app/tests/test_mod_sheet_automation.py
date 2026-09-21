@@ -68,14 +68,22 @@ class FakeReferenceSink:
         self.pdf_payloads = []
         self.numbers = ()
         self.lead_published = []
+        self.lead_scopes = []
+        self.repair_calls = 0
 
-    def work_order_numbers(self):
+    def repair_missing_work_orders(self):
+        self.repair_calls += 1
+        return {'repaired': 0, 'review': 0}
+
+    def work_order_numbers(self, *, missing_only=False):
+        self.lead_scopes.append(('read', missing_only))
         return self.numbers
 
-    def publish_lead_statuses(self, work_order_numbers, records, captured):
+    def publish_lead_statuses(self, work_order_numbers, records, captured, *, missing_only=False):
         if self.fail:
             raise RuntimeError('reference sink unavailable')
         self.lead_published.append((tuple(work_order_numbers), tuple(records), captured))
+        self.lead_scopes.append(('publish', missing_only))
         return {'count': len(records), 'enriched': len(records)}
 
     def dates(self):
@@ -940,10 +948,12 @@ def test_startup_status_refresh_ignores_completed_date_backfill_marker(tmp_path)
     delivery = ModSheetReferenceDeliveryService(repository, source, FakeQueue(), sink,
                                                 'America/Los_Angeles', clock=lambda: 100)
     delivery.backfill_existing()
-    delivery.backfill_existing()  # Restart also refreshes current status.
+    delivery.backfill_existing()  # Restart retries cards still missing status.
     assert source.calls == []
     assert source.lead_calls == [('0003',), ('0003',)]
     assert len(sink.lead_published) == 2
+    assert sink.repair_calls == 2
+    assert sink.lead_scopes == [('read', True), ('publish', True)] * 2
 
 
 def test_startup_status_failure_retries_in_next_hour_without_clearing_cache(tmp_path):
@@ -963,6 +973,40 @@ def test_startup_status_failure_retries_in_next_hour_without_clearing_cache(tmp_
     assert len(sink.lead_published) == 1
 
 
+def test_startup_repairs_and_refreshes_only_missing_status_cards_across_dates(tmp_path):
+    from printer_app.gallery.bootstrap import GalleryReferenceInbox
+    from printer_app.mod_sheet_contract import WorkOrderLeadStatus
+    from printer_app.tests.test_gallery_reference import _card
+
+    sink = GalleryReferenceInbox(tmp_path)
+    sink.service.initialize()
+    _card(sink.service, 'older', '02278850 1', day='2026-09-01')
+    _card(sink.service, 'undated', '02278851', day=None)
+    _card(sink.service, 'known', '02278852', day='2026-09-25')
+    sink.publish_lead_statuses(('02278852',), (WorkOrderLeadStatus('02278852', 'shared', 'Open'),), 1)
+    with sink.service.repository.connect() as c:
+        c.execute("UPDATE items SET work_order_number='022788501',work_order_key='022788501' WHERE id='older'")
+    before = sink.service.item('known')
+    source = FakeSource([])
+    source.lead_results = (WorkOrderLeadStatus('02278850', 'shared', 'Sold'),
+                           WorkOrderLeadStatus('02278851', 'other', 'Open'))
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    repository.complete_reference_backfill()
+    delivery = ModSheetReferenceDeliveryService(repository, source, FakeQueue(), sink,
+                                                'America/Los_Angeles', clock=lambda: 100)
+
+    delivery.backfill_existing()
+
+    assert source.calls == []
+    assert source.lead_calls == [('02278850', '02278851')]
+    assert sink.service.item('older')['work_order_number'] == '02278850'
+    assert sink.service.item('older')['sales_lead_status'] == 'Sold'
+    assert sink.service.item('undated')['sales_lead_status'] == 'Open'
+    assert sink.service.item('known') == before
+    delivery.backfill_existing()
+    assert source.lead_calls == [('02278850', '02278851')]
+
+
 def test_refresh_links_real_cards_by_work_order_without_any_appointment(tmp_path):
     from printer_app.gallery.bootstrap import GalleryReferenceInbox
     from printer_app.mod_sheet_contract import WorkOrderLeadStatus
@@ -970,14 +1014,14 @@ def test_refresh_links_real_cards_by_work_order_without_any_appointment(tmp_path
 
     sink = GalleryReferenceInbox(tmp_path)
     sink.service.initialize()
-    _card(sink.service, 'older', '0001', day='2026-09-01')
-    _card(sink.service, 'undated', '0002', day=None)
-    _card(sink.service, 'future', '0003', day='2026-09-25')
-    _card(sink.service, 'other-lead-same-name', '0004', day='2026-09-21')
+    _card(sink.service, 'older', '00000001', day='2026-09-01')
+    _card(sink.service, 'undated', '00000002', day=None)
+    _card(sink.service, 'future', '00000003', day='2026-09-25')
+    _card(sink.service, 'other-lead-same-name', '00000004', day='2026-09-21')
     source = FakeSource([()])
     source.lead_results = tuple(WorkOrderLeadStatus(number, 'shared', 'Sold')
-                               for number in ('0001', '0002', '0003')) + (
-        WorkOrderLeadStatus('0004', 'different', 'Open'),)
+                               for number in ('00000001', '00000002', '00000003')) + (
+        WorkOrderLeadStatus('00000004', 'different', 'Open'),)
     repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
     delivery = ModSheetReferenceDeliveryService(repository, source, FakeQueue(), sink,
                                                 'America/Los_Angeles', clock=lambda: _stamp(2026, 9, 21, 12))
@@ -985,7 +1029,7 @@ def test_refresh_links_real_cards_by_work_order_without_any_appointment(tmp_path
     result = delivery.run_requested()
 
     assert result['status'] == 'complete'
-    assert set(source.lead_calls[0]) == {'0001', '0002', '0003', '0004'}
+    assert set(source.lead_calls[0]) == {'00000001', '00000002', '00000003', '00000004'}
     for ident in ('older', 'undated', 'future'):
         assert sink.service.item(ident)['sales_lead_status'] == 'Sold'
         assert sink.service.item(ident)['lead_source_id'] == 'shared'
@@ -1001,14 +1045,14 @@ def test_refresh_prepares_current_work_order_status_before_scan_arrives(tmp_path
     sink.service.initialize()
     # Old references alone must not grow the hourly lookup forever.
     sink.publish('2026-01-01', 'final', [ModSheetRecord('old', work_order_number='9999')], 1)
-    source = FakeSource([(ModSheetRecord('today', work_order_number='0010'),)])
-    source.lead_results = (WorkOrderLeadStatus('0010', 'shared', 'Sold'),)
+    source = FakeSource([(ModSheetRecord('today', work_order_number='00000010'),)])
+    source.lead_results = (WorkOrderLeadStatus('00000010', 'shared', 'Sold'),)
     repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
     delivery = ModSheetReferenceDeliveryService(repository, source, FakeQueue(), sink,
                                                 'America/Los_Angeles', clock=lambda: _stamp(2026, 9, 21, 12))
     assert delivery.run_hourly()['status'] == 'complete'
-    assert source.lead_calls == [('0010',)]
-    _card(sink.service, 'later-scan', '0010', day=None)
+    assert source.lead_calls == [('00000010',)]
+    _card(sink.service, 'later-scan', '00000010', day=None)
     assert sink.service.item('later-scan')['sales_lead_status'] == 'Sold'
 
 

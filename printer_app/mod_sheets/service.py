@@ -449,14 +449,15 @@ class ModSheetReferenceDeliveryService:
                 state, status='failed', updated=self.clock(), error=detail,
             ))
 
-    def _refresh_lead_statuses(self, current_work_orders=()):
+    def _refresh_lead_statuses(self, current_work_orders=(), *, missing_only=False):
         """Resolve retained work orders independently of appointment dates."""
-        numbers = tuple(dict.fromkeys((*self.reference_sink.work_order_numbers(), *current_work_orders)))
+        numbers = tuple(dict.fromkeys((
+            *self.reference_sink.work_order_numbers(missing_only=missing_only), *current_work_orders)))
         if not numbers:
             return {'lead_statuses': 0, 'enriched': 0}
         captured = self.clock()
         records = tuple(self.source.lead_statuses(numbers))
-        result = self.reference_sink.publish_lead_statuses(numbers, records, captured)
+        result = self.reference_sink.publish_lead_statuses(numbers, records, captured, missing_only=missing_only)
         return {'lead_statuses': len(records), 'enriched': int(result.get('enriched', 0))}
 
     def _refresh_cards(self, day):
@@ -507,7 +508,8 @@ class ModSheetReferenceDeliveryService:
         if self.reference_sink is None:
             return
         try:
-            self._refresh_lead_statuses()
+            self.reference_sink.repair_missing_work_orders()
+            self._refresh_lead_statuses(missing_only=True)
         except Exception as exc:
             log.warning('Card Lead status lookup failed; hourly refresh will retry: %s', exc)
         if self.repository.reference_backfill_complete():

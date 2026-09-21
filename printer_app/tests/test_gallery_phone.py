@@ -21,7 +21,7 @@ def gallery(tmp_path):
     return service
 
 
-def card(gallery, token, text='', day=DAY, work_order='0011'):
+def card(gallery, token, text='', day=DAY, work_order='00000011'):
     ident = hashlib.sha256(token.encode()).hexdigest()
     gallery.repository.enqueue(ident, token + '.pdf')
     gallery.repository.finish(ident, [dict(
@@ -34,7 +34,7 @@ def card(gallery, token, text='', day=DAY, work_order='0011'):
     return ident
 
 
-def reference(phone, work_order='0011', source_id='source-one'):
+def reference(phone, work_order='00000011', source_id='source-one'):
     return ModSheetRecord(source_id=source_id, work_order_number=work_order, phone=phone)
 
 
