@@ -104,9 +104,11 @@
 <div class="sheet-heading"><h2 id="galleryMenuTitle">Gallery</h2><button type="button" class="circle-button" data-close="galleryMenuSheet" aria-label="Close gallery menu">×</button></div>
 <div class="gallery-menu-options">
 <button id="galleryShare" type="button" hidden>Share</button>
-<label id="galleryOfflineWrap" class="gallery-offline-toggle" hidden><input id="galleryOfflineToggle" type="checkbox"><span>Offline</span></label>
+<!-- Keep the old control inert for devices still finishing a cached-shell update. -->
+<div hidden><label id="galleryOfflineWrap" class="gallery-offline-toggle" hidden><input id="galleryOfflineToggle" type="checkbox"><span>Offline</span></label></div>
 <button id="galleryMenuRefresh" type="button">Refresh</button>
 </div>
+<p id="galleryRefreshMessage" class="muted" role="status"></p>
 <p id="galleryOfflineStatus" class="muted gallery-offline-status" role="status"></p>
 </dialog>
 

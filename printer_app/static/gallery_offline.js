@@ -91,6 +91,7 @@ export class GalleryOffline {
     this.csrf = '';
     this.db = null;
     this.syncing = false;
+    this.syncRequested = false;
     this.urls = new Map();
   }
 
@@ -162,7 +163,7 @@ export class GalleryOffline {
       await this.sync();
       if (!shellReady) {
         this.onStatus(window.isSecureContext
-          ? 'Cards are downloaded, but the offline app shell could not be installed. Reopen the secure Gallery and try Offline again.'
+          ? 'Cards are downloaded, but offline startup is not ready. Reopen the secure Gallery to retry.'
           : 'Cards are downloaded. Reopening away from the office requires the secure full-device setup.');
       }
     } else {
@@ -340,8 +341,13 @@ export class GalleryOffline {
   }
 
   async sync() {
-    if (!this.isEnabled() || !this.allowed || this.syncing || !this.network.isReachable()) return;
+    if (!this.isEnabled() || !this.allowed || !this.network.isReachable()) return;
+    if (this.syncing) {
+      this.syncRequested = true;
+      return;
+    }
     this.syncing = true;
+    let failure;
     try {
       this.onStatus('Updating offline cards…');
       await this.flushPending();
@@ -408,9 +414,17 @@ export class GalleryOffline {
         (pending.length ? ` · ${pending.length} note${pending.length === 1 ? '' : 's'} waiting to sync` : '') +
         (!window.isSecureContext ? ' · secure setup required for relaunch' : '')
       );
+    } catch (error) {
+      failure = error;
     } finally {
       this.syncing = false;
     }
+    const repeat = this.syncRequested;
+    this.syncRequested = false;
+    // A source refresh may finish after this pass captured its index. Coalesce
+    // concurrent requests into one fresh pass, including after a recoverable error.
+    if (repeat && this.isEnabled() && this.allowed && this.network.isReachable()) return this.sync();
+    if (failure) throw failure;
   }
 
   releaseUrls() {

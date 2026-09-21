@@ -247,18 +247,14 @@ import { GalleryOffline } from './gallery_offline.js';
     catch (error) { el('galleryShareMessage').textContent = 'Could not load active access: ' + error.message; }
   }
   function accessControls(info, resumed = false) {
-    // Offline is exposed only on the already-secure Gallery. The certificate
-    // setup page remains server-side but there is intentionally no UI path to it.
     const canOffline = resumed ||
       (window.isSecureContext && Boolean(info?.capabilities?.includes('offline')));
     const canShare = !resumed && Boolean(info?.capabilities?.includes('share'));
-    el('galleryOfflineWrap').hidden = !canOffline;
     el('galleryShare').hidden = !canShare;
     if (!canShare) {
       if (el('galleryShareSheet').open) el('galleryShareSheet').close();
       clearShareQr();
     }
-    el('galleryOfflineToggle').checked = canOffline && offline.isEnabled();
     if (!canOffline) el('galleryOfflineStatus').textContent = '';
     const title = el('galleryTitle');
     const canEditIdentity = !resumed && Boolean(info?.capabilities?.includes('edit_identity'));
@@ -279,7 +275,11 @@ import { GalleryOffline } from './gallery_offline.js';
       await offline.configure(access);
       offlineMode = false;
       accessControls(access);
-      if (offline.isEnabled()) offline.sync().catch(error => {
+      const automaticOffline = window.isSecureContext && access.role === 'full' &&
+        access.capabilities?.includes('offline');
+      const download = automaticOffline && !offline.isEnabled() ? offline.setEnabled(true) :
+        offline.isEnabled() ? offline.sync() : Promise.resolve();
+      download.catch(error => {
         el('galleryOfflineStatus').textContent = 'Offline update paused: ' + error.message;
       });
       return true;
@@ -636,25 +636,41 @@ import { GalleryOffline } from './gallery_offline.js';
   el('galleryMore').onclick = () => load(false);
   el('galleryBack').onclick = () => navigation.back();
   el('galleryMenuButton').onclick = () => openMenu();
-  el('galleryMenuRefresh').onclick = () => {
-    galleryDirty = true;
-    if (offline.isEnabled() && network.isReachable()) offline.sync().catch(() => {});
-    requestClose('galleryMenuSheet');
-  };
-  el('galleryOfflineToggle').onchange = async event => {
-    const toggle = event.currentTarget;
-    if (!window.isSecureContext) {
-      toggle.checked = false;
-      return;
-    }
-    toggle.disabled = true;
+  el('galleryMenuRefresh').onclick = async () => {
+    const button = el('galleryMenuRefresh'), message = el('galleryRefreshMessage') || el('galleryOfflineStatus');
+    if (button.disabled) return;
+    button.disabled = true;
+    const canPull = access?.capabilities?.includes('edit_identity') || offlineMode;
     try {
-      await offline.setEnabled(toggle.checked);
+      if (canPull) {
+        message.textContent = 'Pulling today’s reps…';
+        const body = new FormData();
+        body.set('csrf', access?.csrf || el('galleryNote').elements.csrf.value);
+        let result = await api('/gallery/api/references/refresh', {method:'POST', body});
+        const deadline = Date.now() + 180000;
+        while (['queued', 'running'].includes(result.status)) {
+          message.textContent = result.status === 'queued' ? 'Waiting to pull today’s reps…' : 'Pulling today’s reps…';
+          if (Date.now() >= deadline) throw new Error('Refresh is still pending. Try again shortly.');
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          result = await api('/gallery/api/references/refresh');
+        }
+        if (result.status !== 'complete') throw new Error(result.error || 'Rep refresh did not complete. Try again.');
+        message.textContent = `Reps updated · ${result.enriched || 0} cards updated.`;
+      } else message.textContent = 'Cards refreshed.';
+      galleryDirty = true;
+      // Reload in place unless a card/notes dialog is open. Back/Close will
+      // pick up the dirty feed later without changing an open note target.
+      if (!navigation.restoring && (el('galleryMenuSheet').open || !document.querySelector('dialog[open]'))) {
+        await load();
+        navigation.save();
+      }
+      if (offline.isEnabled()) offline.sync().catch(error => {
+        el('galleryOfflineStatus').textContent = 'Offline update paused: ' + error.message;
+      });
     } catch (error) {
-      toggle.checked = offline.isEnabled();
-      el('galleryOfflineStatus').textContent = error.message;
+      message.textContent = 'Could not refresh reps: ' + error.message;
     } finally {
-      toggle.disabled = false;
+      button.disabled = false;
     }
   };
   el('galleryLeadForm').onsubmit = async event => {

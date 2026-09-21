@@ -6,6 +6,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from .policy import (
@@ -328,6 +329,43 @@ class ModSheetReferenceDeliveryService:
         self.timezone = timezone
         self.zone = ZoneInfo(timezone)
         self.clock = clock or time.time
+
+    def request_refresh(self):
+        """Queue a source refresh without calling the source from the web process."""
+        now = self.clock()
+        day = datetime.fromtimestamp(now, self.zone).date().isoformat()
+        return self.repository.request_reference_refresh(str(uuid4()), day, now)
+
+    def refresh_status(self):
+        return self.repository.reference_refresh_state()
+
+    def requested_due(self):
+        # The worker's single reference future owns execution; running means an
+        # interrupted request should resume after a process restart.
+        return self.refresh_status().get('status') in ('queued', 'running')
+
+    def run_requested(self):
+        state = self.refresh_status()
+        if state.get('status') not in ('queued', 'running'):
+            return state
+        now = self.clock()
+        # A request waiting across midnight must refresh today's assignments.
+        state = dict(state, status='running', updated=now,
+                     day=datetime.fromtimestamp(now, self.zone).date().isoformat())
+        self.repository.save_reference_refresh_state(state)
+        try:
+            if self.reference_sink is None:
+                raise RuntimeError('Card refresh is unavailable.')
+            result = self._publish_day(state['day'])
+            return self.repository.save_reference_refresh_state(dict(
+                state, status='complete', updated=self.clock(), **result,
+            ))
+        except Exception as exc:
+            detail = str(exc).strip()[:500] or type(exc).__name__
+            log.warning('Requested MOD reference pull failed; keeping saved card references.')
+            return self.repository.save_reference_refresh_state(dict(
+                state, status='failed', updated=self.clock(), error=detail,
+            ))
 
     def deliver_printed_mornings(self):
         if self.reference_sink is None:

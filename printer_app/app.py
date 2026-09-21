@@ -24,7 +24,7 @@ from .print_dispatch import PrintDispatchService
 from .print_queue_repository import PrintQueueRepository
 from .retention_repository import RetentionRepository
 from .attachment_routing_repository import AttachmentRoutingRepository
-from .gallery.bootstrap import build as build_gallery, build_access as build_gallery_access
+from .gallery.bootstrap import build as build_gallery, build_access as build_gallery_access, GalleryReferenceInbox
 from .gallery.web import blueprint as gallery_blueprint
 from .gallery_reprocess import GalleryReprocessService
 from .https_adapter import GalleryHttpsAdapter
@@ -33,7 +33,7 @@ from .salesforce_sandbox.service import SalesforceSandboxService
 from .salesforce_sandbox.web import blueprint as salesforce_sandbox_blueprint
 from .mod_sheets.pdf_renderer import render_mod_pdf
 from .mod_sheets.repository import ModSheetAutomationRepository
-from .mod_sheets.service import ModSheetSettingsService, ModSheetTestPrintService
+from .mod_sheets.service import ModSheetSettingsService, ModSheetTestPrintService, ModSheetReferenceDeliveryService
 from .mod_sheets.web import blueprint as mod_sheets_blueprint
 
 
@@ -77,6 +77,8 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.register_blueprint(gallery_blueprint(
         gallery, gallery_access, intake.intake, reprocess,
         admin_session=current_admin_session, https_access=gallery_https,
+        refresh_references=lambda: app.extensions['gallery_reference_refresh']().request_refresh(),
+        reference_refresh_status=lambda: app.extensions['gallery_reference_refresh']().refresh_status(),
     ))
 
     # Beta-only, read-only external source. Salesforce details stay behind the
@@ -88,6 +90,15 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.register_blueprint(salesforce_sandbox_blueprint(salesforce_sandbox))
 
     mod_sheet_repository = ModSheetAutomationRepository(db)
+
+    def gallery_reference_refresh():
+        current = getattr(g, 'printer_config', cfg)
+        return ModSheetReferenceDeliveryService(
+            mod_sheet_repository, salesforce_sandbox, print_queue,
+            GalleryReferenceInbox(cfg.data_dir, current.gallery), current.timezone,
+        )
+
+    app.extensions['gallery_reference_refresh'] = gallery_reference_refresh
     mod_sheet_settings = ModSheetSettingsService(
         mod_sheet_repository,
         print_queue,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import json
 
 from ..mod_sheet_contract import ModSheetRecord
 from .policy import ModSheetAutomationSettings
@@ -13,6 +14,7 @@ TEST_STATE_KEY = 'daily_mod_sheet_test_state'
 REFERENCE_OUTBOX_KEY = 'daily_mod_sheet_reference_outbox'
 FINAL_REFERENCE_STATE_KEY = 'daily_mod_sheet_final_reference_state'
 HOURLY_REFERENCE_STATE_KEY = 'daily_mod_sheet_hourly_reference_state'
+REQUESTED_REFERENCE_STATE_KEY = 'daily_mod_sheet_requested_reference_state'
 REFERENCE_BACKFILL_KEY = 'gallery_reference_backfill_complete'
 REFERENCE_BACKFILL_CONTRACT = 'full-card-search'
 
@@ -127,6 +129,29 @@ class ModSheetAutomationRepository:
     def save_hourly_reference_state(self, state):
         value = dict(state)
         self.db.set(HOURLY_REFERENCE_STATE_KEY, value)
+        return value
+
+    def reference_refresh_state(self):
+        value = self.db.get(REQUESTED_REFERENCE_STATE_KEY, {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def request_reference_refresh(self, ident, day, now):
+        with self.db.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT value FROM meta WHERE key=?',
+                               (REQUESTED_REFERENCE_STATE_KEY,)).fetchone()
+            state = json.loads(row['value']) if row else {}
+            if isinstance(state, dict) and state.get('status') in ('queued', 'running'):
+                return state
+            state = {'id': ident, 'status': 'queued', 'day': day, 'updated': now}
+            conn.execute('INSERT INTO meta(key,value) VALUES(?,?) '
+                         'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                         (REQUESTED_REFERENCE_STATE_KEY, json.dumps(state)))
+        return state
+
+    def save_reference_refresh_state(self, state):
+        value = dict(state)
+        self.db.set(REQUESTED_REFERENCE_STATE_KEY, value)
         return value
 
     def reference_backfill_complete(self):
