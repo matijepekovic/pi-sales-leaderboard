@@ -152,7 +152,7 @@ def test_live_search_all_dates_field_isolation_pagination_and_compact_mobile_bar
     assert len(labels) == 3
     assert all(0 <= label['left'] < label['right'] <= 320 and label['height'] >= 44 for label in labels)
     assert panel.evaluate('(node) => node.scrollWidth <= node.clientWidth')
-    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    assert page.evaluate('() => document.documentElement.scrollWidth <= window.innerWidth')
 
     # Typing alone updates the real feed. Accent/case folding and multiword
     # prefixes apply only to the selected field, across both document dates.
@@ -222,12 +222,12 @@ def test_delayed_real_search_response_cannot_replace_newer_query(gallery_browser
       };
     }""")
     page.locator('#query').fill('pine')
-    page.wait_for_function('window.searchRace.held')
+    page.wait_for_function('() => window.searchRace.held')
     page.locator('#query').fill('cedar')
     page.locator('#query').press('Enter')
     _expect_ids(page, [ids['lead']])
-    page.evaluate('window.releaseSearchResponse()')
-    page.wait_for_function('window.searchRace.consumed')
+    page.evaluate('() => window.releaseSearchResponse()')
+    page.wait_for_function('() => window.searchRace.consumed')
     _expect_ids(page, [ids['lead']])
     expect(page.locator('#query')).to_have_value('cedar')
     expect(page.locator('#gallerySearchSheet')).to_be_visible()
@@ -253,7 +253,7 @@ def test_pending_live_query_keeps_viewer_and_note_target_and_restores_day(galler
     }""", ids['rep'])
     expect(page.locator('#galleryViewer')).to_be_visible()
     expect(page.locator('#galleryTitle')).to_have_text('Lina Example')
-    page.wait_for_function('performance.now() - window.searchInputAt >= 300')
+    page.wait_for_function('() => performance.now() - window.searchInputAt >= 300')
     assert not any(params.get('q') == ['jose paging'] for params in _item_queries(requests))
     expect(page.locator('#galleryFull')).to_have_attribute(
         'src', '/gallery/image/' + ids['rep'] + '?v=' + service.item(ids['rep'])['image_revision'])
