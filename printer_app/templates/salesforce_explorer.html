@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Object Explorer · Salesforce Sandbox{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='salesforce_explorer/explorer.css') }}">{% endblock %}
+{% block content %}
+<div id="sfExplorer" data-api="{{ url_for('salesforce_sandbox.explorer_objects') | replace('/objects', '') }}" data-csrf="{{ session.csrf }}">
+  <nav class="sf-tabs" aria-label="Salesforce sandbox">
+    <a href="{{ url_for('salesforce_sandbox.page') }}">MOD Sheets</a>
+    <a href="{{ url_for('salesforce_sandbox.explorer_page') }}" aria-current="page">Object Explorer</a>
+  </nav>
+  <div class="heading"><div><p class="eyebrow">SALESFORCE SANDBOX</p><h1>Object Explorer</h1></div><span class="sf-read-only">Read only</span></div>
+  <p class="muted sf-intro">Choose an object to see its fields. Records load only when you run a search or open a related record.</p>
+  <p id="sfMessage" role="status" aria-live="polite" hidden></p>
+  <div class="sf-layout">
+    <section class="sf-catalog" aria-labelledby="sfCatalogTitle">
+      <div class="sf-section-heading"><h2 id="sfCatalogTitle">Objects</h2><button id="sfReloadObjects" type="button" class="sf-small">Reload</button></div>
+      <label class="sf-search-label" for="sfObjectSearch">Find an object<input id="sfObjectSearch" type="search" placeholder="Name or API name" autocomplete="off"></label>
+      <p id="sfObjectCount" class="muted" aria-live="polite"></p>
+      <div id="sfObjects" class="sf-object-list" aria-label="Salesforce objects"></div>
+    </section>
+    <div class="sf-workspace">
+      <section id="sfWelcome"><h2>Start with an object</h2><p class="muted">Browse the list or search its name. Then choose fields and filters to find the records you need.</p></section>
+      <div id="sfNavigation" class="sf-navigation" hidden><button id="sfBack" type="button">← Back</button><div id="sfBreadcrumbs" aria-label="Explorer breadcrumb"></div></div>
+      <section id="sfObjectView" hidden>
+        <h2 id="sfObjectTitle"></h2><p id="sfObjectApiName" class="sf-api-name"></p>
+        <p id="sfObjectLoading" class="muted" hidden>Loading fields…</p>
+        <button id="sfRetryObject" type="button" hidden>Try loading fields again</button>
+        <form id="sfSearchForm" hidden>
+          <details class="sf-field-picker" open><summary>Choose columns <span id="sfColumnCount" class="muted"></span></summary>
+            <label class="sf-search-label" for="sfFieldSearch">Find a field<input id="sfFieldSearch" type="search" placeholder="Label or API name" autocomplete="off"></label>
+            <div id="sfColumns" class="sf-columns"></div>
+            <p class="muted">Choose up to 20 columns.</p>
+          </details>
+          <div class="sf-section-heading sf-filter-heading"><h3>Filters</h3><button id="sfAddFilter" type="button">Add filter</button></div>
+          <div id="sfFilters"></div>
+          <div class="sf-search-actions"><label for="sfMatch">Match<select id="sfMatch"><option value="all">All filters</option><option value="any">Any filter</option></select></label><button id="sfRunSearch" class="primary" type="submit">Run search</button></div>
+          <p id="sfSearchHint" class="muted">Records have not been loaded. Add filters, then run a search.</p>
+        </form>
+      </section>
+      <section id="sfResultsSection" hidden aria-labelledby="sfResultsTitle"><div class="sf-section-heading"><h2 id="sfResultsTitle">Results</h2><p id="sfResultCount" class="muted" aria-live="polite"></p></div><div id="sfResults" class="table-wrap"></div><button id="sfMore" type="button" hidden>Load more</button></section>
+      <section id="sfRecordView" hidden>
+        <div class="sf-section-heading"><div><h2 id="sfRecordTitle"></h2><p id="sfRecordIdentity" class="sf-api-name"></p></div><button id="sfCopy" type="button" disabled>Copy details</button></div>
+        <p id="sfRecordLoading" class="muted" hidden>Loading record…</p><button id="sfRetryRecord" type="button" hidden>Try loading record again</button>
+        <div id="sfRecordTools" hidden><label class="sf-search-label" for="sfRecordFieldSearch">Find a field or value<input id="sfRecordFieldSearch" type="search" placeholder="Status, sold, date…" autocomplete="off"></label><label class="check"><input id="sfHideEmpty" type="checkbox">Hide empty fields</label></div>
+        <div id="sfRecordFields" class="table-wrap"></div>
+        <div id="sfCopyFallback" hidden><label for="sfCopyText">Copy these details<textarea id="sfCopyText" readonly rows="10"></textarea></label></div>
+        <div id="sfRelatedSection" hidden><h3>Related records</h3><div id="sfRelated"></div></div>
+      </section>
+    </div>
+  </div>
+</div>
+<script type="module" src="{{ url_for('static', filename='salesforce_explorer/explorer.js') }}"></script>
+{% endblock %}

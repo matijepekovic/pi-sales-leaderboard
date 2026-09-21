@@ -1,5 +1,6 @@
 """HTTP boundary for the isolated Salesforce Sandbox MOD portal."""
 from io import BytesIO
+import json
 
 from flask import Blueprint, jsonify, render_template, request, send_file
 
@@ -19,6 +20,51 @@ def blueprint(service):
     @bp.get('/salesforce-sandbox')
     def page():
         return render_template('salesforce_sandbox.html', snapshot=service.portal())
+
+    @bp.get('/salesforce-sandbox/explorer')
+    def explorer_page():
+        # Rendering the shell must never connect or query Salesforce.
+        return render_template('salesforce_explorer.html')
+
+    def exploration(action, **parameters):
+        snapshot = service.explore(action, **parameters)
+        if snapshot.error:
+            return jsonify(ok=False, error=snapshot.error), 400 if snapshot.invalid else 503
+        return jsonify(ok=True, **snapshot.data)
+
+    @bp.get('/salesforce-sandbox/api/explorer/objects')
+    def explorer_objects():
+        return exploration('objects')
+
+    @bp.get('/salesforce-sandbox/api/explorer/objects/<name>')
+    def explorer_object(name):
+        return exploration('object', name=name)
+
+    @bp.post('/salesforce-sandbox/api/explorer/objects/<name>/search')
+    def explorer_search(name):
+        # POST keeps typed filter values out of URLs and inherits admin/CSRF
+        # protection. This endpoint only reads records from the source.
+        try:
+            columns_text = request.form.get('columns', '[]')
+            filters_text = request.form.get('filters', '[]')
+            if len(columns_text) > 4096 or len(filters_text) > 20000:
+                raise ValueError('Search filters are too large.')
+            columns, filters = json.loads(columns_text), json.loads(filters_text)
+            if not isinstance(columns, list) or not isinstance(filters, list):
+                raise ValueError('Columns and filters must be lists.')
+        except (ValueError, TypeError):
+            return jsonify(ok=False, error='Use the field and filter controls to build a search.'), 400
+        return exploration('search', name=name, columns=columns, filters=filters,
+                           match=request.form.get('match', 'all'), after=request.form.get('after', ''))
+
+    @bp.get('/salesforce-sandbox/api/explorer/objects/<name>/records/<record_id>')
+    def explorer_record(name, record_id):
+        return exploration('record', name=name, record_id=record_id)
+
+    @bp.get('/salesforce-sandbox/api/explorer/objects/<name>/records/<record_id>/related/<relationship>')
+    def explorer_related(name, record_id, relationship):
+        return exploration('related', name=name, record_id=record_id,
+                           relationship=relationship, after=request.args.get('after', ''))
 
     @bp.get('/salesforce-sandbox/api/connection')
     def connection():

@@ -1,20 +1,25 @@
 """Replaceable Salesforce CLI adapter for the MOD-sheet sandbox.
 
-Only this module knows Salesforce object names, relationship paths, SOQL, or the
-`sf` command. Downstream code receives normalized MOD records only.
+Salesforce object names, relationship paths, SOQL, and the `sf` command stay in
+this adapter package. Downstream code receives normalized MOD or explorer data.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import OrderedDict
+from copy import deepcopy
 from datetime import datetime, time, timedelta, timezone
 import getpass
 import json
 import re
 import shlex
 import subprocess
+from threading import Lock
+from time import monotonic
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..mod_sheet_contract import ModSheetRecord, SourceStatus
+from . import explorer
 
 
 class SalesforceAdapterError(RuntimeError):
@@ -149,6 +154,8 @@ class SalesforceCliAdapter:
         self._portal_fields_cache = {}
         self._username = ''
         self._timezone = None
+        self._explorer_cache = OrderedDict()
+        self._explorer_cache_lock = Lock()
 
     def _run(self, args, timeout=30, trace=None):
         executable = self._executable
@@ -212,10 +219,121 @@ class SalesforceCliAdapter:
             raise SalesforceAdapterError(full_message)
         if trace_entry is not None:
             trace_entry['result'] = 'status 0'
-        return payload.get('result') or {}
+        result = payload.get('result')
+        return {} if result is None else result
 
     def _target_args(self):
         return ['--target-org', self.target_org]
+
+    def explorer_objects(self):
+        """List only names; opening the explorer never describes or queries objects."""
+        result = self._run(['sobject', 'list', '--sobject', 'all', *self._target_args()])
+        if not isinstance(result, list):
+            raise SalesforceAdapterError('Salesforce returned an invalid object list.')
+        try:
+            names = sorted({explorer.identifier(name) for name in result}, key=str.casefold)
+        except ValueError as exc:
+            raise SalesforceAdapterError('Salesforce returned an invalid object name.') from exc
+        return {'objects': [
+            {'name': name, 'label': name, 'custom': '__' in name} for name in names
+        ]}
+
+    def _explorer_schema(self, name):
+        name = explorer.identifier(name)
+        with self._explorer_cache_lock:
+            cached = self._explorer_cache.get(name)
+            if cached is not None and monotonic() - cached[0] < 600:
+                self._explorer_cache.move_to_end(name)
+                return deepcopy(cached[1])
+            self._explorer_cache.pop(name, None)
+        result = self._run(['sobject', 'describe', '--sobject', name, *self._target_args()])
+        try:
+            schema = explorer.describe_metadata(result, name)
+        except ValueError as exc:
+            raise SalesforceAdapterError(str(exc)) from exc
+        with self._explorer_cache_lock:
+            self._explorer_cache[name] = (monotonic(), schema)
+            self._explorer_cache.move_to_end(name)
+            while len(self._explorer_cache) > 32:
+                self._explorer_cache.popitem(last=False)
+        return deepcopy(schema)
+
+    def explorer_object(self, name):
+        """Load this object's metadata only, with a bounded ten-minute lazy cache."""
+        return self._explorer_schema(name)
+
+    def explorer_search(self, name, columns=None, filters=None, match='all', after=''):
+        if after != '':
+            explorer.record_id(after)
+        schema = self._explorer_schema(name)
+        query, columns = explorer.query_for(schema, columns, filters, match, after)
+        result = self._run(['data', 'query', '--query', query, *self._target_args()], timeout=45)
+        rows = result.get('records') if isinstance(result, dict) else None
+        if not isinstance(rows, list) or len(rows) > explorer.PAGE_SIZE + 1:
+            raise SalesforceAdapterError('Salesforce returned an invalid records page.')
+        if result.get('done') is False and len(rows) < explorer.PAGE_SIZE + 1:
+            raise SalesforceAdapterError('Salesforce returned an incomplete records page.')
+        ids = []
+        for row in rows:
+            try:
+                ids.append(explorer.record_id(row.get('Id') if isinstance(row, dict) else None))
+            except ValueError as exc:
+                raise SalesforceAdapterError('Salesforce returned a record without a valid ID.') from exc
+        if len(ids) != len(set(ids)) or (after and after in ids):
+            raise SalesforceAdapterError('Salesforce record pagination did not advance safely.')
+        selected = [field['name'] for field in columns]
+        return {
+            'object': {key: schema['object'][key] for key in ('name', 'label')},
+            'columns': columns,
+            'records': [{key: row.get(key) for key in selected} for row in rows[:explorer.PAGE_SIZE]],
+            'next_after': ids[explorer.PAGE_SIZE - 1] if len(rows) > explorer.PAGE_SIZE else '',
+            'page_size': explorer.PAGE_SIZE,
+        }
+
+    def explorer_record(self, name, record_id):
+        ident = explorer.record_id(record_id)
+        schema = self._explorer_schema(name)
+        if not schema['object']['queryable']:
+            raise ValueError('This object does not support record exploration.')
+        result = self._run([
+            'data', 'get', 'record', '--sobject', schema['object']['name'],
+            '--record-id', ident, *self._target_args(),
+        ])
+        try:
+            actual = explorer.record_id(result.get('Id') if isinstance(result, dict) else None)
+        except ValueError as exc:
+            raise SalesforceAdapterError('Salesforce returned a record without a valid ID.') from exc
+        same_id = actual.lower() == ident.lower() if len(actual) == len(ident) == 18 else actual[:15] == ident[:15]
+        if not same_id:
+            raise SalesforceAdapterError('Salesforce returned a different record.')
+        return {
+            'object': {key: schema['object'][key] for key in ('name', 'label')},
+            'record': {field['name']: result.get(field['name']) for field in schema['fields']},
+            'fields': schema['fields'],
+            'relationships': schema['relationships'],
+        }
+
+    def explorer_related(self, name, record_id, relationship, after=''):
+        ident = explorer.record_id(record_id)
+        explorer.identifier(relationship, 'Relationship')
+        schema = self._explorer_schema(name)
+        if not schema['object']['queryable']:
+            raise ValueError('This object does not support record exploration.')
+        matches = [item for item in schema['relationships'] if item['name'] == relationship]
+        if len(matches) != 1:
+            raise ValueError('Choose a related list from this record’s object.')
+        related = matches[0]
+        child = self._explorer_schema(related['object'])
+        field = next((field for field in child['fields'] if field['name'] == related['field']), None)
+        if (not field or field['type'] not in ('id', 'reference')
+                or 'eq' not in field['operators']
+                or (field['reference_to'] and schema['object']['name'] not in field['reference_to'])):
+            raise ValueError('This related list cannot be searched safely.')
+        page = self.explorer_search(related['object'], filters=[{
+            'field': field['name'], 'operator': 'eq', 'value': ident,
+        }], after=after)
+        page['relationship'] = related
+        return page
 
     def status(self, trace=None):
         result = self._run(

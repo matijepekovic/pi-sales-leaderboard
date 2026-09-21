@@ -106,6 +106,24 @@ Source-specific Salesforce CLI/SOQL behavior remains inside the Salesforce
 adapter; MOD scheduling, settings, rendering and workflow use normalized
 contracts under `printer_app/mod_sheets/`.
 
+## Salesforce Object Explorer
+
+Open **Object Explorer** from MOD Sheets to inspect the connected Salesforce
+org. Opening the explorer loads only object names. Selecting an object loads its
+fields and filter controls; records load only after **Search**, 50 at a time.
+Choose columns and combine filters with all/any matching. **Load more** fetches
+the next page without loading the entire object.
+
+Opening a record shows its accessible fields. Related lists and linked records
+load only when opened. **Back** restores the previous view without another
+Salesforce request. **Copy details** includes object and field API names so an
+identified status or sale-date field can be used for a later MOD Sheets change.
+This explorer is read-only and does not change card data or MOD status mappings.
+
+The existing Salesforce adapter owns metadata validation, typed filters and
+queries. The sandbox service and web routes expose explicit exploration steps;
+the standalone explorer page keeps navigation state only in page memory.
+
 ## Embedded email images are not reports
 
 The Gmail attachment selector ignores `image/*` parts marked `inline` and image
