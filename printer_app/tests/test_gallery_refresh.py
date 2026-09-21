@@ -290,9 +290,16 @@ def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(
                 page.locator('[data-close="galleryMenuSheet"]').click()
                 expect(page.locator('#galleryMenuSheet')).not_to_be_visible()
 
-                # Reopen the real app shell with browser networking disabled.
-                # No request interception or toggle click enables this behavior.
-                context.set_offline(True)
+                # An unreachable Pi must still work when the phone has internet.
+                # Stop the real origin; no request interception supplies cards.
+                port = server.server_port
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+                server = None
+                page.close()
+                page = context.new_page()
+                page.on('pageerror', lambda error: errors.append(str(error)))
                 assert page.goto(origin + '/gallery/').status == 200
                 expect(page.locator('.gallery-card')).to_have_attribute('data-id', ids['today'])
                 expect(page.locator('#galleryOfflineStatus')).to_contain_text('stored on this phone')
@@ -310,8 +317,11 @@ def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(
                 expect(page.locator('#galleryNoteMessage')).to_contain_text('Saved offline.')
                 assert gallery.item(ids['today'])['notes'] == before['notes']
 
-                # A second offline launch proves the note was persisted, rather
-                # than merely left in the old document's memory.
+                # A fresh tab proves persistence without restoring the previous
+                # tab's viewer/notes navigation stack over the card list.
+                page.close()
+                page = context.new_page()
+                page.on('pageerror', lambda error: errors.append(str(error)))
                 assert page.goto(origin + '/gallery/').status == 200
                 expect(page.locator('.gallery-card')).to_have_attribute('data-id', ids['today'])
                 page.locator('.gallery-card').click()
@@ -321,7 +331,12 @@ def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(
 
                 # Reconnecting uses the normal pending-note outbox and real
                 # endpoint, preserving the original note and sending exactly once.
-                context.set_offline(False)
+                server = make_server('127.0.0.1', port, app, threaded=True)
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                page.close()
+                page = context.new_page()
+                page.on('pageerror', lambda error: errors.append(str(error)))
                 assert page.goto(origin + '/gallery/').status == 200
                 expect(page.locator('#galleryOfflineStatus')).to_contain_text(
                     'Offline ready · 2 cards', timeout=20000)
@@ -335,6 +350,7 @@ def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(
             finally:
                 browser.close()
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+        if server is not None:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
