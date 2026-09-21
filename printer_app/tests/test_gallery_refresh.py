@@ -281,6 +281,7 @@ def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(
                 expect(page.locator('#galleryOfflineWrap')).not_to_be_visible()
                 expect(page.locator('#galleryOfflineStatus')).to_contain_text(
                     'Offline ready · 2 cards', timeout=20000)
+                expect(page.locator('#galleryOfflineStatus')).not_to_contain_text('waiting to retry')
                 page.wait_for_function('Boolean(navigator.serviceWorker.controller)')
                 subject = page.evaluate("localStorage.getItem('stats.gallery.offlineSubject')")
                 assert subject
@@ -303,6 +304,15 @@ def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(
                 assert page.goto(origin + '/gallery/').status == 200
                 expect(page.locator('.gallery-card')).to_have_attribute('data-id', ids['today'])
                 expect(page.locator('#galleryOfflineStatus')).to_contain_text('stored on this phone')
+                cache_state = page.evaluate('''async () => {
+                    const cache = await caches.open('stats-gallery-images-v1');
+                    return Promise.all((await cache.keys()).map(async request => ({
+                        url:request.url,
+                        matched:Boolean(await cache.match(request)),
+                        matchedIgnoringVary:Boolean(await cache.match(request, {ignoreVary:true})),
+                    })));
+                }''')
+                assert len(cache_state) == 2 and all(entry['matched'] for entry in cache_state), cache_state
                 image = page.locator('.gallery-card img')
                 expect(image).to_have_attribute('src', re.compile('/gallery/offline-image/'))
                 image.evaluate('(img) => img.decode()')

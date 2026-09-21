@@ -60,7 +60,8 @@ const network = {
   fetch:async url => {
     imageRequests.push(url);
     if (failDownload) throw new Error('temporary image failure');
-    return new Response('scanned image bytes', {headers:{'Content-Type':'image/png'}});
+    return new Response('scanned image bytes', {headers:{'Content-Type':'image/png',
+      'Vary':'Cookie', 'Cache-Control':'no-store'}});
   },
 };
 const offline = new GalleryOffline({network});
@@ -109,6 +110,10 @@ assert.equal(detailRequests.length,2,'Unchanged search revision does not refetch
 assert.equal(records.get('card').image_revision,'scan-2');
 assert.equal(await offline.imageUrl('card'),offline.imagePath('card','scan-2'));
 assert.equal(await (await cache.match(offline.imagePath('card','scan-2'))).text(),'scanned image bytes');
+const storedImage = await cache.match(offline.imagePath('card','scan-2'));
+assert.equal(storedImage.headers.get('Content-Type'),'image/png');
+assert.equal(storedImage.headers.get('Vary'),null,'Virtual images do not vary by the live session cookie');
+assert.equal(storedImage.headers.get('Cache-Control'),null,'Virtual images do not inherit no-store');
 assert.equal(await cache.match(offline.imagePath('card','morning-1')),undefined,'Obsolete image is removed');
 assert.equal((await offline.list({q:'Corrected Customer',field:'lead_name'})).total,1);
 assert.equal((await offline.list({q:'Old Customer',field:'lead_name'})).total,0);

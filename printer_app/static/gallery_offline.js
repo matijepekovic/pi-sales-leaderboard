@@ -207,10 +207,13 @@ export class GalleryOffline {
       // the whole Offline sync look complete while leaving later images missing.
       const response = await this.network.fetch(withRevision('/gallery/image/' + id, revision), {timeoutMs:20000});
       if (!response.ok) throw new Error('Could not download a work-order image.');
-      const clone = response.clone();
-      const probe = await clone.blob();
+      const probe = await response.blob();
       if (!probe.size) throw new Error('Downloaded work-order image was empty.');
-      await cache.put(key, response);
+      // This device-owned URL identifies the subject, card and image revision.
+      // Persist the bytes without the live endpoint's URL or cookie-vary headers.
+      await cache.put(key, new Response(probe, {
+        status:200, headers:{'Content-Type':probe.type || 'image/png'},
+      }));
       return key;
     } catch (error) {
       const migrated = imageRevision(legacyCard) === revision
