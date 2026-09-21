@@ -50,7 +50,7 @@ import { GalleryContact } from './gallery_contact.js';
   });
   const navigation = new GalleryNavigation({
     capture: captureView, restore: restoreView,
-    changed: () => { updateNavigation(); focus.reset(); },
+    changed: () => { updateNavigation(); actions(); focus.reset(); },
   });
   function updateNavigation() {
     const context = Boolean(relatedId || query || searchOpen);
@@ -319,7 +319,7 @@ import { GalleryContact } from './gallery_contact.js';
     document.querySelectorAll('button[data-action]').forEach(button => {
       button.disabled = button.dataset.action !== 'search' && (!selected || actionPending);
     });
-    contact.update(selected, Boolean(el('galleryViewer').open && !actionPending));
+    contact.update(selected, Boolean(el('galleryViewer').open && !actionPending && !navigation.restoring));
     cards.forEach(({node, item}) => node.setAttribute('aria-pressed', String(item.id === selected?.id)));
   }
   function cardSubtitle(item) {
@@ -851,7 +851,7 @@ import { GalleryContact } from './gallery_contact.js';
     if (initialView) {
       navigation.restoring = true;
       try { await restoreView(initialView); }
-      finally { navigation.restoring = false; updateNavigation(); focus.reset(); }
+      finally { navigation.restoring = false; updateNavigation(); actions(); focus.reset(); }
     } else { await load(); navigation.save(); }
     contact.restore();
   }

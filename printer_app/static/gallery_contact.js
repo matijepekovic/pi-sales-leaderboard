@@ -152,7 +152,7 @@ export class GalleryContact {
   }
 
   cancel() {
-    if (!this.ready) return false;
+    if (!this.ready || !this.pending) return false;
     if (this.saving) return false;
     this.pending = null;
     this.persist();

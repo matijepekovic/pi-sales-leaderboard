@@ -92,6 +92,8 @@ assert.equal(h.saved.length,0,'Opening a phone app must never imply that contact
 assert.equal(storage.size,1);
 h.event(h.fields.Cancel,'click');
 assert.equal(h.closed(),1); assert.equal(storage.size,0); assert.equal(h.saved.length,0);
+h.event(h.fields.Cancel,'click');
+assert.equal(h.closed(),1,'Repeated cancellation cannot request another history Back.');
 assert.equal(h.runtime.restore(),false);
 for (const [card,enabled] of [[item,false],[{...item,phone_dial:''},true],
     [{...item,phone_dial:'javascript:alert(1)'},true],[{...item,phone_dial:'123;body=bad'},true],[null,true]]) {

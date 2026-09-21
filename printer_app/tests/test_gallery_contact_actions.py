@@ -165,8 +165,59 @@ def test_viewer_contact_links_cancel_and_confirm_once_without_removing_feed_sear
     expect(page.locator('#galleryContactTitle')).to_have_text('Called?')
     expect(page.locator('#galleryContactContext')).to_contain_text('First Customer')
     assert service.item(ids['first'])['notes'] == []
-    page.locator('#galleryContactCancel').click()
-    expect(page.locator('#galleryContactSheet')).not_to_be_visible()
+    # Allow the real detail to render while holding the viewer's image decode.
+    # This exposes the restoration window after detail's actions() call: a new
+    # contact intent here must not skip its history entry and later close the feed.
+    page.evaluate("""(id) => {
+      const image = document.getElementById('galleryFull');
+      const decode = image.decode.bind(image), actualFetch = window.fetch;
+      const gate = window.contactRestoreGate = {entered:false, requested:0, consumed:0};
+      let release;
+      const waiting = new Promise(resolve => {release = resolve;});
+      image.decode = () => {
+        image.decode = decode;
+        gate.entered = true;
+        return Promise.all([decode().catch(() => {}), waiting]).then(() => undefined);
+      };
+      window.fetch = async (input, options) => {
+        const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+        const detail = url.pathname === '/gallery/api/items/' + id;
+        if (detail) gate.requested++;
+        const response = await actualFetch.call(window, input, options);
+        if (detail) {
+          const json = response.json.bind(response);
+          response.json = async () => {
+            const data = await json();
+            // Signal in the next task, after Gallery renders the real data.
+            setTimeout(() => {gate.consumed++;}, 0);
+            return data;
+          };
+        }
+        return response;
+      };
+      window.releaseContactRestore = () => {
+        image.decode = decode;
+        window.fetch = actualFetch;
+        release();
+      };
+    }""", ids['first'])
+    try:
+        page.locator('#galleryContactCancel').click()
+        page.wait_for_function("""() => window.contactRestoreGate.entered &&
+          window.contactRestoreGate.requested > 0 &&
+          window.contactRestoreGate.consumed === window.contactRestoreGate.requested""")
+        expect(page.locator('#galleryContactSheet')).not_to_be_visible()
+        expect(viewer).to_be_visible()
+        for link in (dial, message):
+            expect(link).to_have_attribute('aria-disabled', 'true')
+            assert not link.get_attribute('href')
+        dial.click(force=True)
+        expect(page.locator('#galleryContactSheet')).not_to_be_visible()
+        assert page.evaluate('() => window.contactLaunches') == [
+            {'href': 'tel:' + FIRST_PHONE, 'trusted': True},
+        ]
+    finally:
+        page.evaluate('() => window.releaseContactRestore()')
     assert service.item(ids['first'])['notes'] == []
 
     # Both outcomes are recorded only after the user confirms. Opening the
@@ -190,6 +241,9 @@ def test_viewer_contact_links_cancel_and_confirm_once_without_removing_feed_sear
             page.locator('#galleryContactConfirm').click()
         assert saved.value.status == 200
         expect(page.locator('#galleryContactSheet')).not_to_be_visible(timeout=15000)
+        expect(viewer).to_be_visible()
+        expect(page.locator('#galleryTitle')).to_have_text('First Customer')
+        expect(message).to_have_attribute('href', 'sms:' + FIRST_PHONE)
         notes = service.item(ids['first'])['notes']
         assert len(notes) == before + 1
         assert notes[-1]['author'] == 'Office'
