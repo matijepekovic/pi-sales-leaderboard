@@ -29,6 +29,9 @@ jobs:
         run: |
           python -m pytest \
             printer_app/tests/test_salesforce_sandbox.py \
+            printer_app/tests/test_salesforce_explorer_adapter.py \
+            printer_app/tests/test_salesforce_explorer_web.py \
+            printer_app/tests/test_salesforce_explorer_browser.py \
             printer_app/tests/test_mod_sheet_automation.py \
             printer_app/tests/test_gallery_reference.py \
             printer_app/tests/test_gallery_reference_text.py \

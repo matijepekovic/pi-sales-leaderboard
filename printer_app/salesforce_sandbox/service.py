@@ -32,6 +32,13 @@ class FieldSnapshot:
 
 
 @dataclass(frozen=True)
+class ExplorerSnapshot:
+    data: dict = dataclass_field(default_factory=dict)
+    error: str = ''
+    invalid: bool = False
+
+
+@dataclass(frozen=True)
 class GeneratedSnapshot:
     records: tuple = dataclass_field(default_factory=tuple)
     start_date: str = ''
@@ -82,6 +89,18 @@ class SalesforceSandboxService:
                 trace=tuple(trace),
                 error=str(exc),
             )
+
+    def explore(self, action, **parameters):
+        """Run one explicitly requested, read-only exploration step."""
+        if action not in ('objects', 'object', 'search', 'record', 'related'):
+            return ExplorerSnapshot(error='Unknown explorer action.', invalid=True)
+        try:
+            data = getattr(self.adapter, 'explorer_' + action)(**parameters)
+            return ExplorerSnapshot(data=data)
+        except ValueError as exc:
+            return ExplorerSnapshot(error=str(exc), invalid=True)
+        except SalesforceAdapterError as exc:
+            return ExplorerSnapshot(error=str(exc))
 
     def records(self, **filters):
         """Return normalized MOD records without leaking Salesforce exceptions."""

@@ -2,6 +2,7 @@
 {% block title %}MOD Sheets{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='mod_sheets/shared.css') }}"><script src="{{ url_for('static', filename='mod_sheets/runtime.js') }}" defer></script>{% endblock %}
 {% block content %}
+<nav aria-label="Salesforce sandbox"><a href="{{ url_for('salesforce_sandbox.page') }}" aria-current="page">MOD Sheets</a> · <a href="{{ url_for('salesforce_sandbox.explorer_page') }}">Object Explorer</a></nav>
 
 <div class="mod-source-row" id="modSourceState" data-mod-sheet-runtime
      data-connection-url="{{ url_for('salesforce_sandbox.connection') }}"
