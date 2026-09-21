@@ -147,6 +147,23 @@ assert.equal((await offline.detail('card')).phone_dial,'+13605550100');
 await offline.sync();
 assert.equal(detailRequests.length,5,'Unchanged snapshots do not refetch detail');
 assert.equal(imageRequests.length,2,'Contact updates never redownload unchanged images');
+
+// Status is card metadata, including when its only change arrives in the index.
+summaries[0].sales_lead_status = 'Sold';
+responseDetail.sales_lead_status = 'Sold';
+await offline.sync();
+assert.equal((await offline.list({})).items.find(item => item.id === 'card').sales_lead_status,'Sold');
+assert.equal((await offline.detail('card')).sales_lead_status,'Sold');
+assert.equal(detailRequests.length,5,'Index metadata can update the status without another record read');
+responseDetail.sales_lead_status = 'Canceled';
+await offline.refreshDetail('card');
+assert.equal((await offline.list({})).items.find(item => item.id === 'card').sales_lead_status,'Canceled');
+assert.equal((await offline.detail('card')).sales_lead_status,'Canceled');
+responseDetail.sales_lead_status = '';
+await offline.refreshDetail('card');
+assert.equal((await offline.list({})).items.find(item => item.id === 'card').sales_lead_status,'');
+assert.equal((await offline.detail('card')).sales_lead_status,'');
+assert.equal(imageRequests.length,2,'Status updates preserve saved images');
 console.log('offline lifecycle passed');
 '''
     result = subprocess.run(
@@ -401,13 +418,17 @@ def test_visible_morning_card_and_open_viewer_refresh_when_scan_revision_arrives
                 card = page.locator('.gallery-card')
                 expect(card).to_have_count(1)
                 expect(card.locator('.gallery-card-subtitle')).to_contain_text('Awaiting scan')
+                expect(card.locator('.gallery-card-subtitle')).to_contain_text('Lead status unavailable')
+                expect(card.locator('.gallery-card-subtitle')).not_to_contain_text('Page 1')
                 expect(card.locator('img')).to_have_attribute('src', '/gallery/image/' + current['id'] + '?v=morning-1')
                 card.click()
                 expect(page.locator('#gallerySource')).to_contain_text('Awaiting scan')
+                expect(page.locator('#gallerySource')).to_contain_text('Lead status unavailable')
                 expect(page.locator('#galleryFull')).to_have_attribute('src', '/gallery/image/' + current['id'] + '?v=morning-1')
 
                 current.update(origin='scan', image_revision='scan-2', search_revision=2,
-                               filename='scan.pdf', lead_name='Corrected Customer')
+                               filename='scan.pdf', lead_name='Corrected Customer',
+                               sales_lead_status='Sold', assigned_service_resource='Example Rep')
 
                 expect(page.locator('#galleryFull')).to_have_attribute(
                     'src', '/gallery/image/' + current['id'] + '?v=scan-2', timeout=12000,
@@ -415,6 +436,8 @@ def test_visible_morning_card_and_open_viewer_refresh_when_scan_revision_arrives
                 expect(card.locator('img')).to_have_attribute('src', '/gallery/image/' + current['id'] + '?v=scan-2')
                 expect(card.locator('.gallery-card-subtitle')).not_to_contain_text('Awaiting scan')
                 expect(page.locator('#gallerySource')).not_to_contain_text('Awaiting scan')
+                expect(card.locator('.gallery-card-subtitle')).to_have_text('Lead status: Sold · Rep: Example Rep')
+                expect(page.locator('#gallerySource')).to_have_text('Lead status: Sold · Rep: Example Rep')
                 expect(page.locator('#galleryTitle')).to_have_text('Corrected Customer')
             finally:
                 browser.close()

@@ -358,7 +358,7 @@ export class GalleryOffline {
     if (!card) return;
     const detail = await this.json('/gallery/api/items/' + id);
     const summary = {...card.summary, notes_count:detail.notes.length};
-    for (const column of Object.values(SEARCH_COLUMNS)) {
+    for (const column of [...Object.values(SEARCH_COLUMNS), 'sales_lead_status']) {
       if (Object.prototype.hasOwnProperty.call(detail, column)) summary[column] = detail[column];
     }
     await this.putCard({...card, detail, summary, saved_at:Date.now()});

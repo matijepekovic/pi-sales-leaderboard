@@ -21,6 +21,8 @@ class ModSheetRecord:
     source: str = ''
     sub_source: str = ''
     lead_description: str = ''
+    sales_lead_status: str = ''
+    lead_source_id: str = ''
 
 
 @dataclass(frozen=True)

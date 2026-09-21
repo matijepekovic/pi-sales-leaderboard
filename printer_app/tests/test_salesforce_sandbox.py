@@ -19,14 +19,19 @@ def _appointment(
     appointment_id,
     *,
     work_order_id='0WO000000000001AAA',
+    work_order_number='00012345',
     created='2026-09-19T18:00:00.000+0000',
     scheduled='2026-09-19T17:30:00.000+0000',
     local_start='9/19/2026 10:30 AM',
     resource='Sales Rep One',
     lead_name='Jordan Example',
+    lead_id='00Q000000000001AAA',
+    lead_status='Open',
+    appointment_status='Scheduled',
 ):
     return {
         'Id': appointment_id,
+        'StatusCategory': appointment_status,
         'Local_Scheduled_Start_Time__c': local_start,
         'SchedStartTime': scheduled,
         'SchedEndTime': '2026-09-19T19:30:00.000+0000',
@@ -34,7 +39,7 @@ def _appointment(
         'FSSK__FSK_Work_Order__c': work_order_id,
         'FSSK__FSK_Assigned_Service_Resource__r': {'Name': resource},
         'FSSK__FSK_Work_Order__r': {
-            'WorkOrderNumber': '00012345',
+            'WorkOrderNumber': work_order_number,
             'Address': '123 Main St, Lacey, WA 98503',
             'Street': '123 Main St',
             'City': 'Lacey',
@@ -43,13 +48,14 @@ def _appointment(
             'Product_Interest__c': 'Windows;Doors',
             'WorkType': {'Name': 'Sales Appointment'},
             'Lead__r': {
+                'Id': lead_id,
                 'Name': lead_name,
                 'Phone': '360-555-1212',
                 'Phone_3__c': '',
                 'Market__c': 'Retail',
                 'LeadSource': 'Canvass',
                 'Sub_Source__c': 'Door',
-                'Status': 'Open',
+                'Status': lead_status,
                 'LastModifiedDate': '2026-09-19T16:00:00.000+0000',
                 'Canvass_Set_By__r': {'Name': 'Canvasser'},
                 'Set_By__r': {'Name': 'Setter'},
@@ -212,6 +218,9 @@ def test_mod_query_and_grouping_match_original_apex_controller():
     assert 'Lead__r.LastModifiedDate != null' in report_query
     assert 'FSSK__FSK_Assigned_Service_Resource__r.Name' in report_query
     assert 'FSSK__FSK_Work_Order__c' in report_query
+    assert 'FSSK__FSK_Work_Order__r.Lead__r.Status' in report_query.split(' FROM ')[0]
+    assert 'FSSK__FSK_Work_Order__r.Lead__r.Id' in report_query.split(' FROM ')[0]
+    assert 'StatusCategory' in report_query.split(' FROM ')[0]
     assert 'ORDER BY SchedStartTime, FSSK__FSK_Work_Order__r.Lead__r.Name ASC LIMIT 1000' in report_query
     assert not any('FROM AssignedResource' in query for query in _query_calls(calls))
 
@@ -231,6 +240,151 @@ def test_mod_query_and_grouping_match_original_apex_controller():
     assert record.source == 'Canvass'
     assert record.sub_source == 'Door'
     assert record.lead_description == 'Customer description'
+    assert record.sales_lead_status == 'Open'
+    assert record.lead_source_id == '00Q000000000001AAA'
+
+
+@pytest.mark.parametrize('second_lead_id', ['00Q000000000001AAA', '00Q000000000002AAA'])
+def test_work_orders_preserve_exact_lead_identity_even_when_names_match(second_lead_id):
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner([], appointment_records=[
+        _appointment('08p000000000001AAA', lead_status='Sold'),
+        _appointment(
+            '08p000000000002AAA', work_order_id='0WO000000000002AAA',
+            work_order_number='00012346', lead_id=second_lead_id, lead_status='Sold',
+        ),
+    ]))
+    records = adapter.mod_sheets(start_date='2026-09-19', end_date='2026-09-19')
+    assert len(records) == 2
+    assert records[0].work_order_number == '00012345'
+    assert records[1].work_order_number == '00012346'
+    assert records[0].lead_name == records[1].lead_name == 'Jordan Example'
+    assert records[0].lead_source_id == '00Q000000000001AAA'
+    assert records[1].lead_source_id == second_lead_id
+
+
+def test_missing_lead_id_is_not_replaced_with_name_or_work_order_id():
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner([], appointment_records=[
+        _appointment('08p000000000001AAA', lead_id=None, lead_status='Sold'),
+    ]))
+    records = adapter.mod_sheets(start_date='2026-09-19', end_date='2026-09-19')
+    assert records[0].lead_source_id == ''
+    assert records[0].sales_lead_status == 'Sold'
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_active_appointment_wins_over_canceled_for_same_work_order_day(reverse):
+    rows = [
+        _appointment(
+            '08p000000000001AAA',
+            created='2026-09-19T15:00:00.000+0000',
+            resource='Former Rep', appointment_status='Canceled',
+            local_start='Canceled appointment', lead_status='Former status',
+        ),
+        _appointment(
+            '08p000000000002AAA',
+            created='2026-09-19T18:00:00.000+0000',
+            resource='Current Rep', local_start='Active appointment',
+            lead_status='Sold',
+        ),
+        _appointment(
+            '08p000000000003AAA',
+            created='2026-09-19T19:00:00.000+0000',
+            resource='Second Current Rep', lead_status='Sold',
+        ),
+    ]
+    if reverse:
+        rows.reverse()
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner([], appointment_records=rows))
+    records = adapter.mod_sheets(
+        start_date='2026-09-19', end_date='2026-09-19', remove_canceled=False,
+    )
+    assert len(records) == 1
+    assert records[0].work_order_number == '00012345'
+    assert records[0].local_scheduled_start_time == 'Active appointment'
+    assert records[0].sales_lead_status == 'Sold'
+    assert set(records[0].assigned_service_resources) == {'Current Rep', 'Second Current Rep'}
+
+
+def test_canceled_appointment_fallback_keeps_actual_lead_status_and_all_canceled_reps():
+    calls = []
+    rows = [
+        _appointment(
+            '08p000000000001AAA', appointment_status='Canceled',
+            lead_status='Sold', resource='Rep One',
+        ),
+        _appointment(
+            '08p000000000002AAA', appointment_status='Canceled',
+            lead_status='Sold', resource='Rep Two',
+        ),
+    ]
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner(calls, appointment_records=rows))
+    records = adapter.mod_sheets(
+        start_date='2026-09-19', end_date='2026-09-19', remove_canceled=False,
+    )
+    assert len(records) == 1
+    assert records[0].sales_lead_status == 'Sold'
+    assert records[0].assigned_service_resources == ('Rep One', 'Rep Two')
+    queries = [q for q in _query_calls(calls) if 'FROM ServiceAppointment' in q]
+    assert len(queries) == 1
+    assert 'SchedStartTime >= 2026-09-19T07:00:00Z' in queries[0]
+    assert 'SchedStartTime < 2026-09-20T07:00:00Z' in queries[0]
+    assert "Status != 'Canceled'" not in queries[0]
+
+
+@pytest.mark.parametrize('lead_status', ['', None])
+def test_canceled_appointment_without_lead_status_does_not_invent_a_status(lead_status):
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner([], appointment_records=[
+        _appointment(
+            '08p000000000001AAA', appointment_status='Canceled', lead_status=lead_status,
+        ),
+    ]))
+    records = adapter.mod_sheets(
+        start_date='2026-09-19', end_date='2026-09-19', remove_canceled=False,
+    )
+    assert records[0].sales_lead_status == ''
+
+
+def test_canceled_fallback_cannot_borrow_active_appointment_from_another_date():
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner([], appointment_records=[
+        _appointment(
+            '08p000000000001AAA', appointment_status='Canceled',
+            resource='Canceled Day Rep', lead_status='Canceled',
+        ),
+        _appointment(
+            '08p000000000002AAA', scheduled='2026-09-20T17:30:00.000+0000',
+            resource='Next Day Rep', lead_status='Open',
+        ),
+    ]))
+    records = adapter.mod_sheets(
+        start_date='2026-09-19', end_date='2026-09-19', remove_canceled=False,
+    )
+    assert len(records) == 1
+    assert records[0].sales_lead_status == 'Canceled'
+    assert records[0].assigned_service_resources == ('Canceled Day Rep',)
+
+
+def test_multi_day_query_keeps_same_work_order_on_each_date():
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner([], appointment_records=[
+        _appointment(
+            '08p000000000001AAA', appointment_status='Canceled',
+            resource='First Day Rep', lead_status='Canceled',
+        ),
+        _appointment(
+            '08p000000000002AAA', scheduled='2026-09-20T17:30:00.000+0000',
+            local_start='9/20/2026 10:30 AM', resource='Second Day Rep', lead_status='Sold',
+        ),
+    ]))
+    records = adapter.mod_sheets(
+        start_date='2026-09-19', end_date='2026-09-20', remove_canceled=False,
+    )
+    assert len(records) == 2
+    assert [record.work_order_number for record in records] == ['00012345', '00012345']
+    assert records[0].scheduled_start.startswith('2026.09.19')
+    assert records[0].sales_lead_status == 'Canceled'
+    assert records[0].assigned_service_resources == ('First Day Rep',)
+    assert records[1].scheduled_start.startswith('2026.09.20')
+    assert records[1].sales_lead_status == 'Sold'
+    assert records[1].assigned_service_resources == ('Second Day Rep',)
 
 
 def test_source_type_all_uses_original_controller_allowlist():

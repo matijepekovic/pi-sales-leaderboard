@@ -450,7 +450,8 @@ class ModSheetReferenceDeliveryService:
             ))
 
     def _publish_day(self, day):
-        # Card references cover the whole day, independently of print filters.
+        # Card references cover this day, independently of print filters. The
+        # source includes canceled appointments as fallback work-order matches.
         records = tuple(self.source.records(
             start_date=day,
             end_date=day,

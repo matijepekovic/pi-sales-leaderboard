@@ -1,4 +1,4 @@
-const CACHE = 'stats-gallery-shell-v12';
+const CACHE = 'stats-gallery-shell-v13';
 const IMAGE_CACHE = 'stats-gallery-images-v1';
 const SHELL = [
   '/gallery/',
