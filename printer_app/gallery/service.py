@@ -295,7 +295,8 @@ class GalleryService:
             match = self._match_reference({'work_order_number': number}, references)
             if match is not None:
                 if kind == 'final':
-                    morning = self.repository.reference_matches(day, 'morning', number)
+                    match_day = match.get('day') or day
+                    morning = self.repository.reference_matches(match_day, 'morning', number)
                     initial = self._match_reference({'work_order_number': number}, morning)
                     if initial:
                         match = dict(match)
