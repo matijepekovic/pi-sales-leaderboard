@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from .policy import (
     address_key, authoritative_reference_text, checked_date, checked_date_filter,
-    checked_work_order_number, printed_address, printed_lead, printed_work_order_number,
+    checked_lead_name, checked_work_order_number, lead_key, printed_address, printed_lead, printed_work_order_number,
     printed_phone, related_identity, search_expression, usable_phone, work_order_key,
 )
 
@@ -108,6 +108,42 @@ class GalleryService:
         )
 
     @staticmethod
+    def _checked_lead(value):
+        name = checked_lead_name(value)
+        if not name or not any(c.isalpha() for c in name):
+            raise ValueError('Enter the lead name printed on this card.')
+        return name
+
+    def lead(self, ident, value):
+        self.initialize()
+        name = self._checked_lead(value)
+        item = self.repository.item(ident)
+        if not item:
+            raise LookupError('This image has expired or is unavailable.')
+        # An unnamed active card has no confirmed name identity yet. Its first
+        # correction is intentionally local; later edits can use related identity.
+        if not item.get('lead_name'):
+            return dict(updated=self.repository.rename_one_active_lead(
+                ident, name, lead_key(name)
+            ), scope='single')
+        matches = self._identity_matches(item)
+        return dict(
+            updated=self.repository.rename_leads(
+                [row['id'] for row in matches], name, lead_key(name)
+            ),
+            scope='related',
+        )
+
+    def import_item_lead(self, import_id, item_id, value):
+        """Admin correction for one retained generated card, including REVIEW."""
+        self.initialize()
+        name = self._checked_lead(value)
+        result = self.repository.correct_import_item_lead(
+            import_id, item_id, name, lead_key(name)
+        )
+        return dict(result, lead_name=name)
+
+    @staticmethod
     def _checked_work_order(value):
         return checked_work_order_number(value)
 
@@ -191,7 +227,7 @@ class GalleryService:
             revision = hashlib.sha256(f"{job['id']}:{entry['page']}:{entry['part']}".encode()).hexdigest()
             day = job.get('reference_day') if origin == 'morning' else entry['document_date']
             number = printed_work_order_number(entry['text'])
-            reference_kind, reference = self._reference_for(day, number)
+            _, reference = self._reference_for(day, number)
             if reference and not day:
                 day = reference.get('day') or day
             if origin == 'morning' and day and self.repository.scans_received(day):
@@ -244,42 +280,33 @@ class GalleryService:
 
     @staticmethod
     def _match_reference(item, references):
-        """Accept one work-order source; repeated snapshots of that same source are safe."""
+        """Only one exact work-order match in the card's day can enrich it."""
         work = work_order_key(item.get('work_order_number', ''))
         if not work:
             return None
         matches = [row for row in references if row.get('work_order_key') == work]
-        if len(matches) == 1:
-            return matches[0]
-        source_ids = {str(row.get('source_id') or '') for row in matches}
-        if matches and len(source_ids) == 1 and '' not in source_ids:
-            return max(matches, key=lambda row: str(row.get('day') or ''))
-        return None
+        return matches[0] if len(matches) == 1 else None
 
     def _reference_for(self, day, number):
         if not work_order_key(number):
             return '', None
-        scopes = [day] if day else []
-        scopes.append(None)
-        for scope in scopes:
-            for kind in ('final', 'morning'):
-                references = self.repository.reference_matches(scope, kind, number)
-                match = self._match_reference({'work_order_number': number}, references)
-                if match is not None:
-                    match_day = match.get('day') or scope
-                    if kind == 'final':
-                        morning = self.repository.reference_matches(match_day, 'morning', number)
-                        initial = self._match_reference({'work_order_number': number}, morning)
-                        if initial:
-                            match = dict(match)
-                            for field in ('lead_name', 'address', 'phone', 'product_interest', 'work_type',
-                                          'source', 'sub_source', 'set_by', 'canvass_set_by', 'lead_description',
-                                          'local_scheduled_start_time', 'scheduled_start'):
-                                if not str(match.get(field) or '').strip():
-                                    match[field] = initial.get(field, '')
-                    return kind, match
-                if any(row.get('work_order_key') == work_order_key(number) for row in references):
-                    return kind, None
+        for kind in ('final', 'morning'):
+            references = self.repository.reference_matches(day, kind, number)
+            match = self._match_reference({'work_order_number': number}, references)
+            if match is not None:
+                if kind == 'final':
+                    morning = self.repository.reference_matches(day, 'morning', number)
+                    initial = self._match_reference({'work_order_number': number}, morning)
+                    if initial:
+                        match = dict(match)
+                        for field in ('lead_name', 'address', 'phone', 'product_interest', 'work_type',
+                                      'source', 'sub_source', 'set_by', 'canvass_set_by', 'lead_description',
+                                      'local_scheduled_start_time', 'scheduled_start'):
+                            if not str(match.get(field) or '').strip():
+                                match[field] = initial.get(field, '')
+                return kind, match
+            if any(row.get('work_order_key') == work_order_key(number) for row in references):
+                return kind, None  # Preserve ambiguity; never fall back to older data.
         return '', None
 
     @staticmethod
@@ -327,9 +354,7 @@ class GalleryService:
         assigned = self._resource_names(match) if kind == 'final' else ''
         name = ' '.join(str(match.get('lead_name') or '').split())
         address = ' '.join(str(match.get('address') or '').split())
-        text = self._reference_text(
-            item.get('text', ''), match, reference_day, include_resources=kind == 'final'
-        )
+        text = self._reference_text(item.get('text', ''), match, reference_day, include_resources=kind == 'final')
         return bool(self.repository.apply_reference(
             ident,
             match.get('source_id', ''),
