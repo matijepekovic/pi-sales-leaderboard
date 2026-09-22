@@ -228,11 +228,25 @@ class GalleryService:
             day = job.get('reference_day') if origin == 'morning' else entry['document_date']
             candidates = tuple(entry.get('work_order_candidates') or ())
             number = printed_work_order_number(entry['text'])
+            reference = None
+            candidates_pending = candidates
             if origin == 'scan' and candidates:
-                # OCR candidates are not durable identity until the normalized
-                # source validates exactly one of them.
-                number = ''
-            _, reference = self._reference_for(day, number)
+                # An already-saved normalized source record can validate the
+                # candidate immediately (for example the morning-card handoff).
+                # Otherwise the candidates remain untrusted until the fresh
+                # direct source lookup completes.
+                resolved = []
+                for candidate in candidates:
+                    kind, match = self._reference_for(day, candidate)
+                    if match is not None:
+                        resolved.append((candidate, kind, match))
+                if len(resolved) == 1:
+                    number, _, reference = resolved[0]
+                    candidates_pending = ()
+                else:
+                    number = ''
+            else:
+                _, reference = self._reference_for(day, number)
             if reference and not day:
                 day = reference.get('day') or day
             if origin == 'morning' and day and self.repository.scans_received(day):
@@ -262,8 +276,8 @@ class GalleryService:
                 page=entry['page'], part=entry['part'], bytes=entry['bytes'], text=text,
                 document_date=day, date_status='reference' if origin == 'morning' else entry['date_status'], created=time.time(),
                 lead_text=lead_text,
-                work_order_candidates=tuple(entry.get('work_order_candidates') or ()),
-                recognition_revision=1 if (entry.get('work_order_candidates') or
+                work_order_candidates=candidates_pending,
+                recognition_revision=1 if (candidates or
                     ('lead_text' in entry and entry['text'].strip())) else 0,
                 origin=origin, image_revision=revision, replace_existing=bool(existing), require_identity=True)
         warnings = manifest.get('warnings', [])
