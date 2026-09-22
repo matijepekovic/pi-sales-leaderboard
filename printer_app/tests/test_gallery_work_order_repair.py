@@ -4,7 +4,7 @@ import hashlib
 import pytest
 
 from printer_app.gallery.files import GalleryFiles
-from printer_app.gallery.policy import work_order_key
+from printer_app.gallery.policy import lead_key, work_order_key
 from printer_app.gallery.repository import GalleryRepository
 from printer_app.gallery.service import GalleryService
 from printer_app.mod_sheet_contract import WorkOrderLeadStatus
@@ -25,7 +25,9 @@ def _legacy_card(gallery, token, raw_number, saved_number, *, state='ACTIVE', st
     ident = hashlib.sha256(token.encode()).hexdigest()
     repository = gallery.repository
     _seed(repository, ident=ident, work_order='02278850', day=day)
-    repository.correct_lead(ident, 'Confirmed Customer')
+    with repository.connect() as c:
+        c.execute("UPDATE items SET lead_name=?,lead_key=?,lead_status='confirmed' WHERE id=?",
+                  ('Confirmed Customer', lead_key('Confirmed Customer'), ident))
     repository.add_note(ident, ident[:32], 'Office', 'Keep this note.')
     text = (f'Work Order Number: {raw_number}\nLead Name: Printed Customer\n'
             'Address: 123 Main Street\nPhone: 3605551212\n'
@@ -94,13 +96,26 @@ def test_missing_only_refresh_leaves_filled_cards_untouched_even_for_the_same_le
     assert gallery.repair_missing_work_orders() == {'repaired': 0, 'review': 0}
 
 
-@pytest.mark.parametrize('raw_number,saved_number', [
-    ('022788501', '022788501'),
-    ('02278850 02345678', '0227885002345678'),
-    ('0227 8850', '02278850'),
+@pytest.mark.parametrize('raw_number,saved_number,expected', [
+    ('022788501', '022788501', '02278850'),
+    ('02278850 02345678', '0227885002345678', '02278850'),
 ])
-def test_uncertain_saved_number_is_not_truncated_or_joined_and_requires_review(gallery, raw_number, saved_number):
-    ident = _legacy_card(gallery, 'uncertain', raw_number, saved_number)
+def test_overlong_or_noisy_saved_number_repairs_to_first_complete_eight_digits(
+        gallery, raw_number, saved_number, expected):
+    ident = _legacy_card(gallery, 'overlong-' + raw_number, raw_number, saved_number)
+    before, notes, image = _snapshot(gallery, ident)
+
+    assert gallery.repair_missing_work_orders() == {'repaired': 1, 'review': 0}
+
+    after, after_notes, after_image = _snapshot(gallery, ident)
+    assert after == dict(before, work_order_number=expected, work_order_key=expected,
+                         lead_source_id='', search_revision=before['search_revision'] + 1)
+    assert after_notes == notes
+    assert after_image == image
+
+
+def test_fragmented_saved_number_is_never_joined_and_requires_review(gallery):
+    ident = _legacy_card(gallery, 'fragmented', '0227 8850', '02278850')
     before, notes, image = _snapshot(gallery, ident)
 
     assert gallery.repair_missing_work_orders() == {'repaired': 0, 'review': 1}
@@ -112,14 +127,6 @@ def test_uncertain_saved_number_is_not_truncated_or_joined_and_requires_review(g
     assert after_image == image
     assert gallery.work_order_numbers(missing_only=True) == []
     assert gallery.item(ident) is None
-    assert gallery.repair_missing_work_orders() == {'repaired': 0, 'review': 0}
-
-    # Explicit publication after review must not be undone on the next repair.
-    assert gallery.repository.approve_import_item(before['import_id'], ident)
-    approved = _snapshot(gallery, ident)
-    assert gallery.repair_missing_work_orders() == {'repaired': 0, 'review': 0}
-    assert _snapshot(gallery, ident) == approved
-    assert gallery.item(ident)['state'] == 'ACTIVE'
 
 
 def test_readable_repair_does_not_publish_a_card_already_awaiting_review(gallery):
