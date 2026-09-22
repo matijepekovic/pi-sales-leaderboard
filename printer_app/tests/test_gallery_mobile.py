@@ -114,11 +114,11 @@ def test_web_related_and_work_order_edits_keep_write_protection(web):
     assert b'Change lead name' not in response.data
     assert client.get(f'/gallery/api/items/{ids[0]}/related').json['total'] == 2
     assert client.get('/gallery/api/items/invalid/related').status_code == 404
+    with client.session_transaction() as session: csrf = session['csrf']
     assert client.post(f'/gallery/api/items/{ids[0]}/lead-name',
-                       data={'lead_name': 'Another Name'}).status_code == 404
+                       data={'csrf': csrf, 'lead_name': 'Another Name'}).status_code == 404
     url = f'/gallery/api/items/{ids[0]}/work-order-number'
     assert client.post(url, data={'work_order_number': '00009999'}).status_code == 400
-    with client.session_transaction() as session: csrf = session['csrf']
     form = dict(csrf=csrf, work_order_number='000099999')
     assert client.post(url, data=form, headers={'Origin':'http://elsewhere.test'}).status_code == 403
     assert client.post(url, data=form).status_code == 200
