@@ -42,6 +42,7 @@ def _settings_from_form() -> ModSheetAutomationSettings:
         market_segment=request.form.get('marketsegment', '').strip(),
         product_category=request.form.get('productCategory', 'All').strip() or 'All',
         source_type=request.form.get('sourceType', 'All').strip() or 'All',
+        assigned_service_resource=request.form.get('assignedServiceResource', '').strip(),
         remove_canceled=_checked('removeCanceled'),
         remove_unconfirmed=_checked('removeUnconfirmed'),
         color_code=_checked('colorCode'),

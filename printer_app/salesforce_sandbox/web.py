@@ -111,6 +111,7 @@ def blueprint(service):
             market_segment=request.args.get('marketsegment', ''),
             product_category=request.args.get('productCategory', ''),
             source_type=request.args.get('sourceType', ''),
+            assigned_service_resource=request.args.get('assignedServiceResource', ''),
             remove_canceled=_bool_arg('removeCanceled', False),
             remove_unconfirmed=_bool_arg('removeUnconfirmed', False),
             color_code=_bool_arg('colorCode', False),
