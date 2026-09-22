@@ -129,17 +129,17 @@ def test_fragmented_saved_number_is_never_joined_and_requires_review(gallery):
     assert gallery.item(ident) is None
 
 
-def test_readable_repair_does_not_publish_a_card_already_awaiting_review(gallery):
+def test_readable_repair_publishes_card_once_work_order_is_known(gallery):
     ident = _legacy_card(gallery, 'review', '02278850 1', '022788501', state='REVIEW')
     before, notes, image = _snapshot(gallery, ident)
 
     assert gallery.repair_missing_work_orders() == {'repaired': 1, 'review': 0}
     after, after_notes, after_image = _snapshot(gallery, ident)
     assert after == dict(before, work_order_number='02278850', work_order_key='02278850',
-                         lead_source_id='', search_revision=before['search_revision'] + 1)
-    assert after['state'] == 'REVIEW'
+                         lead_source_id='', state='ACTIVE',
+                         search_revision=before['search_revision'] + 1)
     assert after_notes == notes and after_image == image
-    assert gallery.item(ident) is None
+    assert gallery.item(ident)['work_order_number'] == '02278850'
 
 
 @pytest.mark.parametrize('column,value', [
