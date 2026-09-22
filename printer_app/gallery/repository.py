@@ -239,7 +239,7 @@ class GalleryRepository:
                 state = 'ACTIVE' if name else 'REVIEW'
                 if item.get('require_identity'):
                     # Normal Gallery imports use the work order as their only
-                    # scan identity; Salesforce may fill name/date afterward.
+                    # scan identity; normalized references may fill name/date afterward.
                     state = 'ACTIVE' if work_order else 'REVIEW'
                 origin = item.get('origin', 'scan')
                 if origin == 'morning' and c.execute(
