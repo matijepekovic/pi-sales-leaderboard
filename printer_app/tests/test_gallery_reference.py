@@ -8,7 +8,7 @@ import pytest
 from printer_app.gallery.files import GalleryFiles
 from printer_app.gallery.repository import GalleryRepository
 from printer_app.gallery.service import GalleryService
-from printer_app.mod_sheet_contract import ModSheetRecord, WorkOrderLeadStatus
+from printer_app.mod_sheet_contract import ModSheetRecord, WorkOrderLeadStatus, WorkOrderReference
 
 
 DAY = '2026-09-21'
@@ -335,7 +335,7 @@ def test_direct_work_order_record_supplies_date_identity_and_rep_to_undated_card
     _card(gallery, ident, '00002001', lead='', address='', day=None)
     assert gallery.repository.reference_item(ident)['state'] == 'REVIEW'
 
-    record = ModSheetRecord(
+    record = WorkOrderReference(
         source_id='source-direct',
         work_order_number='00002001',
         appointment_date=DAY,
@@ -362,7 +362,7 @@ def test_direct_work_order_record_supplies_date_identity_and_rep_to_undated_card
     assert item['reference_kind'] == 'work-order'
     assert gallery.search('Resolved', 0)['total'] == 1
 
-    job = gallery.import_job('import-' + ident)
+    job = gallery.repository.import_job('import-' + ident)
     assert job['items'][0]['work_order_number'] == '00002001'
 
 
