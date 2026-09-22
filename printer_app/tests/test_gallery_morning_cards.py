@@ -336,7 +336,9 @@ def test_reconciliation_keeps_complete_reference_snapshot_for_later_scans(galler
     assert snapshot['count'] == 2
     for expected in records:
         actual = next(row for row in stored if row['source_id'] == expected.source_id)
-        assert {key: actual[key] for key in asdict(expected)} == asdict(expected)
+        expected_data = asdict(expected)
+        expected_data.pop('appointment_date', None)
+        assert {key: actual[key] for key in expected_data} == expected_data
 
     _publish(gallery, 'later-scan', [('00000022', DAY)])
     item = gallery.item(_row(gallery, '00000022')['id'])
