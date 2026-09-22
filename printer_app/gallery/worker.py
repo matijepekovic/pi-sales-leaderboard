@@ -71,7 +71,7 @@ def main():
     def request_reference_refresh(current):
         ModSheetReferenceDeliveryService(
             reference_repository, None, None, None, current.timezone,
-        ).request_refresh()
+        ).request_work_order_refresh()
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
