@@ -226,7 +226,12 @@ class GalleryService:
         for entry in manifest['items']:
             revision = hashlib.sha256(f"{job['id']}:{entry['page']}:{entry['part']}".encode()).hexdigest()
             day = job.get('reference_day') if origin == 'morning' else entry['document_date']
+            candidates = tuple(entry.get('work_order_candidates') or ())
             number = printed_work_order_number(entry['text'])
+            if origin == 'scan' and candidates:
+                # OCR candidates are not durable identity until the normalized
+                # source validates exactly one of them.
+                number = ''
             _, reference = self._reference_for(day, number)
             if reference and not day:
                 day = reference.get('day') or day
@@ -576,11 +581,6 @@ class GalleryService:
             if not isinstance(result, dict) or not isinstance(result.get('text'), str):
                 raise ValueError('Invalid recognition result')
             text = result['text'][:100000]
-            if not text.strip():
-                raise ValueError('No readable text; preserve the existing search index')
-            header = result.get('lead_text', '')
-            if not isinstance(header, str):
-                raise ValueError('Invalid header text')
             candidates = tuple(result.get('work_order_candidates') or ())
             if item.get('state') == 'REVIEW' and not item.get('work_order_key'):
                 if not candidates:
@@ -588,6 +588,11 @@ class GalleryService:
                 if not self.repository.save_work_order_candidates(item['id'], candidates):
                     raise ValueError('Work-order candidate changed during recognition')
                 return True
+            if not text.strip():
+                raise ValueError('No readable text; preserve the existing search index')
+            header = result.get('lead_text', '')
+            if not isinstance(header, str):
+                raise ValueError('Invalid header text')
             name = printed_lead(header) or printed_lead(text)
             address = printed_address(text)
             work_order = printed_work_order_number(text)
