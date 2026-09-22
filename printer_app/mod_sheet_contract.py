@@ -32,6 +32,12 @@ class ModSheetRecord:
     lead_description: str = ''
     sales_lead_status: str = ''
     lead_source_id: str = ''
+
+
+@dataclass(frozen=True)
+class WorkOrderReference(ModSheetRecord):
+    """Complete normalized source record resolved directly by work-order number."""
+
     appointment_date: str = ''
 
 
