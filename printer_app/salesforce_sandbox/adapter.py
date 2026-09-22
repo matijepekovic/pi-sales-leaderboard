@@ -54,6 +54,10 @@ PORTAL_FIELDS = {
     'market_segment': ('Market Segment', 'FSSK__FSK_Work_Order__r.Lead__r.Market__c'),
     'product_category': ('Product Category', 'FSSK__FSK_Work_Order__r.Product_Interest__c'),
     'source_type': ('Source Type', 'FSSK__FSK_Work_Order__r.Lead__r.LeadSource'),
+    'assigned_service_resource': (
+        'Assigned Service Resource',
+        'FSSK__FSK_Assigned_Service_Resource__r.Name',
+    ),
 }
 
 
@@ -568,7 +572,10 @@ class SalesforceCliAdapter:
     def portal_fields(self):
         return {
             key: self.portal_field(key)
-            for key in ('market_segment', 'product_category', 'source_type')
+            for key in (
+                'market_segment', 'product_category', 'source_type',
+                'assigned_service_resource',
+            )
         }
 
     @staticmethod
@@ -589,6 +596,7 @@ class SalesforceCliAdapter:
         market_segment='',
         product_category='',
         source_type='',
+        assigned_service_resource='',
         remove_canceled=True,
         remove_unconfirmed=True,
         limit=1000,
@@ -644,6 +652,7 @@ class SalesforceCliAdapter:
         market_segment = str(market_segment or '').strip()
         product_category = str(product_category or '').strip()
         source_type = str(source_type or '').strip()
+        assigned_service_resource = str(assigned_service_resource or '').strip()
 
         if product_category and product_category.casefold() != 'all':
             conditions.append(
@@ -654,6 +663,11 @@ class SalesforceCliAdapter:
             conditions.append(
                 'FSSK__FSK_Work_Order__r.Lead__r.Market__c = '
                 + _soql_literal(market_segment)
+            )
+        if assigned_service_resource:
+            conditions.append(
+                'FSSK__FSK_Assigned_Service_Resource__r.Name = '
+                + _soql_literal(assigned_service_resource)
             )
         if source_type:
             if source_type.casefold() == 'all':
