@@ -338,6 +338,14 @@ class ModSheetReferenceDeliveryService:
         day = datetime.fromtimestamp(now, self.zone).date().isoformat()
         return self.repository.request_reference_refresh(str(uuid4()), day, now)
 
+    def request_work_order_refresh(self):
+        """Queue another source pass when a new Gallery work order arrives."""
+        now = self.clock()
+        day = datetime.fromtimestamp(now, self.zone).date().isoformat()
+        return self.repository.request_reference_refresh(
+            str(uuid4()), day, now, rerun_running=True,
+        )
+
     def refresh_status(self):
         return self.repository.reference_refresh_state()
 
