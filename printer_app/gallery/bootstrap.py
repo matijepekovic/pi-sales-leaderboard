@@ -50,6 +50,9 @@ class GalleryReferenceInbox:
     def work_order_numbers(self, *, missing_only=False):
         return self.service.work_order_numbers(missing_only=missing_only)
 
+    def work_order_lookup_numbers(self):
+        return self.service.work_order_lookup_numbers()
+
     def publish_lead_statuses(self, work_order_numbers, records, captured, *, missing_only=False):
         return self.service.publish_lead_statuses(work_order_numbers, records, captured, missing_only=missing_only)
 
