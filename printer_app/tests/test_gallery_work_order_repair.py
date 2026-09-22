@@ -142,6 +142,18 @@ def test_readable_repair_publishes_card_once_work_order_is_known(gallery):
     assert gallery.item(ident)['work_order_number'] == '02278850'
 
 
+def test_review_card_with_already_valid_work_order_is_published(gallery):
+    ident = _legacy_card(gallery, 'review-valid', '02278850', '02278850', state='REVIEW')
+    before, notes, image = _snapshot(gallery, ident)
+
+    assert gallery.repair_missing_work_orders() == {'repaired': 1, 'review': 0}
+
+    after, after_notes, after_image = _snapshot(gallery, ident)
+    assert after == dict(before, state='ACTIVE', search_revision=before['search_revision'] + 1)
+    assert after_notes == notes and after_image == image
+    assert gallery.item(ident)['work_order_number'] == '02278850'
+
+
 @pytest.mark.parametrize('column,value', [
     ('text', 'Work Order Number: 02345678\nLead Name: Corrected Customer'),
     ('work_order_number', '02345678'),
