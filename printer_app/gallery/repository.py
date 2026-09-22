@@ -692,10 +692,12 @@ class GalleryRepository:
 
     def recognition_candidate(self, now):
         with self.connect() as c:
-            row = c.execute("""SELECT id,text,lead_status FROM items
-                WHERE state IN ('ACTIVE','REVIEW') AND recognition_attempts<3
-                AND recognition_retry_at<=? AND (recognition_revision<1 OR work_order_key='')
-                ORDER BY (work_order_key!=''),(lead_key!=''),created,id LIMIT 1""",
+            row = c.execute("""SELECT id,text,lead_status,state,work_order_key FROM items
+                WHERE recognition_attempts<3 AND recognition_retry_at<=? AND (
+                    (state='ACTIVE' AND recognition_revision<1)
+                    OR (state='REVIEW' AND work_order_key='')
+                )
+                ORDER BY (state='ACTIVE'),(lead_key!=''),created,id LIMIT 1""",
                 (now,)).fetchone()
             return dict(row) if row else None
 
@@ -716,8 +718,10 @@ class GalleryRepository:
                 lead_name=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_name ELSE ? END,
                 lead_key=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_key ELSE ? END,
                 lead_status=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_status ELSE 'printed' END
-                WHERE id=? AND state IN ('ACTIVE','REVIEW')
-                AND (recognition_revision<1 OR work_order_key='')""",
+                WHERE id=? AND (
+                    (state='ACTIVE' AND recognition_revision<1)
+                    OR (state='REVIEW' AND work_order_key='')
+                )""",
                 (text,address,address_normalized,work_order_normalized,work_order_normalized,work_order_normalized,
                  work_order_number,work_order_normalized,work_order_number,
                  name,name,name,key,name,ident))
@@ -726,8 +730,10 @@ class GalleryRepository:
     def defer_recognition(self, ident, now):
         with self.connect() as c:
             c.execute("""UPDATE items SET recognition_attempts=recognition_attempts+1,
-                recognition_retry_at=? WHERE id=? AND state IN ('ACTIVE','REVIEW')
-                AND (recognition_revision<1 OR work_order_key='')""",
+                recognition_retry_at=? WHERE id=? AND (
+                    (state='ACTIVE' AND recognition_revision<1)
+                    OR (state='REVIEW' AND work_order_key='')
+                )""",
                 (now+300,ident))
 
 
