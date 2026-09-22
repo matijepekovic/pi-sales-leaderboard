@@ -18,7 +18,7 @@ from threading import Lock
 from time import monotonic
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from ..mod_sheet_contract import ModSheetRecord, SourceStatus, WorkOrderLeadStatus
+from ..mod_sheet_contract import ModSheetRecord, SourceStatus, WorkOrderLeadStatus, WorkOrderReference
 from . import explorer
 
 
@@ -442,7 +442,7 @@ class SalesforceCliAdapter:
             item = selected['item']
             work_order = item.get('FSSK__FSK_Work_Order__r') or {}
             lead = work_order.get('Lead__r') or {} if isinstance(work_order, dict) else {}
-            normalized.append(ModSheetRecord(
+            normalized.append(WorkOrderReference(
                 source_id=selected['work_order_id'],
                 work_order_number=requested,
                 appointment_date=day.isoformat(),
@@ -883,7 +883,6 @@ class SalesforceCliAdapter:
             normalized.append(ModSheetRecord(
                 source_id=work_order_id,
                 work_order_number=_nested(work_order, 'WorkOrderNumber'),
-                appointment_date=day.isoformat(),
                 local_scheduled_start_time=str(item.get('Local_Scheduled_Start_Time__c') or ''),
                 canvass_set_by=_nested(lead, 'Canvass_Set_By__r.Name'),
                 lead_name=_nested(lead, 'Name'),
