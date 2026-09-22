@@ -485,7 +485,9 @@ class ModSheetReferenceDeliveryService:
         try:
             appointments = self._publish_day(day)
             current_work_orders = appointments.pop('work_order_numbers')
+            appointment_enriched = int(appointments.pop('enriched', 0))
             result.update(appointments)
+            result['enriched'] += appointment_enriched
         except Exception as exc:
             errors.append('Appointments: ' + (str(exc).strip() or type(exc).__name__))
         try:
