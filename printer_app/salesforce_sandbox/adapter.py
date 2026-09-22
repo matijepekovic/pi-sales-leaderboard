@@ -353,6 +353,117 @@ class SalesforceCliAdapter:
         return tuple(WorkOrderLeadStatus(number, resolved[key], statuses.get(resolved[key], ''))
                      for key, number in numbers.items())
 
+    def work_orders(self, work_order_numbers):
+        """Resolve complete appointment/customer data directly by work-order number."""
+        if isinstance(work_order_numbers, (str, bytes)):
+            raise SalesforceAdapterError('Supply a collection of work-order numbers.')
+        numbers = {}
+        for value in work_order_numbers:
+            if value is None or value == '':
+                continue
+            if not isinstance(value, str) or len(value) > 255 or any(ord(char) < 32 for char in value):
+                raise SalesforceAdapterError('A work-order number is invalid.')
+            clean = value.strip()
+            if clean:
+                numbers.setdefault(clean.casefold(), clean)
+        if not numbers:
+            return ()
+
+        user_zone = self._salesforce_timezone()
+        grouped = {}
+        for offset in range(0, len(numbers), 25):
+            batch = list(numbers.values())[offset:offset + 25]
+            query = (
+                'SELECT ' + ', '.join(self._mod_select_fields())
+                + " FROM ServiceAppointment WHERE WorkType.Name LIKE '%Sales%'"
+                + ' AND FSSK__FSK_Work_Order__r.WorkOrderNumber IN ('
+                + ', '.join(_soql_literal(value) for value in batch) + ')'
+                + ' ORDER BY SchedStartTime ASC, CreatedDate ASC LIMIT 1000'
+            )
+            result = self._run(
+                ['data', 'query', '--query', query, *self._target_args()],
+                timeout=60,
+            )
+            rows = result.get('records') if isinstance(result, dict) else None
+            if not isinstance(rows, list) or len(rows) > 1000:
+                raise SalesforceAdapterError('Salesforce work-order query returned an invalid records page.')
+            if result.get('done') is False and len(rows) >= 1000:
+                raise SalesforceAdapterError('Salesforce work-order query exceeded its safe result limit.')
+
+            for item in rows:
+                number = _nested(item, 'FSSK__FSK_Work_Order__r.WorkOrderNumber').strip()
+                key = number.casefold()
+                if key not in numbers:
+                    raise SalesforceAdapterError('Salesforce returned an unexpected work order.')
+                scheduled = _sf_datetime(item.get('SchedStartTime'))
+                if scheduled is None:
+                    continue
+                local_start = scheduled.astimezone(user_zone)
+                work_order_id = str(item.get('FSSK__FSK_Work_Order__c') or '').strip()
+                if not work_order_id:
+                    continue
+                resource = _nested(item, 'FSSK__FSK_Assigned_Service_Resource__r.Name').strip()
+                created = _sf_datetime(item.get('CreatedDate')) or datetime.max.replace(tzinfo=timezone.utc)
+                canceled = str(item.get('StatusCategory') or '').strip().casefold() == 'canceled'
+                group_key = (key, local_start.date())
+                current = grouped.get(group_key)
+                if current is None or (current['canceled'] and not canceled):
+                    grouped[group_key] = {
+                        'item': item,
+                        'work_order_id': work_order_id,
+                        'created': created,
+                        'local_start': local_start,
+                        'canceled': canceled,
+                        'resources': [resource] if resource else [],
+                    }
+                    continue
+                if canceled and not current['canceled']:
+                    continue
+                if resource and resource not in current['resources']:
+                    current['resources'].append(resource)
+                if created < current['created']:
+                    current['item'] = item
+                    current['work_order_id'] = work_order_id
+                    current['created'] = created
+                    current['local_start'] = local_start
+
+        normalized = []
+        for key, requested in numbers.items():
+            candidates = [(group_key, value) for group_key, value in grouped.items()
+                          if group_key[0] == key]
+            if not candidates:
+                continue
+            active = [entry for entry in candidates if not entry[1]['canceled']]
+            group_key, selected = max(
+                active or candidates,
+                key=lambda entry: entry[1]['local_start'],
+            )
+            day = group_key[1]
+            item = selected['item']
+            work_order = item.get('FSSK__FSK_Work_Order__r') or {}
+            lead = work_order.get('Lead__r') or {} if isinstance(work_order, dict) else {}
+            normalized.append(ModSheetRecord(
+                source_id=selected['work_order_id'],
+                work_order_number=requested,
+                appointment_date=day.isoformat(),
+                local_scheduled_start_time=str(item.get('Local_Scheduled_Start_Time__c') or ''),
+                canvass_set_by=_nested(lead, 'Canvass_Set_By__r.Name'),
+                lead_name=_nested(lead, 'Name'),
+                address=_address(work_order),
+                phone=_nested(lead, 'Phone'),
+                scheduled_start=selected['local_start'].strftime('%Y.%m.%d ; %I:%M:%S %p'),
+                assigned_service_resources=tuple(selected['resources']),
+                set_by=_nested(lead, 'Set_By__r.Name'),
+                work_type=_nested(work_order, 'WorkType.Name'),
+                product_interest=_nested(work_order, 'Product_Interest__c'),
+                source=_nested(lead, 'LeadSource'),
+                sub_source=_nested(lead, 'Sub_Source__c'),
+                lead_description=_nested(lead, 'Description'),
+                sales_lead_status=_nested(lead, 'Status'),
+                lead_source_id=_nested(lead, 'Id'),
+            ))
+        return tuple(normalized)
+
     def explorer_objects(self):
         """List only names; opening the explorer never describes or queries objects."""
         result = self._run(['sobject', 'list', '--sobject', 'all', *self._target_args()])
@@ -581,30 +692,9 @@ class SalesforceCliAdapter:
                 pass
         raise SalesforceAdapterError('Use dates in M/D/YYYY format.')
 
-    def mod_sheets(
-        self,
-        *,
-        start_date='',
-        end_date='',
-        market_segment='',
-        product_category='',
-        source_type='',
-        remove_canceled=True,
-        remove_unconfirmed=True,
-        limit=1000,
-    ):
-        """Read normalized sheets; limit=None fetches every matching appointment."""
-        start = self._parse_date(start_date)
-        end = self._parse_date(end_date)
-        if end < start:
-            raise SalesforceAdapterError('End Date must be on or after Start Date.')
-        if limit is not None:
-            limit = max(1, min(int(limit), 1000))
-        user_zone = self._salesforce_timezone()
-        start_local = datetime.combine(start, time.min, tzinfo=user_zone)
-        end_local = datetime.combine(end + timedelta(days=1), time.min, tzinfo=user_zone)
-
-        select_fields = [
+    @staticmethod
+    def _mod_select_fields():
+        return [
             'Id',
             'StatusCategory',
             'FSSK__FSK_Work_Order__r.WorkOrderNumber',
@@ -632,6 +722,31 @@ class SalesforceCliAdapter:
             'FSSK__FSK_Work_Order__r.Lead__r.Description',
             'FSSK__FSK_Work_Order__r.Lead__r.Canvass_Set_By__r.Name',
         ]
+
+    def mod_sheets(
+        self,
+        *,
+        start_date='',
+        end_date='',
+        market_segment='',
+        product_category='',
+        source_type='',
+        remove_canceled=True,
+        remove_unconfirmed=True,
+        limit=1000,
+    ):
+        """Read normalized sheets; limit=None fetches every matching appointment."""
+        start = self._parse_date(start_date)
+        end = self._parse_date(end_date)
+        if end < start:
+            raise SalesforceAdapterError('End Date must be on or after Start Date.')
+        if limit is not None:
+            limit = max(1, min(int(limit), 1000))
+        user_zone = self._salesforce_timezone()
+        start_local = datetime.combine(start, time.min, tzinfo=user_zone)
+        end_local = datetime.combine(end + timedelta(days=1), time.min, tzinfo=user_zone)
+
+        select_fields = self._mod_select_fields()
 
         query_start = start_local.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         query_end = end_local.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -768,6 +883,7 @@ class SalesforceCliAdapter:
             normalized.append(ModSheetRecord(
                 source_id=work_order_id,
                 work_order_number=_nested(work_order, 'WorkOrderNumber'),
+                appointment_date=day.isoformat(),
                 local_scheduled_start_time=str(item.get('Local_Scheduled_Start_Time__c') or ''),
                 canvass_set_by=_nested(lead, 'Canvass_Set_By__r.Name'),
                 lead_name=_nested(lead, 'Name'),
