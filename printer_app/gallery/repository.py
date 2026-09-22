@@ -234,11 +234,13 @@ class GalleryRepository:
             c.execute('BEGIN IMMEDIATE')
             for item in items:
                 name = printed_lead(item.get('lead_text') or item['text'])
-                state = 'ACTIVE' if name else 'REVIEW'
                 address = printed_address(item['text'])
                 work_order = printed_work_order_number(item['text'])
-                if item.get('require_identity') and (not work_order or not item.get('document_date')):
-                    state = 'REVIEW'
+                state = 'ACTIVE' if name else 'REVIEW'
+                if item.get('require_identity'):
+                    # Normal Gallery imports use the work order as their only
+                    # scan identity; normalized references may fill name/date afterward.
+                    state = 'ACTIVE' if work_order else 'REVIEW'
                 origin = item.get('origin', 'scan')
                 if origin == 'morning' and c.execute(
                         'SELECT 1 FROM scan_days WHERE day=?', (item.get('document_date'),)).fetchone():
@@ -348,7 +350,7 @@ class GalleryRepository:
             return dict(row) if row else None
 
     def correct_import_item_lead(self, import_id, item_id, value, key):
-        """Correct one retained generated card without changing review/publication state."""
+        """Internal compatibility path; no Gallery UI exposes name editing."""
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             row = c.execute("""SELECT page,part,state FROM items
@@ -363,6 +365,30 @@ class GalleryRepository:
             self._step(
                 c, import_id, time.time(),
                 f"Manually corrected lead name on page {row['page']} card {row['part']}."
+            )
+            return dict(row)
+
+    def correct_import_item_work_order(self, import_id, item_id, number):
+        """Correct one retained generated card's work-order identity."""
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row = c.execute("""SELECT page,part,state FROM items
+                WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
+                (item_id, import_id)).fetchone()
+            if not row:
+                raise LookupError('This generated card is unavailable.')
+            c.execute("""UPDATE items SET
+                text=?,work_order_number=?,work_order_key=?,
+                lead_name='',lead_key='',lead_status='needs-name',
+                address='',address_key='',assigned_service_resource='',
+                sales_lead_status='',lead_source_id='',reference_kind='',reference_source_id='',
+                document_date=NULL,date_status='needs-date',state='ACTIVE',
+                search_revision=search_revision+1
+                WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
+                ('Work Order Number: ' + number, number, work_order_key(number), item_id, import_id))
+            self._step(
+                c, import_id, time.time(),
+                f"Manually corrected work order on page {row['page']} card {row['part']} to {number}."
             )
             return dict(row)
 
@@ -532,6 +558,21 @@ class GalleryRepository:
         with self.connect() as c:
             if not c.execute("UPDATE items SET lead_name=?,lead_key=?,lead_status='confirmed' WHERE id=? AND state='ACTIVE'",
                              (value, lead_key(value), ident)).rowcount:
+                raise LookupError('This image has expired or is unavailable.')
+
+    def correct_work_order(self, ident, number):
+        """Replace one active card's work order and clear data tied to the old one."""
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            if not c.execute("""UPDATE items SET
+                    text=?,work_order_number=?,work_order_key=?,
+                    lead_name='',lead_key='',lead_status='needs-name',
+                    address='',address_key='',assigned_service_resource='',
+                    sales_lead_status='',lead_source_id='',reference_kind='',reference_source_id='',
+                    document_date=NULL,date_status='needs-date',
+                    search_revision=search_revision+1
+                    WHERE id=? AND state='ACTIVE'""",
+                    ('Work Order Number: ' + number, number, work_order_key(number), ident)).rowcount:
                 raise LookupError('This image has expired or is unavailable.')
 
     def correct_date(self, ident, value):
@@ -747,15 +788,27 @@ class GalleryRepository:
             return [dict(row) for row in c.execute("""SELECT id,text,document_date,lead_name,lead_key,
                 address,address_key,work_order_number,work_order_key,assigned_service_resource,
                 reference_kind,reference_source_id,sales_lead_status,lead_source_id,state
-                FROM items WHERE document_date=? AND state IN ('ACTIVE','REVIEW')
-                ORDER BY created,id""", (day,))]
+                FROM items WHERE state IN ('ACTIVE','REVIEW') AND (
+                    document_date=? OR (document_date IS NULL AND work_order_key IN (
+                        SELECT work_order_key FROM appointment_references
+                        WHERE day=? AND work_order_key!=''
+                    ))
+                ) ORDER BY created,id""", (day, day))]
 
     def reference_matches(self, day, kind, number):
-        """Read only the indexed date/work-order candidates, including ambiguity."""
+        """Read the indexed work-order candidates, using the latest day when undated."""
         with self.connect() as c:
-            rows = c.execute("""SELECT * FROM appointment_references
-                WHERE day=? AND kind=? AND work_order_key=? LIMIT 2""",
-                (day, kind, work_order_key(number)))
+            if day:
+                rows = c.execute("""SELECT * FROM appointment_references
+                    WHERE day=? AND kind=? AND work_order_key=? LIMIT 2""",
+                    (day, kind, work_order_key(number)))
+            else:
+                rows = c.execute("""SELECT * FROM appointment_references
+                    WHERE kind=? AND work_order_key=? AND day=(
+                        SELECT max(day) FROM appointment_references
+                        WHERE kind=? AND work_order_key=?
+                    ) LIMIT 2""",
+                    (kind, work_order_key(number), kind, work_order_key(number)))
             result = []
             for row in rows:
                 value = dict(row)
@@ -865,7 +918,7 @@ class GalleryRepository:
             AND (lead_source_id!={lead} OR sales_lead_status!={status})""" + guard, parameters).rowcount
 
     def apply_reference(self, ident, source_id, kind, assigned_resource, text, name, address,
-                        *, expected_day=_UNSET,
+                        *, reference_day='', expected_day=_UNSET,
                         expected_work_order_key=_UNSET):
         guard, parameters = '', []
         if expected_day is not _UNSET:
@@ -877,7 +930,10 @@ class GalleryRepository:
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             return c.execute("""UPDATE items SET
-                search_revision=search_revision+CASE WHEN text!=? THEN 1 ELSE 0 END,
+                search_revision=search_revision+CASE
+                    WHEN text!=? OR (document_date IS NULL AND ?!='') THEN 1 ELSE 0 END,
+                document_date=CASE WHEN document_date IS NULL AND ?!='' THEN ? ELSE document_date END,
+                date_status=CASE WHEN document_date IS NULL AND ?!='' THEN 'reference' ELSE date_status END,
                 assigned_service_resource=?,reference_kind=?,
                 reference_source_id=?,text=?,
                 lead_name=CASE WHEN ?='' THEN lead_name ELSE ? END,
@@ -886,12 +942,14 @@ class GalleryRepository:
                 address=CASE WHEN ?='' THEN address ELSE ? END,
                 address_key=CASE WHEN ?='' THEN address_key ELSE ? END
                 WHERE id=? AND state IN ('ACTIVE','REVIEW')
-                AND (text!=? OR assigned_service_resource!=? OR reference_kind!=? OR reference_source_id!=?
+                AND (text!=? OR (document_date IS NULL AND ?!='')
+                     OR assigned_service_resource!=? OR reference_kind!=? OR reference_source_id!=?
                      OR (?!='' AND lead_name!=?) OR (?!='' AND address!=?))""" + guard,
-                (text, assigned_resource, kind, source_id, text,
+                (text, reference_day, reference_day, reference_day, reference_day,
+                 assigned_resource, kind, source_id, text,
                  name, name, name, lead_key(name), name, name,
                  address, address, address, address_key(address), ident,
-                 text, assigned_resource, kind, source_id, name, name, address, address,
+                 text, reference_day, assigned_resource, kind, source_id, name, name, address, address,
                  *parameters)).rowcount
 
     def refresh_sales_lead_status(self, ident, *, expected_work_order_key=_UNSET):

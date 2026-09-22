@@ -137,7 +137,7 @@ import { GalleryContact } from './gallery_contact.js';
       }
       else if (id === 'galleryNotesSheet' && selected) await openNotes(false);
       else if (id === 'galleryContactSheet') contact.openPending();
-      else if (id === 'galleryLeadSheet' && selected && editIdentityCapability()) openLeadEditor(false);
+      else if (id === 'galleryWorkOrderSheet' && selected && editIdentityCapability()) openWorkOrderEditor(false);
       else if (id === 'galleryDateSheet') dates.open();
       else if (id === 'galleryMenuSheet') openMenu(false);
       else if (id === 'galleryShareSheet' && shareCapability()) await openShare(false);
@@ -284,7 +284,7 @@ import { GalleryContact } from './gallery_contact.js';
       if (csrf) csrf.value = info.csrf;
       const shareCsrf = el('galleryShareForm').elements.csrf;
       if (shareCsrf) shareCsrf.value = info.csrf;
-      const leadCsrf = el('galleryLeadForm').elements.csrf;
+      const leadCsrf = el('galleryWorkOrderForm').elements.csrf;
       if (leadCsrf) leadCsrf.value = info.csrf;
     }
   }
@@ -519,26 +519,21 @@ import { GalleryContact } from './gallery_contact.js';
       await detail(true);
     } catch (_) { /* The sheet keeps the error visible. */ }
   }
-  function openLeadEditor(record = true) {
+  function openWorkOrderEditor(record = true) {
     if (!selected?.id || !editIdentityCapability()) return;
     if (record) navigation.save();
-    const form = el('galleryLeadForm');
-    const unnamed = !selected.lead_name;
+    const form = el('galleryWorkOrderForm');
     form.dataset.itemId = selected.id;
-    form.dataset.unnamed = String(unnamed);
-    form.elements.lead_name.value = selected.lead_name || '';
-    el('galleryLeadContext').textContent =
-      selected.address || 'No address was recognized on this work order.';
-    el('galleryLeadScope').textContent = unnamed
-      ? 'This work order has no lead name yet. The first name you set applies only to this work order.'
-      : 'This is a global Gallery update. Lead-name letters within 1 character or the exact same address will receive the new lead name. Symbols and digits in names are ignored.';
-    el('galleryLeadSubmit').textContent = unnamed ? 'Set lead name' : 'Update lead name everywhere';
-    el('galleryLeadMessage').textContent = '';
-    showDialog('galleryLeadSheet', false);
+    form.elements.work_order_number.value = selected.work_order_number || '';
+    el('galleryWorkOrderContext').textContent =
+      selected.lead_name || selected.address || 'This card has not been matched to Salesforce yet.';
+    el('galleryWorkOrderMessage').textContent = '';
+    showDialog('galleryWorkOrderSheet', false);
     if (record) navigation.push();
-    form.elements.lead_name.focus();
-    if (!unnamed) form.elements.lead_name.select();
+    form.elements.work_order_number.focus();
+    if (selected.work_order_number) form.elements.work_order_number.select();
   }
+
   function closeDialogs() { document.querySelectorAll('dialog[open]').forEach(d => d.close()); }
   async function related() {
     if (!el('galleryViewer').open) return;
@@ -646,7 +641,7 @@ import { GalleryContact } from './gallery_contact.js';
     leadPressTimer = setTimeout(() => {
       leadPressTimer = null;
       leadPressTriggered = true;
-      openLeadEditor();
+      openWorkOrderEditor();
     }, 550);
   });
   leadTitle.addEventListener('pointermove', event => {
@@ -699,33 +694,27 @@ import { GalleryContact } from './gallery_contact.js';
       button.disabled = false;
     }
   };
-  el('galleryLeadForm').onsubmit = async event => {
+  el('galleryWorkOrderForm').onsubmit = async event => {
     event.preventDefault();
     const form = event.currentTarget;
     const id = form.dataset.itemId;
     if (!id || selected?.id !== id || !editIdentityCapability()) return;
     const button = form.querySelector('button[type="submit"]');
     button.disabled = true;
-    el('galleryLeadMessage').textContent = 'Updating related work orders…';
+    el('galleryWorkOrderMessage').textContent = 'Saving work order and refreshing Salesforce data…';
     try {
-      const result = await api('/gallery/api/items/' + id + '/lead-name', {method:'POST', body:new FormData(form)});
+      const result = await api('/gallery/api/items/' + id + '/work-order-number', {method:'POST', body:new FormData(form)});
       galleryDirty = true;
       await detail(true);
-      const noun = result.updated === 1 ? 'work order' : 'work orders';
-      const message = result.scope === 'single'
-        ? 'Lead name set for this work order.'
-        : 'Lead name updated across ' + result.updated + ' related ' + noun + '.';
-      el('galleryLeadMessage').textContent = message;
+      const message = 'Work order updated to ' + result.work_order_number + '.';
+      el('galleryWorkOrderMessage').textContent = message;
       el('galleryViewerMessage').textContent = message;
-      form.dataset.unnamed = 'false';
-      el('galleryLeadScope').textContent =
-        'This is now a named work order. Future changes compare name letters only, with the exact-address fallback.';
-      el('galleryLeadSubmit').textContent = 'Update lead name everywhere';
       if (offline.isEnabled()) offline.sync().catch(() => {});
     } catch (error) {
-      el('galleryLeadMessage').textContent = 'Could not update lead name: ' + error.message;
+      el('galleryWorkOrderMessage').textContent = 'Could not update work order: ' + error.message;
     } finally { button.disabled = false; }
   };
+
   el('galleryShare').onclick = () => openShare();
   el('galleryShareForm').onsubmit = async event => {
     event.preventDefault();

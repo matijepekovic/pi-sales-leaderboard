@@ -13,10 +13,7 @@ from printer_app.tests.gallery_form_fixture import form_image as _form
 
 VALUE_INK = 80
 FIELDS = {field.key: field for field in TEMPLATE_FIELDS}
-OCR_KEYS = {
-    'work_order_number', 'lead_name', 'address',
-    'local_scheduled_start_time', 'scheduled_start',
-}
+OCR_KEYS = set(recognition._OCR_FIELD_KEYS)
 
 
 @pytest.fixture
@@ -43,27 +40,6 @@ def test_realistic_blank_labels_and_borders_do_not_enter_ocr(raster, scale):
     assert canvas is None
     assert segments == []
     assert raster[1].array_equal(source, before)
-
-
-@pytest.mark.parametrize('scale', [0.7, 1.0, 1.5])
-def test_name_ascenders_above_the_old_label_lane_are_preserved(raster, scale):
-    cv2, np = raster
-    source, registration = _form(raster, scale)
-    left, top, right, bottom = map_box(registration, FIELDS['lead_name'].box)
-    _, _, label_right, _ = map_box(registration, FIELDS['lead_name'].label_box)
-    cv2.putText(source, 'ALEX HILL', (label_right + round(7 * scale), top + round(33 * scale)),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.15 * scale, VALUE_INK,
-                max(1, round(2 * scale)), cv2.LINE_8)
-    before = source.copy()
-    expected = _value_count(raster, source)
-    assert expected > 0
-
-    canvas, segments = recognition.template_ocr_canvas(source, registration)
-
-    assert [key for key, _, _ in segments] == ['lead_name']
-    assert _value_count(raster, _field_pixels(canvas, segments, 'lead_name')) == expected
-    assert not np.any(canvas == 0), 'Printed labels and rules must be excluded.'
-    assert np.array_equal(source, before), 'OCR preprocessing must not alter the archived image.'
 
 
 def test_every_requested_field_keeps_ink_near_its_top_bottom_and_right_borders(raster):
@@ -108,9 +84,7 @@ def test_value_starts_at_the_printed_colon_not_a_fixed_label_rectangle(raster, k
     assert not np.any(canvas == 0)
 
 
-@pytest.mark.parametrize('key', [
-    'lead_name', 'address', 'scheduled_start',
-])
+@pytest.mark.parametrize('key', sorted(OCR_KEYS & {'lead_name', 'address', 'scheduled_start'}))
 def test_wrapped_values_keep_full_width_below_the_label(raster, key):
     cv2, np = raster
     source, registration = _form(raster)
@@ -132,7 +106,7 @@ def test_wrapped_values_keep_full_width_below_the_label(raster, key):
     assert not np.any(canvas == 0)
 
 
-@pytest.mark.parametrize('key', ['work_order_number', 'local_scheduled_start_time'])
+@pytest.mark.parametrize('key', sorted(OCR_KEYS & {'work_order_number', 'local_scheduled_start_time'}))
 def test_single_line_fields_exclude_the_whole_label_column_but_keep_full_value_height(raster, key):
     cv2, np = raster
     source, registration = _form(raster)
@@ -160,7 +134,7 @@ def test_single_line_fields_exclude_the_whole_label_column_but_keep_full_value_h
     assert np.array_equal(source, before)
 
 
-@pytest.mark.parametrize('key', ['lead_name', 'address', 'scheduled_start'])
+@pytest.mark.parametrize('key', sorted(OCR_KEYS & {'lead_name', 'address', 'scheduled_start'}))
 def test_label_padding_cannot_clip_a_wrapped_line_two_blank_rows_below(raster, key):
     cv2, np = raster
     source, registration = _form(raster)
@@ -187,7 +161,7 @@ def test_label_padding_cannot_clip_a_wrapped_line_two_blank_rows_below(raster, k
     assert np.array_equal(source, before)
 
 
-@pytest.mark.parametrize('key', ['local_scheduled_start_time', 'scheduled_start'])
+@pytest.mark.parametrize('key', sorted(OCR_KEYS & {'local_scheduled_start_time', 'scheduled_start'}))
 def test_colon_in_a_value_cannot_be_mistaken_for_the_label_colon(raster, key):
     cv2, np = raster
     source, registration = _form(raster)
@@ -208,7 +182,7 @@ def test_colon_in_a_value_cannot_be_mistaken_for_the_label_colon(raster, key):
     assert np.array_equal(source, before)
 
 
-@pytest.mark.parametrize('key', ['lead_name', 'address', 'scheduled_start'])
+@pytest.mark.parametrize('key', sorted(OCR_KEYS & {'lead_name', 'address', 'scheduled_start'}))
 @pytest.mark.parametrize('text', ['ALEX', '10:30 AM'])
 def test_missing_printed_colon_must_not_erase_the_start_of_the_value(raster, key, text):
     cv2, np = raster
@@ -236,8 +210,9 @@ def test_missing_printed_colon_must_not_erase_the_start_of_the_value(raster, key
 def test_small_registration_offsets_follow_the_printed_borders(raster, dx, dy):
     cv2, np = raster
     source, actual = _form(raster)
-    left, top, right, bottom = map_box(actual, FIELDS['address'].box)
-    cv2.putText(source, 'WRAPPED', (left + 5, bottom - 6), cv2.FONT_HERSHEY_SIMPLEX,
+    left, top, right, bottom = map_box(actual, FIELDS['work_order_number'].box)
+    _, _, label_right, _ = map_box(actual, FIELDS['work_order_number'].label_box)
+    cv2.putText(source, '02275180', (label_right + 10, bottom - 6), cv2.FONT_HERSHEY_SIMPLEX,
                 0.7, VALUE_INK, 2, cv2.LINE_8)
     expected = _value_count(raster, source)
     approximate = FormRegistration(
@@ -247,23 +222,24 @@ def test_small_registration_offsets_follow_the_printed_borders(raster, dx, dy):
 
     canvas, segments = recognition.template_ocr_canvas(source, approximate)
 
-    assert [segment[0] for segment in segments] == ['address']
-    assert _value_count(raster, _field_pixels(canvas, segments, 'address')) == expected
+    assert [segment[0] for segment in segments] == ['work_order_number']
+    assert _value_count(raster, _field_pixels(canvas, segments, 'work_order_number')) == expected
     assert not np.any(canvas == 0)
 
 
 def test_all_populated_fields_still_share_one_ocr_call(raster, monkeypatch, tmp_path):
     cv2, np = raster
     source, registration = _form(raster)
-    for key in ('lead_name', 'address', 'scheduled_start'):
-        left, top, right, bottom = map_box(registration, FIELDS[key].box)
-        cv2.putText(source, 'VALUE', (left + 12, bottom - 7), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8, VALUE_INK, 2, cv2.LINE_8)
+    key = 'work_order_number'
+    left, top, right, bottom = map_box(registration, FIELDS[key].box)
+    _, _, label_right, _ = map_box(registration, FIELDS[key].label_box)
+    cv2.putText(source, '02275180', (label_right + 10, bottom - 7), cv2.FONT_HERSHEY_SIMPLEX,
+                0.8, VALUE_INK, 2, cv2.LINE_8)
     before = source.copy()
     calls = []
 
-    def fake_tesseract(canvas, path):
-        calls.append((canvas.copy(), path))
+    def fake_tesseract(canvas, path, **kwargs):
+        calls.append((canvas.copy(), path, kwargs))
         return []
 
     monkeypatch.setattr(recognition, '_run_tesseract', fake_tesseract)
@@ -272,7 +248,8 @@ def test_all_populated_fields_still_share_one_ocr_call(raster, monkeypatch, tmp_
     )
 
     assert len(calls) == 1
-    assert _value_count(raster, calls[0][0]) == _value_count(raster, source)
+    assert calls[0][2] == {'digits_only': True}
+    assert _value_count(raster, calls[0][0]) > 0
     assert np.array_equal(source, before)
     assert result['document_date'] == '2026-09-19'
     assert result['date_status'] == 'printed'

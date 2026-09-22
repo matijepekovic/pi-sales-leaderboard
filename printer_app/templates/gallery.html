@@ -89,17 +89,17 @@
 <p id="galleryContactMessage" class="gallery-message" role="status"></p>
 </dialog>
 
-<dialog id="galleryLeadSheet" class="gallery-sheet" aria-labelledby="galleryLeadEditTitle">
+<dialog id="galleryWorkOrderSheet" class="gallery-sheet" aria-labelledby="galleryWorkOrderEditTitle">
 <div class="sheet-handle" aria-hidden="true"></div>
-<div class="sheet-heading"><h2 id="galleryLeadEditTitle">Change lead name</h2><button type="button" class="circle-button" data-close="galleryLeadSheet" aria-label="Close lead name editor">×</button></div>
-<p id="galleryLeadContext" class="sheet-context"></p>
-<p id="galleryLeadScope" class="muted"></p>
-<form id="galleryLeadForm">
+<div class="sheet-heading"><h2 id="galleryWorkOrderEditTitle">Change work order number</h2><button type="button" class="circle-button" data-close="galleryWorkOrderSheet" aria-label="Close work order editor">×</button></div>
+<p id="galleryWorkOrderContext" class="sheet-context"></p>
+<p id="galleryWorkOrderScope" class="muted">Customer, address, rep and appointment data will refresh from Salesforce for the corrected work order.</p>
+<form id="galleryWorkOrderForm">
 <input type="hidden" name="csrf" value="{{ session.csrf }}">
-<label>Lead name<input name="lead_name" maxlength="160" autocomplete="off" required></label>
-<button id="galleryLeadSubmit" type="submit" class="primary">Save lead name</button>
+<label>Work order number<input name="work_order_number" maxlength="80" inputmode="numeric" autocomplete="off" required></label>
+<button id="galleryWorkOrderSubmit" type="submit" class="primary">Save work order</button>
 </form>
-<p id="galleryLeadMessage" class="gallery-message" role="status"></p>
+<p id="galleryWorkOrderMessage" class="gallery-message" role="status"></p>
 </dialog>
 
 <dialog id="galleryDateSheet" class="gallery-sheet date-sheet" aria-labelledby="galleryDateTitle">

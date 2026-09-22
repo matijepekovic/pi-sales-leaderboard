@@ -259,7 +259,8 @@ def test_recognition_and_navigation_have_explicit_owners():
     assert "'edit_identity'" in access_service
     web_source=(root/'gallery/web.py').read_text()
     assert "require('edit_identity')" in web_source
-    assert "'gallery.import_item_lead_name'" in web_source
+    assert "'gallery.import_item_work_order_number'" in web_source
+    assert '/lead-name' not in web_source
     assert "if (!selected?.id || !editIdentityCapability()) return;" in gallery_ui
     assert 'indexedDB' not in gallery_ui and 'localStorage' not in gallery_ui
     assert 'indexedDB' in offline_runtime and '/gallery/api/offline/index' in offline_runtime

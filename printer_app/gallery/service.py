@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from .policy import (
     address_key, authoritative_reference_text, checked_date, checked_date_filter,
-    checked_lead_name, lead_key, printed_address, printed_lead, printed_work_order_number,
+    checked_lead_name, checked_work_order_number, lead_key, printed_address, printed_lead, printed_work_order_number,
     printed_phone, related_identity, search_expression, usable_phone, work_order_key,
 )
 
@@ -143,6 +143,25 @@ class GalleryService:
         )
         return dict(result, lead_name=name)
 
+    @staticmethod
+    def _checked_work_order(value):
+        return checked_work_order_number(value)
+
+    def work_order(self, ident, value):
+        self.initialize()
+        number = self._checked_work_order(value)
+        self.repository.correct_work_order(ident, number)
+        self._enrich_reference_item(ident)
+        return dict(work_order_number=number)
+
+    def import_item_work_order(self, import_id, item_id, value):
+        """Admin correction for one retained generated card, including REVIEW."""
+        self.initialize()
+        number = self._checked_work_order(value)
+        result = self.repository.correct_import_item_work_order(import_id, item_id, number)
+        self._enrich_reference_item(item_id)
+        return dict(result, work_order_number=number)
+
     def item(self, ident):
         self.initialize()
         item = self.repository.item(ident)
@@ -208,6 +227,9 @@ class GalleryService:
             revision = hashlib.sha256(f"{job['id']}:{entry['page']}:{entry['part']}".encode()).hexdigest()
             day = job.get('reference_day') if origin == 'morning' else entry['document_date']
             number = printed_work_order_number(entry['text'])
+            _, reference = self._reference_for(day, number)
+            if reference and not day:
+                day = reference.get('day') or day
             if origin == 'morning' and day and self.repository.scans_received(day):
                 continue
             key = (day, work_order_key(number))
@@ -225,7 +247,6 @@ class GalleryService:
                                                     previous['assigned_service_resource'])
                 if previous['lead_name']:
                     lead_text = 'Lead Name: ' + previous['lead_name']
-            _, reference = self._reference_for(day, number)
             if reference:
                 # Typed identity comes from the normalized source; the image is the scan.
                 text = self._reference_text(text, reference, day, include_resources=False)
@@ -267,14 +288,15 @@ class GalleryService:
         return matches[0] if len(matches) == 1 else None
 
     def _reference_for(self, day, number):
-        if not day or not work_order_key(number):
+        if not work_order_key(number):
             return '', None
         for kind in ('final', 'morning'):
             references = self.repository.reference_matches(day, kind, number)
             match = self._match_reference({'work_order_number': number}, references)
             if match is not None:
                 if kind == 'final':
-                    morning = self.repository.reference_matches(day, 'morning', number)
+                    match_day = match.get('day') or day
+                    morning = self.repository.reference_matches(match_day, 'morning', number)
                     initial = self._match_reference({'work_order_number': number}, morning)
                     if initial:
                         match = dict(match)
@@ -325,16 +347,15 @@ class GalleryService:
             ident, expected_work_order_key=item['work_order_key']))
         identity = dict(expected_day=item['document_date'],
                         expected_work_order_key=item['work_order_key'])
-        if not item.get('document_date'):
-            return status_changed
-        kind, match = self._reference_for(item['document_date'], item['work_order_number'])
+        kind, match = self._reference_for(item.get('document_date'), item['work_order_number'])
         if match is None:
             return status_changed
 
+        reference_day = match.get('day') or item.get('document_date') or ''
         assigned = self._resource_names(match) if kind == 'final' else ''
         name = ' '.join(str(match.get('lead_name') or '').split())
         address = ' '.join(str(match.get('address') or '').split())
-        text = self._reference_text(item.get('text', ''), match, item['document_date'], include_resources=kind == 'final')
+        text = self._reference_text(item.get('text', ''), match, reference_day, include_resources=kind == 'final')
         return bool(self.repository.apply_reference(
             ident,
             match.get('source_id', ''),
@@ -343,6 +364,7 @@ class GalleryService:
             text,
             name,
             address,
+            reference_day=reference_day,
             **identity,
         )) or status_changed
 

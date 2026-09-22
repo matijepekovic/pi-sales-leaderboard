@@ -26,7 +26,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         'gallery.queue_page',
         'gallery.import_job_page',
         'gallery.import_item_image',
-        'gallery.import_item_lead_name',
+        'gallery.import_item_work_order_number',
         'gallery.approve_import_item',
         'gallery.delete_import_item',
         'gallery.reprocess_job',
@@ -268,20 +268,20 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
             abort(404)
         return send_file(path, mimetype='image/png', conditional=True)
 
-    @bp.post('/jobs/<ident>/items/<item_id>/lead-name')
-    def import_item_lead_name(ident, item_id):
+    @bp.post('/jobs/<ident>/items/<item_id>/work-order-number')
+    def import_item_work_order_number(ident, item_id):
         require_admin()
         retained_job_item(ident, item_id)
-        result = service.import_item_lead(
-            ident, item_id, request.form.get('lead_name', '')
+        result = service.import_item_work_order(
+            ident, item_id, request.form.get('work_order_number', '')
         )
         return redirect(
             url_for(
                 'gallery.import_job_page',
                 ident=ident,
                 offset=action_offset(),
-                action='renamed',
-                renamed_state=result['state'],
+                action='work-order',
+                work_order_number=result['work_order_number'],
             ) + '#item-' + item_id,
             code=303,
         )
@@ -372,11 +372,11 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         return jsonify(service.related(ident, int(request.args.get('offset', '0')),
                                        request.args.get('date', '')))
 
-    @bp.post('/api/items/<ident>/lead-name')
-    def lead_name(ident):
+    @bp.post('/api/items/<ident>/work-order-number')
+    def work_order_number(ident):
         require('edit_identity')
         existing(ident)
-        result = service.lead(ident, request.form.get('lead_name', ''))
+        result = service.work_order(ident, request.form.get('work_order_number', ''))
         return jsonify(ok=True, **result)
 
     @bp.get('/image/<ident>')

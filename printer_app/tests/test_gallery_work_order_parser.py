@@ -1,7 +1,7 @@
 """Work order OCR must preserve the fixed-length identifier and token boundaries."""
 import pytest
 
-from printer_app.gallery.policy import printed_work_order_number, work_order_key
+from printer_app.gallery.policy import checked_work_order_number, printed_work_order_number, work_order_key
 
 
 @pytest.mark.parametrize('text,expected', [
@@ -17,34 +17,37 @@ from printer_app.gallery.policy import printed_work_order_number, work_order_key
     ('Work Order Number: 02278850\nPhone: 12345678', '02278850'),
     ('Work Order Number: 02278850 Work Order Number: 02278850', '02278850'),
     ('Work Order Number: 02278850\nWork Order Number: 02278850 1', '02278850'),
+    ('Work Order Number: 022788501', '02278850'),
+    ('Work Order Number: 102278850', '10227885'),
+    ('Work Order Number: 0227885012345678', '02278850'),
 ])
 def test_reads_a_complete_eight_digit_token_without_joining_ocr_noise(text, expected):
     assert printed_work_order_number(text) == expected
 
 
 @pytest.mark.parametrize('value', [
-    '', '1', '2278850', '022788501', '102278850', '0227885012345678',
+    '', '1', '2278850',
     '0227 8850', '022 788 50', '0227-8850', '0227/8850',
     'WO02278850', '02278850A', 'A02278850B',
     '０２２７８８５０', '٠٢٢٧٨٨٥٠', '0227885０',
     'é02278850', '02278850é', '٢02278850', '02278850٢',
     'A\u030102278850', '02278850\u0301', '02278850\u200dA',
 ])
-def test_does_not_invent_a_number_from_fragments_long_tokens_or_unicode(value):
+def test_does_not_invent_a_number_from_fragments_or_unicode(value):
     assert printed_work_order_number('Work Order Number: ' + value) == ''
 
 
-@pytest.mark.parametrize('text', [
-    'Work Order Number: 02278850 02278851',
-    'Work Order Number: 02278850\nWork Order Number: 02278851',
-    'Work Order Number: 02278850 Work Order Number: 02278851',
-    'Work Order Number: 02278850\nWork Order Number:',
-    'Work Order Number:\nWork Order Number: 02278850',
-    'Work Order Number: 02278850\nWork Order Number: 022788501',
-    'Work Order Number: 0227 8850\nWork Order Number: 02278850',
+@pytest.mark.parametrize('text,expected', [
+    ('Work Order Number: 02278850 02345678', '02278850'),
+    ('Work Order Number: 02278850\nWork Order Number: 02345678', '02278850'),
+    ('Work Order Number: 02278850 Work Order Number: 02345678', '02278850'),
+    ('Work Order Number: 02278850\nWork Order Number:', '02278850'),
+    ('Work Order Number:\nWork Order Number: 02278850', '02278850'),
+    ('Work Order Number: 02278850\nWork Order Number: 023456789', '02278850'),
+    ('Work Order Number: 0227 8850\nWork Order Number: 02278850', '02278850'),
 ])
-def test_conflicting_or_unreadable_repeated_fields_do_not_choose_one(text):
-    assert printed_work_order_number(text) == ''
+def test_first_complete_eight_digits_win_without_joining_fragments(text, expected):
+    assert printed_work_order_number(text) == expected
 
 
 @pytest.mark.parametrize('text', [
@@ -66,3 +69,19 @@ def test_only_the_explicit_single_line_work_order_field_supplies_the_number(text
 def test_external_work_order_key_keeps_its_general_normalization_contract():
     assert work_order_key('WO-0042 / A') == 'wo0042a'
     assert work_order_key('02278850') == '02278850'
+
+
+@pytest.mark.parametrize('value,expected', [
+    ('02278850', '02278850'),
+    ('022788501', '02278850'),
+    ('  102278850  ', '10227885'),
+    ('WO 02278850', '02278850'),
+])
+def test_manual_work_order_uses_same_first_eight_digit_rule(value, expected):
+    assert checked_work_order_number(value) == expected
+
+
+@pytest.mark.parametrize('value', ['', '1234567', '0227 8850', 'WO02278850A'])
+def test_manual_work_order_requires_one_contiguous_eight_digit_token(value):
+    with pytest.raises(ValueError):
+        checked_work_order_number(value)

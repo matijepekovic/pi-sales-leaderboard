@@ -137,11 +137,11 @@ def address_key(value):
 
 
 def printed_work_order_number(text):
-    """Read one unambiguous eight-digit number from every explicit OCR field.
+    """Read the first complete eight digits from an explicit Work Order Number field.
 
-    Work order numbers do not wrap. Keep OCR token boundaries: a separate stray
-    digit is not part of a complete number, and fragments must never be joined.
-    Conflicting or unreadable repeated fields require review instead of a guess.
+    OCR sometimes appends an extra digit to the printed identifier. Never join
+    separate digit fragments; when one contiguous token contains more than eight
+    digits, the printed work-order identity is its first eight digits.
     """
     original = str(text or '')
     labels = list(re.finditer(
@@ -149,21 +149,26 @@ def printed_work_order_number(text):
     fields = '|'.join(re.escape(label).replace(r'\ ', r'[ \t]+')
                       for label in sorted(REFERENCE_FIELD_LABELS, key=len, reverse=True))
     boundary = r'[\r\n|]|\b(?:' + fields + r')\b|\b[A-Za-z][A-Za-z0-9 /_-]*[:;]'
-    readings = set()
     for index, label in enumerate(labels):
         end = labels[index + 1].start() if index + 1 < len(labels) else len(original)
         field = re.split(boundary, original[label.end():end], maxsplit=1, flags=re.I)[0]
-        numbers = set()
-        for match in re.finditer(r'[0-9]+', field):
-            if len(match[0]) != 8:
-                continue
+        for match in re.finditer(r'[0-9]{8,}', field):
             edges = field[max(0, match.start() - 1):match.start()] + field[match.end():match.end() + 1]
             if all(char.isspace() or unicodedata.category(char)[0] in 'PS' for char in edges):
-                numbers.add(match[0])
-        if len(numbers) != 1:
-            return ''
-        readings.update(numbers)
-    return readings.pop() if len(readings) == 1 else ''
+                return match[0][:8]
+    return ''
+
+
+def checked_work_order_number(value):
+    """Normalize a manually entered work order using the same eight-digit rule."""
+    if not isinstance(value, str) or len(value) > 80 or any(not char.isprintable() for char in value):
+        raise ValueError('Enter the eight-digit work order number.')
+    clean = value.strip()
+    for match in re.finditer(r'[0-9]{8,}', clean):
+        edges = clean[max(0, match.start() - 1):match.start()] + clean[match.end():match.end() + 1]
+        if all(char.isspace() or unicodedata.category(char)[0] in 'PS' for char in edges):
+            return match[0][:8]
+    raise ValueError('Enter the eight-digit work order number.')
 
 
 def work_order_key(value):
