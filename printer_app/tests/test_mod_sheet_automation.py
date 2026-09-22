@@ -45,12 +45,20 @@ class FakeSource:
         self.calls = []
         self.lead_calls = []
         self.lead_results = ()
+        self.work_order_calls = []
+        self.work_order_results = ()
 
     def lead_statuses(self, work_order_numbers):
         self.lead_calls.append(tuple(work_order_numbers))
         if isinstance(self.lead_results, Exception):
             raise self.lead_results
         return self.lead_results
+
+    def work_orders(self, work_order_numbers):
+        self.work_order_calls.append(tuple(work_order_numbers))
+        if isinstance(self.work_order_results, Exception):
+            raise self.work_order_results
+        return self.work_order_results
 
     def records(self, **filters):
         self.calls.append(filters)
@@ -68,6 +76,7 @@ class FakeReferenceSink:
         self.pdf_payloads = []
         self.numbers = ()
         self.lead_published = []
+        self.work_order_published = []
         self.lead_scopes = []
         self.repair_calls = 0
 
@@ -84,6 +93,13 @@ class FakeReferenceSink:
             raise RuntimeError('reference sink unavailable')
         self.lead_published.append((tuple(work_order_numbers), tuple(records), captured))
         self.lead_scopes.append(('publish', missing_only))
+        return {'count': len(records), 'enriched': len(records)}
+
+    def publish_work_order_records(self, work_order_numbers, records, captured):
+        if self.fail:
+            raise RuntimeError('reference sink unavailable')
+        records = tuple(records)
+        self.work_order_published.append((tuple(work_order_numbers), records, captured))
         return {'count': len(records), 'enriched': len(records)}
 
     def dates(self):
@@ -934,6 +950,29 @@ def test_failed_lead_pull_keeps_status_cache_and_does_not_block_reps(manual_refe
     assert len(service.reference_sink.published) == 1
     assert service.reference_sink.lead_published == []
     assert service.source.lead_calls == [('0001', '0011')]
+
+
+def test_startup_direct_work_order_lookup_enriches_retained_cards_without_date_filter(tmp_path):
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    repository.complete_reference_backfill()
+    source = FakeSource([])
+    source.work_order_results = (
+        ModSheetRecord(
+            source_id='wo-source', work_order_number='0003',
+            appointment_date='2026-09-21', lead_name='Resolved Customer',
+            address='123 Resolved St', assigned_service_resources=('Resolved Rep',),
+        ),
+    )
+    sink = FakeReferenceSink(days=())
+    sink.numbers = ('0003',)
+    delivery = ModSheetReferenceDeliveryService(
+        repository, source, FakeQueue(), sink, 'America/Los_Angeles', clock=lambda: 100
+    )
+
+    delivery.backfill_existing()
+
+    assert source.work_order_calls == [('0003',)]
+    assert sink.work_order_published == [(sink.numbers, source.work_order_results, 100)]
 
 
 def test_startup_status_refresh_ignores_completed_date_backfill_marker(tmp_path):
