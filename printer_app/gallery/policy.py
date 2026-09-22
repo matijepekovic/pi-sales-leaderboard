@@ -152,8 +152,10 @@ def printed_work_order_number(text):
     for index, label in enumerate(labels):
         end = labels[index + 1].start() if index + 1 < len(labels) else len(original)
         field = re.split(boundary, original[label.end():end], maxsplit=1, flags=re.I)[0]
-        for match in re.finditer(r'(?<![A-Za-z0-9])[0-9]{8,}(?![A-Za-z])', field):
-            return match[0][:8]
+        for match in re.finditer(r'[0-9]{8,}', field):
+            edges = field[max(0, match.start() - 1):match.start()] + field[match.end():match.end() + 1]
+            if all(char.isspace() or unicodedata.category(char)[0] in 'PS' for char in edges):
+                return match[0][:8]
     return ''
 
 
@@ -161,10 +163,12 @@ def checked_work_order_number(value):
     """Normalize a manually entered work order using the same eight-digit rule."""
     if not isinstance(value, str) or len(value) > 80 or any(not char.isprintable() for char in value):
         raise ValueError('Enter the eight-digit work order number.')
-    match = re.search(r'(?<![A-Za-z0-9])[0-9]{8,}(?![A-Za-z])', value.strip())
-    if not match:
-        raise ValueError('Enter the eight-digit work order number.')
-    return match[0][:8]
+    clean = value.strip()
+    for match in re.finditer(r'[0-9]{8,}', clean):
+        edges = clean[max(0, match.start() - 1):match.start()] + clean[match.end():match.end() + 1]
+        if all(char.isspace() or unicodedata.category(char)[0] in 'PS' for char in edges):
+            return match[0][:8]
+    raise ValueError('Enter the eight-digit work order number.')
 
 
 def work_order_key(value):
