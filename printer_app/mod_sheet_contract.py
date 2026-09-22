@@ -17,7 +17,6 @@ class WorkOrderLeadStatus:
 class ModSheetRecord:
     source_id: str
     work_order_number: str = ''
-    appointment_date: str = ''
     local_scheduled_start_time: str = ''
     canvass_set_by: str = ''
     lead_name: str = ''
@@ -33,6 +32,7 @@ class ModSheetRecord:
     lead_description: str = ''
     sales_lead_status: str = ''
     lead_source_id: str = ''
+    appointment_date: str = ''
 
 
 @dataclass(frozen=True)
