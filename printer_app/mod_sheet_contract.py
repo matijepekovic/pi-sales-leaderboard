@@ -17,6 +17,7 @@ class WorkOrderLeadStatus:
 class ModSheetRecord:
     source_id: str
     work_order_number: str = ''
+    appointment_date: str = ''
     local_scheduled_start_time: str = ''
     canvass_set_by: str = ''
     lead_name: str = ''
