@@ -347,6 +347,25 @@ class GalleryRepository:
                 (item_id, import_id)).fetchone()
             return dict(row) if row else None
 
+    def correct_import_item_lead(self, import_id, item_id, value, key):
+        """Internal compatibility path; no Gallery UI exposes name editing."""
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row = c.execute("""SELECT page,part,state FROM items
+                WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
+                (item_id, import_id)).fetchone()
+            if not row:
+                raise LookupError('This generated card is unavailable.')
+            c.execute("""UPDATE items
+                SET lead_name=?,lead_key=?,lead_status='confirmed'
+                WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
+                (value, key, item_id, import_id))
+            self._step(
+                c, import_id, time.time(),
+                f"Manually corrected lead name on page {row['page']} card {row['part']}."
+            )
+            return dict(row)
+
     def correct_import_item_work_order(self, import_id, item_id, number):
         """Correct one retained generated card's work-order identity."""
         with self.connect() as c:
