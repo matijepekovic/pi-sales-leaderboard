@@ -192,6 +192,29 @@ def test_existing_repair_preserves_ids_images_notes_dates_and_confirmation(tmp_p
     assert service.item(other)['lead_status']=='confirmed'
 
 
+def test_review_card_missing_work_order_is_reread_from_retained_image(tmp_path):
+    service = build(tmp_path)
+    source = 'a' * 64
+    ident = seed(
+        service, 40, 1,
+        text='Address: 10 Example St',
+        recognition_revision=1,
+    )
+    assert service.import_item(source, ident)['state'] == 'REVIEW'
+
+    assert service.repair_one(lambda path: dict(
+        text='Work Order Number: 02265919',
+        lead_text='',
+        document_date=None,
+        date_status='needs-date',
+    ))
+
+    item = service.item(ident)
+    assert item is not None
+    assert item['state'] == 'ACTIVE'
+    assert item['work_order_number'] == '02265919'
+
+
 def test_repair_failure_is_durable_bounded_and_expiry_wins(tmp_path):
     service=build(tmp_path); ident=seed(service)
     def broken(path): raise OSError('missing local tool')
