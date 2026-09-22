@@ -181,7 +181,7 @@ def test_refresh_request_arriving_during_running_pull_is_not_lost(tmp_path):
     running = dict(first, status='running', updated=1)
     repository.save_reference_refresh_state(running)
 
-    repeated = service.request_refresh()
+    repeated = service.request_work_order_refresh()
 
     assert repeated['status'] == 'running'
     assert repeated['rerun'] is True
