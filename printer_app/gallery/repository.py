@@ -692,9 +692,11 @@ class GalleryRepository:
 
     def recognition_candidate(self, now):
         with self.connect() as c:
-            row = c.execute("""SELECT id,text,lead_status FROM items WHERE state='ACTIVE'
-                AND recognition_revision<1 AND recognition_attempts<3 AND recognition_retry_at<=?
-                ORDER BY (lead_key!=''),created,id LIMIT 1""", (now,)).fetchone()
+            row = c.execute("""SELECT id,text,lead_status FROM items
+                WHERE state IN ('ACTIVE','REVIEW') AND recognition_attempts<3
+                AND recognition_retry_at<=? AND (recognition_revision<1 OR work_order_key='')
+                ORDER BY (work_order_key!=''),(lead_key!=''),created,id LIMIT 1""",
+                (now,)).fetchone()
             return dict(row) if row else None
 
     def repair_recognition(
@@ -710,19 +712,22 @@ class GalleryRepository:
                 sales_lead_status=CASE WHEN work_order_key!=? THEN '' ELSE sales_lead_status END,
                 search_revision=search_revision+CASE WHEN work_order_key!=? THEN 1 ELSE 0 END,
                 work_order_number=?,work_order_key=?,
+                state=CASE WHEN ?!='' THEN 'ACTIVE' ELSE state END,
                 lead_name=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_name ELSE ? END,
                 lead_key=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_key ELSE ? END,
                 lead_status=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_status ELSE 'printed' END
-                WHERE id=? AND state='ACTIVE' AND recognition_revision<1""",
+                WHERE id=? AND state IN ('ACTIVE','REVIEW')
+                AND (recognition_revision<1 OR work_order_key='')""",
                 (text,address,address_normalized,work_order_normalized,work_order_normalized,work_order_normalized,
-                 work_order_number,work_order_normalized,
+                 work_order_number,work_order_normalized,work_order_number,
                  name,name,name,key,name,ident))
             self._refresh_sales_lead_statuses(c, ' AND id=?', (ident,))
 
     def defer_recognition(self, ident, now):
         with self.connect() as c:
             c.execute("""UPDATE items SET recognition_attempts=recognition_attempts+1,
-                recognition_retry_at=? WHERE id=? AND state='ACTIVE' AND recognition_revision<1""",
+                recognition_retry_at=? WHERE id=? AND state IN ('ACTIVE','REVIEW')
+                AND (recognition_revision<1 OR work_order_key='')""",
                 (now+300,ident))
 
 
