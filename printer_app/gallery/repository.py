@@ -236,9 +236,11 @@ class GalleryRepository:
                 name = printed_lead(item.get('lead_text') or item['text'])
                 address = printed_address(item['text'])
                 work_order = printed_work_order_number(item['text'])
-                # The scan identity is the work order. Salesforce may fill the
-                # customer and date later without blocking a readable card.
-                state = 'ACTIVE' if work_order else 'REVIEW'
+                state = 'ACTIVE' if name else 'REVIEW'
+                if item.get('require_identity'):
+                    # Normal Gallery imports use the work order as their only
+                    # scan identity; Salesforce may fill name/date afterward.
+                    state = 'ACTIVE' if work_order else 'REVIEW'
                 origin = item.get('origin', 'scan')
                 if origin == 'morning' and c.execute(
                         'SELECT 1 FROM scan_days WHERE day=?', (item.get('document_date'),)).fetchone():
