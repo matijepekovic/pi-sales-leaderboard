@@ -19,7 +19,7 @@ from printer_app.mod_sheets.service import (
     ModSheetSettingsService,
     ModSheetTestPrintService,
 )
-from printer_app.mod_sheet_contract import ModSheetRecord
+from printer_app.mod_sheet_contract import ModSheetRecord, WorkOrderReference
 from printer_app.print_options import PrintOptions
 from printer_app.print_queue_repository import PrintQueueRepository
 
@@ -957,7 +957,7 @@ def test_startup_direct_work_order_lookup_enriches_retained_cards_without_date_f
     repository.complete_reference_backfill()
     source = FakeSource([])
     source.work_order_results = (
-        ModSheetRecord(
+        WorkOrderReference(
             source_id='wo-source', work_order_number='0003',
             appointment_date='2026-09-21', lead_name='Resolved Customer',
             address='123 Resolved St', assigned_service_resources=('Resolved Rep',),
