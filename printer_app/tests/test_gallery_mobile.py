@@ -106,22 +106,26 @@ def web(tmp_path):
     return app, service, ids
 
 
-def test_web_related_and_name_edits_keep_write_protection(web):
+def test_web_related_and_work_order_edits_keep_write_protection(web):
     app, service, ids = web
     assert app.test_client().get(f'/gallery/api/items/{ids[0]}/related').status_code == 401
     client = gallery_client(app); response = client.get('/gallery/')
     assert response.status_code == 200
+    assert b'Change lead name' not in response.data
     assert client.get(f'/gallery/api/items/{ids[0]}/related').json['total'] == 2
     assert client.get('/gallery/api/items/invalid/related').status_code == 404
-    url = f'/gallery/api/items/{ids[0]}/lead-name'
-    assert client.post(url, data={'lead_name': 'Another Name'}).status_code == 400
+    assert client.post(f'/gallery/api/items/{ids[0]}/lead-name',
+                       data={'lead_name': 'Another Name'}).status_code == 404
+    url = f'/gallery/api/items/{ids[0]}/work-order-number'
+    assert client.post(url, data={'work_order_number': '00009999'}).status_code == 400
     with client.session_transaction() as session: csrf = session['csrf']
-    form = dict(csrf=csrf, lead_name='Corrected Example')
+    form = dict(csrf=csrf, work_order_number='000099999')
     assert client.post(url, data=form, headers={'Origin':'http://elsewhere.test'}).status_code == 403
-    assert service.item(ids[0])['lead_name'] == 'Jordan Example'
     assert client.post(url, data=form).status_code == 200
-    assert client.get('/gallery/api/items?q=Corrected&field=lead_name').json['total'] == 2
-    assert service.item(ids[1])['lead_name'] == 'Corrected Example'
+    item = service.item(ids[0])
+    assert item['work_order_number'] == '00009999'
+    assert item['lead_name'] == ''
+    assert service.item(ids[1])['lead_name'] == 'JORDAN EXAMPLE'
     assert service.item(ids[2])['lead_name'] == 'Someone Else'
     assert app.extensions['printer_db'].rows('SELECT * FROM jobs') == []
 
