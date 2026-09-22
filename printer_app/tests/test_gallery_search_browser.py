@@ -27,7 +27,7 @@ def _seed_gallery(service):
     for number, (key, day, name, address, rep) in enumerate(definitions, 1):
         ident = hashlib.sha256(key.encode()).hexdigest()
         import_id = hashlib.sha256(('import-' + key).encode()).hexdigest()
-        order = f'WO-{number:04}'
+        order = f'{number:08}'
         service.repository.enqueue(import_id, 'synthetic.pdf')
         service.repository.finish(import_id, [dict(
             id=ident, import_id=import_id, filename='synthetic.pdf', page=number, part=1,
@@ -44,8 +44,8 @@ def _seed_gallery(service):
         ids[key] = ident
     for day, records in references.items():
         service.publish_reference_snapshot(day, 'final', records, 100.0)
-    service.publish_lead_statuses(['WO-0001'], [
-        WorkOrderLeadStatus('WO-0001', 'lead-one', 'Sold <confirmed>')], 101.0)
+    service.publish_lead_statuses(['00000001'], [
+        WorkOrderLeadStatus('00000001', 'lead-one', 'Sold <confirmed>')], 101.0)
     service.note(ids['notes'], 'e' * 32, 'Office', 'José Alvarez appears only in this shared note')
     return ids
 

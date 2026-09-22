@@ -23,7 +23,7 @@ def add(service, number, date, name, extra='', *, address=None):
     address = f'{number} Example St' if address is None else address
     service.repository.enqueue(source, 'synthetic.pdf')
     service.repository.finish(source, [dict(id=ident, import_id=source, filename='synthetic.pdf',
-        page=number, part=1, text=f'Work Order Number: {number}\nLead Name: {name}\nAddress: {address}\n{extra}',
+        page=number, part=1, text=f'Work Order Number: {number:08}\nLead Name: {name}\nAddress: {address}\n{extra}',
         document_date=date, date_status='printed' if date else 'needs-date', bytes=10, created=time.time())])
     return ident
 

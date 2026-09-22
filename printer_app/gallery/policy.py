@@ -137,20 +137,33 @@ def address_key(value):
 
 
 def printed_work_order_number(text):
-    """Read the explicit Work Order Number field from normalized OCR text."""
-    readings = []
-    boundary = (
-        r'(?=\s*(?:\||\n)|\s+(?:Local\s+Scheduled\s+Start\s+Time|'
-        r'Canvass\s+Set\s+By|Lead\s+Name|Address|Phone)\s*:?[ \t]*|$)'
-    )
-    for match in re.finditer(
-            r'\bWork\s+Order\s+Number\s*[:;]?[ \t]*([^\n|]+?)' + boundary,
-            str(text or ''), re.I):
-        value = ''.join(re.findall(r'[A-Za-z0-9-]+', match[1]))
-        if value and len(value) <= 80:
-            readings.append(value)
-    normalized = {value.casefold() for value in readings}
-    return readings[0] if readings and len(normalized) == 1 else ''
+    """Read one unambiguous eight-digit number from every explicit OCR field.
+
+    Work order numbers do not wrap. Keep OCR token boundaries: a separate stray
+    digit is not part of a complete number, and fragments must never be joined.
+    Conflicting or unreadable repeated fields require review instead of a guess.
+    """
+    original = str(text or '')
+    labels = list(re.finditer(
+        r'\bWork[ \t]+Order[ \t]+Number\b[ \t]*[:;]?[ \t]*', original, re.I))
+    fields = '|'.join(re.escape(label).replace(r'\ ', r'[ \t]+')
+                      for label in sorted(REFERENCE_FIELD_LABELS, key=len, reverse=True))
+    boundary = r'[\r\n|]|\b(?:' + fields + r')\b|\b[A-Za-z][A-Za-z0-9 /_-]*[:;]'
+    readings = set()
+    for index, label in enumerate(labels):
+        end = labels[index + 1].start() if index + 1 < len(labels) else len(original)
+        field = re.split(boundary, original[label.end():end], maxsplit=1, flags=re.I)[0]
+        numbers = set()
+        for match in re.finditer(r'[0-9]+', field):
+            if len(match[0]) != 8:
+                continue
+            edges = field[max(0, match.start() - 1):match.start()] + field[match.end():match.end() + 1]
+            if all(char.isspace() or unicodedata.category(char)[0] in 'PS' for char in edges):
+                numbers.add(match[0])
+        if len(numbers) != 1:
+            return ''
+        readings.update(numbers)
+    return readings.pop() if len(readings) == 1 else ''
 
 
 def work_order_key(value):

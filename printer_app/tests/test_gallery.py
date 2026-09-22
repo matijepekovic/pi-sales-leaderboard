@@ -17,7 +17,7 @@ from printer_app.tests.auth_helpers import login_admin
 
 
 def item(service, document_date=None, text=(
-        'Work Order Number: 1001\nLead Name: Synthetic Customer\n'
+        'Work Order Number: 00001001\nLead Name: Synthetic Customer\n'
         'Address: 12345 Acorn Avenue\nProduct Interest: Roofing')):
     ident, iid = 'a' * 64, 'b' * 64
     service.initialize()

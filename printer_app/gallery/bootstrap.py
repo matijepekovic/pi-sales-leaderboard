@@ -44,8 +44,11 @@ class GalleryReferenceInbox:
     def dates(self):
         return self.service.reference_dates()
 
-    def work_order_numbers(self):
-        return self.service.work_order_numbers()
+    def repair_missing_work_orders(self):
+        return self.service.repair_missing_work_orders()
 
-    def publish_lead_statuses(self, work_order_numbers, records, captured):
-        return self.service.publish_lead_statuses(work_order_numbers, records, captured)
+    def work_order_numbers(self, *, missing_only=False):
+        return self.service.work_order_numbers(missing_only=missing_only)
+
+    def publish_lead_statuses(self, work_order_numbers, records, captured, *, missing_only=False):
+        return self.service.publish_lead_statuses(work_order_numbers, records, captured, missing_only=missing_only)

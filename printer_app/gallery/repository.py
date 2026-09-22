@@ -783,16 +783,35 @@ class GalleryRepository:
                             (lead_source_id,)).fetchone()
             return row['sales_lead_status'] if row else ''
 
-    def work_order_numbers(self):
+    def missing_work_order_items(self):
+        with self.connect() as c:
+            return [dict(row) for row in c.execute("""SELECT id,text,work_order_number,work_order_key,state
+                FROM items WHERE state IN ('ACTIVE','REVIEW') AND sales_lead_status=''
+                ORDER BY id""")]
+
+    def repair_missing_work_order(self, item, number):
+        """Reparse one unchanged unresolved card without touching its other content."""
+        if number == item['work_order_number']:
+            return 0
+        with self.connect() as c:
+            return c.execute("""UPDATE items SET work_order_number=?,work_order_key=?,
+                lead_source_id='',sales_lead_status='',search_revision=search_revision+1,
+                state=CASE WHEN ?='' THEN 'REVIEW' ELSE state END
+                WHERE id=? AND state IN ('ACTIVE','REVIEW') AND sales_lead_status=''
+                AND text=? AND work_order_number=? AND work_order_key=? AND state=?""",
+                (number, work_order_key(number), number, item['id'], item['text'],
+                 item['work_order_number'], item['work_order_key'], item['state'])).rowcount
+
+    def work_order_numbers(self, *, missing_only=False):
         """All retained cards, with no appointment date requirement."""
         with self.connect() as c:
-            rows = c.execute("""SELECT work_order_key,min(work_order_number) AS number FROM (
-                SELECT work_order_key,work_order_number FROM items WHERE state IN ('ACTIVE','REVIEW')
-                )
-                WHERE work_order_key!='' GROUP BY work_order_key ORDER BY work_order_key""")
+            rows = c.execute("""SELECT work_order_key,min(work_order_number) AS number
+                FROM items WHERE state IN ('ACTIVE','REVIEW') AND work_order_key!=''"""
+                + (" AND sales_lead_status=''" if missing_only else '')
+                + ' GROUP BY work_order_key ORDER BY work_order_key')
             return [row['number'] for row in rows]
 
-    def replace_work_order_lead_statuses(self, work_order_numbers, records, captured):
+    def replace_work_order_lead_statuses(self, work_order_numbers, records, captured, *, missing_only=False):
         """Publish one completed direct lookup; absent or ambiguous orders lose their mapping."""
         requested = {work_order_key(number) for number in work_order_numbers} - {''}
         matches = {key: [] for key in requested}
@@ -830,7 +849,7 @@ class GalleryRepository:
                         ELSE '' END,
                     captured=excluded.captured
                     WHERE excluded.captured>=lead_status_snapshots.captured""", (lead_id, status, captured))
-            return self._refresh_sales_lead_statuses(c)
+            return self._refresh_sales_lead_statuses(c, " AND sales_lead_status=''" if missing_only else '')
 
     @staticmethod
     def _refresh_sales_lead_statuses(c, guard='', parameters=()):

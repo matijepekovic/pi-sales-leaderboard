@@ -107,7 +107,7 @@ def test_template_search_contract_keeps_fields_lead_date_and_each_cards_time():
     from printer_app.gallery.recognition import _template_document_date, _template_search_text
 
     values = {
-        'work_order_number': '002275180',
+        'work_order_number': '02275180',
         'local_scheduled_start_time': '2026-09-19 10:30 AM',
         'lead_name': 'JORDAN EXAMPLE',
         'address': '123 MAIN ST',
@@ -117,7 +117,7 @@ def test_template_search_contract_keeps_fields_lead_date_and_each_cards_time():
     text = _template_search_text(values)
     assert 'Lead Name: JORDAN EXAMPLE' in text
     assert 'Address: 123 MAIN ST' in text
-    assert 'Work Order Number: 002275180' in text
+    assert 'Work Order Number: 02275180' in text
     assert 'Product Interest' not in text
     assert 'WINDOWS' not in text
     assert text.count('10:30 AM') == 2

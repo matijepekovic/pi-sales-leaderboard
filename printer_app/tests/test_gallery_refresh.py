@@ -32,7 +32,7 @@ class ReferenceSource:
         self.calls.append(filters)
         if self.error:
             raise RuntimeError(self.error)
-        return (reference('0001', 'Today Customer', 'Fresh Assigned Rep'),)
+        return (reference('00000001', 'Today Customer', 'Fresh Assigned Rep'),)
 
 
 def reference(order, name, rep):
@@ -68,8 +68,8 @@ def web(tmp_path):
     gallery = app.extensions['printer_gallery']
     gallery.initialize()
     ids = {
-        'today': seed_card(gallery, 'today', DAY, '0001', 'Today Customer', 'Old Assigned Rep'),
-        'older': seed_card(gallery, 'older', OLDER, '0002', 'Older Customer', 'Fresh Historical Rep'),
+        'today': seed_card(gallery, 'today', DAY, '00000001', 'Today Customer', 'Old Assigned Rep'),
+        'older': seed_card(gallery, 'older', OLDER, '00000002', 'Older Customer', 'Fresh Historical Rep'),
     }
     gallery.note(ids['today'], 'a' * 32, 'Office', 'Keep the existing shared note')
     source = ReferenceSource()

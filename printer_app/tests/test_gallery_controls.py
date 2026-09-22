@@ -30,7 +30,7 @@ def card(service, number, name, day='2026-09-15', extra=''):
     iid = 'a' * 64
     service.repository.enqueue(iid, 'fixture.pdf')
     service.repository.finish(iid, [dict(id=ident, import_id=iid, filename='fixture.pdf', page=number,
-        part=1, text=f'Work Order Number: {number} Lead Name: {name} Address: {number} Test street\n{extra}',
+        part=1, text=f'Work Order Number: {number:08} Lead Name: {name} Address: {number} Test street\n{extra}',
         document_date=day, date_status='printed', bytes=10, created=number)])
     return ident
 

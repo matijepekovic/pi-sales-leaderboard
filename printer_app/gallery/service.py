@@ -346,11 +346,22 @@ class GalleryService:
             **identity,
         )) or status_changed
 
-    def work_order_numbers(self):
+    def repair_missing_work_orders(self):
+        """Recover clear saved OCR numbers only on cards still missing Lead status."""
         self.initialize()
-        return self.repository.work_order_numbers()
+        repaired = review = 0
+        for item in self.repository.missing_work_order_items():
+            number = printed_work_order_number(item['text'])
+            changed = self.repository.repair_missing_work_order(item, number)
+            repaired += changed if number else 0
+            review += changed if not number else 0
+        return dict(repaired=repaired, review=review)
 
-    def publish_lead_statuses(self, work_order_numbers, records, captured):
+    def work_order_numbers(self, *, missing_only=False):
+        self.initialize()
+        return self.repository.work_order_numbers(missing_only=missing_only)
+
+    def publish_lead_statuses(self, work_order_numbers, records, captured, *, missing_only=False):
         """Apply a completed normalized work-order lookup independently of appointments."""
         self.initialize()
         normalized = []
@@ -358,7 +369,8 @@ class GalleryService:
             value = self._reference_record(record)
             normalized.append({key: ' '.join(str(value.get(key) or '').split()) for key in (
                 'work_order_number', 'lead_source_id', 'sales_lead_status')})
-        changed = self.repository.replace_work_order_lead_statuses(work_order_numbers, normalized, captured)
+        changed = self.repository.replace_work_order_lead_statuses(
+            work_order_numbers, normalized, captured, missing_only=missing_only)
         return dict(count=len(normalized), enriched=changed)
 
     def reference_dates(self):

@@ -36,7 +36,7 @@ def web(tmp_path):
     ], 1):
         ident = hashlib.sha256(key.encode()).hexdigest()
         import_id = hashlib.sha256(('contact-' + key).encode()).hexdigest()
-        order = f'000{number}'
+        order = f'{number:08}'
         service.repository.enqueue(import_id, 'contact-fixture.pdf')
         service.repository.finish(import_id, [dict(
             id=ident, import_id=import_id, filename='contact-fixture.pdf', page=number, part=1,
