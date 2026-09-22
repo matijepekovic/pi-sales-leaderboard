@@ -256,7 +256,10 @@ class GalleryService:
             items[ident] = dict(id=ident, import_id=job['id'], filename=job['filename'],
                 page=entry['page'], part=entry['part'], bytes=entry['bytes'], text=text,
                 document_date=day, date_status='reference' if origin == 'morning' else entry['date_status'], created=time.time(),
-                lead_text=lead_text, recognition_revision=1 if 'lead_text' in entry and entry['text'].strip() else 0,
+                lead_text=lead_text,
+                work_order_candidates=tuple(entry.get('work_order_candidates') or ()),
+                recognition_revision=1 if (entry.get('work_order_candidates') or
+                    ('lead_text' in entry and entry['text'].strip())) else 0,
                 origin=origin, image_revision=revision, replace_existing=bool(existing), require_identity=True)
         warnings = manifest.get('warnings', [])
         if manifest.get('skipped'):
@@ -383,6 +386,11 @@ class GalleryService:
         self.initialize()
         return self.repository.work_order_numbers(missing_only=missing_only)
 
+    def work_order_lookup_numbers(self):
+        """Accepted work orders plus OCR candidates awaiting source validation."""
+        self.initialize()
+        return self.repository.work_order_lookup_numbers()
+
     def publish_lead_statuses(self, work_order_numbers, records, captured, *, missing_only=False):
         """Apply a completed normalized work-order lookup independently of appointments."""
         self.initialize()
@@ -396,43 +404,64 @@ class GalleryService:
         return dict(count=len(normalized), enriched=changed)
 
     def publish_work_order_records(self, work_order_numbers, records, captured):
-        """Apply normalized complete source records directly by work-order identity."""
+        """Validate OCR candidates and enrich accepted work orders from normalized source data."""
         self.initialize()
         requested = {work_order_key(number) for number in work_order_numbers if work_order_key(number)}
-        normalized = []
+        normalized = {}
         for record in records:
             value = self._reference_record(record)
             key = work_order_key(value.get('work_order_number', ''))
-            if key not in requested:
-                continue
-            normalized.append(value)
+            if key in requested and key not in normalized:
+                normalized[key] = value
 
-        changed = 0
-        for record in normalized:
-            number = record.get('work_order_number', '')
+        def fields(record):
             day = str(record.get('appointment_date') or '').strip()
             if day:
                 day = checked_date(day)
-            assigned = self._resource_names(record)
-            name = ' '.join(str(record.get('lead_name') or '').split())
-            address = ' '.join(str(record.get('address') or '').split())
+            return (
+                day,
+                self._resource_names(record),
+                ' '.join(str(record.get('lead_name') or '').split()),
+                ' '.join(str(record.get('address') or '').split()),
+                ' '.join(str(record.get('lead_source_id') or '').split()),
+                ' '.join(str(record.get('sales_lead_status') or '').split()),
+            )
+
+        changed = 0
+        # Existing confirmed work orders keep their direct enrichment path.
+        for key, record in normalized.items():
+            number = record.get('work_order_number', '')
+            day, assigned, name, address, lead_source_id, sales_status = fields(record)
             for item in self.repository.work_order_items(number):
-                text = self._reference_text(
-                    item.get('text', ''), record, day, include_resources=True
-                )
+                text = self._reference_text(item.get('text', ''), record, day, include_resources=True)
                 changed += self.repository.apply_work_order_reference(
-                    item['id'],
-                    item['work_order_key'],
-                    str(record.get('source_id') or ''),
-                    text,
-                    name,
-                    address,
-                    assigned,
-                    day,
-                    ' '.join(str(record.get('lead_source_id') or '').split()),
-                    ' '.join(str(record.get('sales_lead_status') or '').split()),
+                    item['id'], item['work_order_key'], str(record.get('source_id') or ''),
+                    text, name, address, assigned, day, lead_source_id, sales_status,
                 )
-        return dict(count=len(normalized), enriched=changed)
+
+        # A scanned card accepts an OCR number only when exactly one of its
+        # independent candidates resolves through the normalized source.
+        validated = 0
+        for item in self.repository.work_order_candidate_items():
+            matches = [
+                (candidate, normalized[work_order_key(candidate)])
+                for candidate in item['candidates']
+                if work_order_key(candidate) in normalized
+            ]
+            if len(matches) != 1:
+                continue
+            number, record = matches[0]
+            day, assigned, name, address, lead_source_id, sales_status = fields(record)
+            text = self._reference_text(
+                'Work Order Number: ' + number, record, day, include_resources=True
+            )
+            applied = self.repository.apply_validated_work_order_reference(
+                item['id'], item['candidates'], number, str(record.get('source_id') or ''),
+                text, name, address, assigned, day, lead_source_id, sales_status,
+            )
+            changed += applied
+            validated += applied
+        return dict(count=len(normalized), enriched=changed, validated=validated)
 
     def reference_dates(self):
         """Distinct usable dates of retained cards, for normalized source backfill."""
@@ -546,11 +575,16 @@ class GalleryService:
             header = result.get('lead_text', '')
             if not isinstance(header, str):
                 raise ValueError('Invalid header text')
+            candidates = tuple(result.get('work_order_candidates') or ())
+            if item.get('state') == 'REVIEW' and not item.get('work_order_key'):
+                if not candidates:
+                    raise ValueError('No readable work order; retry later')
+                if not self.repository.save_work_order_candidates(item['id'], candidates):
+                    raise ValueError('Work-order candidate changed during recognition')
+                return True
             name = printed_lead(header) or printed_lead(text)
             address = printed_address(text)
             work_order = printed_work_order_number(text)
-            if item.get('state') == 'REVIEW' and not item.get('work_order_key') and not work_order:
-                raise ValueError('No readable work order; retry later')
             self.repository.repair_recognition(
                 item['id'], text, name, lead_key(name), address, address_key(address),
                 work_order, work_order_key(work_order),
