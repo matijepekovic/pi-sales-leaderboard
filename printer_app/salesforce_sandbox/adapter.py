@@ -56,6 +56,35 @@ PORTAL_FIELDS = {
     'source_type': ('Source Type', 'FSSK__FSK_Work_Order__r.Lead__r.LeadSource'),
 }
 
+MOD_SELECT_FIELDS = (
+    'Id',
+    'StatusCategory',
+    'FSSK__FSK_Work_Order__r.WorkOrderNumber',
+    'FSSK__FSK_Work_Order__r.Address',
+    'Local_Scheduled_Start_Time__c',
+    'FSSK__FSK_Work_Order__r.City',
+    'FSSK__FSK_Work_Order__r.Street',
+    'FSSK__FSK_Work_Order__r.State',
+    'FSSK__FSK_Work_Order__r.PostalCode',
+    'FSSK__FSK_Work_Order__r.Lead__r.Name',
+    'FSSK__FSK_Work_Order__r.Lead__r.Id',
+    'FSSK__FSK_Work_Order__r.Lead__r.Status',
+    'FSSK__FSK_Work_Order__r.Lead__r.Phone',
+    'FSSK__FSK_Work_Order__r.Lead__r.Phone_3__c',
+    'SchedStartTime',
+    'SchedEndTime',
+    'CreatedDate',
+    'FSSK__FSK_Work_Order__c',
+    'FSSK__FSK_Work_Order__r.Product_Interest__c',
+    'FSSK__FSK_Assigned_Service_Resource__r.Name',
+    'FSSK__FSK_Work_Order__r.Lead__r.LeadSource',
+    'FSSK__FSK_Work_Order__r.Lead__r.Sub_Source__c',
+    'FSSK__FSK_Work_Order__r.Lead__r.Set_By__r.Name',
+    'FSSK__FSK_Work_Order__r.WorkType.Name',
+    'FSSK__FSK_Work_Order__r.Lead__r.Description',
+    'FSSK__FSK_Work_Order__r.Lead__r.Canvass_Set_By__r.Name',
+)
+
 
 def _safe_cli_detail(value):
     """Return the useful Node/Salesforce error without leaking credential values."""
@@ -124,6 +153,75 @@ def _soql_literal(value):
     value = str(value or '').replace('\\', '\\\\').replace("'", "\\'")
     return "'" + value + "'"
 
+
+
+def _group_appointments(records, user_zone, start_local=None, end_local=None):
+    """Normalize duplicate appointment rows without choosing a work-order date."""
+    grouped = {}
+    order = []
+    for item in records:
+        scheduled = _sf_datetime(item.get('SchedStartTime'))
+        if scheduled is None:
+            continue
+        local_start = scheduled.astimezone(user_zone)
+        if start_local is not None and end_local is not None and not (start_local <= local_start < end_local):
+            continue
+
+        work_order_id = str(item.get('FSSK__FSK_Work_Order__c') or '').strip()
+        if not work_order_id:
+            continue
+        resource = _nested(item, 'FSSK__FSK_Assigned_Service_Resource__r.Name').strip()
+        created = _sf_datetime(item.get('CreatedDate')) or datetime.max.replace(tzinfo=timezone.utc)
+        canceled = str(item.get('StatusCategory') or '').strip().casefold() == 'canceled'
+        group_key = (work_order_id, local_start.date())
+
+        current = grouped.get(group_key)
+        if current is None or (current['canceled'] and not canceled):
+            if current is None:
+                order.append(group_key)
+            grouped[group_key] = {
+                'item': item,
+                'created': created,
+                'local_start': local_start,
+                'canceled': canceled,
+                'resources': [resource] if resource else [],
+            }
+            continue
+        if canceled and not current['canceled']:
+            continue
+        if resource and resource not in current['resources']:
+            current['resources'].append(resource)
+        if created < current['created']:
+            current['item'] = item
+            current['created'] = created
+            current['local_start'] = local_start
+    return grouped, order
+
+
+def _mod_record(work_order_id, day, grouped_item):
+    item = grouped_item['item']
+    work_order = item.get('FSSK__FSK_Work_Order__r') or {}
+    lead = work_order.get('Lead__r') or {} if isinstance(work_order, dict) else {}
+    return ModSheetRecord(
+        source_id=work_order_id,
+        work_order_number=_nested(work_order, 'WorkOrderNumber'),
+        appointment_date=day.isoformat(),
+        local_scheduled_start_time=str(item.get('Local_Scheduled_Start_Time__c') or ''),
+        canvass_set_by=_nested(lead, 'Canvass_Set_By__r.Name'),
+        lead_name=_nested(lead, 'Name'),
+        address=_address(work_order),
+        phone=_nested(lead, 'Phone'),
+        scheduled_start=grouped_item['local_start'].strftime('%Y.%m.%d ; %I:%M:%S %p'),
+        assigned_service_resources=tuple(grouped_item['resources']),
+        set_by=_nested(lead, 'Set_By__r.Name'),
+        work_type=_nested(work_order, 'WorkType.Name'),
+        product_interest=_nested(work_order, 'Product_Interest__c'),
+        source=_nested(lead, 'LeadSource'),
+        sub_source=_nested(lead, 'Sub_Source__c'),
+        lead_description=_nested(lead, 'Description'),
+        sales_lead_status=_nested(lead, 'Status'),
+        lead_source_id=_nested(lead, 'Id'),
+    )
 
 def _sf_datetime(value):
     value = str(value or '').strip()
@@ -581,6 +679,90 @@ class SalesforceCliAdapter:
                 pass
         raise SalesforceAdapterError('Use dates in M/D/YYYY format.')
 
+    def work_orders(self, work_order_numbers):
+        """Resolve current normalized appointment data directly by work-order number."""
+        if isinstance(work_order_numbers, (str, bytes)):
+            raise SalesforceAdapterError('Supply a collection of work-order numbers.')
+        numbers = {}
+        for value in work_order_numbers:
+            if value is None or value == '':
+                continue
+            if not isinstance(value, str) or len(value) > 255 or any(ord(char) < 32 for char in value):
+                raise SalesforceAdapterError('A work-order number is invalid.')
+            clean = value.strip()
+            if clean:
+                numbers.setdefault(clean.casefold(), clean)
+        if not numbers:
+            return ()
+
+        user_zone = self._salesforce_timezone()
+        raw_records = []
+        requested = list(numbers.values())
+        for offset in range(0, len(requested), 100):
+            batch = requested[offset:offset + 100]
+            condition = (
+                "WorkType.Name LIKE '%Sales%' AND "
+                'FSSK__FSK_Work_Order__r.WorkOrderNumber IN ('
+                + ', '.join(_soql_literal(value) for value in batch)
+                + ')'
+            )
+            cursor = ''
+            seen = set()
+            while True:
+                query = (
+                    'SELECT ' + ', '.join(MOD_SELECT_FIELDS)
+                    + ' FROM ServiceAppointment WHERE ' + condition
+                    + (f' AND Id > {_soql_literal(cursor)}' if cursor else '')
+                    + ' ORDER BY Id ASC LIMIT 1000'
+                )
+                result = self._run(
+                    ['data', 'query', '--query', query, *self._target_args()],
+                    timeout=60,
+                )
+                rows = result.get('records') if isinstance(result, dict) else None
+                if not isinstance(rows, list) or len(rows) > 1000:
+                    raise SalesforceAdapterError('Salesforce work-order query returned an invalid records page.')
+                if not rows:
+                    if result.get('done') is False or result.get('totalSize', 0):
+                        raise SalesforceAdapterError('Salesforce work-order query returned an incomplete records page.')
+                    break
+                ids = [str(row.get('Id') or '') if isinstance(row, dict) else '' for row in rows]
+                if (any(not re.fullmatch(r'[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?', value) for value in ids)
+                        or len(set(ids)) != len(ids) or seen.intersection(ids)):
+                    raise SalesforceAdapterError('Salesforce work-order pagination did not advance safely.')
+                raw_records.extend(rows)
+                seen.update(ids)
+                cursor = ids[-1]
+
+        grouped, order = _group_appointments(raw_records, user_zone)
+        by_number = {}
+        for work_order_id, day in order:
+            grouped_item = grouped[(work_order_id, day)]
+            number = _nested(grouped_item['item'], 'FSSK__FSK_Work_Order__r.WorkOrderNumber').strip()
+            key = number.casefold()
+            if key in numbers:
+                by_number.setdefault(key, []).append((work_order_id, day, grouped_item))
+
+        resolved = []
+        for key, requested_number in numbers.items():
+            candidates = by_number.get(key, [])
+            work_order_ids = {work_order_id for work_order_id, _, _ in candidates}
+            if len(work_order_ids) != 1:
+                continue
+            active = [candidate for candidate in candidates if not candidate[2]['canceled']]
+            pool = active or candidates
+            if not pool:
+                continue
+            work_order_id, day, grouped_item = max(
+                pool, key=lambda candidate: candidate[2]['local_start']
+            )
+            record = _mod_record(work_order_id, day, grouped_item)
+            if record.work_order_number.casefold() != key:
+                raise SalesforceAdapterError('Salesforce returned an unexpected work order.')
+            resolved.append(record)
+        return tuple(resolved)
+
+
     def mod_sheets(
         self,
         *,
@@ -604,34 +786,7 @@ class SalesforceCliAdapter:
         start_local = datetime.combine(start, time.min, tzinfo=user_zone)
         end_local = datetime.combine(end + timedelta(days=1), time.min, tzinfo=user_zone)
 
-        select_fields = [
-            'Id',
-            'StatusCategory',
-            'FSSK__FSK_Work_Order__r.WorkOrderNumber',
-            'FSSK__FSK_Work_Order__r.Address',
-            'Local_Scheduled_Start_Time__c',
-            'FSSK__FSK_Work_Order__r.City',
-            'FSSK__FSK_Work_Order__r.Street',
-            'FSSK__FSK_Work_Order__r.State',
-            'FSSK__FSK_Work_Order__r.PostalCode',
-            'FSSK__FSK_Work_Order__r.Lead__r.Name',
-            'FSSK__FSK_Work_Order__r.Lead__r.Id',
-            'FSSK__FSK_Work_Order__r.Lead__r.Status',
-            'FSSK__FSK_Work_Order__r.Lead__r.Phone',
-            'FSSK__FSK_Work_Order__r.Lead__r.Phone_3__c',
-            'SchedStartTime',
-            'SchedEndTime',
-            'CreatedDate',
-            'FSSK__FSK_Work_Order__c',
-            'FSSK__FSK_Work_Order__r.Product_Interest__c',
-            'FSSK__FSK_Assigned_Service_Resource__r.Name',
-            'FSSK__FSK_Work_Order__r.Lead__r.LeadSource',
-            'FSSK__FSK_Work_Order__r.Lead__r.Sub_Source__c',
-            'FSSK__FSK_Work_Order__r.Lead__r.Set_By__r.Name',
-            'FSSK__FSK_Work_Order__r.WorkType.Name',
-            'FSSK__FSK_Work_Order__r.Lead__r.Description',
-            'FSSK__FSK_Work_Order__r.Lead__r.Canvass_Set_By__r.Name',
-        ]
+        select_fields = MOD_SELECT_FIELDS
 
         query_start = start_local.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         query_end = end_local.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -713,75 +868,12 @@ class SalesforceCliAdapter:
         if not records:
             raise SalesforceAdapterError('No Records Found for Selected Criteria')
 
-        grouped = {}
-        order = []
-
-        for item in records:
-            scheduled = _sf_datetime(item.get('SchedStartTime'))
-            if scheduled is None:
-                continue
-            local_start = scheduled.astimezone(user_zone)
-            if not (start_local <= local_start < end_local):
-                continue
-
-            work_order_id = str(item.get('FSSK__FSK_Work_Order__c') or '').strip()
-            if not work_order_id:
-                continue
-            resource = _nested(item, 'FSSK__FSK_Assigned_Service_Resource__r.Name').strip()
-            created = _sf_datetime(item.get('CreatedDate')) or datetime.max.replace(tzinfo=timezone.utc)
-            canceled = str(item.get('StatusCategory') or '').strip().casefold() == 'canceled'
-            group_key = (work_order_id, local_start.date())
-
-            current = grouped.get(group_key)
-            if current is None or (current['canceled'] and not canceled):
-                if current is None:
-                    order.append(group_key)
-                grouped[group_key] = {
-                    'item': item,
-                    'created': created,
-                    'local_start': local_start,
-                    'canceled': canceled,
-                    'resources': [resource] if resource else [],
-                }
-                continue
-
-            # A canceled appointment is a fallback for this work order on this
-            # date. It must not replace or add assignments to an active match.
-            if canceled and not current['canceled']:
-                continue
-            if resource and resource not in current['resources']:
-                current['resources'].append(resource)
-            if created < current['created']:
-                current['item'] = item
-                current['created'] = created
-                current['local_start'] = local_start
-
+        grouped, order = _group_appointments(records, user_zone, start_local, end_local)
         if not grouped:
             raise SalesforceAdapterError('No Records Found for Selected Criteria')
 
-        normalized = []
-        for work_order_id, day in order:
-            grouped_item = grouped[(work_order_id, day)]
-            item = grouped_item['item']
-            work_order = item.get('FSSK__FSK_Work_Order__r') or {}
-            lead = work_order.get('Lead__r') or {} if isinstance(work_order, dict) else {}
-            normalized.append(ModSheetRecord(
-                source_id=work_order_id,
-                work_order_number=_nested(work_order, 'WorkOrderNumber'),
-                local_scheduled_start_time=str(item.get('Local_Scheduled_Start_Time__c') or ''),
-                canvass_set_by=_nested(lead, 'Canvass_Set_By__r.Name'),
-                lead_name=_nested(lead, 'Name'),
-                address=_address(work_order),
-                phone=_nested(lead, 'Phone'),
-                scheduled_start=grouped_item['local_start'].strftime('%Y.%m.%d ; %I:%M:%S %p'),
-                assigned_service_resources=tuple(grouped_item['resources']),
-                set_by=_nested(lead, 'Set_By__r.Name'),
-                work_type=_nested(work_order, 'WorkType.Name'),
-                product_interest=_nested(work_order, 'Product_Interest__c'),
-                source=_nested(lead, 'LeadSource'),
-                sub_source=_nested(lead, 'Sub_Source__c'),
-                lead_description=_nested(lead, 'Description'),
-                sales_lead_status=_nested(lead, 'Status'),
-                lead_source_id=_nested(lead, 'Id'),
-            ))
+        normalized = [
+            _mod_record(work_order_id, day, grouped[(work_order_id, day)])
+            for work_order_id, day in order
+        ]
         return normalized

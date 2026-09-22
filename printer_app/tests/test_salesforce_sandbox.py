@@ -228,6 +228,7 @@ def test_mod_query_and_grouping_match_original_apex_controller():
     record = records[0]
     assert record.source_id == '0WO000000000001AAA'
     assert record.local_scheduled_start_time == 'SELECTED EARLIER CREATED ROW'
+    assert record.appointment_date == '2026-09-19'
     assert record.assigned_service_resources == ('Sales Rep Two', 'Sales Rep One')
     assert record.scheduled_start == '2026.09.19 ; 10:30:00 AM'
     assert record.work_order_number == '00012345'
@@ -242,6 +243,52 @@ def test_mod_query_and_grouping_match_original_apex_controller():
     assert record.lead_description == 'Customer description'
     assert record.sales_lead_status == 'Open'
     assert record.lead_source_id == '00Q000000000001AAA'
+
+
+def test_direct_work_order_lookup_needs_no_date_and_returns_latest_active_appointment():
+    calls = []
+    rows = [
+        _appointment(
+            '08p000000000001AAA',
+            scheduled='2026-09-18T17:30:00.000+0000',
+            local_start='9/18/2026 10:30 AM',
+            resource='Old Rep',
+            appointment_status='Canceled',
+        ),
+        _appointment(
+            '08p000000000002AAA',
+            scheduled='2026-09-19T17:30:00.000+0000',
+            local_start='9/19/2026 10:30 AM',
+            resource='Current Rep',
+            lead_status='Sold',
+        ),
+        _appointment(
+            '08p000000000003AAA',
+            scheduled='2026-09-19T18:00:00.000+0000',
+            local_start='9/19/2026 11:00 AM',
+            resource='Second Current Rep',
+            lead_status='Sold',
+        ),
+    ]
+    service = SalesforceSandboxService(SalesforceCliAdapter(
+        runner=_paged_salesforce_runner(calls, [rows, []]),
+        executable='/fake/sf',
+    ))
+
+    records = service.work_orders(['00012345'])
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.work_order_number == '00012345'
+    assert record.appointment_date == '2026-09-19'
+    assert record.lead_name == 'Jordan Example'
+    assert record.address == '123 Main St, Lacey, WA, 98503'
+    assert record.sales_lead_status == 'Sold'
+    assert set(record.assigned_service_resources) == {'Current Rep', 'Second Current Rep'}
+    queries = [query for query in _query_calls(calls) if 'FROM ServiceAppointment' in query]
+    assert "FSSK__FSK_Work_Order__r.WorkOrderNumber IN ('00012345')" in queries[0]
+    assert 'SchedStartTime >=' not in queries[0]
+    assert 'SchedStartTime <' not in queries[0]
 
 
 @pytest.mark.parametrize('second_lead_id', ['00Q000000000001AAA', '00Q000000000002AAA'])

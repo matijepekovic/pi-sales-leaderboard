@@ -316,6 +316,7 @@ def main():
             return daily, references
 
         daily_mod_sheets, mod_references = make_mod_workflows(cfg)
+        known_gallery_work_orders = None
 
         def heartbeat():
             while not stop.is_set():
@@ -351,6 +352,7 @@ def main():
                                 gmail = GmailClient(cfg, db, stop=stop, gallery=GalleryInbox(cfg.data_dir, cfg.gallery))
                                 retention = make_retention(cfg)
                                 daily_mod_sheets, mod_references = make_mod_workflows(cfg)
+                                known_gallery_work_orders = None
                                 next_poll, next_status = 0, 0
                             active_revision = revision
                             db.set('settings_revision', revision)
@@ -406,6 +408,12 @@ def main():
                         mod_reference_task = background.submit(mod_references.run_requested)
                     elif mod_reference_task is None and mod_references.hourly_due(now):
                         mod_reference_task = background.submit(mod_references.run_hourly)
+                    elif mod_reference_task is None:
+                        signature = mod_references.work_order_signature()
+                        if signature != known_gallery_work_orders:
+                            known_gallery_work_orders = signature
+                            if signature:
+                                mod_reference_task = background.submit(mod_references.refresh_work_orders)
                     if daily_mod_task is None and daily_mod_sheets.due(now):
                         daily_mod_task = background.submit(daily_mod_sheets.run_due)
                     if cleaning is None and polling is None and retention.due(now):

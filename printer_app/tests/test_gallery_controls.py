@@ -98,6 +98,8 @@ def test_web_controls_really_render_and_cancel_with_csrf(tmp_path):
     assert client.get('/gallery/queue').status_code == 200
     job_page = client.get('/gallery/jobs/' + 'a'*64)
     assert job_page.status_code == 200 and b'Generated work orders' in job_page.data
+    assert b'value="00000001"' in job_page.data
+    assert b'Work order needs correction' not in job_page.data
     admin_image = '/gallery/jobs/' + 'a' * 64 + '/items/' + ident + '/image'
     assert admin_image.encode() in job_page.data
     assert client.get(admin_image).data == b'fixture image'

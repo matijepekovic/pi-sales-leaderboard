@@ -449,6 +449,28 @@ class ModSheetReferenceDeliveryService:
                 state, status='failed', updated=self.clock(), error=detail,
             ))
 
+    def work_order_signature(self):
+        if self.reference_sink is None:
+            return ()
+        return tuple(self.reference_sink.work_order_numbers())
+
+    def refresh_work_orders(self):
+        return self._refresh_work_orders()
+
+    def _refresh_work_orders(self, current_work_orders=()):
+        """Resolve full normalized appointment/customer data directly by work order."""
+        numbers = tuple(dict.fromkeys((
+            *self.reference_sink.work_order_numbers(), *current_work_orders)))
+        if not numbers:
+            return {'work_order_records': 0, 'enriched': 0}
+        captured = self.clock()
+        records = tuple(self.source.work_orders(numbers))
+        result = self.reference_sink.publish_work_orders(numbers, records, captured)
+        return {
+            'work_order_records': len(records),
+            'enriched': int(result.get('enriched', 0)),
+        }
+
     def _refresh_lead_statuses(self, current_work_orders=(), *, missing_only=False):
         """Resolve retained work orders independently of appointment dates."""
         numbers = tuple(dict.fromkeys((
@@ -463,7 +485,7 @@ class ModSheetReferenceDeliveryService:
     def _refresh_cards(self, day):
         # Each lookup must still run when the other fails. An unavailable
         # appointment cannot prevent its work order from finding a Lead.
-        result = {'appointments': 0, 'lead_statuses': 0, 'enriched': 0}
+        result = {'appointments': 0, 'work_order_records': 0, 'lead_statuses': 0, 'enriched': 0}
         errors = []
         current_work_orders = ()
         try:
@@ -472,6 +494,12 @@ class ModSheetReferenceDeliveryService:
             result.update(appointments)
         except Exception as exc:
             errors.append('Appointments: ' + (str(exc).strip() or type(exc).__name__))
+        try:
+            details = self._refresh_work_orders(current_work_orders)
+            result['work_order_records'] = details['work_order_records']
+            result['enriched'] += details['enriched']
+        except Exception as exc:
+            errors.append('Work orders: ' + (str(exc).strip() or type(exc).__name__))
         try:
             statuses = self._refresh_lead_statuses(current_work_orders)
             result['lead_statuses'] = statuses['lead_statuses']
@@ -509,9 +537,10 @@ class ModSheetReferenceDeliveryService:
             return
         try:
             self.reference_sink.repair_missing_work_orders()
+            self._refresh_work_orders()
             self._refresh_lead_statuses(missing_only=True)
         except Exception as exc:
-            log.warning('Card Lead status lookup failed; hourly refresh will retry: %s', exc)
+            log.warning('Card work-order lookup failed; hourly refresh will retry: %s', exc)
         if self.repository.reference_backfill_complete():
             return
         today = datetime.fromtimestamp(self.clock(), self.zone).date().isoformat()

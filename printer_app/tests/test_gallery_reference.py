@@ -124,6 +124,35 @@ def test_morning_snapshot_can_be_larger_than_final_without_gallery_error(tmp_pat
     assert 'Assigned Service Resource: CANCELLED INK' in cancelled['text']
 
 
+def test_direct_work_order_record_supplies_date_identity_rep_and_status(tmp_path):
+    gallery = _gallery(tmp_path)
+    ident = 'direct-work-order-card'
+    _card(gallery, ident, '00009991', day=None)
+    record = replace(
+        _reference('00009991', 'Direct Rep', lead='Direct Customer', address='99 Direct St'),
+        appointment_date=DAY,
+        phone='360-555-0101',
+        sales_lead_status='Sold',
+        lead_source_id='lead-direct',
+    )
+
+    result = gallery.publish_work_order_records(['00009991'], [record], 100.0)
+    item = gallery.item(ident)
+
+    assert result['count'] == 1
+    assert result['enriched'] == 1
+    assert item['document_date'] == DAY
+    assert item['date_status'] == 'reference'
+    assert item['lead_name'] == 'Direct Customer'
+    assert item['address'] == '99 Direct St'
+    assert item['assigned_service_resource'] == 'Direct Rep'
+    assert item['sales_lead_status'] == 'Sold'
+    assert item['lead_source_id'] == 'lead-direct'
+    assert item['reference_kind'] == 'work-order'
+    assert gallery.search('Direct Customer', 0)['total'] == 1
+    assert gallery.search('Direct Rep', 0, field='rep')['total'] == 1
+
+
 def test_reference_can_arrive_before_card_and_enrich_later(tmp_path):
     gallery = _gallery(tmp_path)
     gallery.publish_reference_snapshot(

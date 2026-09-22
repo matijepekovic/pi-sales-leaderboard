@@ -158,7 +158,11 @@ def main():
                     log.info('Gallery import complete: %s crop(s)', len(manifest['items']))
                 # One repair per iteration, after any new import. Printing has a
                 # different service; neither imports nor repairs run in web requests.
-                repaired = False if stop.is_set() else gallery.repair_one(read_saved)
+                repaired = False
+                if not stop.is_set():
+                    repaired = gallery.repair_missing_work_order_image(read_saved)
+                    if not repaired:
+                        repaired = gallery.repair_one(read_saved)
                 if not job and not repaired:
                     stop.wait(5)
             except Exception as exc:

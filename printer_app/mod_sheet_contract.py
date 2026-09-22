@@ -32,6 +32,7 @@ class ModSheetRecord:
     lead_description: str = ''
     sales_lead_status: str = ''
     lead_source_id: str = ''
+    appointment_date: str = ''
 
 
 @dataclass(frozen=True)

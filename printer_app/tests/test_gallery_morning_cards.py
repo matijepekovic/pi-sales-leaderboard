@@ -146,7 +146,15 @@ def test_hourly_reference_refresh_preserves_cards_and_enriches_later_scans(galle
     now = [datetime(2026, 9, 21, 12, tzinfo=zone).timestamp()]
     delivery = ModSheetReferenceDeliveryService(
         ModSheetAutomationRepository(Database(tmp_path / 'printer.db')),
-        SimpleNamespace(records=records, lead_statuses=lambda numbers: ()), object(), GalleryReferenceInbox(tmp_path),
+        SimpleNamespace(
+            records=records,
+            work_orders=lambda numbers: tuple(
+                replace(record, appointment_date=DAY)
+                for record in current_records
+                if record.work_order_number in set(numbers)
+            ),
+            lead_statuses=lambda numbers: (),
+        ), object(), GalleryReferenceInbox(tmp_path),
         'America/Los_Angeles', clock=lambda: now[0],
     )
 
@@ -328,7 +336,9 @@ def test_reconciliation_keeps_complete_reference_snapshot_for_later_scans(galler
     assert snapshot['count'] == 2
     for expected in records:
         actual = next(row for row in stored if row['source_id'] == expected.source_id)
-        assert {key: actual[key] for key in asdict(expected)} == asdict(expected)
+        expected_data = asdict(expected)
+        expected_data.pop('appointment_date', None)
+        assert {key: actual[key] for key in expected_data} == expected_data
 
     _publish(gallery, 'later-scan', [('00000022', DAY)])
     item = gallery.item(_row(gallery, '00000022')['id'])

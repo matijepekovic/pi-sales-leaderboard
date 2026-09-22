@@ -45,6 +45,14 @@ class FakeSource:
         self.calls = []
         self.lead_calls = []
         self.lead_results = ()
+        self.work_order_calls = []
+        self.work_order_results = ()
+
+    def work_orders(self, work_order_numbers):
+        self.work_order_calls.append(tuple(work_order_numbers))
+        if isinstance(self.work_order_results, Exception):
+            raise self.work_order_results
+        return self.work_order_results
 
     def lead_statuses(self, work_order_numbers):
         self.lead_calls.append(tuple(work_order_numbers))
@@ -68,6 +76,7 @@ class FakeReferenceSink:
         self.pdf_payloads = []
         self.numbers = ()
         self.lead_published = []
+        self.work_order_published = []
         self.lead_scopes = []
         self.repair_calls = 0
 
@@ -78,6 +87,12 @@ class FakeReferenceSink:
     def work_order_numbers(self, *, missing_only=False):
         self.lead_scopes.append(('read', missing_only))
         return self.numbers
+
+    def publish_work_orders(self, work_order_numbers, records, captured):
+        if self.fail:
+            raise RuntimeError('reference sink unavailable')
+        self.work_order_published.append((tuple(work_order_numbers), tuple(records), captured))
+        return {'count': len(records), 'enriched': len(records)}
 
     def publish_lead_statuses(self, work_order_numbers, records, captured, *, missing_only=False):
         if self.fail:
@@ -517,6 +532,33 @@ def test_legacy_morning_outbox_without_document_still_delivers_reference_data(tm
     assert repository.pending_morning_references() == []
 
 
+def test_direct_work_order_refresh_uses_retained_numbers_without_date_filter(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 21, 10, 0))
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    source = FakeSource([])
+    source.work_order_results = (
+        ModSheetRecord(
+            source_id='source-direct',
+            work_order_number='00009991',
+            appointment_date='2026-09-21',
+            lead_name='Direct Customer',
+        ),
+    )
+    sink = FakeReferenceSink()
+    sink.numbers = ('00009991',)
+    service = ModSheetReferenceDeliveryService(
+        repository, source, FakeQueue(), sink, 'America/Los_Angeles', clock=clock,
+    )
+
+    result = service.refresh_work_orders()
+
+    assert source.work_order_calls == [('00009991',)]
+    assert sink.work_order_published[0][0] == ('00009991',)
+    assert sink.work_order_published[0][1] == source.work_order_results
+    assert result['work_order_records'] == 1
+    assert result['enriched'] == 1
+
+
 def test_final_reference_pull_runs_at_11_pm_and_uses_current_day(tmp_path):
     clock = MutableClock(_stamp(2026, 9, 21, 22, 59))
     db = Database(tmp_path / 'printer.db')
@@ -953,7 +995,10 @@ def test_startup_status_refresh_ignores_completed_date_backfill_marker(tmp_path)
     assert source.lead_calls == [('0003',), ('0003',)]
     assert len(sink.lead_published) == 2
     assert sink.repair_calls == 2
-    assert sink.lead_scopes == [('read', True), ('publish', True)] * 2
+    assert sink.lead_scopes == [
+        ('read', False), ('read', True), ('publish', True),
+        ('read', False), ('read', True), ('publish', True),
+    ]
 
 
 def test_startup_status_failure_retries_in_next_hour_without_clearing_cache(tmp_path):
