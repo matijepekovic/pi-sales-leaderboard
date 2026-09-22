@@ -236,8 +236,8 @@ class GalleryRepository:
                 name = printed_lead(item.get('lead_text') or item['text'])
                 address = printed_address(item['text'])
                 work_order = printed_work_order_number(item['text'])
-                # Work order is the scan identity. Name/date are Salesforce enrichment,
-                # so they never hold an otherwise readable card behind manual review.
+                # The scan identity is the work order. Salesforce may fill the
+                # customer and date later without blocking a readable card.
                 state = 'ACTIVE' if work_order else 'REVIEW'
                 origin = item.get('origin', 'scan')
                 if origin == 'morning' and c.execute(
@@ -348,7 +348,7 @@ class GalleryRepository:
             return dict(row) if row else None
 
     def correct_import_item_work_order(self, import_id, item_id, number):
-        """Correct one generated card's work-order identity and discard stale enrichment."""
+        """Correct one retained generated card's work-order identity."""
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             row = c.execute("""SELECT page,part,state FROM items
@@ -509,8 +509,38 @@ class GalleryRepository:
                          source.created,source.id,i.page,i.part,i.id""")
             return [dict(row) for row in rows]
 
+    def rename_leads(self, item_ids, value, key):
+        ids = list(dict.fromkeys(item_ids))
+        if not ids:
+            raise LookupError('No active related work orders are available.')
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            changed = 0
+            for ident in ids:
+                changed += c.execute("""UPDATE items
+                    SET lead_name=?,lead_key=?,lead_status='confirmed'
+                    WHERE id=? AND state='ACTIVE'""", (value, key, ident)).rowcount
+            if not changed:
+                raise LookupError('No active related work orders are available.')
+            return changed
+
+    def rename_one_active_lead(self, ident, value, key):
+        with self.connect() as c:
+            changed = c.execute("""UPDATE items
+                SET lead_name=?,lead_key=?,lead_status='confirmed'
+                WHERE id=? AND state='ACTIVE'""", (value, key, ident)).rowcount
+            if not changed:
+                raise LookupError('This image has expired or is unavailable.')
+            return changed
+
+    def correct_lead(self, ident, value):
+        with self.connect() as c:
+            if not c.execute("UPDATE items SET lead_name=?,lead_key=?,lead_status='confirmed' WHERE id=? AND state='ACTIVE'",
+                             (value, lead_key(value), ident)).rowcount:
+                raise LookupError('This image has expired or is unavailable.')
+
     def correct_work_order(self, ident, number):
-        """Replace one active card's work-order identity and discard stale enrichment."""
+        """Replace one active card's work order and clear data tied to the old one."""
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             if not c.execute("""UPDATE items SET
@@ -733,29 +763,31 @@ class GalleryRepository:
             return (dict(snap) if snap else None), result
 
     def reference_items(self, day):
-        """Cards already on this day plus undated cards whose work order appears there."""
         with self.connect() as c:
             return [dict(row) for row in c.execute("""SELECT id,text,document_date,lead_name,lead_key,
                 address,address_key,work_order_number,work_order_key,assigned_service_resource,
                 reference_kind,reference_source_id,sales_lead_status,lead_source_id,state
                 FROM items WHERE state IN ('ACTIVE','REVIEW') AND (
-                    document_date=? OR work_order_key IN (
+                    document_date=? OR (document_date IS NULL AND work_order_key IN (
                         SELECT work_order_key FROM appointment_references
                         WHERE day=? AND work_order_key!=''
-                    )
+                    ))
                 ) ORDER BY created,id""", (day, day))]
 
     def reference_matches(self, day, kind, number):
-        """Read indexed work-order candidates; day=None permits cross-day recovery."""
+        """Read the indexed work-order candidates, using the latest day when undated."""
         with self.connect() as c:
             if day:
                 rows = c.execute("""SELECT * FROM appointment_references
-                    WHERE day=? AND kind=? AND work_order_key=? ORDER BY source_id LIMIT 20""",
+                    WHERE day=? AND kind=? AND work_order_key=? LIMIT 2""",
                     (day, kind, work_order_key(number)))
             else:
                 rows = c.execute("""SELECT * FROM appointment_references
-                    WHERE kind=? AND work_order_key=? ORDER BY day DESC,source_id LIMIT 20""",
-                    (kind, work_order_key(number)))
+                    WHERE kind=? AND work_order_key=? AND day=(
+                        SELECT max(day) FROM appointment_references
+                        WHERE kind=? AND work_order_key=?
+                    ) LIMIT 2""",
+                    (kind, work_order_key(number), kind, work_order_key(number)))
             result = []
             for row in rows:
                 value = dict(row)
@@ -885,7 +917,7 @@ class GalleryRepository:
                 reference_source_id=?,text=?,
                 lead_name=CASE WHEN ?='' THEN lead_name ELSE ? END,
                 lead_key=CASE WHEN ?='' THEN lead_key ELSE ? END,
-                lead_status=CASE WHEN ?='' OR lead_name=? THEN lead_status ELSE 'reference' END,
+                lead_status=CASE WHEN ?='' OR lead_name=? THEN lead_status ELSE 'printed' END,
                 address=CASE WHEN ?='' THEN address ELSE ? END,
                 address_key=CASE WHEN ?='' THEN address_key ELSE ? END
                 WHERE id=? AND state IN ('ACTIVE','REVIEW')
