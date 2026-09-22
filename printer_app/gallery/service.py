@@ -368,6 +368,24 @@ class GalleryService:
             **identity,
         )) or status_changed
 
+    def repair_missing_work_order_image(self, reader):
+        """Re-read one retained card image whose work-order identity is still blank."""
+        self.initialize()
+        item = self.repository.missing_work_order_recognition_candidate(time.time())
+        if not item:
+            return False
+        try:
+            result = reader(self.files.path('crops', item['id']))
+            if not isinstance(result, dict) or not isinstance(result.get('text'), str):
+                raise ValueError('Invalid recognition result')
+            number = printed_work_order_number(result['text'])
+            if not number:
+                raise ValueError('No readable work order')
+            self.repository.repair_work_order_recognition(item['id'], number)
+        except (OSError, ValueError):
+            self.repository.defer_work_order_recognition(item['id'], time.time())
+        return True
+
     def repair_missing_work_orders(self):
         """Recover clear saved OCR numbers only on cards still missing Lead status."""
         self.initialize()
@@ -382,6 +400,52 @@ class GalleryService:
     def work_order_numbers(self, *, missing_only=False):
         self.initialize()
         return self.repository.work_order_numbers(missing_only=missing_only)
+
+    def publish_work_order_records(self, work_order_numbers, records, captured):
+        """Apply normalized source data directly to every retained matching work order."""
+        self.initialize()
+        requested = {work_order_key(number): number for number in work_order_numbers
+                     if work_order_key(number)}
+        normalized = [self._reference_record(record) for record in records]
+        matches = {key: [] for key in requested}
+        for record in normalized:
+            key = work_order_key(record.get('work_order_number', ''))
+            if key in matches:
+                matches[key].append(record)
+
+        status_rows = [{key: ' '.join(str(record.get(key) or '').split()) for key in (
+            'work_order_number', 'lead_source_id', 'sales_lead_status')} for record in normalized]
+        status_changed = self.repository.replace_work_order_lead_statuses(
+            list(requested.values()), status_rows, captured)
+
+        enriched = 0
+        for item in self.repository.work_order_items(requested.values()):
+            candidates = matches.get(item['work_order_key'], [])
+            if len(candidates) != 1:
+                continue
+            match = candidates[0]
+            try:
+                day = checked_date(str(match.get('appointment_date') or ''))
+            except (TypeError, ValueError):
+                continue
+            assigned = self._resource_names(match)
+            name = ' '.join(str(match.get('lead_name') or '').split())
+            address = ' '.join(str(match.get('address') or '').split())
+            text = self._reference_text(
+                item.get('text', ''), match, day, include_resources=True
+            )
+            enriched += int(bool(self.repository.apply_reference(
+                item['id'],
+                str(match.get('source_id') or ''),
+                'work-order',
+                assigned,
+                text,
+                name,
+                address,
+                reference_day=day,
+                expected_work_order_key=item['work_order_key'],
+            )))
+        return dict(count=len(normalized), enriched=enriched, status_enriched=status_changed)
 
     def publish_lead_statuses(self, work_order_numbers, records, captured, *, missing_only=False):
         """Apply a completed normalized work-order lookup independently of appointments."""
