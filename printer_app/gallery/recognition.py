@@ -21,7 +21,7 @@ else:
     from policy import printed_work_order_number
 
 # The scan supplies only the durable work-order identity. Customer, address,
-# appointment and rep data come from the existing normalized Salesforce references.
+# appointment and rep data come from the existing normalized reference data.
 _OCR_FIELD_KEYS = frozenset({'work_order_number'})
 _WRAPPED_FIELD_KEYS = frozenset()
 
