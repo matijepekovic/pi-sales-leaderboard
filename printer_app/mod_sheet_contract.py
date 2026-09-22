@@ -35,6 +35,13 @@ class ModSheetRecord:
 
 
 @dataclass(frozen=True)
+class WorkOrderReference(ModSheetRecord):
+    """Complete normalized source record resolved directly by work-order number."""
+
+    appointment_date: str = ''
+
+
+@dataclass(frozen=True)
 class SourceStatus:
     connected: bool
     username: str = ''

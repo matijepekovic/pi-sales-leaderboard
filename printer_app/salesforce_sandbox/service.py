@@ -118,6 +118,13 @@ class SalesforceSandboxService:
         except SalesforceAdapterError as exc:
             raise ModSheetSourceError(str(exc)) from exc
 
+    def work_orders(self, work_order_numbers):
+        """Resolve complete normalized appointment data directly by work-order number."""
+        try:
+            return tuple(self.adapter.work_orders(work_order_numbers))
+        except SalesforceAdapterError as exc:
+            raise ModSheetSourceError(str(exc)) from exc
+
     def generate(self, **filters):
         color_code = bool(filters.pop('color_code', False))
         try:

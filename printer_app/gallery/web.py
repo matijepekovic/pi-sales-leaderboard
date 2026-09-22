@@ -275,6 +275,8 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         result = service.import_item_work_order(
             ident, item_id, request.form.get('work_order_number', '')
         )
+        if refresh_references is not None:
+            refresh_references()
         return redirect(
             url_for(
                 'gallery.import_job_page',
@@ -377,6 +379,8 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         require('edit_identity')
         existing(ident)
         result = service.work_order(ident, request.form.get('work_order_number', ''))
+        if refresh_references is not None:
+            refresh_references()
         return jsonify(ok=True, **result)
 
     @bp.get('/image/<ident>')

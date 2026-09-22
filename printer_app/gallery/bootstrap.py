@@ -52,3 +52,6 @@ class GalleryReferenceInbox:
 
     def publish_lead_statuses(self, work_order_numbers, records, captured, *, missing_only=False):
         return self.service.publish_lead_statuses(work_order_numbers, records, captured, missing_only=missing_only)
+
+    def publish_work_order_records(self, work_order_numbers, records, captured):
+        return self.service.publish_work_order_records(work_order_numbers, records, captured)
