@@ -10,6 +10,9 @@ import threading
 import time
 
 from ..config import Config, environment_file
+from ..db import Database
+from ..mod_sheets.repository import ModSheetAutomationRepository
+from ..mod_sheets.service import ModSheetReferenceDeliveryService
 from ..settings import SettingsService
 from ..settings_repository import SettingsRepository
 from .bootstrap import build
@@ -63,6 +66,12 @@ def main():
     settings = SettingsService(SettingsRepository(cfg.env_file or environment_file()), cfg)
     gallery = build(cfg.data_dir)
     gallery.initialize()
+    reference_repository = ModSheetAutomationRepository(Database(cfg.db_path))
+
+    def request_reference_refresh(current):
+        ModSheetReferenceDeliveryService(
+            reference_repository, None, None, None, current.timezone,
+        ).request_refresh()
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
@@ -152,13 +161,17 @@ def main():
                             raise ValueError('Import failed: unreadable PDF or unsupported layout. Source cannot be processed.')
                     gallery.report_progress(job['id'])
                     manifest = json.loads((directory / 'manifest.json').read_text())
-                    gallery.publish(job, manifest, directory)
+                    lookup_numbers = gallery.publish(job, manifest, directory)
+                    if lookup_numbers:
+                        request_reference_refresh(cfg)
                     # Newly imported old documents follow the printed-date policy too.
                     gallery.expire(cfg.gallery.days, cfg.timezone)
                     log.info('Gallery import complete: %s crop(s)', len(manifest['items']))
                 # One repair per iteration, after any new import. Printing has a
                 # different service; neither imports nor repairs run in web requests.
                 repaired = False if stop.is_set() else gallery.repair_one(read_saved)
+                if repaired and gallery.work_order_lookup_numbers():
+                    request_reference_refresh(cfg)
                 if not job and not repaired:
                     stop.wait(5)
             except Exception as exc:
