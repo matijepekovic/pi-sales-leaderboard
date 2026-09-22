@@ -460,12 +460,28 @@ class ModSheetReferenceDeliveryService:
         result = self.reference_sink.publish_lead_statuses(numbers, records, captured, missing_only=missing_only)
         return {'lead_statuses': len(records), 'enriched': int(result.get('enriched', 0))}
 
+    def _refresh_work_orders(self):
+        """Resolve retained Gallery cards directly by work-order number, without a date prerequisite."""
+        numbers = tuple(dict.fromkeys(self.reference_sink.work_order_numbers()))
+        if not numbers:
+            return {'work_orders': 0, 'enriched': 0}
+        captured = self.clock()
+        records = tuple(self.source.work_orders(numbers))
+        result = self.reference_sink.publish_work_order_records(numbers, records, captured)
+        return {'work_orders': len(records), 'enriched': int(result.get('enriched', 0))}
+
     def _refresh_cards(self, day):
-        # Each lookup must still run when the other fails. An unavailable
-        # appointment cannot prevent its work order from finding a Lead.
-        result = {'appointments': 0, 'lead_statuses': 0, 'enriched': 0}
+        # The direct work-order lookup owns Gallery identity/date enrichment.
+        # Day snapshots remain independent support for the existing MOD workflow.
+        result = {'appointments': 0, 'work_orders': 0, 'lead_statuses': 0, 'enriched': 0}
         errors = []
         current_work_orders = ()
+        try:
+            direct = self._refresh_work_orders()
+            result['work_orders'] = direct['work_orders']
+            result['enriched'] += direct['enriched']
+        except Exception as exc:
+            errors.append('Work orders: ' + (str(exc).strip() or type(exc).__name__))
         try:
             appointments = self._publish_day(day)
             current_work_orders = appointments.pop('work_order_numbers')
@@ -504,11 +520,18 @@ class ModSheetReferenceDeliveryService:
                                             if record.work_order_number)}
 
     def backfill_existing(self):
-        """Refresh Lead status on startup; fill dated references once on upgrade."""
+        """Repair retained identities, then enrich every known work order directly on startup."""
         if self.reference_sink is None:
             return
         try:
             self.reference_sink.repair_missing_work_orders()
+        except Exception as exc:
+            log.warning('Stored work-order repair failed; Gallery worker will retry images: %s', exc)
+        try:
+            self._refresh_work_orders()
+        except Exception as exc:
+            log.warning('Direct work-order lookup failed; hourly refresh will retry: %s', exc)
+        try:
             self._refresh_lead_statuses(missing_only=True)
         except Exception as exc:
             log.warning('Card Lead status lookup failed; hourly refresh will retry: %s', exc)
