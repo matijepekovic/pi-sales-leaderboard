@@ -549,6 +549,8 @@ class GalleryService:
             name = printed_lead(header) or printed_lead(text)
             address = printed_address(text)
             work_order = printed_work_order_number(text)
+            if item.get('state') == 'REVIEW' and not item.get('work_order_key') and not work_order:
+                raise ValueError('No readable work order; retry later')
             self.repository.repair_recognition(
                 item['id'], text, name, lead_key(name), address, address_key(address),
                 work_order, work_order_key(work_order),
