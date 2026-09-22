@@ -59,6 +59,24 @@ def test_new_normalized_header_is_used_without_address_or_number_guessing(tmp_pa
     assert service.repository.recognition_candidate(10**12) is None
 
 
+def test_retained_blank_work_order_is_reread_from_saved_image(tmp_path):
+    service = build(tmp_path)
+    ident = seed(service, 9, 1, text='')
+    before = service.repository.reference_item(ident)
+    assert before['state'] == 'REVIEW'
+    assert before['work_order_number'] == ''
+
+    assert service.repair_missing_work_order_image(
+        lambda path: {'text': 'Work Order Number: 02265919'}
+    ) is True
+
+    after = service.repository.reference_item(ident)
+    assert after['work_order_number'] == '02265919'
+    assert after['work_order_key'] == '02265919'
+    assert after['state'] == 'ACTIVE'
+    assert service.files.path('crops', ident).read_bytes() == b'preserved-png'
+
+
 def test_related_uses_one_character_name_or_exact_address_and_global_rename(tmp_path):
     service=build(tmp_path)
     anchor=seed(service,1,1,
