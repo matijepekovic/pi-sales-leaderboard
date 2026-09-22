@@ -227,7 +227,7 @@ def test_small_registration_offsets_follow_the_printed_borders(raster, dx, dy):
     assert not np.any(canvas == 0)
 
 
-def test_all_populated_fields_still_share_one_ocr_call(raster, monkeypatch, tmp_path):
+def test_work_order_field_uses_three_independent_reads_without_changing_mask(raster, monkeypatch, tmp_path):
     cv2, np = raster
     source, registration = _form(raster)
     key = 'work_order_number'
@@ -240,17 +240,24 @@ def test_all_populated_fields_still_share_one_ocr_call(raster, monkeypatch, tmp_
 
     def fake_tesseract(canvas, path, **kwargs):
         calls.append((canvas.copy(), path, kwargs))
-        return []
+        return [dict(text='02275180', left=0, top=0, width=40, height=12, conf=90,
+                     page_num=1, block_num=1, par_num=1, line_num=1)]
 
     monkeypatch.setattr(recognition, '_run_tesseract', fake_tesseract)
     result = recognition._recognize_template(
         source, registration, tmp_path / 'ocr.png', '2026-09-19',
     )
 
-    assert len(calls) == 1
-    assert calls[0][2] == {'digits_only': True}
+    assert len(calls) == 3
+    assert [call[2] for call in calls] == [
+        {'digits_only': True, 'psm': 7},
+        {'digits_only': True, 'psm': 13},
+        {'digits_only': True, 'psm': 6},
+    ]
     assert _value_count(raster, calls[0][0]) > 0
     assert np.array_equal(source, before)
+    assert result['work_order_candidates'] == ('02275180',)
+    assert result['text'] == 'Work Order Number: 02275180'
     assert result['document_date'] == '2026-09-19'
     assert result['date_status'] == 'printed'
 
