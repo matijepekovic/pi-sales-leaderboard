@@ -683,12 +683,38 @@ class GalleryRepository:
                 "SELECT count(*) FROM items WHERE import_id=? AND state='REVIEW'", (ident,)
             ).fetchone()[0]
             result['retained'] = result['published'] + result['pending_review']
-            result['items'] = [dict(i) for i in c.execute("""SELECT id,page,part,bytes,document_date,date_status,lead_name,sales_lead_status,state
+            result['items'] = [dict(i) for i in c.execute("""SELECT id,page,part,bytes,document_date,date_status,lead_name,sales_lead_status,work_order_number,state
                 FROM items WHERE import_id=? AND state IN ('ACTIVE','REVIEW')
                 ORDER BY CASE state WHEN 'REVIEW' THEN 0 ELSE 1 END,page,part,id LIMIT 24 OFFSET ?""",
                 (ident,offset))]
             return result
 
+
+    def missing_work_order_recognition_candidate(self, now):
+        """Retained card image that still has no work-order identity."""
+        with self.connect() as c:
+            row = c.execute("""SELECT id,text,state FROM items
+                WHERE state IN ('ACTIVE','REVIEW') AND work_order_key=''
+                AND recognition_attempts<3 AND recognition_retry_at<=?
+                ORDER BY created,id LIMIT 1""", (now,)).fetchone()
+            return dict(row) if row else None
+
+    def repair_work_order_recognition(self, ident, number):
+        """Attach an OCR-recovered work order without altering the saved image."""
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            return c.execute("""UPDATE items SET
+                work_order_number=?,work_order_key=?,state='ACTIVE',
+                recognition_revision=1,recognition_attempts=0,recognition_retry_at=0,
+                search_revision=search_revision+1
+                WHERE id=? AND state IN ('ACTIVE','REVIEW') AND work_order_key=''""",
+                (number, work_order_key(number), ident)).rowcount
+
+    def defer_work_order_recognition(self, ident, now):
+        with self.connect() as c:
+            c.execute("""UPDATE items SET recognition_attempts=recognition_attempts+1,
+                recognition_retry_at=? WHERE id=? AND state IN ('ACTIVE','REVIEW')
+                AND work_order_key=''""", (now + 300, ident))
 
     def recognition_candidate(self, now):
         with self.connect() as c:
@@ -829,6 +855,19 @@ class GalleryRepository:
                 reference_source_id,sales_lead_status,lead_source_id,state,origin FROM items
                 WHERE id=? AND state IN ('ACTIVE','REVIEW')""", (ident,)).fetchone()
             return dict(row) if row else None
+
+    def work_order_items(self, work_order_numbers):
+        keys = sorted({work_order_key(number) for number in work_order_numbers} - {''})
+        if not keys:
+            return []
+        placeholders = ','.join('?' for _ in keys)
+        with self.connect() as c:
+            rows = c.execute(f"""SELECT id,text,document_date,lead_name,lead_key,address,address_key,
+                work_order_number,work_order_key,assigned_service_resource,reference_kind,
+                reference_source_id,sales_lead_status,lead_source_id,state,origin FROM items
+                WHERE state IN ('ACTIVE','REVIEW') AND work_order_key IN ({placeholders})
+                ORDER BY created,id""", keys)
+            return [dict(row) for row in rows]
 
     def sales_status_for_lead(self, lead_source_id):
         with self.connect() as c:
