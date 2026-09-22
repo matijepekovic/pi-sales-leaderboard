@@ -53,6 +53,13 @@
           <option value="{{ snapshot.settings.source_type }}">{{ snapshot.settings.source_type }}</option>
         </select>
       </div>
+      <br>
+      <div class="setting">
+        <span>Assigned Service Resource:</span>
+        <select id="assignedServiceResource" name="assignedServiceResource" data-selected="{{ snapshot.settings.assigned_service_resource }}">
+          <option value="{{ snapshot.settings.assigned_service_resource }}">{{ snapshot.settings.assigned_service_resource or 'All' }}</option>
+        </select>
+      </div>
       <br><br>
       <div class="setting check-setting">
         <span>Remove Canceled Appointments:</span>
