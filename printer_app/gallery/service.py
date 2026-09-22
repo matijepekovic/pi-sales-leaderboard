@@ -322,8 +322,9 @@ class GalleryService:
     @classmethod
     def _reference_text(cls, text, reference, day, *, include_resources=True):
         fields = {key: reference.get(key, '') for key in (
-            'phone', 'product_interest', 'work_type', 'source', 'sub_source', 'set_by',
-            'canvass_set_by', 'lead_description', 'local_scheduled_start_time', 'scheduled_start')}
+            'work_order_number', 'phone', 'product_interest', 'work_type', 'source', 'sub_source',
+            'set_by', 'canvass_set_by', 'lead_description',
+            'local_scheduled_start_time', 'scheduled_start')}
         assigned = cls._resource_names(reference) if include_resources else ''
         return authoritative_reference_text(
             text, reference.get('lead_name', ''), reference.get('address', ''),
