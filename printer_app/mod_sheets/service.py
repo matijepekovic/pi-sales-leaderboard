@@ -462,7 +462,10 @@ class ModSheetReferenceDeliveryService:
 
     def _refresh_work_orders(self):
         """Resolve retained Gallery cards directly by work-order number, without a date prerequisite."""
-        numbers = tuple(dict.fromkeys(self.reference_sink.work_order_numbers()))
+        lookup = getattr(self.reference_sink, 'work_order_lookup_numbers', None)
+        numbers = tuple(dict.fromkeys(
+            lookup() if lookup is not None else self.reference_sink.work_order_numbers()
+        ))
         if not numbers:
             return {'work_orders': 0, 'enriched': 0}
         resolver = getattr(self.source, 'work_orders', None)
