@@ -207,12 +207,13 @@ def test_review_card_missing_work_order_is_reread_from_retained_image(tmp_path):
         lead_text='',
         document_date=None,
         date_status='needs-date',
+        work_order_candidates=('02265919',),
     ))
 
-    item = service.item(ident)
-    assert item is not None
-    assert item['state'] == 'ACTIVE'
-    assert item['work_order_number'] == '02265919'
+    item = service.repository.reference_item(ident)
+    assert item['state'] == 'REVIEW'
+    assert item['work_order_number'] == ''
+    assert service.work_order_lookup_numbers() == ['02265919']
 
 
 def test_repair_failure_is_durable_bounded_and_expiry_wins(tmp_path):

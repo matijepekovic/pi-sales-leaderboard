@@ -366,6 +366,91 @@ def test_direct_work_order_record_supplies_date_identity_and_rep_to_undated_card
     assert job['items'][0]['work_order_number'] == '00002001'
 
 
+def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_path):
+    gallery = _gallery(tmp_path)
+    ident = 'candidate-card'
+    import_id = 'candidate-import'
+    gallery.repository.enqueue(import_id, 'candidate.pdf')
+    gallery.repository.finish(import_id, [{
+        'id': ident,
+        'import_id': import_id,
+        'page': 1,
+        'part': 1,
+        'filename': 'candidate.png',
+        'text': 'Work Order Number: 02257311',
+        'lead_text': '',
+        'work_order_candidates': ('02257311', '02257317'),
+        'document_date': None,
+        'date_status': 'needs-date',
+        'bytes': 100,
+        'created': time.time(),
+        'recognition_revision': 1,
+        'require_identity': True,
+    }])
+
+    waiting = gallery.repository.reference_item(ident)
+    assert waiting['state'] == 'REVIEW'
+    assert waiting['work_order_number'] == ''
+    assert gallery.work_order_lookup_numbers() == ['02257311', '02257317']
+
+    record = WorkOrderReference(
+        source_id='source-02257311',
+        work_order_number='02257311',
+        appointment_date=DAY,
+        lead_name='Resolved Customer',
+        address='222 Resolved Ave',
+        assigned_service_resources=('Resolved Rep',),
+        sales_lead_status='Sold',
+        lead_source_id='lead-1',
+    )
+    result = gallery.publish_work_order_records(
+        gallery.work_order_lookup_numbers(), (record,), 100,
+    )
+
+    item = gallery.item(ident)
+    assert result == {'count': 1, 'enriched': 1}
+    assert item['work_order_number'] == '02257311'
+    assert item['document_date'] == DAY
+    assert item['lead_name'] == 'Resolved Customer'
+    assert item['assigned_service_resource'] == 'Resolved Rep'
+    assert item['sales_lead_status'] == 'Sold'
+
+
+def test_two_source_valid_ocr_candidates_remain_in_review(tmp_path):
+    gallery = _gallery(tmp_path)
+    ident = 'ambiguous-candidate-card'
+    import_id = 'ambiguous-candidate-import'
+    gallery.repository.enqueue(import_id, 'candidate.pdf')
+    gallery.repository.finish(import_id, [{
+        'id': ident,
+        'import_id': import_id,
+        'page': 1,
+        'part': 1,
+        'filename': 'candidate.png',
+        'text': '',
+        'lead_text': '',
+        'work_order_candidates': ('02257311', '02257317'),
+        'document_date': None,
+        'date_status': 'needs-date',
+        'bytes': 100,
+        'created': time.time(),
+        'recognition_revision': 1,
+        'require_identity': True,
+    }])
+    records = (
+        WorkOrderReference(source_id='one', work_order_number='02257311', appointment_date=DAY),
+        WorkOrderReference(source_id='two', work_order_number='02257317', appointment_date=DAY),
+    )
+
+    result = gallery.publish_work_order_records(
+        gallery.work_order_lookup_numbers(), records, 100,
+    )
+
+    assert result == {'count': 2, 'enriched': 0}
+    assert gallery.repository.reference_item(ident)['state'] == 'REVIEW'
+    assert gallery.repository.reference_item(ident)['work_order_number'] == ''
+
+
 def test_reference_dates_exposes_only_distinct_valid_retained_card_dates(tmp_path):
     from printer_app.gallery.bootstrap import GalleryReferenceInbox
 

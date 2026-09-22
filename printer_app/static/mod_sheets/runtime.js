@@ -17,6 +17,7 @@
     {key: 'market_segment', label: 'Market Segment', allValue: '', select: document.getElementById('marketSegment')},
     {key: 'product_category', label: 'Product Category', allValue: 'All', select: document.getElementById('productCategory')},
     {key: 'source_type', label: 'Source Type', allValue: 'All', select: document.getElementById('srcType')},
+    {key: 'assigned_service_resource', label: 'Assigned Service Resource', allValue: '', select: document.getElementById('assignedServiceResource')},
   ];
   let loading = false;
 

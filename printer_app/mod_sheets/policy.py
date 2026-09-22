@@ -18,13 +18,17 @@ class ModSheetAutomationSettings:
     market_segment: str = ''
     product_category: str = 'All'
     source_type: str = 'All'
+    assigned_service_resource: str = ''
     remove_canceled: bool = True
     remove_unconfirmed: bool = True
     color_code: bool = True
     print_options: PrintOptions = field(default_factory=PrintOptions)
 
     def __post_init__(self):
-        for value in (self.market_segment, self.product_category, self.source_type):
+        for value in (
+            self.market_segment, self.product_category, self.source_type,
+            self.assigned_service_resource,
+        ):
             if not isinstance(value, str) or len(value) > 128 or any(not c.isprintable() for c in value):
                 raise ValueError('MOD Sheet settings must be short single-line values.')
         if not isinstance(self.print_options, PrintOptions):

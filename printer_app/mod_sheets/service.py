@@ -115,6 +115,7 @@ class ModSheetTestPrintService:
                 market_segment=settings.market_segment,
                 product_category=settings.product_category,
                 source_type=settings.source_type,
+                assigned_service_resource=settings.assigned_service_resource,
                 remove_canceled=settings.remove_canceled,
                 remove_unconfirmed=settings.remove_unconfirmed,
                 limit=1000,
@@ -240,6 +241,7 @@ class DailyModSheetService:
                 market_segment=settings.market_segment,
                 product_category=settings.product_category,
                 source_type=settings.source_type,
+                assigned_service_resource=settings.assigned_service_resource,
                 remove_canceled=settings.remove_canceled,
                 remove_unconfirmed=settings.remove_unconfirmed,
                 limit=1000,
@@ -336,6 +338,14 @@ class ModSheetReferenceDeliveryService:
         day = datetime.fromtimestamp(now, self.zone).date().isoformat()
         return self.repository.request_reference_refresh(str(uuid4()), day, now)
 
+    def request_work_order_refresh(self):
+        """Queue another source pass when a new Gallery work order arrives."""
+        now = self.clock()
+        day = datetime.fromtimestamp(now, self.zone).date().isoformat()
+        return self.repository.request_reference_refresh(
+            str(uuid4()), day, now, rerun_running=True,
+        )
+
     def refresh_status(self):
         return self.repository.reference_refresh_state()
 
@@ -357,6 +367,11 @@ class ModSheetReferenceDeliveryService:
             if self.reference_sink is None:
                 raise RuntimeError('Card refresh is unavailable.')
             result = self._refresh_cards(state['day'])
+            latest = self.refresh_status()
+            if latest.get('id') == state.get('id') and latest.get('rerun'):
+                return self.repository.save_reference_refresh_state(dict(
+                    latest, status='queued', rerun=False, updated=self.clock(), **result,
+                ))
             return self.repository.save_reference_refresh_state(dict(
                 state, status='complete', updated=self.clock(), **result,
             ))
@@ -462,7 +477,10 @@ class ModSheetReferenceDeliveryService:
 
     def _refresh_work_orders(self):
         """Resolve retained Gallery cards directly by work-order number, without a date prerequisite."""
-        numbers = tuple(dict.fromkeys(self.reference_sink.work_order_numbers()))
+        lookup = getattr(self.reference_sink, 'work_order_lookup_numbers', None)
+        numbers = tuple(dict.fromkeys(
+            lookup() if lookup is not None else self.reference_sink.work_order_numbers()
+        ))
         if not numbers:
             return {'work_orders': 0, 'enriched': 0}
         resolver = getattr(self.source, 'work_orders', None)

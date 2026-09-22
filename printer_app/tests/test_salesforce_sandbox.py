@@ -160,10 +160,12 @@ def test_portal_fields_use_report_controller_fields_not_guessed_labels():
     market = adapter.portal_field('market_segment')
     product = adapter.portal_field('product_category')
     source = adapter.portal_field('source_type')
+    resource = adapter.portal_field('assigned_service_resource')
 
     assert market.path == 'FSSK__FSK_Work_Order__r.Lead__r.Market__c'
     assert product.path == 'FSSK__FSK_Work_Order__r.Product_Interest__c'
     assert source.path == 'FSSK__FSK_Work_Order__r.Lead__r.LeadSource'
+    assert resource.path == 'FSSK__FSK_Assigned_Service_Resource__r.Name'
     assert market.values == ('Retail',)
     assert product.values == (
         'Roofing', 'Siding', 'Bath', 'Gutters', 'Windows',
@@ -173,6 +175,7 @@ def test_portal_fields_use_report_controller_fields_not_guessed_labels():
         'Canvass', 'Flyer', 'Internet', 'Other', 'Previous Customer',
         'Referral', 'Self Generated Lead', 'Telemarketing', 'Shows',
     )
+    assert resource.values == ('Sales Rep One',)
     assert not any(call[1:3] == ['sobject', 'describe'] for call in calls)
 
 
@@ -203,6 +206,7 @@ def test_mod_query_and_grouping_match_original_apex_controller():
         market_segment='Retail',
         product_category='Windows',
         source_type='Canvass',
+        assigned_service_resource='Sales Rep One',
         remove_canceled=True,
         remove_unconfirmed=True,
         limit=1000,
@@ -214,6 +218,7 @@ def test_mod_query_and_grouping_match_original_apex_controller():
     assert "Product_Interest__c INCLUDES ('Windows')" in report_query
     assert "Lead__r.Market__c = 'Retail'" in report_query
     assert "Lead__r.LeadSource = 'Canvass'" in report_query
+    assert "FSSK__FSK_Assigned_Service_Resource__r.Name = 'Sales Rep One'" in report_query
     assert "Lead__r.Status != 'Canceled'" in report_query
     assert 'Lead__r.LastModifiedDate != null' in report_query
     assert 'FSSK__FSK_Assigned_Service_Resource__r.Name' in report_query
@@ -594,12 +599,14 @@ def test_connection_check_is_separate_from_filter_loading():
     market = service.field('market_segment')
     product = service.field('product_category')
     source = service.field('source_type')
+    resource = service.field('assigned_service_resource')
     assert market.field.values == ('Retail',)
     assert product.field.values == (
         'Roofing', 'Siding', 'Bath', 'Gutters', 'Windows',
         'Doors', 'Other', 'Walk-In Tubs', 'Solar',
     )
     assert source.field.values[0] == 'Canvass'
+    assert resource.field.values == ('Sales Rep One',)
 
 
 def test_portal_ui_preserves_controller_all_semantics_and_black_shell():
@@ -610,7 +617,9 @@ def test_portal_ui_preserves_controller_all_semantics_and_black_shell():
 
     assert "product_category', label: 'Product Category', allValue: 'All'" in js
     assert "source_type', label: 'Source Type', allValue: 'All'" in js
+    assert "assigned_service_resource', label: 'Assigned Service Resource', allValue: ''" in js
     assert "market_segment', label: 'Market Segment', allValue: ''" in js
+    assert 'name="assignedServiceResource"' in portal
     assert 'modSourceLog' in portal
     assert 'background:#000' in css
     assert 'color:#fff' in css

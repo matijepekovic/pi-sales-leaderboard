@@ -150,6 +150,7 @@ def _service(tmp_path, source, clock, renderer=lambda records, color_code=False:
         market_segment='Olympia',
         product_category='All',
         source_type='All',
+        assigned_service_resource='Sales Rep One',
         remove_canceled=True,
         remove_unconfirmed=True,
         color_code=True,
@@ -166,6 +167,24 @@ def _service(tmp_path, source, clock, renderer=lambda records, color_code=False:
         clock=clock,
     )
     return service, repository, queue
+
+
+def test_refresh_request_arriving_during_running_pull_is_not_lost(tmp_path):
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    source = FakeSource([()])
+    sink = FakeReferenceSink()
+    service = ModSheetReferenceDeliveryService(
+        repository, source, FakeQueue(), sink, 'America/Los_Angeles',
+        clock=lambda: _stamp(2026, 9, 21, 12),
+    )
+    first = service.request_refresh()
+    running = dict(first, status='running', updated=1)
+    repository.save_reference_refresh_state(running)
+
+    repeated = service.request_work_order_refresh()
+
+    assert repeated['status'] == 'running'
+    assert repeated['rerun'] is True
 
 
 def test_daily_schedule_is_weekdays_at_seven_and_catches_up_same_day():
@@ -197,6 +216,7 @@ def test_daily_run_uses_current_day_and_mod_owned_print_settings(tmp_path):
         'market_segment': 'Olympia',
         'product_category': 'All',
         'source_type': 'All',
+        'assigned_service_resource': 'Sales Rep One',
         'remove_canceled': True,
         'remove_unconfirmed': True,
         'limit': 1000,
@@ -227,6 +247,7 @@ def test_old_saved_mod_settings_gain_independent_default_print_settings(tmp_path
     settings = ModSheetAutomationRepository(db).settings()
 
     assert settings.market_segment == 'Olympia'
+    assert settings.assigned_service_resource == ''
     assert settings.print_options == PrintOptions()
 
 
@@ -284,6 +305,7 @@ def test_test_print_uses_unsaved_values_today_and_does_not_change_daily_settings
         market_segment='Unsaved Test Market',
         product_category='Windows',
         source_type='Internet',
+        assigned_service_resource='Unsaved Rep',
         remove_canceled=False,
         remove_unconfirmed=False,
         color_code=False,
@@ -310,6 +332,7 @@ def test_test_print_uses_unsaved_values_today_and_does_not_change_daily_settings
         'market_segment': 'Unsaved Test Market',
         'product_category': 'Windows',
         'source_type': 'Internet',
+        'assigned_service_resource': 'Unsaved Rep',
         'remove_canceled': False,
         'remove_unconfirmed': False,
         'limit': 1000,

@@ -353,14 +353,14 @@ def _template_search_text(values):
     return '\n'.join(lines)[:100000]
 
 
-def _run_tesseract(image, ocr_copy, *, digits_only=False):
+def _run_tesseract(image, ocr_copy, *, digits_only=False, psm=None):
     import cv2
 
     if not cv2.imwrite(str(ocr_copy), image):
         raise OSError('OCR working image cannot be written')
     command = [
         'tesseract', str(ocr_copy), 'stdout', '-l', 'eng',
-        '--psm', '7' if digits_only else '6',
+        '--psm', str(psm if psm is not None else (7 if digits_only else 6)),
     ]
     if digits_only:
         command.extend(['-c', 'tessedit_char_whitelist=0123456789'])
@@ -375,26 +375,47 @@ def _run_tesseract(image, ocr_copy, *, digits_only=False):
     return tsv_words(result.stdout)
 
 
-def _recognize_template(source, registration, ocr_copy, known_date):
-    canvas, segments = template_ocr_canvas(source, registration)
-    if canvas is None:
-        docdate, state = _template_document_date({}, known_date)
-        return dict(text='', lead_text='', document_date=docdate, date_status=state)
+def _first_work_order_candidate(text):
+    match = next(re.finditer(r'[0-9]{8,}', str(text or '')), None)
+    return match[0][:8] if match else ''
 
-    words = _run_tesseract(canvas, ocr_copy, digits_only=True)
-    values = _field_values(words, segments)
-    raw = values.get('work_order_number', '')
-    number = next((match[0][:8] for match in re.finditer(r'[0-9]{8,}', raw)), '')
+
+def _candidate_result(candidates, known_date):
+    unique = tuple(dict.fromkeys(value for value in candidates if value))
+    number = unique[0] if len(unique) == 1 else ''
     return dict(
         text=('Work Order Number: ' + number) if number else '',
         lead_text='',
         document_date=known_date,
         date_status='printed' if known_date else 'needs-date',
+        work_order_candidates=unique,
     )
 
 
+def _recognize_template(source, registration, ocr_copy, known_date):
+    """Read the same masked work-order value several independent ways."""
+    import cv2
+
+    canvas, segments = template_ocr_canvas(source, registration)
+    if canvas is None:
+        return _candidate_result((), known_date)
+
+    enlarged = cv2.resize(canvas, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    thresholded = cv2.threshold(enlarged, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    candidates = []
+    for image, psm in ((canvas, 7), (enlarged, 13), (thresholded, 6)):
+        try:
+            words = _run_tesseract(image, ocr_copy, digits_only=True, psm=psm)
+        except subprocess.SubprocessError:
+            continue
+        candidate = _first_work_order_candidate(search_text(words))
+        if candidate:
+            candidates.append(candidate)
+    return _candidate_result(candidates, known_date)
+
+
 def _recognize_legacy(source, ocr_copy, known_date):
-    """Fallback localization may inspect the card, but only work-order identity leaves OCR."""
+    """Fallback may inspect the card, but only explicit work-order candidates leave OCR."""
     import cv2
     import numpy as np
 
@@ -406,14 +427,16 @@ def _recognize_legacy(source, ocr_copy, known_date):
     )
     disposable = source.copy()
     disposable[cv2.dilate(rules, np.ones((3, 3), np.uint8)) > 0] = 255
-    words = _run_tesseract(disposable, ocr_copy)
-    number = printed_work_order_number(search_text(words))
-    return dict(
-        text=('Work Order Number: ' + number) if number else '',
-        lead_text='',
-        document_date=known_date,
-        date_status='printed' if known_date else 'needs-date',
-    )
+    candidates = []
+    for psm in (6, 11):
+        try:
+            words = _run_tesseract(disposable, ocr_copy, psm=psm)
+        except subprocess.SubprocessError:
+            continue
+        number = printed_work_order_number(search_text(words))
+        if number:
+            candidates.append(number)
+    return _candidate_result(candidates, known_date)
 
 
 def recognize(path, work, known_date=None):
@@ -427,7 +450,18 @@ def recognize(path, work, known_date=None):
         registration = register_form(source)
         if registration.matched:
             return _recognize_template(source, registration, ocr_copy, known_date)
-        return _recognize_legacy(source, ocr_copy, known_date)
+
+        # The card was already isolated by the Gallery form detector. Reuse the
+        # same work-order mask with the best available registration even when
+        # the full template score is low, then keep the legacy label-aware read
+        # as an independent fallback. The normalized source validates candidates later.
+        template = _recognize_template(source, registration, ocr_copy, known_date)
+        legacy = _recognize_legacy(source, ocr_copy, known_date)
+        return _candidate_result(
+            (*template.get('work_order_candidates', ()),
+             *legacy.get('work_order_candidates', ())),
+            known_date,
+        )
     finally:
         ocr_copy.unlink(missing_ok=True)
 
