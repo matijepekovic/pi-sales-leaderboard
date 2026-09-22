@@ -415,8 +415,10 @@ class GalleryService:
 
         status_rows = [{key: ' '.join(str(record.get(key) or '').split()) for key in (
             'work_order_number', 'lead_source_id', 'sales_lead_status')} for record in normalized]
+        returned_numbers = [record['work_order_number'] for record in status_rows
+                            if record.get('work_order_number')]
         status_changed = self.repository.replace_work_order_lead_statuses(
-            list(requested.values()), status_rows, captured)
+            returned_numbers, status_rows, captured) if returned_numbers else 0
 
         enriched = 0
         for item in self.repository.work_order_items(requested.values()):
