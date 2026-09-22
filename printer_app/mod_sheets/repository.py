@@ -135,7 +135,7 @@ class ModSheetAutomationRepository:
         value = self.db.get(REQUESTED_REFERENCE_STATE_KEY, {})
         return dict(value) if isinstance(value, dict) else {}
 
-    def request_reference_refresh(self, ident, day, now):
+    def request_reference_refresh(self, ident, day, now, *, rerun_running=False):
         with self.db.connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
             row = conn.execute('SELECT value FROM meta WHERE key=?',
@@ -144,6 +144,8 @@ class ModSheetAutomationRepository:
             if isinstance(state, dict) and state.get('status') == 'queued':
                 return state
             if isinstance(state, dict) and state.get('status') == 'running':
+                if not rerun_running:
+                    return state
                 state = dict(state, rerun=True, updated=now)
                 conn.execute('INSERT INTO meta(key,value) VALUES(?,?) '
                              'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
