@@ -357,6 +357,11 @@ class ModSheetReferenceDeliveryService:
             if self.reference_sink is None:
                 raise RuntimeError('Card refresh is unavailable.')
             result = self._refresh_cards(state['day'])
+            latest = self.refresh_status()
+            if latest.get('id') == state.get('id') and latest.get('rerun'):
+                return self.repository.save_reference_refresh_state(dict(
+                    latest, status='queued', rerun=False, updated=self.clock(), **result,
+                ))
             return self.repository.save_reference_refresh_state(dict(
                 state, status='complete', updated=self.clock(), **result,
             ))
