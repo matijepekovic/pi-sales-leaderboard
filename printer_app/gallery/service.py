@@ -268,10 +268,16 @@ class GalleryService:
         self._remove_morning_cards()
         # Reference enrichment is optional. With no matching reference snapshot,
         # these calls are no-ops and Gallery behaves exactly as before.
+        lookup_numbers = []
         for item in items.values():
             self._enrich_reference_item(item['id'])
+            lookup_numbers.extend(item.get('work_order_candidates') or ())
+            number = printed_work_order_number(item.get('text', ''))
+            if number:
+                lookup_numbers.append(number)
         self.files.remove('spool', job['id'])
         self.files.remove('work', job['id'])
+        return tuple(dict.fromkeys(lookup_numbers))
 
     @staticmethod
     def _reference_record(record):
