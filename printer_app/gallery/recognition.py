@@ -389,7 +389,7 @@ def _recognize_template(source, registration, ocr_copy, known_date):
         text=('Work Order Number: ' + number) if number else '',
         lead_text='',
         document_date=known_date,
-        date_status='reference' if known_date else 'needs-date',
+        date_status='printed' if known_date else 'needs-date',
     )
 
 
@@ -412,7 +412,7 @@ def _recognize_legacy(source, ocr_copy, known_date):
         text=('Work Order Number: ' + number) if number else '',
         lead_text='',
         document_date=known_date,
-        date_status='reference' if known_date else 'needs-date',
+        date_status='printed' if known_date else 'needs-date',
     )
 
 
