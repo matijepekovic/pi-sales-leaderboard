@@ -888,7 +888,7 @@ class GalleryRepository:
         with self.connect() as c:
             return c.execute("""UPDATE items SET work_order_number=?,work_order_key=?,
                 lead_source_id='',sales_lead_status='',search_revision=search_revision+1,
-                state=CASE WHEN ?='' THEN 'REVIEW' ELSE state END
+                state=CASE WHEN ?='' THEN 'REVIEW' ELSE 'ACTIVE' END
                 WHERE id=? AND state IN ('ACTIVE','REVIEW') AND sales_lead_status=''
                 AND text=? AND work_order_number=? AND work_order_key=? AND state=?""",
                 (number, work_order_key(number), number, item['id'], item['text'],
