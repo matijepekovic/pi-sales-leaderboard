@@ -900,12 +900,15 @@ class GalleryRepository:
 
     def missing_work_order_items(self):
         with self.connect() as c:
-            return [dict(row) for row in c.execute("""SELECT id,text,work_order_number,work_order_key,state
+            return [dict(row) for row in c.execute("""SELECT id,text,work_order_number,work_order_key,
+                    work_order_candidates,state
                 FROM items WHERE state IN ('ACTIVE','REVIEW') AND sales_lead_status=''
                 ORDER BY id""")]
 
     def repair_missing_work_order(self, item, number):
         """Reparse one unchanged unresolved card without touching its other content."""
+        if item.get('work_order_candidates') not in (None, '', '[]'):
+            return 0
         if number == item['work_order_number']:
             return 0
         with self.connect() as c:
