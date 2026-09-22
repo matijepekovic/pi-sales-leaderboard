@@ -329,6 +329,43 @@ def test_normal_import_uses_cached_reference_for_identity_and_search(tmp_path, r
     assert gallery.files.path('crops', ident).read_bytes() == b'original-import-image'
 
 
+def test_direct_work_order_record_supplies_date_identity_and_rep_to_undated_card(tmp_path):
+    gallery = _gallery(tmp_path)
+    ident = 'direct-undated'
+    _card(gallery, ident, '00002001', lead='', address='', day=None)
+    assert gallery.repository.reference_item(ident)['state'] == 'REVIEW'
+
+    record = ModSheetRecord(
+        source_id='source-direct',
+        work_order_number='00002001',
+        appointment_date=DAY,
+        lead_name='Resolved Customer',
+        address='222 Resolved Ave, Lacey, WA 98503',
+        phone='360-555-0199',
+        assigned_service_resources=('Resolved Rep',),
+        scheduled_start='2026.09.21 ; 10:30:00 AM',
+        sales_lead_status='Sold',
+        lead_source_id='lead-direct',
+    )
+    result = gallery.publish_work_order_records(('00002001',), (record,), 100)
+
+    item = gallery.item(ident)
+    assert result == {'count': 1, 'enriched': 1}
+    assert item['state'] == 'ACTIVE'
+    assert item['document_date'] == DAY
+    assert item['date_status'] == 'reference'
+    assert item['lead_name'] == 'Resolved Customer'
+    assert item['address'] == '222 Resolved Ave, Lacey, WA 98503'
+    assert item['assigned_service_resource'] == 'Resolved Rep'
+    assert item['sales_lead_status'] == 'Sold'
+    assert item['lead_source_id'] == 'lead-direct'
+    assert item['reference_kind'] == 'work-order'
+    assert gallery.search('Resolved', 0)['total'] == 1
+
+    job = gallery.import_job('import-' + ident)
+    assert job['items'][0]['work_order_number'] == '00002001'
+
+
 def test_reference_dates_exposes_only_distinct_valid_retained_card_dates(tmp_path):
     from printer_app.gallery.bootstrap import GalleryReferenceInbox
 
