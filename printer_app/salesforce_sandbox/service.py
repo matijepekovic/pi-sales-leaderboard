@@ -111,6 +111,13 @@ class SalesforceSandboxService:
                 return ()
             raise ModSheetSourceError(str(exc)) from exc
 
+    def work_orders(self, work_order_numbers):
+        """Resolve normalized appointment/customer data directly by work order."""
+        try:
+            return tuple(self.adapter.work_orders(work_order_numbers))
+        except SalesforceAdapterError as exc:
+            raise ModSheetSourceError(str(exc)) from exc
+
     def lead_statuses(self, work_order_numbers):
         """Resolve current lead statuses without any appointment or date filter."""
         try:
