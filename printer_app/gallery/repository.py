@@ -683,7 +683,7 @@ class GalleryRepository:
                 "SELECT count(*) FROM items WHERE import_id=? AND state='REVIEW'", (ident,)
             ).fetchone()[0]
             result['retained'] = result['published'] + result['pending_review']
-            result['items'] = [dict(i) for i in c.execute("""SELECT id,page,part,bytes,document_date,date_status,lead_name,sales_lead_status,state
+            result['items'] = [dict(i) for i in c.execute("""SELECT id,page,part,bytes,document_date,date_status,lead_name,sales_lead_status,work_order_number,state
                 FROM items WHERE import_id=? AND state IN ('ACTIVE','REVIEW')
                 ORDER BY CASE state WHEN 'REVIEW' THEN 0 ELSE 1 END,page,part,id LIMIT 24 OFFSET ?""",
                 (ident,offset))]
@@ -829,6 +829,43 @@ class GalleryRepository:
                 reference_source_id,sales_lead_status,lead_source_id,state,origin FROM items
                 WHERE id=? AND state IN ('ACTIVE','REVIEW')""", (ident,)).fetchone()
             return dict(row) if row else None
+
+    def work_order_items(self, number):
+        """All retained cards carrying this exact normalized work-order identity."""
+        key = work_order_key(number)
+        if not key:
+            return []
+        with self.connect() as c:
+            return [dict(row) for row in c.execute("""SELECT id,text,document_date,lead_name,address,
+                    work_order_number,work_order_key,assigned_service_resource,state
+                FROM items WHERE work_order_key=? AND state IN ('ACTIVE','REVIEW')
+                ORDER BY created,id""", (key,))]
+
+    def apply_work_order_reference(self, ident, expected_work_order_key, source_id, text, name,
+                                   address, assigned_resource, appointment_date,
+                                   lead_source_id, sales_lead_status):
+        """Apply authoritative normalized source data resolved directly by work order."""
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            return c.execute("""UPDATE items SET
+                search_revision=search_revision+1,
+                state='ACTIVE',
+                document_date=CASE WHEN ?='' THEN document_date ELSE ? END,
+                date_status=CASE WHEN ?='' THEN date_status ELSE 'reference' END,
+                assigned_service_resource=?,
+                reference_kind='work-order',reference_source_id=?,text=?,
+                lead_name=CASE WHEN ?='' THEN lead_name ELSE ? END,
+                lead_key=CASE WHEN ?='' THEN lead_key ELSE ? END,
+                lead_status=CASE WHEN ?='' THEN lead_status ELSE 'printed' END,
+                address=CASE WHEN ?='' THEN address ELSE ? END,
+                address_key=CASE WHEN ?='' THEN address_key ELSE ? END,
+                lead_source_id=?,sales_lead_status=?
+                WHERE id=? AND state IN ('ACTIVE','REVIEW') AND work_order_key=?""",
+                (appointment_date, appointment_date, appointment_date,
+                 assigned_resource, source_id, text,
+                 name, name, name, lead_key(name), name,
+                 address, address, address, address_key(address),
+                 lead_source_id, sales_lead_status, ident, expected_work_order_key)).rowcount
 
     def sales_status_for_lead(self, lead_source_id):
         with self.connect() as c:
