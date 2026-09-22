@@ -45,6 +45,14 @@ class FakeSource:
         self.calls = []
         self.lead_calls = []
         self.lead_results = ()
+        self.work_order_calls = []
+        self.work_order_results = ()
+
+    def work_orders(self, work_order_numbers):
+        self.work_order_calls.append(tuple(work_order_numbers))
+        if isinstance(self.work_order_results, Exception):
+            raise self.work_order_results
+        return self.work_order_results
 
     def lead_statuses(self, work_order_numbers):
         self.lead_calls.append(tuple(work_order_numbers))
@@ -68,6 +76,7 @@ class FakeReferenceSink:
         self.pdf_payloads = []
         self.numbers = ()
         self.lead_published = []
+        self.work_order_published = []
         self.lead_scopes = []
         self.repair_calls = 0
 
@@ -78,6 +87,12 @@ class FakeReferenceSink:
     def work_order_numbers(self, *, missing_only=False):
         self.lead_scopes.append(('read', missing_only))
         return self.numbers
+
+    def publish_work_orders(self, work_order_numbers, records, captured):
+        if self.fail:
+            raise RuntimeError('reference sink unavailable')
+        self.work_order_published.append((tuple(work_order_numbers), tuple(records), captured))
+        return {'count': len(records), 'enriched': len(records)}
 
     def publish_lead_statuses(self, work_order_numbers, records, captured, *, missing_only=False):
         if self.fail:
