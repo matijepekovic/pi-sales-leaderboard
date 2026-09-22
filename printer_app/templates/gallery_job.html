@@ -1,7 +1,7 @@
 {% extends 'base.html' %}{% block title %}Gallery job — {{ job.filename }}{% endblock %}{% block content %}
 <p><a class="button" href="{{ url_for('gallery.queue_page') }}">Back to Gallery Queue</a> <a class="button" href="{{ url_for('gallery.import_job_page', ident=job.id, offset=offset) }}">Refresh</a></p>
 <h1>Gallery job</h1><h2>{{ job.filename }}</h2>
-{% if request.args.get('action') == 'approved' %}<p class="notice good">Approved. That generated card is now in the work-order Gallery.</p>{% elif request.args.get('action') == 'deleted' %}<p class="notice">Deleted that generated card from this Gallery job.</p>{% elif request.args.get('action') == 'renamed' %}<p class="notice good">Lead name saved.{% if request.args.get('renamed_state') == 'REVIEW' %} This card still needs approval before it appears in the work-order Gallery.{% endif %}</p>{% endif %}
+{% if request.args.get('action') == 'approved' %}<p class="notice good">Approved. That generated card is now in the work-order Gallery.</p>{% elif request.args.get('action') == 'deleted' %}<p class="notice">Deleted that generated card from this Gallery job.</p>{% elif request.args.get('action') == 'work-order' %}<p class="notice good">Work order saved as {{ request.args.get('work_order_number') }}. Salesforce enrichment was retried.</p>{% endif %}
 <section><p class="status">{{ job.state }}</p><dl>
 <dt>Received</dt><dd>{{ job.created|localtime }}</dd>
 <dt>Started</dt><dd>{{ job.started|localtime }}</dd>
@@ -13,22 +13,22 @@
 <dt>Images retained</dt><dd>{{ job.retained }}</dd>
 </dl>
 {% if job.progress %}<p>{{ job.progress.message }}</p>{% endif %}{% if job.error %}<p class="error">{{ job.error }}</p>{% endif %}
-<p class="muted">{% if job.source_available %}Temporary source PDF is waiting for processing.{% else %}Source PDF is not retained.{% endif %} Unnamed generated cards stay here for manual approval and are not visible in the work-order Gallery. Deleting a generated card removes that server copy and its gallery notes; it does not affect printing or copies already downloaded to a phone.</p></section>
+<p class="muted">{% if job.source_available %}Temporary source PDF is waiting for processing.{% else %}Source PDF is not retained.{% endif %} A card without a readable work order stays here until its work order is corrected. Customer names come from Salesforce and are not manually editable. Deleting a generated card removes that server copy and its gallery notes; it does not affect printing or copies already downloaded to a phone.</p></section>
 <section><h2>Processing log</h2>{% for step in job.steps %}<p><time>{{ step.at|localtime }}</time> — {{ step.message }}</p>{% else %}<p>No detailed log was recorded for this older import.</p>{% endfor %}</section>
 <section><h2>Generated work orders</h2>
 {% for item in job['items'] %}
 <article id="item-{{ item.id }}">
-<h3>{{ item.lead_name or 'Name not recognized' }} · Page {{ item.page }} · Card {{ item.part }}</h3>
+<h3>{{ item.lead_name or ('Work order ' ~ item.work_order_number if item.work_order_number else 'Work order needs correction') }} · Page {{ item.page }} · Card {{ item.part }}</h3>
 <p>{{ item.document_date or 'Date needs checking' }}</p>
 {% if item.state == 'REVIEW' %}
-<p class="notice error"><strong>Needs approval.</strong> {% if item.lead_name %}A lead name was manually entered; approve this card when it is ready for the work-order Gallery.{% else %}No lead name was recognized, so this card is not in the work-order Gallery.{% endif %}</p>
+<p class="notice error"><strong>Work order needs correction.</strong> Enter the correct work order number below. A valid work order publishes the card and retries Salesforce enrichment.</p>
 {% else %}
 <p class="good"><strong>In Gallery</strong></p>
 {% endif %}
-<form class="gallery-job-name-form" method="post" action="{{ url_for('gallery.import_item_lead_name', ident=job.id, item_id=item.id) }}">
+<form class="gallery-job-work-order-form" method="post" action="{{ url_for('gallery.import_item_work_order_number', ident=job.id, item_id=item.id) }}">
 <input type="hidden" name="csrf" value="{{ session.csrf }}"><input type="hidden" name="offset" value="{{ offset }}">
-<label>Lead name<input name="lead_name" maxlength="160" value="{{ item.lead_name }}" placeholder="Enter lead name" required></label>
-<button type="submit">{{ 'Set name' if not item.lead_name else 'Change name' }}</button>
+<label>Work order number<input name="work_order_number" maxlength="80" inputmode="numeric" value="{{ item.work_order_number }}" placeholder="Enter 8-digit work order" required></label>
+<button type="submit">{{ 'Change work order' if item.work_order_number else 'Set work order' }}</button>
 </form>
 <img class="gallery-job-image" loading="lazy" src="{{ url_for('gallery.import_item_image', ident=job.id, item_id=item.id) }}" alt="Generated work order, page {{ item.page }}, card {{ item.part }}">
 <div class="toolbar">
