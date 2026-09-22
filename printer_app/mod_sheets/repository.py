@@ -141,7 +141,13 @@ class ModSheetAutomationRepository:
             row = conn.execute('SELECT value FROM meta WHERE key=?',
                                (REQUESTED_REFERENCE_STATE_KEY,)).fetchone()
             state = json.loads(row['value']) if row else {}
-            if isinstance(state, dict) and state.get('status') in ('queued', 'running'):
+            if isinstance(state, dict) and state.get('status') == 'queued':
+                return state
+            if isinstance(state, dict) and state.get('status') == 'running':
+                state = dict(state, rerun=True, updated=now)
+                conn.execute('INSERT INTO meta(key,value) VALUES(?,?) '
+                             'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                             (REQUESTED_REFERENCE_STATE_KEY, json.dumps(state)))
                 return state
             state = {'id': ident, 'status': 'queued', 'day': day, 'updated': now}
             conn.execute('INSERT INTO meta(key,value) VALUES(?,?) '
