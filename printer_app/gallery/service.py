@@ -395,6 +395,45 @@ class GalleryService:
             work_order_numbers, normalized, captured, missing_only=missing_only)
         return dict(count=len(normalized), enriched=changed)
 
+    def publish_work_order_records(self, work_order_numbers, records, captured):
+        """Apply normalized complete source records directly by work-order identity."""
+        self.initialize()
+        requested = {work_order_key(number) for number in work_order_numbers if work_order_key(number)}
+        normalized = []
+        for record in records:
+            value = self._reference_record(record)
+            key = work_order_key(value.get('work_order_number', ''))
+            if key not in requested:
+                continue
+            normalized.append(value)
+
+        changed = 0
+        for record in normalized:
+            number = record.get('work_order_number', '')
+            day = str(record.get('appointment_date') or '').strip()
+            if day:
+                day = checked_date(day)
+            assigned = self._resource_names(record)
+            name = ' '.join(str(record.get('lead_name') or '').split())
+            address = ' '.join(str(record.get('address') or '').split())
+            for item in self.repository.work_order_items(number):
+                text = self._reference_text(
+                    item.get('text', ''), record, day, include_resources=True
+                )
+                changed += self.repository.apply_work_order_reference(
+                    item['id'],
+                    item['work_order_key'],
+                    str(record.get('source_id') or ''),
+                    text,
+                    name,
+                    address,
+                    assigned,
+                    day,
+                    ' '.join(str(record.get('lead_source_id') or '').split()),
+                    ' '.join(str(record.get('sales_lead_status') or '').split()),
+                )
+        return dict(count=len(normalized), enriched=changed)
+
     def reference_dates(self):
         """Distinct usable dates of retained cards, for normalized source backfill."""
         self.initialize()
