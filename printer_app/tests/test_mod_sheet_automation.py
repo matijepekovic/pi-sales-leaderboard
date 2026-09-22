@@ -992,7 +992,10 @@ def test_startup_status_refresh_ignores_completed_date_backfill_marker(tmp_path)
     assert source.lead_calls == [('0003',), ('0003',)]
     assert len(sink.lead_published) == 2
     assert sink.repair_calls == 2
-    assert sink.lead_scopes == [('read', True), ('publish', True)] * 2
+    assert sink.lead_scopes == [
+        ('read', False), ('read', True), ('publish', True),
+        ('read', False), ('read', True), ('publish', True),
+    ]
 
 
 def test_startup_status_failure_retries_in_next_hour_without_clearing_cache(tmp_path):
