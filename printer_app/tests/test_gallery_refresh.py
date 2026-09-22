@@ -25,6 +25,19 @@ class ReferenceSource:
         self.calls = []
         self.error = None
 
+    def work_orders(self, work_order_numbers):
+        if self.error:
+            raise RuntimeError(self.error)
+        wanted = set(work_order_numbers)
+        return tuple(
+            replace_record
+            for replace_record in (
+                reference('00000001', 'Today Customer', 'Fresh Assigned Rep',
+                          appointment_date=DAY),
+            )
+            if replace_record.work_order_number in wanted
+        )
+
     def lead_statuses(self, work_order_numbers):
         return ()
 
@@ -35,10 +48,12 @@ class ReferenceSource:
         return (reference('00000001', 'Today Customer', 'Fresh Assigned Rep'),)
 
 
-def reference(order, name, rep):
-    return ModSheetRecord(source_id='source-' + order, work_order_number=order,
-                          lead_name=name, address='100 Main Street',
-                          assigned_service_resources=(rep,))
+def reference(order, name, rep, **changes):
+    record = ModSheetRecord(source_id='source-' + order, work_order_number=order,
+                            lead_name=name, address='100 Main Street',
+                            assigned_service_resources=(rep,))
+    from dataclasses import replace
+    return replace(record, **changes)
 
 
 def seed_card(service, key, day, order, name, rep):
