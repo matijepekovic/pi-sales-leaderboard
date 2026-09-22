@@ -46,6 +46,7 @@ class GeneratedSnapshot:
     market_segment: str = ''
     product_category: str = ''
     source_type: str = ''
+    assigned_service_resource: str = ''
     remove_canceled: bool = True
     remove_unconfirmed: bool = True
     color_code: bool = False
@@ -131,6 +132,7 @@ class SalesforceSandboxService:
                 market_segment=filters.get('market_segment', ''),
                 product_category=filters.get('product_category', ''),
                 source_type=filters.get('source_type', ''),
+                assigned_service_resource=filters.get('assigned_service_resource', ''),
                 remove_canceled=bool(filters.get('remove_canceled', True)),
                 remove_unconfirmed=bool(filters.get('remove_unconfirmed', True)),
                 color_code=color_code,
@@ -142,6 +144,7 @@ class SalesforceSandboxService:
                 market_segment=filters.get('market_segment', ''),
                 product_category=filters.get('product_category', ''),
                 source_type=filters.get('source_type', ''),
+                assigned_service_resource=filters.get('assigned_service_resource', ''),
                 remove_canceled=bool(filters.get('remove_canceled', True)),
                 remove_unconfirmed=bool(filters.get('remove_unconfirmed', True)),
                 color_code=color_code,
