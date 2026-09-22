@@ -244,7 +244,6 @@ def test_mod_query_and_grouping_match_original_apex_controller():
     assert record.lead_source_id == '00Q000000000001AAA'
 
 
-@pytest.mark.parametrize('second_lead_id', ['00Q000000000001AAA', '00Q000000000002AAA'])
 def test_direct_work_order_lookup_needs_no_date_and_returns_current_normalized_appointment():
     calls = []
     rows = [
@@ -287,6 +286,7 @@ def test_direct_work_order_lookup_needs_no_date_and_returns_current_normalized_a
     assert record.assigned_service_resources == ('Current Rep', 'Second Rep')
 
 
+@pytest.mark.parametrize('second_lead_id', ['00Q000000000001AAA', '00Q000000000002AAA'])
 def test_work_orders_preserve_exact_lead_identity_even_when_names_match(second_lead_id):
     adapter = SalesforceCliAdapter(runner=_salesforce_runner([], appointment_records=[
         _appointment('08p000000000001AAA', lead_status='Sold'),
