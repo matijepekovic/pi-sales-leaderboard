@@ -423,6 +423,11 @@ class GalleryService:
 
         enriched = 0
         for item in self.repository.work_order_items(requested.values()):
+            # A work order alone resolves a new/undated scan. Dated cards already
+            # represent a specific historical occurrence and must not be rewritten
+            # by the latest appointment for the same work order.
+            if item.get('document_date'):
+                continue
             candidates = matches.get(item['work_order_key'], [])
             if len(candidates) != 1:
                 continue
