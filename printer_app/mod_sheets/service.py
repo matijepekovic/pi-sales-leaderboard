@@ -465,8 +465,11 @@ class ModSheetReferenceDeliveryService:
         numbers = tuple(dict.fromkeys(self.reference_sink.work_order_numbers()))
         if not numbers:
             return {'work_orders': 0, 'enriched': 0}
+        resolver = getattr(self.source, 'work_orders', None)
+        if resolver is None:
+            return {'work_orders': 0, 'enriched': 0}
         captured = self.clock()
-        records = tuple(self.source.work_orders(numbers))
+        records = tuple(resolver(numbers))
         result = self.reference_sink.publish_work_order_records(numbers, records, captured)
         return {'work_orders': len(records), 'enriched': int(result.get('enriched', 0))}
 
