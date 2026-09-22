@@ -472,7 +472,7 @@ class GalleryService:
             )
             changed += applied
             validated += applied
-        return dict(count=len(normalized), enriched=changed, validated=validated)
+        return dict(count=len(normalized), enriched=changed)
 
     def reference_dates(self):
         """Distinct usable dates of retained cards, for normalized source backfill."""
