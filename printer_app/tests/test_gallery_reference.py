@@ -408,7 +408,7 @@ def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_p
     )
 
     item = gallery.item(ident)
-    assert result['validated'] == 1
+    assert result == {'count': 1, 'enriched': 1}
     assert item['work_order_number'] == '02257311'
     assert item['document_date'] == DAY
     assert item['lead_name'] == 'Resolved Customer'
@@ -446,7 +446,7 @@ def test_two_source_valid_ocr_candidates_remain_in_review(tmp_path):
         gallery.work_order_lookup_numbers(), records, 100,
     )
 
-    assert result['validated'] == 0
+    assert result == {'count': 2, 'enriched': 0}
     assert gallery.repository.reference_item(ident)['state'] == 'REVIEW'
     assert gallery.repository.reference_item(ident)['work_order_number'] == ''
 
