@@ -532,6 +532,33 @@ def test_legacy_morning_outbox_without_document_still_delivers_reference_data(tm
     assert repository.pending_morning_references() == []
 
 
+def test_direct_work_order_refresh_uses_retained_numbers_without_date_filter(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 21, 10, 0))
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    source = FakeSource([])
+    source.work_order_results = (
+        ModSheetRecord(
+            source_id='source-direct',
+            work_order_number='00009991',
+            appointment_date='2026-09-21',
+            lead_name='Direct Customer',
+        ),
+    )
+    sink = FakeReferenceSink()
+    sink.numbers = ('00009991',)
+    service = ModSheetReferenceDeliveryService(
+        repository, source, FakeQueue(), sink, 'America/Los_Angeles', clock=clock,
+    )
+
+    result = service.refresh_work_orders()
+
+    assert source.work_order_calls == [('00009991',)]
+    assert sink.work_order_published[0][0] == ('00009991',)
+    assert sink.work_order_published[0][1] == source.work_order_results
+    assert result['work_order_records'] == 1
+    assert result['enriched'] == 1
+
+
 def test_final_reference_pull_runs_at_11_pm_and_uses_current_day(tmp_path):
     clock = MutableClock(_stamp(2026, 9, 21, 22, 59))
     db = Database(tmp_path / 'printer.db')
