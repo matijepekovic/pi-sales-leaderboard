@@ -15,16 +15,15 @@ import sys
 
 if __package__:
     from .form_template import TEMPLATE_FIELDS, field_boxes, map_box, register_form
+    from .policy import printed_work_order_number
 else:
     from form_template import TEMPLATE_FIELDS, field_boxes, map_box, register_form
+    from policy import printed_work_order_number
 
-# The Gallery needs only the customer, work order, address and appointment.
-# Both printed appointment boxes corroborate the date when no PDF date is known.
-_OCR_FIELD_KEYS = frozenset({
-    'work_order_number', 'lead_name', 'address',
-    'local_scheduled_start_time', 'scheduled_start',
-})
-_WRAPPED_FIELD_KEYS = frozenset({'lead_name', 'address', 'scheduled_start'})
+# The scan supplies only the durable work-order identity. Customer, address,
+# appointment and rep data come from the existing normalized Salesforce references.
+_OCR_FIELD_KEYS = frozenset({'work_order_number'})
+_WRAPPED_FIELD_KEYS = frozenset()
 
 
 def tsv_words(value):
@@ -276,7 +275,7 @@ def _label_extent(crop, field, registration):
 
 
 def template_ocr_canvas(source, registration):
-    """Pack customer, order, address and appointment fields into one OCR image.
+    """Pack the work-order field into one OCR image.
 
     Measured black borders bound every field. The two first-row fields use a
     straight cut after the colon; name, address and Scheduled Start keep the full
@@ -354,13 +353,20 @@ def _template_search_text(values):
     return '\n'.join(lines)[:100000]
 
 
-def _run_tesseract(image, ocr_copy):
+def _run_tesseract(image, ocr_copy, *, digits_only=False):
     import cv2
 
     if not cv2.imwrite(str(ocr_copy), image):
         raise OSError('OCR working image cannot be written')
+    command = [
+        'tesseract', str(ocr_copy), 'stdout', '-l', 'eng',
+        '--psm', '7' if digits_only else '6',
+    ]
+    if digits_only:
+        command.extend(['-c', 'tessedit_char_whitelist=0123456789'])
+    command.append('tsv')
     result = subprocess.run(
-        ['tesseract', str(ocr_copy), 'stdout', '-l', 'eng', '--psm', '6', 'tsv'],
+        command,
         check=True,
         capture_output=True,
         text=True,
@@ -375,19 +381,20 @@ def _recognize_template(source, registration, ocr_copy, known_date):
         docdate, state = _template_document_date({}, known_date)
         return dict(text='', lead_text='', document_date=docdate, date_status=state)
 
-    words = _run_tesseract(canvas, ocr_copy)
+    words = _run_tesseract(canvas, ocr_copy, digits_only=True)
     values = _field_values(words, segments)
-    lead = next((values.get(field.key, '') for field in TEMPLATE_FIELDS if field.lead), '')
-    docdate, state = _template_document_date(values, known_date)
+    raw = values.get('work_order_number', '')
+    number = next((match[0][:8] for match in re.finditer(r'[0-9]{8,}', raw)), '')
     return dict(
-        text=_template_search_text(values),
-        lead_text=('Lead Name: ' + lead) if lead else '',
-        document_date=docdate,
-        date_status=state,
+        text=('Work Order Number: ' + number) if number else '',
+        lead_text='',
+        document_date=known_date,
+        date_status='reference' if known_date else 'needs-date',
     )
 
 
 def _recognize_legacy(source, ocr_copy, known_date):
+    """Fallback localization may inspect the card, but only work-order identity leaves OCR."""
     import cv2
     import numpy as np
 
@@ -400,12 +407,12 @@ def _recognize_legacy(source, ocr_copy, known_date):
     disposable = source.copy()
     disposable[cv2.dilate(rules, np.ones((3, 3), np.uint8)) > 0] = 255
     words = _run_tesseract(disposable, ocr_copy)
-    docdate, state = document_date(words, h, known_date)
+    number = printed_work_order_number(search_text(words))
     return dict(
-        text=search_text(words),
-        lead_text=lead_cell_text(words, source),
-        document_date=docdate,
-        date_status=state,
+        text=('Work Order Number: ' + number) if number else '',
+        lead_text='',
+        document_date=known_date,
+        date_status='reference' if known_date else 'needs-date',
     )
 
 
