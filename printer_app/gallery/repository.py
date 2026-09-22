@@ -883,8 +883,16 @@ class GalleryRepository:
 
     def repair_missing_work_order(self, item, number):
         """Reparse one unchanged unresolved card without touching its other content."""
-        if number == item['work_order_number'] and not (number and item['state'] == 'REVIEW'):
-            return 0
+        if number == item['work_order_number']:
+            if not number or item['state'] != 'REVIEW':
+                return 0
+            with self.connect() as c:
+                return c.execute("""UPDATE items SET state='ACTIVE',
+                    search_revision=search_revision+1
+                    WHERE id=? AND state='REVIEW' AND sales_lead_status=''
+                    AND text=? AND work_order_number=? AND work_order_key=?""",
+                    (item['id'], item['text'], item['work_order_number'],
+                     item['work_order_key'])).rowcount
         with self.connect() as c:
             return c.execute("""UPDATE items SET work_order_number=?,work_order_key=?,
                 lead_source_id='',sales_lead_status='',search_revision=search_revision+1,
