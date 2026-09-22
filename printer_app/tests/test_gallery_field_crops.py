@@ -211,7 +211,8 @@ def test_small_registration_offsets_follow_the_printed_borders(raster, dx, dy):
     cv2, np = raster
     source, actual = _form(raster)
     left, top, right, bottom = map_box(actual, FIELDS['work_order_number'].box)
-    cv2.putText(source, '02275180', (left + 90, bottom - 6), cv2.FONT_HERSHEY_SIMPLEX,
+    _, _, label_right, _ = map_box(actual, FIELDS['work_order_number'].label_box)
+    cv2.putText(source, '02275180', (label_right + 10, bottom - 6), cv2.FONT_HERSHEY_SIMPLEX,
                 0.7, VALUE_INK, 2, cv2.LINE_8)
     expected = _value_count(raster, source)
     approximate = FormRegistration(
@@ -231,7 +232,8 @@ def test_all_populated_fields_still_share_one_ocr_call(raster, monkeypatch, tmp_
     source, registration = _form(raster)
     key = 'work_order_number'
     left, top, right, bottom = map_box(registration, FIELDS[key].box)
-    cv2.putText(source, '02275180', (left + 90, bottom - 7), cv2.FONT_HERSHEY_SIMPLEX,
+    _, _, label_right, _ = map_box(registration, FIELDS[key].label_box)
+    cv2.putText(source, '02275180', (label_right + 10, bottom - 7), cv2.FONT_HERSHEY_SIMPLEX,
                 0.8, VALUE_INK, 2, cv2.LINE_8)
     before = source.copy()
     calls = []
