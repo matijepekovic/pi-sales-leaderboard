@@ -454,7 +454,7 @@ def recognize(path, work, known_date=None):
         # The card was already isolated by the Gallery form detector. Reuse the
         # same work-order mask with the best available registration even when
         # the full template score is low, then keep the legacy label-aware read
-        # as an independent fallback. Salesforce validates the candidates later.
+        # as an independent fallback. The normalized source validates candidates later.
         template = _recognize_template(source, registration, ocr_copy, known_date)
         legacy = _recognize_legacy(source, ocr_copy, known_date)
         return _candidate_result(
