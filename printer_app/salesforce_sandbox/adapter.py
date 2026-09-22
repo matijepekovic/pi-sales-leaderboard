@@ -56,6 +56,35 @@ PORTAL_FIELDS = {
     'source_type': ('Source Type', 'FSSK__FSK_Work_Order__r.Lead__r.LeadSource'),
 }
 
+MOD_SELECT_FIELDS = (
+    'Id',
+    'StatusCategory',
+    'FSSK__FSK_Work_Order__r.WorkOrderNumber',
+    'FSSK__FSK_Work_Order__r.Address',
+    'Local_Scheduled_Start_Time__c',
+    'FSSK__FSK_Work_Order__r.City',
+    'FSSK__FSK_Work_Order__r.Street',
+    'FSSK__FSK_Work_Order__r.State',
+    'FSSK__FSK_Work_Order__r.PostalCode',
+    'FSSK__FSK_Work_Order__r.Lead__r.Name',
+    'FSSK__FSK_Work_Order__r.Lead__r.Id',
+    'FSSK__FSK_Work_Order__r.Lead__r.Status',
+    'FSSK__FSK_Work_Order__r.Lead__r.Phone',
+    'FSSK__FSK_Work_Order__r.Lead__r.Phone_3__c',
+    'SchedStartTime',
+    'SchedEndTime',
+    'CreatedDate',
+    'FSSK__FSK_Work_Order__c',
+    'FSSK__FSK_Work_Order__r.Product_Interest__c',
+    'FSSK__FSK_Assigned_Service_Resource__r.Name',
+    'FSSK__FSK_Work_Order__r.Lead__r.LeadSource',
+    'FSSK__FSK_Work_Order__r.Lead__r.Sub_Source__c',
+    'FSSK__FSK_Work_Order__r.Lead__r.Set_By__r.Name',
+    'FSSK__FSK_Work_Order__r.WorkType.Name',
+    'FSSK__FSK_Work_Order__r.Lead__r.Description',
+    'FSSK__FSK_Work_Order__r.Lead__r.Canvass_Set_By__r.Name',
+)
+
 
 def _safe_cli_detail(value):
     """Return the useful Node/Salesforce error without leaking credential values."""
@@ -124,6 +153,75 @@ def _soql_literal(value):
     value = str(value or '').replace('\\', '\\\\').replace("'", "\\'")
     return "'" + value + "'"
 
+
+
+def _group_appointments(records, user_zone, start_local=None, end_local=None):
+    """Normalize duplicate appointment rows without choosing a work-order date."""
+    grouped = {}
+    order = []
+    for item in records:
+        scheduled = _sf_datetime(item.get('SchedStartTime'))
+        if scheduled is None:
+            continue
+        local_start = scheduled.astimezone(user_zone)
+        if start_local is not None and end_local is not None and not (start_local <= local_start < end_local):
+            continue
+
+        work_order_id = str(item.get('FSSK__FSK_Work_Order__c') or '').strip()
+        if not work_order_id:
+            continue
+        resource = _nested(item, 'FSSK__FSK_Assigned_Service_Resource__r.Name').strip()
+        created = _sf_datetime(item.get('CreatedDate')) or datetime.max.replace(tzinfo=timezone.utc)
+        canceled = str(item.get('StatusCategory') or '').strip().casefold() == 'canceled'
+        group_key = (work_order_id, local_start.date())
+
+        current = grouped.get(group_key)
+        if current is None or (current['canceled'] and not canceled):
+            if current is None:
+                order.append(group_key)
+            grouped[group_key] = {
+                'item': item,
+                'created': created,
+                'local_start': local_start,
+                'canceled': canceled,
+                'resources': [resource] if resource else [],
+            }
+            continue
+        if canceled and not current['canceled']:
+            continue
+        if resource and resource not in current['resources']:
+            current['resources'].append(resource)
+        if created < current['created']:
+            current['item'] = item
+            current['created'] = created
+            current['local_start'] = local_start
+    return grouped, order
+
+
+def _mod_record(work_order_id, day, grouped_item):
+    item = grouped_item['item']
+    work_order = item.get('FSSK__FSK_Work_Order__r') or {}
+    lead = work_order.get('Lead__r') or {} if isinstance(work_order, dict) else {}
+    return ModSheetRecord(
+        source_id=work_order_id,
+        work_order_number=_nested(work_order, 'WorkOrderNumber'),
+        appointment_date=day.isoformat(),
+        local_scheduled_start_time=str(item.get('Local_Scheduled_Start_Time__c') or ''),
+        canvass_set_by=_nested(lead, 'Canvass_Set_By__r.Name'),
+        lead_name=_nested(lead, 'Name'),
+        address=_address(work_order),
+        phone=_nested(lead, 'Phone'),
+        scheduled_start=grouped_item['local_start'].strftime('%Y.%m.%d ; %I:%M:%S %p'),
+        assigned_service_resources=tuple(grouped_item['resources']),
+        set_by=_nested(lead, 'Set_By__r.Name'),
+        work_type=_nested(work_order, 'WorkType.Name'),
+        product_interest=_nested(work_order, 'Product_Interest__c'),
+        source=_nested(lead, 'LeadSource'),
+        sub_source=_nested(lead, 'Sub_Source__c'),
+        lead_description=_nested(lead, 'Description'),
+        sales_lead_status=_nested(lead, 'Status'),
+        lead_source_id=_nested(lead, 'Id'),
+    )
 
 def _sf_datetime(value):
     value = str(value or '').strip()
