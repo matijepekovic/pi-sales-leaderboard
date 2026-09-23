@@ -5,7 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from datetime import date
 
 from ..mod_sheet_contract import ModSheetSourceError, NO_MOD_SHEET_RECORDS, SourceStatus
-from .adapter import SalesforceAdapterError
+from .adapter import PortalField, SalesforceAdapterError
 
 
 @dataclass(frozen=True)
@@ -78,19 +78,30 @@ class SalesforceSandboxService:
                 error=str(exc),
             )
 
-    def field(self, key, *, market_segment=''):
-        """Resolve one portal filter independently after connection succeeds."""
+    def field(self, key, *, market_segment='', start_date='', end_date='',
+              product_category='', source_type='', remove_canceled=True,
+              remove_unconfirmed=True):
+        """Rep options come from the same normalized records as the MOD PDF."""
         trace = []
         try:
-            context = {'market_segment': market_segment} if key == 'assigned_service_resource' else {}
-            resolved = self.adapter.portal_field(key, trace=trace, **context)
+            if key == 'assigned_service_resource':
+                if (not isinstance(market_segment, str) or len(market_segment) > 128
+                        or any(not char.isprintable() for char in market_segment)):
+                    raise ModSheetSourceError('Market Segment must be a short single-line value.')
+                records = self.records(
+                    start_date=start_date, end_date=end_date,
+                    market_segment=market_segment.strip(), product_category=product_category,
+                    source_type=source_type, remove_canceled=remove_canceled,
+                    remove_unconfirmed=remove_unconfirmed, limit=None, trace=trace,
+                )
+                names = {name for record in records for name in record.assigned_service_resources if name}
+                resolved = PortalField('Assigned Service Resource', 'assigned_service_resources',
+                                       tuple(sorted(names, key=str.casefold)))
+            else:
+                resolved = self.adapter.portal_field(key, trace=trace)
             return FieldSnapshot(key=key, field=resolved, trace=tuple(trace))
-        except SalesforceAdapterError as exc:
-            return FieldSnapshot(
-                key=key,
-                trace=tuple(trace),
-                error=str(exc),
-            )
+        except (SalesforceAdapterError, ModSheetSourceError) as exc:
+            return FieldSnapshot(key=key, trace=tuple(trace), error=str(exc))
 
     def explore(self, action, **parameters):
         """Run one explicitly requested, read-only exploration step."""
@@ -105,13 +116,26 @@ class SalesforceSandboxService:
             return ExplorerSnapshot(error=str(exc))
 
     def records(self, **filters):
-        """Return normalized MOD records without leaking Salesforce exceptions."""
+        """Filter complete normalized sheets, retaining every co-assigned rep."""
+        selected = str(filters.pop('assigned_service_resource', '') or '').strip().casefold()
+        limit = filters.get('limit', 1000)
+        if selected:
+            # Filtering before grouping would lose co-reps and could revive a
+            # canceled assignment. Read all pages before selecting whole sheets.
+            filters['limit'] = None
         try:
-            return tuple(self.adapter.mod_sheets(**filters))
+            records = tuple(self.adapter.mod_sheets(**filters))
         except SalesforceAdapterError as exc:
             if str(exc) == NO_MOD_SHEET_RECORDS:
                 return ()
             raise ModSheetSourceError(str(exc)) from exc
+        if selected:
+            records = tuple(record for record in records
+                            if any(name.casefold() == selected
+                                   for name in record.assigned_service_resources))
+            if limit is not None:
+                records = records[:max(1, min(int(limit), 1000))]
+        return records
 
     def lead_statuses(self, work_order_numbers):
         """Resolve current lead statuses without any appointment or date filter."""

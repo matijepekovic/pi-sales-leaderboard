@@ -85,14 +85,9 @@ def _salesforce_runner(calls, *, appointment_records=None):
             return _result({'status': 0, 'result': {'records': [
                 {'TimeZoneSidKey': 'America/Los_Angeles'},
             ]}})
-        if 'FROM ServiceResource' in query:
-            # Resource options do not depend on any customer appointments.
-            rows = [] if 'Id > ' in query else [
-                {'Id': '0Hn000000000001AAA', 'Name': 'Sales Rep One'},
-            ]
-            return _result({'status': 0, 'result': {'records': rows, 'done': True}})
         if 'FROM ServiceAppointment' in query:
-            return _result({'status': 0, 'result': {'records': appointment_records}})
+            rows = [] if ' AND Id > ' in query else appointment_records
+            return _result({'status': 0, 'result': {'records': rows}})
         raise AssertionError(query)
 
     return runner
@@ -166,12 +161,10 @@ def test_portal_fields_use_report_controller_fields_not_guessed_labels():
     market = adapter.portal_field('market_segment')
     product = adapter.portal_field('product_category')
     source = adapter.portal_field('source_type')
-    resource = adapter.portal_field('assigned_service_resource')
 
     assert market.path == 'FSSK__FSK_Work_Order__r.Lead__r.Market__c'
     assert product.path == 'FSSK__FSK_Work_Order__r.Product_Interest__c'
     assert source.path == 'FSSK__FSK_Work_Order__r.Lead__r.LeadSource'
-    assert resource.path == 'ServiceResource.Name'
     assert market.values == ('Retail',)
     assert product.values == (
         'Roofing', 'Siding', 'Bath', 'Gutters', 'Windows',
@@ -181,7 +174,6 @@ def test_portal_fields_use_report_controller_fields_not_guessed_labels():
         'Canvass', 'Flyer', 'Internet', 'Other', 'Previous Customer',
         'Referral', 'Self Generated Lead', 'Telemarketing', 'Shows',
     )
-    assert resource.values == ('Sales Rep One',)
     assert not any(call[1:3] == ['sobject', 'describe'] for call in calls)
 
 
@@ -212,7 +204,6 @@ def test_mod_query_and_grouping_match_original_apex_controller():
         market_segment='Retail',
         product_category='Windows',
         source_type='Canvass',
-        assigned_service_resource='Sales Rep One',
         remove_canceled=True,
         remove_unconfirmed=True,
         limit=1000,
@@ -224,7 +215,6 @@ def test_mod_query_and_grouping_match_original_apex_controller():
     assert "Product_Interest__c INCLUDES ('Windows')" in report_query
     assert "Lead__r.Market__c = 'Retail'" in report_query
     assert "Lead__r.LeadSource = 'Canvass'" in report_query
-    assert "FSSK__FSK_Assigned_Service_Resource__r.Name = 'Sales Rep One'" in report_query
     assert "Lead__r.Status != 'Canceled'" in report_query
     assert 'Lead__r.LastModifiedDate != null' in report_query
     assert 'FSSK__FSK_Assigned_Service_Resource__r.Name' in report_query
@@ -455,7 +445,7 @@ def test_source_type_all_uses_original_controller_allowlist():
     report_query = next(query for query in _query_calls(calls) if 'FROM ServiceAppointment' in query
                         and 'Local_Scheduled_Start_Time__c' in query)
     assert 'Lead__r.LeadSource IN (' in report_query
-    for value in ('Canvass', 'Previous Customer', 'Self Generated Lead', 'Shows'):
+    for value in ('Canvass', 'Previous Customer', 'Self Generated Lead', 'Telemarketing', 'Shows'):
         assert value in report_query
     assert 'Product_Interest__c INCLUDES' not in report_query
     assert "Lead__r.Status != 'Canceled'" not in report_query
@@ -605,7 +595,7 @@ def test_connection_check_is_separate_from_filter_loading():
     market = service.field('market_segment')
     product = service.field('product_category')
     source = service.field('source_type')
-    resource = service.field('assigned_service_resource')
+    resource = service.field('assigned_service_resource', start_date='9/19/2026', end_date='9/19/2026')
     assert market.field.values == ('Retail',)
     assert product.field.values == (
         'Roofing', 'Siding', 'Bath', 'Gutters', 'Windows',

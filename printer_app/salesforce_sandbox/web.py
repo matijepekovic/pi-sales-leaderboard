@@ -1,8 +1,10 @@
 """HTTP boundary for the isolated Salesforce Sandbox MOD portal."""
+from datetime import datetime
 from io import BytesIO
+from zoneinfo import ZoneInfo
 import json
 
-from flask import Blueprint, jsonify, render_template, request, send_file
+from flask import Blueprint, g, jsonify, render_template, request, send_file
 
 from ..mod_sheets.pdf_renderer import render_mod_pdf
 
@@ -12,6 +14,19 @@ def _bool_arg(name, default=False):
     if value is None:
         return default
     return str(value).casefold() in ('1', 'true', 'on', 'yes')
+
+
+def _record_filters():
+    """One HTTP-to-MOD filter mapping for both rep options and PDF generation."""
+    return dict(
+        start_date=request.args.get('startdate', ''),
+        end_date=request.args.get('enddate', ''),
+        market_segment=request.args.get('marketsegment', ''),
+        product_category=request.args.get('productCategory', ''),
+        source_type=request.args.get('sourceType', ''),
+        remove_canceled=_bool_arg('removeCanceled', False),
+        remove_unconfirmed=_bool_arg('removeUnconfirmed', False),
+    )
 
 
 def blueprint(service):
@@ -85,7 +100,12 @@ def blueprint(service):
 
     @bp.get('/salesforce-sandbox/api/field/<key>')
     def field(key):
-        context = {'market_segment': request.args.get('marketsegment', '')} if key == 'assigned_service_resource' else {}
+        context = _record_filters() if key == 'assigned_service_resource' else {}
+        if key == 'assigned_service_resource' and request.args.get('dateScope') == 'today':
+            # Daily settings/Test Print use the configured local day, even if
+            # the browser tab has remained open across midnight.
+            today = datetime.now(ZoneInfo(g.printer_config.timezone)).date().isoformat()
+            context.update(start_date=today, end_date=today)
         snapshot = service.field(key, **context)
         if snapshot.error:
             return jsonify(
@@ -107,14 +127,8 @@ def blueprint(service):
     @bp.get('/salesforce-sandbox/mod-sheet')
     def mod_sheet():
         snapshot = service.generate(
-            start_date=request.args.get('startdate', ''),
-            end_date=request.args.get('enddate', ''),
-            market_segment=request.args.get('marketsegment', ''),
-            product_category=request.args.get('productCategory', ''),
-            source_type=request.args.get('sourceType', ''),
+            **_record_filters(),
             assigned_service_resource=request.args.get('assignedServiceResource', ''),
-            remove_canceled=_bool_arg('removeCanceled', False),
-            remove_unconfirmed=_bool_arg('removeUnconfirmed', False),
             color_code=_bool_arg('colorCode', False),
             limit=1000,
         )

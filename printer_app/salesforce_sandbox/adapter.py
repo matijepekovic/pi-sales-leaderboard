@@ -54,10 +54,6 @@ PORTAL_FIELDS = {
     'market_segment': ('Market Segment', 'FSSK__FSK_Work_Order__r.Lead__r.Market__c'),
     'product_category': ('Product Category', 'FSSK__FSK_Work_Order__r.Product_Interest__c'),
     'source_type': ('Source Type', 'FSSK__FSK_Work_Order__r.Lead__r.LeadSource'),
-    'assigned_service_resource': (
-        'Assigned Service Resource',
-        'ServiceResource.Name',
-    ),
 }
 
 
@@ -655,53 +651,10 @@ class SalesforceCliAdapter:
             trace[-1]['result'] = 'status 0 · values ' + json.dumps(values)
         return tuple(values)
 
-    def _assigned_resource_values(self, market_segment, trace=None):
-        """Read reps directly from the selected market's Sales service territory."""
-        conditions = ['Name != null']
-        if market_segment:
-            conditions.append('Service_Territory__c = '
-                              + _soql_literal(market_segment + ' - Sales'))
-        values, seen, cursor = set(), set(), ''
-        while True:
-            page_conditions = conditions + ([f'Id > {_soql_literal(cursor)}'] if cursor else [])
-            query = ('SELECT Id, Name FROM ServiceResource WHERE '
-                     + ' AND '.join(page_conditions)
-                     + ' ORDER BY Id ASC LIMIT 1000')
-            result = self._run(['data', 'query', '--query', query, *self._target_args()],
-                               timeout=45, trace=trace)
-            page = result.get('records') if isinstance(result, dict) else None
-            if not isinstance(page, list) or len(page) > 1000:
-                raise SalesforceAdapterError('Assigned resource query returned an invalid records page.')
-            if not page:
-                if result.get('done') is False or result.get('totalSize', 0):
-                    raise SalesforceAdapterError('Assigned resource query returned an incomplete records page.')
-                break
-            ids = [row.get('Id') if isinstance(row, dict) else None for row in page]
-            names = [row.get('Name') if isinstance(row, dict) else None for row in page]
-            if (any(not isinstance(ident, str) or not re.fullmatch(
-                    r'[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?', ident) for ident in ids)
-                    or any(not isinstance(name, str) or not name.strip() for name in names)
-                    or len(set(ids)) != len(ids) or seen.intersection(ids)):
-                raise SalesforceAdapterError('Assigned resource query pagination did not advance safely.')
-            seen.update(ids)
-            values.update(name.strip() for name in names)
-            cursor = ids[-1]
-            # A full LIMIT page may still have more resources beyond that query.
-            if (result.get('done') is True and len(page) < 1000
-                    and result.get('totalSize', len(page)) == len(page)):
-                break
-        return tuple(sorted(values, key=str.casefold))
-
-    def portal_field(self, key, trace=None, *, market_segment=''):
+    def portal_field(self, key, trace=None):
         if key not in PORTAL_FIELDS:
             raise SalesforceAdapterError(f'Unknown Salesforce portal field: {key}')
-        if key == 'assigned_service_resource':
-            if (not isinstance(market_segment, str) or len(market_segment) > 128
-                    or any(not char.isprintable() for char in market_segment)):
-                raise SalesforceAdapterError('Market Segment must be a short single-line value.')
-            market_segment = market_segment.strip()
-        cache_key = (key, market_segment) if key == 'assigned_service_resource' else key
-        cached = self._portal_fields_cache.get(cache_key)
+        cached = self._portal_fields_cache.get(key)
         if cached is not None:
             _trace_note(trace, f'# cached field {cached.label}', 'cache hit')
             return cached
@@ -711,12 +664,10 @@ class SalesforceCliAdapter:
             values = SOURCE_TYPE_ALL
         elif key == 'product_category':
             values = PRODUCT_CATEGORY_OPTIONS
-        elif key == 'assigned_service_resource':
-            values = self._assigned_resource_values(market_segment, trace)
         else:
             values = self._distinct_values(path, trace)
         resolved = PortalField(label, path, tuple(values))
-        self._portal_fields_cache[cache_key] = resolved
+        self._portal_fields_cache[key] = resolved
         _trace_note(
             trace,
             f'# resolve {resolved.label}',
@@ -725,12 +676,11 @@ class SalesforceCliAdapter:
         )
         return resolved
 
-    def portal_fields(self, *, market_segment=''):
+    def portal_fields(self):
         return {
-            key: self.portal_field(key, market_segment=market_segment)
+            key: self.portal_field(key)
             for key in (
                 'market_segment', 'product_category', 'source_type',
-                'assigned_service_resource',
             )
         }
 
@@ -783,10 +733,10 @@ class SalesforceCliAdapter:
         market_segment='',
         product_category='',
         source_type='',
-        assigned_service_resource='',
         remove_canceled=True,
         remove_unconfirmed=True,
         limit=1000,
+        trace=None,
     ):
         """Read normalized sheets; limit=None fetches every matching appointment."""
         start = self._parse_date(start_date)
@@ -812,7 +762,6 @@ class SalesforceCliAdapter:
         market_segment = str(market_segment or '').strip()
         product_category = str(product_category or '').strip()
         source_type = str(source_type or '').strip()
-        assigned_service_resource = str(assigned_service_resource or '').strip()
 
         if product_category and product_category.casefold() != 'all':
             conditions.append(
@@ -823,11 +772,6 @@ class SalesforceCliAdapter:
             conditions.append(
                 'FSSK__FSK_Work_Order__r.Lead__r.Market__c = '
                 + _soql_literal(market_segment)
-            )
-        if assigned_service_resource:
-            conditions.append(
-                'FSSK__FSK_Assigned_Service_Resource__r.Name = '
-                + _soql_literal(assigned_service_resource)
             )
         if source_type:
             if source_type.casefold() == 'all':
@@ -860,10 +804,10 @@ class SalesforceCliAdapter:
             )
             result = self._run(
                 ['data', 'query', '--query', query, *self._target_args()],
-                timeout=60,
+                timeout=60, trace=trace,
             )
             page = result.get('records') if isinstance(result, dict) else None
-            if not isinstance(page, list):
+            if not isinstance(page, list) or (limit is None and len(page) > 1000):
                 raise SalesforceAdapterError('Salesforce query returned an invalid records page.')
             if limit is not None:
                 records = page
@@ -886,6 +830,13 @@ class SalesforceCliAdapter:
 
         if not records:
             raise SalesforceAdapterError('No Records Found for Selected Criteria')
+
+        if limit is None:
+            # Pagination uses Id; restore the same report order as a finite read.
+            records.sort(key=lambda item: (
+                _sf_datetime(item.get('SchedStartTime')) or datetime.max.replace(tzinfo=timezone.utc),
+                _nested(item, 'FSSK__FSK_Work_Order__r.Lead__r.Name').casefold(),
+            ))
 
         grouped = {}
         order = []
