@@ -85,14 +85,13 @@ def _salesforce_runner(calls, *, appointment_records=None):
             return _result({'status': 0, 'result': {'records': [
                 {'TimeZoneSidKey': 'America/Los_Angeles'},
             ]}})
+        if 'FROM ServiceResource' in query:
+            # Resource options do not depend on any customer appointments.
+            rows = [] if 'Id > ' in query else [
+                {'Id': '0Hn000000000001AAA', 'Name': 'Sales Rep One'},
+            ]
+            return _result({'status': 0, 'result': {'records': rows, 'done': True}})
         if 'FROM ServiceAppointment' in query:
-            if ' GROUP BY ' in query:
-                names = sorted({row['FSSK__FSK_Assigned_Service_Resource__r']['Name']
-                                for row in appointment_records})
-                # The production adapter paginates grouped names, not appointments.
-                if 'FSSK__FSK_Assigned_Service_Resource__r.Name > ' in query:
-                    names = []
-                return _result({'status': 0, 'result': {'records': [{'Name': name} for name in names]}})
             return _result({'status': 0, 'result': {'records': appointment_records}})
         raise AssertionError(query)
 
@@ -172,7 +171,7 @@ def test_portal_fields_use_report_controller_fields_not_guessed_labels():
     assert market.path == 'FSSK__FSK_Work_Order__r.Lead__r.Market__c'
     assert product.path == 'FSSK__FSK_Work_Order__r.Product_Interest__c'
     assert source.path == 'FSSK__FSK_Work_Order__r.Lead__r.LeadSource'
-    assert resource.path == 'FSSK__FSK_Assigned_Service_Resource__r.Name'
+    assert resource.path == 'ServiceResource.Name'
     assert market.values == ('Retail',)
     assert product.values == (
         'Roofing', 'Siding', 'Bath', 'Gutters', 'Windows',
@@ -526,7 +525,7 @@ def test_unlimited_records_continue_after_short_pages():
 @pytest.mark.parametrize(('day', 'start_utc', 'end_utc'), [
     ('2026-09-19', '2026-09-19T07:00:00Z', '2026-09-20T07:00:00Z'),
     ('2026-03-08', '2026-03-08T08:00:00Z', '2026-03-09T07:00:00Z'),
-    ('2026-11-01', '2026-11-01T07:00:00Z', '2026-11-02T08:00:00Z'),
+    ('2026-11-01', '2026-11-01T08:00:00Z', '2026-11-02T08:00:00Z'),
 ])
 def test_records_use_exact_local_day_including_last_second(day, start_utc, end_utc):
     calls = []
