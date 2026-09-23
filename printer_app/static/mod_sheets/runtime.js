@@ -26,6 +26,11 @@
   let resourceRequest = 0;
   let resourceLoading = false;
   let resourceFailed = false;
+  let preserveSavedResource = mode === 'settings';
+  const startDate = document.getElementById('startDate');
+  const endDate = document.getElementById('endDate');
+  const canceled = document.getElementById('canceled');
+  const unconfirmed = document.getElementById('unconfirmed');
 
   function updateActions() {
     submit.disabled = (requireConnection && !connected) || resourceLoading || resourceFailed;
@@ -60,7 +65,7 @@
     select.disabled = true;
   }
 
-  function setOptions(item, values) {
+  function setOptions(item, values, preserveSelection = false) {
     const selected = currentSelection(item);
     const select = item.select;
     select.replaceChildren();
@@ -75,7 +80,7 @@
       select.appendChild(option);
     }
     let choices = Array.from(select.options).map(option => option.value);
-    if (item !== resourceField && selected && !choices.includes(selected)) {
+    if ((item !== resourceField || preserveSelection) && selected && !choices.includes(selected)) {
       const saved = document.createElement('option');
       saved.value = selected;
       saved.textContent = selected;
@@ -136,23 +141,32 @@
       window.location.href,
     );
     url.searchParams.set('marketsegment', market);
+    url.searchParams.set('startdate', startDate.value);
+    url.searchParams.set('enddate', endDate.value);
+    url.searchParams.set('productCategory', currentSelection(fields[1]));
+    url.searchParams.set('sourceType', currentSelection(fields[2]));
+    url.searchParams.set('removeCanceled', String(canceled.checked));
+    url.searchParams.set('removeUnconfirmed', String(unconfirmed.checked));
+    if (mode === 'settings') url.searchParams.set('dateScope', 'today');
     appendActivity('# Assigned Service Resource · ' + (market || 'All markets'));
     try {
       const payload = await requestJson(url.toString(), 100000);
       if (request !== resourceRequest) return null;
-      setOptions(resourceField, payload.field.values);
+      // Do not erase a permanent daily rep merely because they have no
+      // appointments today. Explicit scope changes still reset invalid choices.
+      setOptions(resourceField, payload.field.values, preserveSavedResource);
       return true;
     } catch (exc) {
       if (request !== resourceRequest) return null;
       resourceFailed = true;
       setPlaceholder(resourceField.select, 'Unavailable');
-      error.textContent = 'Could not load reps for the selected market. Retry or select another market.';
+      error.textContent = 'Could not load assigned reps for these dates and filters. Retry or change the filters.';
       error.hidden = false;
       retry.hidden = false;
       appendActivity('ERR Assigned Service Resource: ' + String(exc.message || exc));
       return false;
     } finally {
-      // A slower response from an earlier market must never replace the latest list.
+      // A slower response from earlier dates or filters must never replace the latest list.
       if (request === resourceRequest) {
         resourceLoading = false;
         updateActions();
@@ -213,20 +227,35 @@
     }
   }
 
+  function scopeChanged() {
+    preserveSavedResource = false;
+    if (connected) {
+      error.hidden = true;
+      retry.hidden = true;
+      loadResources();
+    } else {
+      resourceField.select.dataset.selected = '';
+      setOptions(resourceField, []);
+    }
+  }
+
   for (const item of fields) {
     item.select.addEventListener('change', () => {
       item.select.dataset.selected = item.select.value;
-      if (item === marketField) {
-        if (connected) {
-          error.hidden = true;
-          retry.hidden = true;
-          loadResources();
-        } else {
-          // Never submit a rep from the old market when the source is offline.
-          resourceField.select.dataset.selected = '';
-          setOptions(resourceField, []);
-        }
-      }
+      if (item !== resourceField) scopeChanged();
+    });
+  }
+  for (const control of [startDate, endDate, canceled, unconfirmed]) {
+    control.addEventListener('change', scopeChanged);
+  }
+  for (const control of [startDate, endDate]) {
+    control.addEventListener('input', () => {
+      // Invalidate old responses as soon as dates are edited, not only on blur.
+      ++resourceRequest;
+      resourceLoading = true;
+      preserveSavedResource = false;
+      setPlaceholder(resourceField.select, 'Finish entering dates…');
+      updateActions();
     });
   }
 

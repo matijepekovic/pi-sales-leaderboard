@@ -1,23 +1,30 @@
-"""Market-dependent MOD resource options, complete source reads and browser races."""
+"""Rep choices/filtering share the PDF records, date scope, and normalized boundary."""
+import inspect
 import json
 from pathlib import Path
 import shutil
 import subprocess
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 
+from printer_app.mod_sheet_contract import ModSheetRecord
 from printer_app.salesforce_sandbox.adapter import SalesforceCliAdapter
 from printer_app.salesforce_sandbox.service import SalesforceSandboxService
-
+from test_salesforce_sandbox import _appointment
 
 RESOURCE = 'assigned_service_resource'
-TERRITORY = 'Service_Territory__c'
+MARKET = 'FSSK__FSK_Work_Order__r.Lead__r.Market__c'
+ASSIGNMENT = 'FSSK__FSK_Assigned_Service_Resource__r.Name'
+DAY = '2026-09-19'
+SCOPE = dict(start_date=DAY, end_date=DAY, market_segment='Olympia')
 RUNTIME = Path(__file__).resolve().parents[1] / 'static/mod_sheets/runtime.js'
 
 
-def resource(index, name):
-    return {'Id': f'0Hn{index:012d}AAA', 'Name': name}
+def appointment(index, name, **kwargs):
+    kwargs.setdefault('work_order_id', f'0WO{index:012d}AAA')
+    return _appointment(f'08p{index:012d}AAA', resource=name, **kwargs)
 
 
 def source_pages(pages):
@@ -32,123 +39,208 @@ def source_pages(pages):
         result = {'records': page} if isinstance(page, list) else page
         return SimpleNamespace(returncode=0, stdout=json.dumps({'status': 0, 'result': result}), stderr='')
 
-    return SalesforceSandboxService(SalesforceCliAdapter(runner=runner)), queries
+    adapter = SalesforceCliAdapter(runner=runner)
+    adapter._timezone = ZoneInfo('America/Los_Angeles')
+    return SalesforceSandboxService(adapter), queries
 
 
-@pytest.mark.parametrize('market', ['Olympia', 'Federal Way', 'Seattle', 'King\'s & North'])
-def test_every_selected_market_uses_its_sales_territory_not_appointment_history(market):
-    service, queries = source_pages([{'records': [resource(1, 'Territory Rep')], 'done': True}])
-
-    result = service.field(RESOURCE, market_segment=market)
-
+@pytest.mark.parametrize('market', ['Olympia', 'Federal Way', 'Seattle', "King's & North"])
+def test_options_use_the_pdf_assignment_and_selected_dates_and_filters(market):
+    service, queries = source_pages([[appointment(1, 'Assigned Rep')], []])
+    result = service.field(RESOURCE, **dict(SCOPE, market_segment=market),
+                           product_category='Windows', source_type='Canvass',
+                           remove_canceled=True, remove_unconfirmed=True)
     assert not result.error
-    assert result.field.values == ('Territory Rep',)
-    assert result.field.path == 'ServiceResource.Name'
-    escaped = market.replace("'", "\\'") + ' - Sales'
-    assert queries == [f"SELECT Id, Name FROM ServiceResource WHERE Name != null AND "
-                       f"{TERRITORY} = '{escaped}' ORDER BY Id ASC LIMIT 1000"]
-    # This assertion also prevents returning to the expensive customer-history lookup.
-    assert all(term not in queries[0] for term in ('ServiceAppointment', 'WorkOrder', 'Lead__r',
-                                                  'GROUP BY', 'IsActive', 'SchedStartTime'))
+    assert result.field.values == ('Assigned Rep',)
+    assert result.field.path == 'assigned_service_resources'
+    escaped = market.replace("'", "\\'")
+    for query in queries:
+        assert ' FROM ServiceAppointment WHERE ' in query
+        assert f"{MARKET} = '{escaped}'" in query
+        assert 'SchedStartTime >= 2026-09-19T07:00:00Z' in query
+        assert 'SchedStartTime < 2026-09-20T07:00:00Z' in query
+        assert "Product_Interest__c INCLUDES ('Windows')" in query
+        assert "LeadSource = 'Canvass'" in query
+        assert "Status != 'Canceled'" in query
+        assert 'LastModifiedDate != null' in query
+        assert ASSIGNMENT in query.split(' FROM ')[0]
+        assert ASSIGNMENT not in query.split(' WHERE ')[1]
+        assert all(term not in query for term in ('ServiceResource WHERE', 'Service_Territory', 'GROUP BY'))
 
 
-def test_resource_options_are_distinct_market_scoped_and_not_cut_at_1000():
-    first = [resource(index, f'Rep {index:04}') for index in range(1000)]
-    second = [resource(1000, 'Rep 1000'), resource(1001, 'Rep 1001')]
+def test_resource_options_read_beyond_first_1000_appointments():
+    first = [appointment(index, f'Rep {index:04}') for index in range(1000)]
+    second = [appointment(1000, 'Rep 1000'), appointment(1001, 'Rep 1001')]
     service, queries = source_pages([{'records': first, 'done': True}, second, []])
-
-    result = service.field(RESOURCE, market_segment='Olympia')
-
+    result = service.field(RESOURCE, **SCOPE)
     assert not result.error
     assert result.field.values == tuple(f'Rep {index:04}' for index in range(1002))
     assert len(queries) == 3
-    assert all(f"{TERRITORY} = 'Olympia - Sales'" in query for query in queries)
-    assert all('FROM ServiceResource' in query and 'ORDER BY Id ASC LIMIT 1000' in query
-               for query in queries)
     assert f"Id > '{first[-1]['Id']}'" in queries[1]
     assert f"Id > '{second[-1]['Id']}'" in queries[2]
 
 
-def test_resource_cache_is_per_market_and_all_market_has_no_territory_predicate():
+def test_changed_assignments_are_read_fresh_and_all_market_has_no_market_predicate():
     service, queries = source_pages([
-        [resource(1, 'Olympia Rep')], [], [resource(2, 'Seattle Rep')], [],
-        [resource(1, 'Olympia Rep'), resource(2, 'Seattle Rep')], [],
+        [appointment(1, 'Before Reassignment')], [],
+        [appointment(1, 'After Reassignment')], [],
+        [appointment(2, 'Seattle Rep')], [],
     ])
-    first = service.field(RESOURCE, market_segment=' Olympia ')
-    assert first.field.values == ('Olympia Rep',)
-    assert service.field(RESOURCE, market_segment='Seattle').field.values == ('Seattle Rep',)
-    assert service.field(RESOURCE, market_segment='Olympia').field == first.field
-    assert len(queries) == 4
-    assert f"{TERRITORY} = 'Seattle - Sales'" in queries[2]
-    assert service.field(RESOURCE).field.values == ('Olympia Rep', 'Seattle Rep')
-    assert all(TERRITORY not in query for query in queries[4:])
+    assert service.field(RESOURCE, **SCOPE).field.values == ('Before Reassignment',)
+    assert service.field(RESOURCE, **SCOPE).field.values == ('After Reassignment',)
+    assert service.field(RESOURCE, **dict(SCOPE, market_segment='')).field.values == ('Seattle Rep',)
+    assert len(queries) == 6
+    assert all('Market__c =' not in query for query in queries[4:])
 
 
-def test_market_is_escaped_and_names_are_not_split_or_used_as_pagination_cursors():
-    service, queries = source_pages([[resource(1, "O'Neil; Alex")], []])
-    result = service.field(RESOURCE, market_segment="King's \\ North")
+def test_no_appointments_is_successful_empty_options_not_unavailable():
+    service, _ = source_pages([[]])
+    result = service.field(RESOURCE, **SCOPE)
     assert not result.error
-    assert result.field.values == ("O'Neil; Alex",)
-    assert f"{TERRITORY} = 'King\\'s \\\\ North - Sales'" in queries[0]
-    assert "Id > '0Hn000000000001AAA'" in queries[1]
-    assert 'O\'Neil' not in queries[1]
+    assert result.field.values == ()
 
 
 @pytest.mark.parametrize('metadata', [{'done': False}, {'done': True, 'totalSize': 3}])
-def test_same_name_resources_on_later_pages_do_not_break_pagination(metadata):
+def test_names_are_distinct_whole_names_and_all_short_pages_are_read(metadata):
     service, queries = source_pages([
-        {'records': [resource(1, 'Shared Rep')], **metadata},
-        [resource(2, 'Shared Rep'), resource(3, 'Another Rep')], [],
+        {'records': [appointment(1, "O'Neil; Alex")], **metadata},
+        [appointment(2, "O'Neil; Alex"), appointment(3, 'Another Rep')], [],
     ])
-    result = service.field(RESOURCE, market_segment='Olympia')
+    result = service.field(RESOURCE, **dict(SCOPE, market_segment="King's \\ North"))
     assert not result.error
-    assert result.field.values == ('Another Rep', 'Shared Rep')
-    assert len(queries) == 3
-    assert "Id > '0Hn000000000001AAA'" in queries[1]
+    assert result.field.values == ('Another Rep', "O'Neil; Alex")
+    assert "Market__c = 'King\\'s \\\\ North'" in queries[0]
+    assert "Id > '08p000000000001AAA'" in queries[1]
 
 
 @pytest.mark.parametrize('broken_page', [
     {}, {'records': [], 'done': False}, {'records': [], 'totalSize': 1},
-    [resource(1, 'Rep One')], [resource(2, None)], [{'Name': 'No ID'}],
-    [{'Id': "bad' OR Id != null", 'Name': 'Bad ID'}],
-    [resource(2, 'Rep Two'), resource(2, 'Rep Two')],
-    [resource(index, 'Too many') for index in range(1001)], OSError('source unavailable'),
-    subprocess.TimeoutExpired('sf', 45),
+    [appointment(1, 'Repeated')], [{'Name': 'No ID'}],
+    [dict(appointment(2, 'Bad ID'), Id="bad' OR Id != null")],
+    [appointment(2, 'Two'), appointment(2, 'Two')],
+    [appointment(index, 'Too many') for index in range(1001)],
+    OSError('source unavailable'), subprocess.TimeoutExpired('sf', 60),
 ])
-def test_incomplete_resource_read_is_not_returned_or_cached(broken_page):
+def test_failed_pages_return_no_partial_options_and_retry_reads_fresh(broken_page):
     service, queries = source_pages([
-        [resource(1, 'Rep One')], broken_page,
-        [resource(1, 'Rep One'), resource(2, 'Rep Two')], [],
+        [appointment(1, 'Rep One')], broken_page,
+        [appointment(1, 'Rep One'), appointment(2, 'Rep Two')], [],
     ])
-    failed = service.field(RESOURCE, market_segment='Olympia')
-    assert failed.error
-    assert failed.field is None
-    retried = service.field(RESOURCE, market_segment='Olympia')
+    failed = service.field(RESOURCE, **SCOPE)
+    assert failed.error and failed.field is None
+    retried = service.field(RESOURCE, **SCOPE)
     assert not retried.error
     assert retried.field.values == ('Rep One', 'Rep Two')
     assert len(queries) == 4
 
 
-@pytest.mark.parametrize('market', [None, 12, 'x' * 129, 'Olympia\nSeattle'])
-def test_invalid_market_never_reaches_source(market):
+@pytest.mark.parametrize('scope', [
+    dict(SCOPE, market_segment=None), dict(SCOPE, market_segment=12),
+    dict(SCOPE, market_segment='x' * 129), dict(SCOPE, market_segment='Olympia\nSeattle'),
+    dict(SCOPE, start_date=''), dict(SCOPE, end_date='bad'),
+    dict(SCOPE, end_date='2026-09-18'),
+])
+def test_invalid_scope_never_queries_unbounded_history(scope):
     service, queries = source_pages([])
-    assert service.field(RESOURCE, market_segment=market).error
+    assert service.field(RESOURCE, **scope).error
     assert queries == []
 
 
-def test_field_http_endpoint_passes_selected_market_to_the_source():
+@pytest.mark.parametrize('selected', ['Sam', 'sam'])
+def test_selected_rep_keeps_all_coassignments_and_filters_after_grouping(selected):
+    rows = [appointment(1, 'Alex', work_order_id='shared'),
+            appointment(2, 'Sam', work_order_id='shared'), appointment(3, 'Other')]
+    service, queries = source_pages([rows, []])
+    result = service.generate(**SCOPE, assigned_service_resource=selected, limit=1000)
+    assert not result.error
+    assert len(result.records) == 1
+    assert result.records[0].assigned_service_resources == ('Alex', 'Sam')
+    # PDF receives the same complete normalized assignment, not a renamed/cut sheet.
+    from printer_app.mod_sheets.pdf_renderer import _mod_table
+    cell = _mod_table(result.records[0], False)._cellvalues[2][2]
+    assert cell.value == 'Alex, Sam'
+    assert all(ASSIGNMENT not in query.split(' WHERE ')[1] for query in queries)
+
+
+def test_canceled_assignment_cannot_resurrect_after_rep_selection():
+    rows = [appointment(1, 'Alex', work_order_id='shared'),
+            appointment(2, 'Sam', work_order_id='shared', appointment_status='Canceled')]
+    service, _ = source_pages([rows, []])
+    result = service.generate(**SCOPE, assigned_service_resource='Sam', remove_canceled=False)
+    assert result.error and result.records == ()
+
+
+def test_selected_rep_beyond_first_page_is_found_before_display_limit():
+    service, queries = source_pages([
+        [appointment(index, 'Other') for index in range(1000)],
+        [appointment(1000, 'Sam'), appointment(1001, 'Sam')], [],
+    ])
+    records = service.records(**SCOPE, assigned_service_resource='Sam', limit=1)
+    assert len(records) == 1
+    assert records[0].source_id == '0WO000000001000AAA'
+    assert len(queries) == 3
+
+
+def test_record_workflow_can_use_a_replacement_adapter_with_only_normalized_records():
+    shared = ModSheetRecord('shared', assigned_service_resources=('Alex', 'Sam'))
+    other = ModSheetRecord('other', assigned_service_resources=('Other',))
+    calls = []
+    class Adapter:
+        def mod_sheets(self, **filters):
+            calls.append(filters)
+            return (shared, other)
+    service = SalesforceSandboxService(Adapter())
+    assert service.field(RESOURCE, **SCOPE).field.values == ('Alex', 'Other', 'Sam')
+    assert service.records(**SCOPE, assigned_service_resource='Sam') == (shared,)
+    assert service.records(**SCOPE, assigned_service_resource='Nobody') == ()
+    assert all(call['limit'] is None and 'assigned_service_resource' not in call for call in calls)
+    assert 'Service_Territory__c' not in inspect.getsource(SalesforceCliAdapter)
+    assert '_assigned_resource_values' not in inspect.getsource(SalesforceCliAdapter)
+
+
+def test_field_endpoint_passes_the_same_scope_as_generate_but_never_selected_rep():
     flask = pytest.importorskip('flask')
     from printer_app.salesforce_sandbox.web import blueprint
-
-    service, queries = source_pages([[resource(1, 'Market Rep')], []])
+    service, queries = source_pages([[appointment(1, 'Market Rep')], []])
     app = flask.Flask(__name__)
     app.register_blueprint(blueprint(service))
     response = app.test_client().get('/salesforce-sandbox/api/field/assigned_service_resource',
-                                    query_string={'marketsegment': "King's Market"})
+        query_string=dict(startdate=DAY, enddate=DAY, marketsegment="King's Market",
+                          productCategory='Windows', sourceType='Internet',
+                          removeCanceled='true', removeUnconfirmed='false', assignedServiceResource='Other'))
     assert response.status_code == 200
     assert response.json['field']['values'] == ['Market Rep']
-    assert f"{TERRITORY} = 'King\\'s Market - Sales'" in queries[0]
-    assert all('FROM ServiceResource' in query for query in queries)
+    assert "Market__c = 'King\\'s Market'" in queries[0]
+    assert "LeadSource = 'Internet'" in queries[0]
+    assert 'LastModifiedDate != null' not in queries[0]
+    assert 'Other' not in queries[0]
+
+
+def test_daily_option_dates_use_configured_local_today_not_an_old_browser_date(monkeypatch):
+    flask = pytest.importorskip('flask')
+    from datetime import datetime, timezone
+    from printer_app.salesforce_sandbox import web
+    from printer_app.salesforce_sandbox.service import FieldSnapshot
+    from printer_app.salesforce_sandbox.adapter import PortalField
+    captured = []
+    class Clock:
+        @staticmethod
+        def now(zone):
+            return datetime(2026, 9, 20, 1, tzinfo=timezone.utc).astimezone(zone)
+    class Service:
+        def field(self, key, **scope):
+            captured.append(scope)
+            return FieldSnapshot(key, PortalField('Reps', 'assigned_service_resources', ()))
+    monkeypatch.setattr(web, 'datetime', Clock)
+    app = flask.Flask(__name__)
+    @app.before_request
+    def config():
+        flask.g.printer_config = SimpleNamespace(timezone='America/Los_Angeles')
+    app.register_blueprint(web.blueprint(Service()))
+    response = app.test_client().get('/salesforce-sandbox/api/field/assigned_service_resource',
+        query_string=dict(dateScope='today', startdate='2000-01-01', enddate='2000-01-01'))
+    assert response.status_code == 200
+    assert captured[0]['start_date'] == captured[0]['end_date'] == DAY
 
 
 BROWSER = r'''
@@ -165,7 +257,12 @@ const reply=values=>({ok:true,json:async()=>({ok:true,field:{values}})});
 const ids={};
 for (const id of ['modSourceStatus','modSourceUser','modSourceError','modSourceRetry','modSubmit',
     'modTestPrint','modSourceLog','modSourceClear','modSheetForm',
-    'marketSegment','productCategory','srcType','assignedServiceResource']) ids[id]=new Element();
+    'marketSegment','productCategory','srcType','assignedServiceResource',
+    'startDate','endDate','canceled','unconfirmed','colorCode']) ids[id]=new Element();
+ids.startDate.value=ids.endDate.value='9/19/2026';
+ids.canceled.checked=ids.unconfirmed.checked=true;
+ids.productCategory.value=ids.productCategory.dataset.selected='All';
+ids.srcType.value=ids.srcType.dataset.selected='All';
 const market=ids.marketSegment, rep=ids.assignedServiceResource, form=ids.modSheetForm;
 const settings=process.argv[3]==='settings';
 form.dataset={mode:settings?'settings':'manual',requireConnection:settings?'false':'true'};
@@ -182,7 +279,7 @@ globalThis.fetch=async input=>{
   if(url.pathname==='/connection') return {ok:true,json:async()=>({ok:true,username:'test'})};
   if(url.pathname==='/field/market_segment') return marketPromise;
   if(url.pathname==='/field/assigned_service_resource') return new Promise((resolve,reject)=>{
-    requests.push({market:url.searchParams.get('marketsegment'),resolve:values=>resolve(reply(values)),reject});
+    requests.push({params:Object.fromEntries(url.searchParams),market:url.searchParams.get('marketsegment'),resolve:values=>resolve(reply(values)),reject});
   });
   return reply(['All']);
 };
@@ -304,3 +401,99 @@ assert.equal(rep.disabled,false);
 assert.equal(ids.modSubmit.disabled,false);
 assert.equal(submit(),true);
 ''', mode)
+
+
+@pytest.mark.parametrize('mode', ['manual', 'settings'])
+def test_option_requests_follow_dates_products_sources_and_status_flags(mode):
+    run_runtime(r'''
+assert.equal(requests[0].params.startdate,'9/19/2026');
+assert.equal(requests[0].params.enddate,'9/19/2026');
+assert.equal(requests[0].params.dateScope,settings?'today':undefined);
+assert.equal(requests[0].params.removeCanceled,'true');
+assert.equal(requests[0].params.assignedServiceResource,undefined);
+ids.productCategory.value='Windows'; ids.productCategory.dispatchEvent(new Event('change')); await tick();
+assert.equal(requests[1].params.productCategory,'Windows');
+requests[1].resolve(['Shared Rep']); await tick();
+ids.srcType.value='Canvass'; ids.srcType.dispatchEvent(new Event('change')); await tick();
+assert.equal(requests[2].params.sourceType,'Canvass');
+requests[2].resolve(['Shared Rep']); await tick();
+ids.canceled.checked=false; ids.canceled.dispatchEvent(new Event('change')); await tick();
+assert.equal(requests[3].params.removeCanceled,'false');
+requests[3].resolve(['Shared Rep']); await tick();
+ids.unconfirmed.checked=false; ids.unconfirmed.dispatchEvent(new Event('change')); await tick();
+assert.equal(requests[4].params.removeUnconfirmed,'false');
+requests[4].resolve(['Shared Rep']); await tick();
+ids.endDate.value='9/20/2026'; ids.endDate.dispatchEvent(new Event('input')); await tick();
+assert.equal(submit(),false);
+ids.endDate.dispatchEvent(new Event('change')); await tick();
+assert.equal(requests[5].params.enddate,'9/20/2026');
+requests[5].resolve(['New Day Rep']); await tick();
+assert.equal(submit(),true);
+choose('New Day Rep'); await tick();
+ids.colorCode.dispatchEvent(new Event('change')); await tick();
+assert.equal(requests.length,6,'Rep or color selection must not reload/restrict the options.');
+''', mode)
+
+
+def test_saved_daily_rep_is_not_erased_just_because_they_have_no_appointments_today():
+    run_runtime(r'''
+ids.modSourceRetry.dispatchEvent(new Event('click')); await tick();
+requests[1].resolve([]); await tick();
+assert.equal(rep.value,'Shared Rep');
+assert.equal(submit(),true);
+change('Seattle'); await tick();
+requests[2].resolve([]); await tick();
+assert.equal(rep.value,'','An explicit market change resets an invalid selection.');
+''', 'settings')
+
+
+@pytest.mark.parametrize('mode', ['manual', 'settings'])
+def test_date_edit_immediately_invalidates_inflight_old_scope(mode):
+    run_runtime(r'''
+change('Seattle'); await tick();
+ids.endDate.value='9/21/2026'; ids.endDate.dispatchEvent(new Event('input'));
+requests[1].resolve(['Old Day Rep']); await tick();
+assert.equal(submit(),false);
+assert.equal(rep.disabled,true);
+ids.endDate.dispatchEvent(new Event('change')); await tick();
+requests[2].resolve(['New Day Rep']); await tick();
+assert.deepEqual(rep.options.map(o=>o.value),['','New Day Rep']);
+assert.equal(submit(),true);
+''', mode)
+
+
+@pytest.mark.parametrize('workflow', ['daily', 'test'])
+def test_automatic_and_test_print_filter_whole_sheets_through_same_source(tmp_path, workflow):
+    from datetime import datetime
+    from printer_app.db import Database
+    from printer_app.mod_sheets.policy import ModSheetAutomationSettings
+    from printer_app.mod_sheets.repository import ModSheetAutomationRepository
+    from printer_app.mod_sheets.service import DailyModSheetService, ModSheetTestPrintService
+    from test_mod_sheet_automation import FakeQueue
+
+    rows = [appointment(1, 'Alex', work_order_id='shared', scheduled='2026-09-21T17:00:00Z'),
+            appointment(2, 'Sam', work_order_id='shared', scheduled='2026-09-21T17:00:00Z'),
+            appointment(3, 'Other', scheduled='2026-09-21T18:00:00Z')]
+    source, queries = source_pages([rows, []])
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    settings = ModSheetAutomationSettings(market_segment='Olympia', assigned_service_resource='Sam')
+    repository.save_settings(settings)
+    queue, rendered = FakeQueue(), []
+    def renderer(records, color_code=False):
+        rendered.extend(records)
+        return b'%PDF-test'
+    clock = lambda: datetime(2026, 9, 21, 7, tzinfo=ZoneInfo('America/Los_Angeles')).timestamp()
+    if workflow == 'daily':
+        service = DailyModSheetService(repository, source, queue, renderer, tmp_path,
+                                       'America/Los_Angeles', clock=clock)
+        result = service.run_due()
+        assert len(queue.enqueued) == 1 and not queue.immediate
+    else:
+        service = ModSheetTestPrintService(repository, source, queue, renderer, tmp_path, clock=clock)
+        result = service.run(settings, 'America/Los_Angeles', '0' * 32)
+        assert len(queue.immediate) == 1 and not queue.enqueued
+    assert result['status'] == 'queued'
+    assert len(rendered) == 1
+    assert rendered[0].assigned_service_resources == ('Alex', 'Sam')
+    assert repository.settings() == settings
+    assert all('2026-09-21T07:00:00Z' in query for query in queries)
