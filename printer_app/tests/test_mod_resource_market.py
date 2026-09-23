@@ -239,3 +239,29 @@ assert.equal(rep.disabled,false);
 assert.equal(ids.modSubmit.disabled,false);
 assert.equal(submit(),true);
 ''', mode)
+
+
+@pytest.mark.parametrize('mode', ['manual', 'settings'])
+def test_retry_does_not_temporarily_submit_a_disabled_rep_field(mode):
+    run_runtime(r'''
+change('Seattle'); await tick();
+requests[1].reject(new Error('resource lookup failed')); await tick();
+const originalFetch=globalThis.fetch;
+let reconnect;
+globalThis.fetch=input=>new URL(input,window.location.href).pathname==='/connection'
+  ? new Promise(resolve=>reconnect=resolve) : originalFetch(input);
+ids.modSourceRetry.dispatchEvent(new Event('click')); await tick();
+assert.equal(rep.disabled,true);
+assert.equal(ids.modSubmit.disabled,true,'Retry must not silently clear the selected rep.');
+assert.equal(submit(),false);
+reconnect({ok:false,json:async()=>({ok:false,error:'disconnected'})}); await tick();
+assert.equal(ids.modSubmit.disabled,true);
+assert.equal(submit(),false);
+globalThis.fetch=originalFetch;
+ids.modSourceRetry.dispatchEvent(new Event('click')); await tick();
+assert.equal(requests[2].market,'Seattle');
+requests[2].resolve(['Seattle Rep']); await tick();
+assert.equal(rep.disabled,false);
+assert.equal(ids.modSubmit.disabled,false);
+assert.equal(submit(),true);
+''', mode)
