@@ -655,10 +655,48 @@ class SalesforceCliAdapter:
             trace[-1]['result'] = 'status 0 · values ' + json.dumps(values)
         return tuple(values)
 
-    def portal_field(self, key, trace=None):
+    def _assigned_resource_values(self, market_segment, trace=None):
+        """Read distinct rep names for one market, not a sample of appointments."""
+        path = PORTAL_FIELDS['assigned_service_resource'][1]
+        conditions = ["WorkType.Name LIKE '%Sales%'", f'{path} != null']
+        if market_segment:
+            conditions.append(PORTAL_FIELDS['market_segment'][1] + ' = '
+                              + _soql_literal(market_segment))
+        values, seen, cursor = set(), set(), ''
+        while True:
+            page_conditions = conditions + ([f'{path} > {_soql_literal(cursor)}'] if cursor else [])
+            query = (f'SELECT {path} FROM ServiceAppointment WHERE '
+                     + ' AND '.join(page_conditions)
+                     + f' GROUP BY {path} ORDER BY {path} ASC LIMIT 1000')
+            result = self._run(['data', 'query', '--query', query, *self._target_args()],
+                               timeout=45, trace=trace)
+            page = result.get('records') if isinstance(result, dict) else None
+            if not isinstance(page, list):
+                raise SalesforceAdapterError('Assigned resource query returned an invalid records page.')
+            if not page:
+                if result.get('done') is False or result.get('totalSize', 0):
+                    raise SalesforceAdapterError('Assigned resource query returned an incomplete records page.')
+                break
+            # SOQL GROUP BY returns the relationship field under its leaf name.
+            names = [row.get('Name') if isinstance(row, dict) else None for row in page]
+            if (any(not isinstance(name, str) or not name.strip() for name in names)
+                    or len(set(names)) != len(names) or seen.intersection(names)):
+                raise SalesforceAdapterError('Assigned resource query pagination did not advance safely.')
+            seen.update(names)
+            values.update(name.strip() for name in names)
+            cursor = names[-1]
+        return tuple(sorted(values, key=str.casefold))
+
+    def portal_field(self, key, trace=None, *, market_segment=''):
         if key not in PORTAL_FIELDS:
             raise SalesforceAdapterError(f'Unknown Salesforce portal field: {key}')
-        cached = self._portal_fields_cache.get(key)
+        if key == 'assigned_service_resource':
+            if (not isinstance(market_segment, str) or len(market_segment) > 128
+                    or any(not char.isprintable() for char in market_segment)):
+                raise SalesforceAdapterError('Market Segment must be a short single-line value.')
+            market_segment = market_segment.strip()
+        cache_key = (key, market_segment) if key == 'assigned_service_resource' else key
+        cached = self._portal_fields_cache.get(cache_key)
         if cached is not None:
             _trace_note(trace, f'# cached field {cached.label}', 'cache hit')
             return cached
@@ -668,10 +706,12 @@ class SalesforceCliAdapter:
             values = SOURCE_TYPE_ALL
         elif key == 'product_category':
             values = PRODUCT_CATEGORY_OPTIONS
+        elif key == 'assigned_service_resource':
+            values = self._assigned_resource_values(market_segment, trace)
         else:
             values = self._distinct_values(path, trace)
         resolved = PortalField(label, path, tuple(values))
-        self._portal_fields_cache[key] = resolved
+        self._portal_fields_cache[cache_key] = resolved
         _trace_note(
             trace,
             f'# resolve {resolved.label}',
@@ -680,9 +720,9 @@ class SalesforceCliAdapter:
         )
         return resolved
 
-    def portal_fields(self):
+    def portal_fields(self, *, market_segment=''):
         return {
-            key: self.portal_field(key)
+            key: self.portal_field(key, market_segment=market_segment)
             for key in (
                 'market_segment', 'product_category', 'source_type',
                 'assigned_service_resource',
