@@ -525,7 +525,7 @@ def test_unlimited_records_continue_after_short_pages():
 @pytest.mark.parametrize(('day', 'start_utc', 'end_utc'), [
     ('2026-09-19', '2026-09-19T07:00:00Z', '2026-09-20T07:00:00Z'),
     ('2026-03-08', '2026-03-08T08:00:00Z', '2026-03-09T07:00:00Z'),
-    ('2026-11-01', '2026-11-01T08:00:00Z', '2026-11-02T08:00:00Z'),
+    ('2026-11-01', '2026-11-01T07:00:00Z', '2026-11-02T08:00:00Z'),
 ])
 def test_records_use_exact_local_day_including_last_second(day, start_utc, end_utc):
     calls = []
