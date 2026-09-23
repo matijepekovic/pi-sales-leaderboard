@@ -85,7 +85,8 @@ def blueprint(service):
 
     @bp.get('/salesforce-sandbox/api/field/<key>')
     def field(key):
-        snapshot = service.field(key)
+        context = {'market_segment': request.args.get('marketsegment', '')} if key == 'assigned_service_resource' else {}
+        snapshot = service.field(key, **context)
         if snapshot.error:
             return jsonify(
                 ok=False,
