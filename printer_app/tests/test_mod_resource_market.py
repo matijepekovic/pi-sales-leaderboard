@@ -12,9 +12,12 @@ from printer_app.salesforce_sandbox.service import SalesforceSandboxService
 
 
 RESOURCE = 'assigned_service_resource'
-RESOURCE_PATH = 'FSSK__FSK_Assigned_Service_Resource__r.Name'
-MARKET_PATH = 'FSSK__FSK_Work_Order__r.Lead__r.Market__c'
+TERRITORY = 'Service_Territory__c'
 RUNTIME = Path(__file__).resolve().parents[1] / 'static/mod_sheets/runtime.js'
+
+
+def resource(index, name):
+    return {'Id': f'0Hn{index:012d}AAA', 'Name': name}
 
 
 def source_pages(pages):
@@ -32,55 +35,90 @@ def source_pages(pages):
     return SalesforceSandboxService(SalesforceCliAdapter(runner=runner)), queries
 
 
+@pytest.mark.parametrize('market', ['Olympia', 'Federal Way', 'Seattle', 'King\'s & North'])
+def test_every_selected_market_uses_its_sales_territory_not_appointment_history(market):
+    service, queries = source_pages([{'records': [resource(1, 'Territory Rep')], 'done': True}])
+
+    result = service.field(RESOURCE, market_segment=market)
+
+    assert not result.error
+    assert result.field.values == ('Territory Rep',)
+    assert result.field.path == 'ServiceResource.Name'
+    escaped = market.replace("'", "\\'") + ' - Sales'
+    assert queries == [f"SELECT Id, Name FROM ServiceResource WHERE Name != null AND "
+                       f"{TERRITORY} = '{escaped}' ORDER BY Id ASC LIMIT 1000"]
+    # This assertion also prevents returning to the expensive customer-history lookup.
+    assert all(term not in queries[0] for term in ('ServiceAppointment', 'WorkOrder', 'Lead__r',
+                                                  'GROUP BY', 'IsActive', 'SchedStartTime'))
+
+
 def test_resource_options_are_distinct_market_scoped_and_not_cut_at_1000():
-    first = [{'Name': f'Rep {index:04}'} for index in range(1000)]
-    second = [{'Name': 'Rep 1000'}, {'Name': 'Rep 1001'}]
-    service, queries = source_pages([first, second, []])
+    first = [resource(index, f'Rep {index:04}') for index in range(1000)]
+    second = [resource(1000, 'Rep 1000'), resource(1001, 'Rep 1001')]
+    service, queries = source_pages([{'records': first, 'done': True}, second, []])
 
     result = service.field(RESOURCE, market_segment='Olympia')
 
     assert not result.error
     assert result.field.values == tuple(f'Rep {index:04}' for index in range(1002))
     assert len(queries) == 3
-    assert all(f"{MARKET_PATH} = 'Olympia'" in query for query in queries)
-    assert all(f'GROUP BY {RESOURCE_PATH} ORDER BY {RESOURCE_PATH} ASC LIMIT 1000' in query
+    assert all(f"{TERRITORY} = 'Olympia - Sales'" in query for query in queries)
+    assert all('FROM ServiceResource' in query and 'ORDER BY Id ASC LIMIT 1000' in query
                for query in queries)
-    assert f"{RESOURCE_PATH} > 'Rep 0999'" in queries[1]
-    assert f"{RESOURCE_PATH} > 'Rep 1001'" in queries[2]
-    assert all('SchedStartTime' not in query for query in queries)
+    assert f"Id > '{first[-1]['Id']}'" in queries[1]
+    assert f"Id > '{second[-1]['Id']}'" in queries[2]
 
 
-def test_resource_cache_is_per_market_and_all_market_has_no_market_predicate():
+def test_resource_cache_is_per_market_and_all_market_has_no_territory_predicate():
     service, queries = source_pages([
-        [{'Name': 'Olympia Rep'}], [], [{'Name': 'Seattle Rep'}], [],
-        [{'Name': 'Olympia Rep'}, {'Name': 'Seattle Rep'}], [],
+        [resource(1, 'Olympia Rep')], [], [resource(2, 'Seattle Rep')], [],
+        [resource(1, 'Olympia Rep'), resource(2, 'Seattle Rep')], [],
     ])
     first = service.field(RESOURCE, market_segment=' Olympia ')
     assert first.field.values == ('Olympia Rep',)
     assert service.field(RESOURCE, market_segment='Seattle').field.values == ('Seattle Rep',)
     assert service.field(RESOURCE, market_segment='Olympia').field == first.field
-    assert len(queries) == 4  # Returning to a market uses only that market's cached list.
+    assert len(queries) == 4
+    assert f"{TERRITORY} = 'Seattle - Sales'" in queries[2]
     assert service.field(RESOURCE).field.values == ('Olympia Rep', 'Seattle Rep')
-    assert all(MARKET_PATH not in query for query in queries[4:])
+    assert all(TERRITORY not in query for query in queries[4:])
 
 
-def test_market_and_name_cursor_are_escaped_without_splitting_names():
-    service, queries = source_pages([[{'Name': "O'Neil; Alex"}], []])
+def test_market_is_escaped_and_names_are_not_split_or_used_as_pagination_cursors():
+    service, queries = source_pages([[resource(1, "O'Neil; Alex")], []])
     result = service.field(RESOURCE, market_segment="King's \\ North")
     assert not result.error
     assert result.field.values == ("O'Neil; Alex",)
-    assert f"{MARKET_PATH} = 'King\\'s \\\\ North'" in queries[0]
-    assert f"{RESOURCE_PATH} > 'O\\'Neil; Alex'" in queries[1]
+    assert f"{TERRITORY} = 'King\\'s \\\\ North - Sales'" in queries[0]
+    assert "Id > '0Hn000000000001AAA'" in queries[1]
+    assert 'O\'Neil' not in queries[1]
+
+
+@pytest.mark.parametrize('metadata', [{'done': False}, {'done': True, 'totalSize': 3}])
+def test_same_name_resources_on_later_pages_do_not_break_pagination(metadata):
+    service, queries = source_pages([
+        {'records': [resource(1, 'Shared Rep')], **metadata},
+        [resource(2, 'Shared Rep'), resource(3, 'Another Rep')], [],
+    ])
+    result = service.field(RESOURCE, market_segment='Olympia')
+    assert not result.error
+    assert result.field.values == ('Another Rep', 'Shared Rep')
+    assert len(queries) == 3
+    assert "Id > '0Hn000000000001AAA'" in queries[1]
 
 
 @pytest.mark.parametrize('broken_page', [
     {}, {'records': [], 'done': False}, {'records': [], 'totalSize': 1},
-    [{'Name': 'Rep One'}], [{'Name': None}], OSError('source unavailable'),
+    [resource(1, 'Rep One')], [resource(2, None)], [{'Name': 'No ID'}],
+    [{'Id': "bad' OR Id != null", 'Name': 'Bad ID'}],
+    [resource(2, 'Rep Two'), resource(2, 'Rep Two')],
+    [resource(index, 'Too many') for index in range(1001)], OSError('source unavailable'),
+    subprocess.TimeoutExpired('sf', 45),
 ])
 def test_incomplete_resource_read_is_not_returned_or_cached(broken_page):
     service, queries = source_pages([
-        [{'Name': 'Rep One'}], broken_page,
-        [{'Name': 'Rep One'}, {'Name': 'Rep Two'}], [],
+        [resource(1, 'Rep One')], broken_page,
+        [resource(1, 'Rep One'), resource(2, 'Rep Two')], [],
     ])
     failed = service.field(RESOURCE, market_segment='Olympia')
     assert failed.error
@@ -102,14 +140,15 @@ def test_field_http_endpoint_passes_selected_market_to_the_source():
     flask = pytest.importorskip('flask')
     from printer_app.salesforce_sandbox.web import blueprint
 
-    service, queries = source_pages([[{'Name': 'Market Rep'}], []])
+    service, queries = source_pages([[resource(1, 'Market Rep')], []])
     app = flask.Flask(__name__)
     app.register_blueprint(blueprint(service))
     response = app.test_client().get('/salesforce-sandbox/api/field/assigned_service_resource',
                                     query_string={'marketsegment': "King's Market"})
     assert response.status_code == 200
     assert response.json['field']['values'] == ['Market Rep']
-    assert f"{MARKET_PATH} = 'King\\'s Market'" in queries[0]
+    assert f"{TERRITORY} = 'King\\'s Market - Sales'" in queries[0]
+    assert all('FROM ServiceResource' in query for query in queries)
 
 
 BROWSER = r'''

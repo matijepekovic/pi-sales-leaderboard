@@ -56,7 +56,7 @@ PORTAL_FIELDS = {
     'source_type': ('Source Type', 'FSSK__FSK_Work_Order__r.Lead__r.LeadSource'),
     'assigned_service_resource': (
         'Assigned Service Resource',
-        'FSSK__FSK_Assigned_Service_Resource__r.Name',
+        'ServiceResource.Name',
     ),
 }
 
@@ -656,35 +656,40 @@ class SalesforceCliAdapter:
         return tuple(values)
 
     def _assigned_resource_values(self, market_segment, trace=None):
-        """Read distinct rep names for one market, not a sample of appointments."""
-        path = PORTAL_FIELDS['assigned_service_resource'][1]
-        conditions = ["WorkType.Name LIKE '%Sales%'", f'{path} != null']
+        """Read reps directly from the selected market's Sales service territory."""
+        conditions = ['Name != null']
         if market_segment:
-            conditions.append(PORTAL_FIELDS['market_segment'][1] + ' = '
-                              + _soql_literal(market_segment))
+            conditions.append('Service_Territory__c = '
+                              + _soql_literal(market_segment + ' - Sales'))
         values, seen, cursor = set(), set(), ''
         while True:
-            page_conditions = conditions + ([f'{path} > {_soql_literal(cursor)}'] if cursor else [])
-            query = (f'SELECT {path} FROM ServiceAppointment WHERE '
+            page_conditions = conditions + ([f'Id > {_soql_literal(cursor)}'] if cursor else [])
+            query = ('SELECT Id, Name FROM ServiceResource WHERE '
                      + ' AND '.join(page_conditions)
-                     + f' GROUP BY {path} ORDER BY {path} ASC LIMIT 1000')
+                     + ' ORDER BY Id ASC LIMIT 1000')
             result = self._run(['data', 'query', '--query', query, *self._target_args()],
                                timeout=45, trace=trace)
             page = result.get('records') if isinstance(result, dict) else None
-            if not isinstance(page, list):
+            if not isinstance(page, list) or len(page) > 1000:
                 raise SalesforceAdapterError('Assigned resource query returned an invalid records page.')
             if not page:
                 if result.get('done') is False or result.get('totalSize', 0):
                     raise SalesforceAdapterError('Assigned resource query returned an incomplete records page.')
                 break
-            # SOQL GROUP BY returns the relationship field under its leaf name.
+            ids = [row.get('Id') if isinstance(row, dict) else None for row in page]
             names = [row.get('Name') if isinstance(row, dict) else None for row in page]
-            if (any(not isinstance(name, str) or not name.strip() for name in names)
-                    or len(set(names)) != len(names) or seen.intersection(names)):
+            if (any(not isinstance(ident, str) or not re.fullmatch(
+                    r'[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?', ident) for ident in ids)
+                    or any(not isinstance(name, str) or not name.strip() for name in names)
+                    or len(set(ids)) != len(ids) or seen.intersection(ids)):
                 raise SalesforceAdapterError('Assigned resource query pagination did not advance safely.')
-            seen.update(names)
+            seen.update(ids)
             values.update(name.strip() for name in names)
-            cursor = names[-1]
+            cursor = ids[-1]
+            # A full LIMIT page may still have more resources beyond that query.
+            if (result.get('done') is True and len(page) < 1000
+                    and result.get('totalSize', len(page)) == len(page)):
+                break
         return tuple(sorted(values, key=str.casefold))
 
     def portal_field(self, key, trace=None, *, market_segment=''):
