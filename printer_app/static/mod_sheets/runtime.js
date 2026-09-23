@@ -19,7 +19,18 @@
     {key: 'source_type', label: 'Source Type', allValue: 'All', select: document.getElementById('srcType')},
     {key: 'assigned_service_resource', label: 'Assigned Service Resource', allValue: '', select: document.getElementById('assignedServiceResource')},
   ];
+  const marketField = fields.find(item => item.key === 'market_segment');
+  const resourceField = fields.find(item => item.key === 'assigned_service_resource');
   let loading = false;
+  let connected = false;
+  let resourceRequest = 0;
+  let resourceLoading = false;
+  let resourceFailed = false;
+
+  function updateActions() {
+    submit.disabled = (requireConnection && !connected) || resourceLoading || resourceFailed;
+    if (testPrint) testPrint.disabled = !connected || resourceLoading || resourceFailed;
+  }
 
   function appendActivity(line = '') {
     if (!shell) return;
@@ -64,7 +75,7 @@
       select.appendChild(option);
     }
     let choices = Array.from(select.options).map(option => option.value);
-    if (selected && !choices.includes(selected)) {
+    if (item !== resourceField && selected && !choices.includes(selected)) {
       const saved = document.createElement('option');
       saved.value = selected;
       saved.textContent = selected;
@@ -113,15 +124,54 @@
     }
   }
 
+  async function loadResources() {
+    const request = ++resourceRequest;
+    const market = currentSelection(marketField);
+    resourceLoading = true;
+    resourceFailed = false;
+    updateActions();
+    setPlaceholder(resourceField.select, 'Loading reps…');
+    const url = new URL(
+      state.dataset.fieldUrl.replace('__FIELD__', encodeURIComponent(resourceField.key)),
+      window.location.href,
+    );
+    url.searchParams.set('marketsegment', market);
+    appendActivity('# Assigned Service Resource · ' + (market || 'All markets'));
+    try {
+      const payload = await requestJson(url.toString(), 100000);
+      if (request !== resourceRequest) return null;
+      setOptions(resourceField, payload.field.values);
+      return true;
+    } catch (exc) {
+      if (request !== resourceRequest) return null;
+      resourceFailed = true;
+      setPlaceholder(resourceField.select, 'Unavailable');
+      error.textContent = 'Could not load reps for the selected market. Retry or select another market.';
+      error.hidden = false;
+      retry.hidden = false;
+      appendActivity('ERR Assigned Service Resource: ' + String(exc.message || exc));
+      return false;
+    } finally {
+      // A slower response from an earlier market must never replace the latest list.
+      if (request === resourceRequest) {
+        resourceLoading = false;
+        updateActions();
+      }
+    }
+  }
+
   async function load() {
     if (loading) return;
     loading = true;
+    connected = false;
+    ++resourceRequest;
+    resourceLoading = false;
+    resourceFailed = false;
     status.textContent = 'Checking source…';
     user.textContent = '';
     error.hidden = true;
     retry.hidden = true;
-    if (requireConnection) submit.disabled = true;
-    if (testPrint) testPrint.disabled = true;
+    updateActions();
     if (mode === 'manual') {
       for (const item of fields) setPlaceholder(item.select, 'Waiting for connection…');
     }
@@ -130,15 +180,17 @@
     appendActivity('# connection');
     try {
       const payload = await requestJson(state.dataset.connectionUrl, 25000);
+      connected = true;
       status.textContent = 'Connected';
       user.textContent = payload.username ? ' · ' + payload.username : '';
       appendActivity('# connected' + (payload.alias ? ' as ' + payload.alias : ''));
 
-      const fieldResults = await Promise.all(fields.map(loadField));
+      const fieldResults = await Promise.all(fields.filter(item => item !== resourceField).map(loadField));
+      // The market list must be restored before asking for its dependent rep list.
+      await loadResources();
       const fieldError = fieldResults.some(ok => !ok);
-      submit.disabled = false;
-      if (testPrint) testPrint.disabled = false;
-      if (fieldError) {
+      updateActions();
+      if (fieldError && !resourceFailed) {
         error.textContent = mode === 'settings'
           ? 'Connected to the MOD source, but one or more filter lists could not refresh. Your saved values are still available.'
           : 'Connected to the MOD source, but one or more filter lists could not load. Generate still works with the available filters.';
@@ -146,6 +198,7 @@
         retry.hidden = false;
       }
     } catch (exc) {
+      connected = false;
       status.textContent = 'Not connected';
       const message = exc.name === 'AbortError'
         ? 'MOD source connection check timed out.'
@@ -153,7 +206,7 @@
       error.textContent = message;
       error.hidden = false;
       retry.hidden = false;
-      if (!requireConnection) submit.disabled = false;
+      updateActions();
       appendActivity('ERR ' + message);
     } finally {
       loading = false;
@@ -163,6 +216,17 @@
   for (const item of fields) {
     item.select.addEventListener('change', () => {
       item.select.dataset.selected = item.select.value;
+      if (item === marketField) {
+        if (connected) {
+          error.hidden = true;
+          retry.hidden = true;
+          loadResources();
+        } else {
+          // Never submit a rep from the old market when the source is offline.
+          resourceField.select.dataset.selected = '';
+          setOptions(resourceField, []);
+        }
+      }
     });
   }
 
@@ -173,7 +237,11 @@
   }
   retry.addEventListener('click', load);
 
-  form.addEventListener('submit', () => {
+  form.addEventListener('submit', event => {
+    if (resourceLoading || resourceFailed) {
+      event.preventDefault();
+      return;
+    }
     const values = Object.fromEntries(new FormData(form).entries());
     delete values.csrf;
     appendActivity('');
