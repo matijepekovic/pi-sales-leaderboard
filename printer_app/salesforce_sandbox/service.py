@@ -78,11 +78,12 @@ class SalesforceSandboxService:
                 error=str(exc),
             )
 
-    def field(self, key):
+    def field(self, key, *, market_segment=''):
         """Resolve one portal filter independently after connection succeeds."""
         trace = []
         try:
-            resolved = self.adapter.portal_field(key, trace=trace)
+            context = {'market_segment': market_segment} if key == 'assigned_service_resource' else {}
+            resolved = self.adapter.portal_field(key, trace=trace, **context)
             return FieldSnapshot(key=key, field=resolved, trace=tuple(trace))
         except SalesforceAdapterError as exc:
             return FieldSnapshot(
