@@ -86,6 +86,13 @@ def _salesforce_runner(calls, *, appointment_records=None):
                 {'TimeZoneSidKey': 'America/Los_Angeles'},
             ]}})
         if 'FROM ServiceAppointment' in query:
+            if ' GROUP BY ' in query:
+                names = sorted({row['FSSK__FSK_Assigned_Service_Resource__r']['Name']
+                                for row in appointment_records})
+                # The production adapter paginates grouped names, not appointments.
+                if 'FSSK__FSK_Assigned_Service_Resource__r.Name > ' in query:
+                    names = []
+                return _result({'status': 0, 'result': {'records': [{'Name': name} for name in names]}})
             return _result({'status': 0, 'result': {'records': appointment_records}})
         raise AssertionError(query)
 
