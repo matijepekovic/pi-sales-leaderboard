@@ -165,8 +165,8 @@
     loading = true;
     connected = false;
     ++resourceRequest;
-    resourceLoading = false;
-    resourceFailed = false;
+    // A retry must not submit an unavailable rep field as an accidental All.
+    // Keep its pending/failed guard until the replacement list succeeds.
     status.textContent = 'Checking source…';
     user.textContent = '';
     error.hidden = true;
