@@ -475,7 +475,8 @@ class SalesforceCliAdapter:
             'Lead__r.Latitude', 'Lead__r.Longitude',
         )
         jobs = []
-        for row in self._lead_status_query(fields, object_name, f'{lead_field} != null'):
+        condition = "WorkType.Name LIKE '%Sales%' AND " + lead_field + ' != null'
+        for row in self._lead_status_query(fields, object_name, condition):
             work_order_id = str(row.get('Id') or '').strip()
             work_order_number = str(row.get('WorkOrderNumber') or '').strip()
             lead_id = _nested(row, 'Lead__r.Id').strip()
