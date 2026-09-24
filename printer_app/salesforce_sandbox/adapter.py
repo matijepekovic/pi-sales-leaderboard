@@ -476,6 +476,7 @@ class SalesforceCliAdapter:
         )
         condition = (
             f"{lead_field} != null AND WorkOrderNumber != null "
+            "AND WorkType.Name LIKE '%Sales%' "
             "AND Lead__r.Status NOT IN ('New', 'Scheduled', 'Do Not Call')"
         )
         resolved = []
