@@ -1,6 +1,7 @@
 """Workflow for the read-only Salesforce MOD portal sandbox."""
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field as dataclass_field
 from datetime import date
 from threading import Lock
@@ -31,6 +32,7 @@ class FieldSnapshot:
     trace: tuple = dataclass_field(default_factory=tuple)
     error: str = ''
     saved: bool = False
+    totals: dict = dataclass_field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -86,9 +88,9 @@ class SalesforceSandboxService:
     def field(self, key):
         """Read saved rep options locally; only explicit refresh may query their source."""
         if key == 'assigned_service_resource':
-            names = self.rep_repository.names() if self.rep_repository is not None else None
+            names, totals = self.rep_repository.snapshot() if self.rep_repository is not None else (None, {})
             return FieldSnapshot(
-                key=key, saved=names is not None,
+                key=key, saved=names is not None, totals=totals,
                 field=PortalField('Assigned Service Resource', 'assigned_service_resources', names or ()),
             )
         trace = []
@@ -109,17 +111,29 @@ class SalesforceSandboxService:
                     or any(not char.isprintable() for char in market_segment)):
                 raise ModSheetSourceError('Market Segment must be a short single-line value.')
             with self._rep_refresh_lock:
-                names = tuple(self.adapter.assigned_resource_names(
+                assignments = self.adapter.rep_assignments(
                     start_date=start_date, end_date=end_date,
                     market_segment=market_segment.strip(), product_category=product_category,
                     source_type=source_type, trace=trace,
-                ))
-                if any(not isinstance(name, str) for name in names):
-                    raise ModSheetSourceError('Rep lookup returned invalid names.')
-                names = tuple(sorted({name.strip() for name in names if name.strip()}, key=str.casefold))
-                self.rep_repository.replace(names)
+                )
+                totals, display_names = Counter(), {}
+                for assignment in assignments:
+                    if (not isinstance(assignment, (tuple, list))
+                            or any(not isinstance(name, str) for name in assignment)):
+                        raise ModSheetSourceError('Rep lookup returned invalid names.')
+                    unique = {}
+                    for name in assignment:
+                        if name.strip():
+                            unique.setdefault(name.strip().casefold(), name.strip())
+                    credit = 1 if len(unique) == 1 else 0.5
+                    for key_name, name in unique.items():
+                        display_names.setdefault(key_name, name)
+                        totals[key_name] += credit
+                names = tuple(sorted(display_names.values(), key=str.casefold))
+                totals = {name: totals[name.casefold()] for name in names}
+                self.rep_repository.replace(names, totals)
             return FieldSnapshot(
-                key=key, saved=True, trace=tuple(trace),
+                key=key, saved=True, trace=tuple(trace), totals=totals,
                 field=PortalField('Assigned Service Resource', 'assigned_service_resources', names),
             )
         except (SalesforceAdapterError, ModSheetSourceError) as exc:
