@@ -27,6 +27,8 @@ from .attachment_routing_repository import AttachmentRoutingRepository
 from .gallery.bootstrap import build as build_gallery, build_access as build_gallery_access, GalleryReferenceInbox
 from .gallery.web import blueprint as gallery_blueprint
 from .gallery_reprocess import GalleryReprocessService
+from .job_map.service import JobMapService
+from .job_map.web import blueprint as job_map_blueprint
 from .https_adapter import GalleryHttpsAdapter
 from .salesforce_sandbox.adapter import SalesforceCliAdapter
 from .salesforce_sandbox.service import SalesforceSandboxService
@@ -90,6 +92,10 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     )
     app.extensions['salesforce_sandbox'] = salesforce_sandbox
     app.register_blueprint(salesforce_sandbox_blueprint(salesforce_sandbox))
+
+    job_map = JobMapService(salesforce_sandbox, render_mod_pdf)
+    app.extensions['job_map'] = job_map
+    app.register_blueprint(job_map_blueprint(job_map))
 
     mod_sheet_repository = ModSheetAutomationRepository(db)
 
@@ -219,8 +225,9 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         # while still withholding referrers from every external destination.
         response.headers['Referrer-Policy'] = 'same-origin'
         response.headers.setdefault('Content-Security-Policy',
-            "default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; "
-            "object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'")
+            "default-src 'self'; script-src 'self' https://unpkg.com; "
+            "style-src 'self' https://unpkg.com; img-src 'self' data: https://unpkg.com https://tile.openstreetmap.org; "
+            "frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'")
         return response
 
     def dispatch():

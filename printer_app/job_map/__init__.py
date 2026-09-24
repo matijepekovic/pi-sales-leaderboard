@@ -1,0 +1,1 @@
+"""Normalized job-map feature."""
