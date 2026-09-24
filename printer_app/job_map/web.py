@@ -27,6 +27,8 @@ def blueprint(service):
             'work_order_number': item.work_order_number,
             'lead_name': item.lead_name,
             'lead_status': item.lead_status,
+            'market_segment': item.market_segment,
+            'assigned_service_resources': list(item.assigned_service_resources),
             'latitude': item.latitude,
             'longitude': item.longitude,
             'source_record_url': item.source_record_url,
