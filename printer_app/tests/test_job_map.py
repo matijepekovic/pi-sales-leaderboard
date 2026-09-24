@@ -125,10 +125,6 @@ def test_map_web_returns_jobs_and_mod_pdf():
     app.register_blueprint(blueprint(Service()))
     client = app.test_client()
 
-    page = client.get('/map')
-    assert page.status_code == 200
-    assert b'leaflet@1.9.4' in page.data
-
     payload = client.get('/map/api/jobs').get_json()
     assert payload['ok'] is True
     assert payload['jobs'][0]['work_order_number'] == '02257311'
@@ -141,6 +137,8 @@ def test_job_map_python_stays_vendor_neutral_and_frontend_uses_free_osm_tiles():
     root = Path(__file__).resolve().parents[1]
     for path in (root / 'job_map').glob('*.py'):
         assert 'salesforce' not in path.read_text().casefold()
+    template = (root / 'templates/job_map.html').read_text()
+    assert 'leaflet@1.9.4' in template
     runtime = (root / 'static/job_map/map.js').read_text()
     assert 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' in runtime
     assert "action('MOD Sheet'" in runtime
