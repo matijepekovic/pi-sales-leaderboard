@@ -8,6 +8,8 @@
   const retry = document.getElementById('modSourceRetry');
   const submit = document.getElementById('modSubmit');
   const testPrint = document.getElementById('modTestPrint');
+  const refreshReps = document.getElementById('modRefreshReps');
+  const repsStatus = document.getElementById('modRepsStatus');
   const shell = document.getElementById('modSourceLog');
   const clearActivity = document.getElementById('modSourceClear');
   const form = document.getElementById('modSheetForm');
@@ -23,18 +25,15 @@
   const resourceField = fields.find(item => item.key === 'assigned_service_resource');
   let loading = false;
   let connected = false;
-  let resourceRequest = 0;
   let resourceLoading = false;
-  let resourceFailed = false;
-  let preserveSavedResource = mode === 'settings';
+  let resourceReady = false;
   const startDate = document.getElementById('startDate');
   const endDate = document.getElementById('endDate');
-  const canceled = document.getElementById('canceled');
-  const unconfirmed = document.getElementById('unconfirmed');
 
   function updateActions() {
-    submit.disabled = (requireConnection && !connected) || resourceLoading || resourceFailed;
-    if (testPrint) testPrint.disabled = !connected || resourceLoading || resourceFailed;
+    submit.disabled = (requireConnection && (!connected || loading)) || !resourceReady;
+    if (testPrint) testPrint.disabled = !connected || loading || !resourceReady;
+    refreshReps.disabled = !connected || loading || resourceLoading;
   }
 
   function appendActivity(line = '') {
@@ -92,12 +91,13 @@
     select.disabled = false;
   }
 
-  async function requestJson(url, timeoutMs) {
+  async function requestJson(url, timeoutMs, options = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    appendActivity('GET ' + url);
+    appendActivity((options.method || 'GET') + ' ' + url);
     try {
       const response = await fetch(url, {
+        ...options,
         signal: controller.signal,
         headers: {'Accept': 'application/json'},
       });
@@ -129,48 +129,50 @@
     }
   }
 
-  async function loadResources() {
-    const request = ++resourceRequest;
-    const market = currentSelection(marketField);
+  async function loadResources(refresh = false) {
+    if (resourceLoading) return;
     resourceLoading = true;
-    resourceFailed = false;
     updateActions();
-    setPlaceholder(resourceField.select, 'Loading reps…');
-    const url = new URL(
-      state.dataset.fieldUrl.replace('__FIELD__', encodeURIComponent(resourceField.key)),
-      window.location.href,
-    );
-    url.searchParams.set('marketsegment', market);
-    url.searchParams.set('startdate', startDate.value);
-    url.searchParams.set('enddate', endDate.value);
-    url.searchParams.set('productCategory', currentSelection(fields[1]));
-    url.searchParams.set('sourceType', currentSelection(fields[2]));
-    url.searchParams.set('removeCanceled', String(canceled.checked));
-    url.searchParams.set('removeUnconfirmed', String(unconfirmed.checked));
-    if (mode === 'settings') url.searchParams.set('dateScope', 'today');
-    appendActivity('# Assigned Service Resource · ' + (market || 'All markets'));
+    repsStatus.textContent = refresh ? 'Refreshing reps…' : 'Loading saved reps…';
+    const url = refresh ? state.dataset.repsRefreshUrl
+      : state.dataset.fieldUrl.replace('__FIELD__', encodeURIComponent(resourceField.key));
+    const options = {};
+    if (refresh) {
+      // Snapshot the current lookup scope only on an explicit click. Status
+      // checkboxes belong to report generation, not the saved names dropdown.
+      const body = new URLSearchParams({
+        csrf: state.dataset.csrf,
+        marketsegment: currentSelection(marketField),
+        startdate: startDate.value,
+        enddate: endDate.value,
+        productCategory: currentSelection(fields[1]),
+        sourceType: currentSelection(fields[2]),
+      });
+      if (mode === 'settings') body.set('dateScope', 'today');
+      options.method = 'POST';
+      options.body = body;
+    }
     try {
-      const payload = await requestJson(url.toString(), 100000);
-      if (request !== resourceRequest) return null;
-      // Do not erase a permanent daily rep merely because they have no
-      // appointments today. Explicit scope changes still reset invalid choices.
-      setOptions(resourceField, payload.field.values, preserveSavedResource);
-      return true;
-    } catch (exc) {
-      if (request !== resourceRequest) return null;
-      resourceFailed = true;
-      setPlaceholder(resourceField.select, 'Unavailable');
-      error.textContent = 'Could not load assigned reps for these dates and filters. Retry or change the filters.';
-      error.hidden = false;
-      retry.hidden = false;
-      appendActivity('ERR Assigned Service Resource: ' + String(exc.message || exc));
-      return false;
-    } finally {
-      // A slower response from earlier dates or filters must never replace the latest list.
-      if (request === resourceRequest) {
-        resourceLoading = false;
-        updateActions();
+      const payload = await requestJson(url, 100000, options);
+      const selected = currentSelection(resourceField);
+      setOptions(resourceField, payload.field.values, !refresh && mode === 'settings');
+      resourceReady = true;
+      repsStatus.textContent = payload.saved
+        ? (refresh ? 'Rep list replaced.' : 'Using saved reps.')
+        : 'No saved reps yet. Press Refresh reps.';
+      if (refresh && selected && resourceField.select.value !== selected) {
+        repsStatus.textContent += ' Previous rep is absent; All selected.';
       }
+    } catch (exc) {
+      // Keep existing options and selection on failures. Never silently fall
+      // back to All, append partial pages, or replace saved names with errors.
+      repsStatus.textContent = refresh
+        ? 'Refresh failed. Existing reps kept. Press Refresh reps to retry.'
+        : 'Could not read saved reps. Press Refresh reps after connecting.';
+      appendActivity('ERR Assigned Service Resource: ' + String(exc.message || exc));
+    } finally {
+      resourceLoading = false;
+      updateActions();
     }
   }
 
@@ -178,16 +180,15 @@
     if (loading) return;
     loading = true;
     connected = false;
-    ++resourceRequest;
-    // A retry must not submit an unavailable rep field as an accidental All.
-    // Keep its pending/failed guard until the replacement list succeeds.
     status.textContent = 'Checking source…';
     user.textContent = '';
     error.hidden = true;
     retry.hidden = true;
     updateActions();
     if (mode === 'manual') {
-      for (const item of fields) setPlaceholder(item.select, 'Waiting for connection…');
+      for (const item of fields.filter(item => item !== resourceField)) {
+        setPlaceholder(item.select, 'Waiting for connection…');
+      }
     }
 
     appendActivity('');
@@ -200,11 +201,9 @@
       appendActivity('# connected' + (payload.alias ? ' as ' + payload.alias : ''));
 
       const fieldResults = await Promise.all(fields.filter(item => item !== resourceField).map(loadField));
-      // The market list must be restored before asking for its dependent rep list.
-      await loadResources();
       const fieldError = fieldResults.some(ok => !ok);
       updateActions();
-      if (fieldError && !resourceFailed) {
+      if (fieldError) {
         error.textContent = mode === 'settings'
           ? 'Connected to the MOD source, but one or more filter lists could not refresh. Your saved values are still available.'
           : 'Connected to the MOD source, but one or more filter lists could not load. Generate still works with the available filters.';
@@ -224,40 +223,18 @@
       appendActivity('ERR ' + message);
     } finally {
       loading = false;
-    }
-  }
-
-  function scopeChanged() {
-    preserveSavedResource = false;
-    if (connected) {
-      error.hidden = true;
-      retry.hidden = true;
-      loadResources();
-    } else {
-      resourceField.select.dataset.selected = '';
-      setOptions(resourceField, []);
+      updateActions();
     }
   }
 
   for (const item of fields) {
     item.select.addEventListener('change', () => {
       item.select.dataset.selected = item.select.value;
-      if (item !== resourceField) scopeChanged();
     });
   }
-  for (const control of [startDate, endDate, canceled, unconfirmed]) {
-    control.addEventListener('change', scopeChanged);
-  }
-  for (const control of [startDate, endDate]) {
-    control.addEventListener('input', () => {
-      // Invalidate old responses as soon as dates are edited, not only on blur.
-      ++resourceRequest;
-      resourceLoading = true;
-      preserveSavedResource = false;
-      setPlaceholder(resourceField.select, 'Finish entering dates…');
-      updateActions();
-    });
-  }
+  refreshReps.addEventListener('click', () => {
+    if (!refreshReps.disabled) loadResources(true);
+  });
 
   if (clearActivity) {
     clearActivity.addEventListener('click', () => {
@@ -267,7 +244,7 @@
   retry.addEventListener('click', load);
 
   form.addEventListener('submit', event => {
-    if (resourceLoading || resourceFailed) {
+    if (!resourceReady || (requireConnection && (!connected || loading))) {
       event.preventDefault();
       return;
     }
@@ -281,5 +258,6 @@
       : 'RESULT request opened in a new tab');
   });
 
+  loadResources(); // Local persistence only, independent of the source connection.
   load();
 })();

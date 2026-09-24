@@ -5,6 +5,8 @@
 <nav class="toolbar" aria-label="Salesforce sandbox"><a class="button primary" href="{{ url_for('salesforce_sandbox.page') }}" aria-current="page">MOD Sheets</a><a class="button" href="{{ url_for('salesforce_sandbox.explorer_page') }}">Object Explorer</a></nav>
 
 <div class="mod-source-row" id="modSourceState" data-mod-sheet-runtime
+     data-reps-refresh-url="{{ url_for('salesforce_sandbox.refresh_reps') }}"
+     data-csrf="{{ session.csrf }}"
      data-connection-url="{{ url_for('salesforce_sandbox.connection') }}"
      data-field-url="{{ url_for('salesforce_sandbox.field', key='__FIELD__') }}">
   <div class="status-line">
@@ -58,6 +60,10 @@
         <select id="assignedServiceResource" name="assignedServiceResource" data-selected="" disabled>
           <option value="">Waiting for connection…</option>
         </select>
+      </div>
+      <div class="mod-actions">
+        <button type="button" id="modRefreshReps">Refresh reps</button>
+        <span id="modRepsStatus" role="status" aria-live="polite"></span>
       </div>
       <br><br>
       <div class="setting check-setting">

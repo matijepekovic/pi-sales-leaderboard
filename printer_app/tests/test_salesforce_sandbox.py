@@ -595,14 +595,16 @@ def test_connection_check_is_separate_from_filter_loading():
     market = service.field('market_segment')
     product = service.field('product_category')
     source = service.field('source_type')
-    resource = service.field('assigned_service_resource', start_date='9/19/2026', end_date='9/19/2026')
+    before_reps = len(calls)
+    resource = service.field('assigned_service_resource')
+    assert len(calls) == before_reps
     assert market.field.values == ('Retail',)
     assert product.field.values == (
         'Roofing', 'Siding', 'Bath', 'Gutters', 'Windows',
         'Doors', 'Other', 'Walk-In Tubs', 'Solar',
     )
     assert source.field.values[0] == 'Canvass'
-    assert resource.field.values == ('Sales Rep One',)
+    assert resource.field.values == () and not resource.saved
 
 
 def test_portal_ui_preserves_controller_all_semantics_and_black_shell():
