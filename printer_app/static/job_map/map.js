@@ -3,17 +3,20 @@
   if (!node) return;
   const status = document.getElementById('jobMapStatus');
   const error = document.getElementById('jobMapError');
-  if (!window.L) {
+  if (!window.maplibregl) {
     status.textContent = 'Map unavailable';
     error.textContent = 'The map library could not load.';
     error.hidden = false;
     return;
   }
-  const map = L.map(node, {preferCanvas: true}).setView([39.5, -98.35], 4);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; OpenStreetMap contributors',
-  }).addTo(map);
+
+  const map = new maplibregl.Map({
+    container: node,
+    style: 'https://tiles.openfreemap.org/styles/liberty',
+    center: [-98.35, 39.5],
+    zoom: 3.5,
+  });
+  map.addControl(new maplibregl.NavigationControl(), 'top-left');
 
   function text(tag, value, className = '') {
     const element = document.createElement(tag);
@@ -53,15 +56,23 @@
       return payload.jobs || [];
     })
     .then(jobs => {
-      const bounds = [];
+      const bounds = new maplibregl.LngLatBounds();
+      let count = 0;
+      let only = null;
       for (const job of jobs) {
         if (!Number.isFinite(job.latitude) || !Number.isFinite(job.longitude)) continue;
-        L.marker([job.latitude, job.longitude]).addTo(map).bindPopup(popup(job));
-        bounds.push([job.latitude, job.longitude]);
+        const point = [job.longitude, job.latitude];
+        new maplibregl.Marker()
+          .setLngLat(point)
+          .setPopup(new maplibregl.Popup({offset: 24}).setDOMContent(popup(job)))
+          .addTo(map);
+        bounds.extend(point);
+        only = point;
+        count += 1;
       }
-      status.textContent = bounds.length + (bounds.length === 1 ? ' job mapped' : ' jobs mapped');
-      if (bounds.length === 1) map.setView(bounds[0], 15);
-      else if (bounds.length > 1) map.fitBounds(bounds, {padding: [24, 24], maxZoom: 15});
+      status.textContent = count + (count === 1 ? ' job mapped' : ' jobs mapped');
+      if (count === 1) map.jumpTo({center: only, zoom: 15});
+      else if (count > 1) map.fitBounds(bounds, {padding: 24, maxZoom: 15, duration: 0});
       else {
         error.textContent = 'No mapped jobs matched the current status rules.';
         error.hidden = false;
