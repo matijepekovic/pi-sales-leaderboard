@@ -817,21 +817,28 @@ class SalesforceCliAdapter:
             cursor = page_ids[-1]
             # A short response can still have more rows; only an empty query ends the read.
 
-    def assigned_resource_names(self, *, start_date='', end_date='', market_segment='',
-                                product_category='', source_type='', trace=None):
-        """Only assignment names and pagination IDs; never construct MOD sheets."""
-        conditions, _, _ = self._appointment_scope(
+    def rep_assignments(self, *, start_date='', end_date='', market_segment='',
+                        product_category='', source_type='', trace=None):
+        """Return rep names grouped by work order/day, without loading MOD content."""
+        conditions, start_local, _ = self._appointment_scope(
             start_date=start_date, end_date=end_date, market_segment=market_segment,
             product_category=product_category, source_type=source_type,
             remove_canceled=False, remove_unconfirmed=False,
         )
         path = 'FSSK__FSK_Assigned_Service_Resource__r.Name'
-        names = set()
-        for row in self._appointment_rows(('Id', path), conditions, trace=trace):
+        groups = {}
+        fields = ('Id', 'FSSK__FSK_Work_Order__c', 'SchedStartTime', path)
+        for row in self._appointment_rows(fields, conditions, trace=trace):
             name = _nested(row, path).strip()
-            if name:
-                names.add(name)
-        return tuple(sorted(names, key=str.casefold))
+            if not name:
+                continue
+            work_order = str(row.get('FSSK__FSK_Work_Order__c') or '').strip()
+            scheduled = _sf_datetime(row.get('SchedStartTime'))
+            if not work_order or scheduled is None:
+                raise SalesforceAdapterError('Rep assignment is missing its work order or date.')
+            key = (work_order, scheduled.astimezone(start_local.tzinfo).date())
+            groups.setdefault(key, []).append(name)
+        return tuple(tuple(names) for names in groups.values())
 
     def mod_sheets(
         self,

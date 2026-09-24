@@ -104,7 +104,7 @@ def blueprint(service):
         response = jsonify(
             ok=True, key=snapshot.key, saved=snapshot.saved,
             field={'label': snapshot.field.label, 'path': snapshot.field.path,
-                   'values': list(snapshot.field.values)},
+                   'values': list(snapshot.field.values), 'totals': snapshot.totals},
             trace=list(snapshot.trace),
         )
         response.headers['Cache-Control'] = 'no-store'

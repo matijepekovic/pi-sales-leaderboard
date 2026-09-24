@@ -1,5 +1,7 @@
 """Saved names-only rep options are independent of live MOD generation."""
 import inspect
+from contextlib import contextmanager
+import sqlite3
 import json
 from pathlib import Path
 import shutil
@@ -10,7 +12,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from printer_app.mod_sheet_contract import ModSheetRecord
-from printer_app.mod_sheets.rep_repository import ModSheetRepRepository
+from printer_app.mod_sheets.rep_repository import ModSheetRepRepository, REP_NAMES_KEY, REP_TOTALS_KEY
 from printer_app.db import Database
 from printer_app.salesforce_sandbox.adapter import SalesforceCliAdapter
 from printer_app.salesforce_sandbox.service import SalesforceSandboxService
@@ -19,6 +21,7 @@ from test_salesforce_sandbox import _appointment
 RESOURCE = 'assigned_service_resource'
 MARKET = 'FSSK__FSK_Work_Order__r.Lead__r.Market__c'
 ASSIGNMENT = 'FSSK__FSK_Assigned_Service_Resource__r.Name'
+PROJECTION = 'SELECT Id, FSSK__FSK_Work_Order__c, SchedStartTime, ' + ASSIGNMENT
 DAY = '2026-09-19'
 SCOPE = dict(start_date=DAY, end_date=DAY, market_segment='Olympia')
 RUNTIME = Path(__file__).resolve().parents[1] / 'static/mod_sheets/runtime.js'
@@ -31,11 +34,23 @@ def appointment(index, name, **kwargs):
 
 class MemoryDb:
     def __init__(self):
-        self.values = {}
+        self.conn = sqlite3.connect(':memory:')
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute('CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)')
+
+    @contextmanager
+    def connect(self):
+        with self.conn:
+            yield self.conn
+
     def get(self, key):
-        return self.values.get(key)
+        row = self.conn.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
+        return json.loads(row['value']) if row else None
+
     def set(self, key, value):
-        self.values[key] = value
+        with self.connect() as conn:
+            conn.execute('INSERT INTO meta VALUES (?,?) '
+                         'ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key, json.dumps(value)))
 
 
 def source_pages(pages, repository=None):
@@ -73,7 +88,7 @@ def test_options_use_the_pdf_assignment_and_selected_dates_and_filters(market):
         assert "LeadSource = 'Canvass'" in query
         assert 'Status' not in query
         assert 'LastModifiedDate' not in query
-        assert query.split(' FROM ')[0] == 'SELECT Id, ' + ASSIGNMENT
+        assert query.split(' FROM ')[0] == PROJECTION
         assert ASSIGNMENT not in query.split(' WHERE ')[1]
         assert all(term not in query for term in ('ServiceResource WHERE', 'Service_Territory', 'GROUP BY'))
 
@@ -197,9 +212,9 @@ def test_replacement_adapter_names_and_records_have_separate_responsibilities():
     shared = ModSheetRecord('shared', assigned_service_resources=('Alex', 'Sam'))
     calls = []
     class Adapter:
-        def assigned_resource_names(self, **filters):
+        def rep_assignments(self, **filters):
             calls.append(('names', filters))
-            return ('Sam', 'Alex', 'Sam')
+            return (('Sam', 'Alex', 'Sam'), ('Alex',))
         def mod_sheets(self, **filters):
             calls.append(('records', filters))
             return (shared,)
@@ -209,6 +224,7 @@ def test_replacement_adapter_names_and_records_have_separate_responsibilities():
     assert calls == []
     assert service.refresh_reps(**SCOPE).field.values == ('Alex', 'Sam')
     assert service.field(RESOURCE).field.values == ('Alex', 'Sam')
+    assert service.field(RESOURCE).totals == {'Alex': 1.5, 'Sam': 0.5}
     assert [kind for kind, _ in calls] == ['names']
     assert service.records(**SCOPE, assigned_service_resource='Sam') == (shared,)
     assert service.records(**SCOPE, assigned_service_resource='Nobody') == ()
@@ -218,13 +234,14 @@ def test_replacement_adapter_names_and_records_have_separate_responsibilities():
 
 
 def test_names_only_read_handles_appointments_without_customer_or_status_fields():
-    rows = [{'Id': '08p000000000001AAA',
+    rows = [{'Id': '08p000000000001AAA', 'FSSK__FSK_Work_Order__c': 'work-order',
+             'SchedStartTime': '2026-09-19T17:30:00Z',
              'FSSK__FSK_Assigned_Service_Resource__r': {'Name': 'Saved Rep'}},
             {'Id': '08p000000000002AAA', 'FSSK__FSK_Assigned_Service_Resource__r': None}]
     service, queries = source_pages([rows, []])
     result = service.refresh_reps(**SCOPE)
     assert not result.error and result.field.values == ('Saved Rep',)
-    assert all(query.startswith('SELECT Id, ' + ASSIGNMENT + ' FROM ') for query in queries)
+    assert all(query.startswith(PROJECTION + ' FROM ') for query in queries)
     assert all('Status' not in query and 'LastModifiedDate' not in query for query in queries)
 
 
@@ -264,7 +281,7 @@ def test_names_persistence_remains_a_repository_not_source_or_frontend_storage()
     assert 'FSSK__' not in repository and 'salesforce' not in repository.lower()
     assert 'connect(' not in inspect.getsource(SalesforceSandboxService)
     assert 'localStorage' not in RUNTIME.read_text()
-    assert 'self.mod_sheets(' not in inspect.getsource(SalesforceCliAdapter.assigned_resource_names)
+    assert 'self.mod_sheets(' not in inspect.getsource(SalesforceCliAdapter.rep_assignments)
 
 
 def test_cached_get_never_queries_and_refresh_post_ignores_status_and_selected_rep():
@@ -283,6 +300,7 @@ def test_cached_get_never_queries_and_refresh_post_ignores_status_and_selected_r
         assignedServiceResource='Other'))
     assert response.status_code == 200 and response.json['saved']
     assert response.json['field']['values'] == ['Market Rep']
+    assert response.json['field']['totals'] == {'Market Rep': 1}
     assert "Market__c = 'King\\'s Market'" in queries[0]
     assert "LeadSource = 'Internet'" in queries[0]
     assert 'Status' not in queries[0] and 'LastModifiedDate' not in queries[0]
@@ -329,7 +347,7 @@ class Element extends EventTarget {
   appendChild(option) { this.options.push(option); }
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
-const reply=(values,saved=true)=>({ok:true,json:async()=>({ok:true,saved,field:{values}})});
+const reply=(values,saved=true,totals={})=>({ok:true,json:async()=>({ok:true,saved,field:{values,totals}})});
 const ids={};
 for (const id of ['modSourceStatus','modSourceUser','modSourceError','modSourceRetry','modSubmit',
     'modTestPrint','modSourceLog','modSourceClear','modSheetForm','modRefreshReps','modRepsStatus',
@@ -359,7 +377,7 @@ globalThis.fetch=async (input,options={})=>{
   }
   if(url.pathname==='/reps/refresh') return new Promise((resolve,reject)=>{
     assert.equal(options.method,'POST');
-    requests.push({params:Object.fromEntries(options.body),resolve:values=>resolve(reply(values)),reject});
+    requests.push({params:Object.fromEntries(options.body),resolve:(values,totals)=>resolve(reply(values,true,totals)),reject});
   });
   return reply(['All']);
 };
@@ -535,5 +553,132 @@ def test_saved_names_load_when_source_is_offline():
                             "return {ok:false,json:async()=>({ok:false,error:'offline'})}")
     script += "assert.equal(rep.value,'Shared Rep'); assert.equal(requests.length,0); assert.equal(ids.modRefreshReps.disabled,true); assert.equal(ids.modSubmit.disabled,false);"
     result = subprocess.run([node, '--input-type=module', '-', str(RUNTIME), 'settings'],
+                            input=script, text=True, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+
+def test_only_one_weighted_total_per_rep_and_refresh_does_not_accumulate():
+    rows = [appointment(i, 'Alex') for i in range(6)]
+    for i in range(4):
+        rows.extend([appointment(10 + i * 2, 'Alex', work_order_id=f'shared-{i}'),
+                     appointment(11 + i * 2, 'Sam', work_order_id=f'shared-{i}')])
+    service, _ = source_pages([rows, [], rows, []])
+    first = service.refresh_reps(**SCOPE)
+    assert first.field.values == ('Alex', 'Sam')
+    assert first.totals == {'Alex': 8, 'Sam': 2}
+    second = service.refresh_reps(**SCOPE)
+    assert second.totals == first.totals
+    assert service.field(RESOURCE).totals == first.totals
+
+
+def test_counter_deduplicates_same_work_order_day_across_pages_and_uses_local_day():
+    # Same lead has repeated assignment rows. The third name is not an extra lead.
+    service, _ = source_pages([
+        [appointment(1, 'Alex', work_order_id='shared', scheduled='2026-09-19T23:00:00Z')],
+        [appointment(2, 'Sam', work_order_id='shared', scheduled='2026-09-20T01:00:00Z'),
+         appointment(3, 'Alex', work_order_id='shared', scheduled='2026-09-20T01:00:00Z')],
+        [appointment(4, 'Alex', work_order_id='shared', scheduled='2026-09-20T17:00:00Z')], [],
+    ])
+    result = service.refresh_reps(**dict(SCOPE, end_date='2026-09-20'))
+    assert result.totals == {'Alex': 1.5, 'Sam': 0.5}
+
+
+def test_shared_credit_is_half_even_with_three_reps_and_blank_names_do_not_count():
+    service, _ = source_pages([[
+        appointment(1, 'Alex', work_order_id='shared'),
+        appointment(2, 'Sam', work_order_id='shared'),
+        appointment(3, 'Jo', work_order_id='shared'),
+        appointment(4, '', work_order_id='solo'),
+        appointment(5, 'Solo', work_order_id='solo'),
+        appointment(6, ' ', work_order_id='empty'),
+    ], []])
+    assert service.refresh_reps(**SCOPE).totals == {'Alex': 0.5, 'Jo': 0.5, 'Sam': 0.5, 'Solo': 1}
+
+
+def test_counter_treats_duplicate_casing_as_one_rep_and_keeps_whole_names():
+    service, _ = source_pages([[
+        appointment(1, "O'Neil; Alex", work_order_id='solo'),
+        appointment(2, " o'neil; alex ", work_order_id='solo'),
+    ], []])
+    result = service.refresh_reps(**SCOPE)
+    assert result.field.values == ("O'Neil; Alex",)
+    assert result.totals == {"O'Neil; Alex": 1}
+
+
+def test_totals_and_legacy_names_survive_restart_without_source_queries(tmp_path):
+    db = Database(tmp_path / 'printer.db')
+    # Prior releases saved only a list. Do not make up totals or force a source read.
+    db.set(REP_NAMES_KEY, ['Legacy Rep'])
+    repository = ModSheetRepRepository(db)
+    offline = SalesforceSandboxService(object(), rep_repository=repository)
+    assert offline.field(RESOURCE).field.values == ('Legacy Rep',)
+    assert offline.field(RESOURCE).totals == {}
+    repository.replace(('Alex', 'Sam'), {'Alex': 8.5, 'Sam': 1})
+    restarted = SalesforceSandboxService(object(), rep_repository=ModSheetRepRepository(Database(db.path)))
+    assert restarted.field(RESOURCE).totals == {'Alex': 8.5, 'Sam': 1}
+    assert db.get(REP_NAMES_KEY) == ['Alex', 'Sam']  # Existing data format unchanged.
+
+
+def test_failed_refresh_keeps_total_and_empty_success_clears_it():
+    repo = ModSheetRepRepository(MemoryDb())
+    repo.replace(('Old Rep',), {'Old Rep': 8.5})
+    service, _ = source_pages([[appointment(1, 'Partial')], OSError('failed'), []], repo)
+    assert service.refresh_reps(**SCOPE).error
+    saved = service.field(RESOURCE)
+    assert saved.field.values == ('Old Rep',) and saved.totals == {'Old Rep': 8.5}
+    empty = service.refresh_reps(**SCOPE)
+    assert empty.field.values == () and empty.totals == {}
+    assert service.field(RESOURCE).totals == {}
+
+
+def test_names_and_totals_replace_in_one_transaction():
+    db = MemoryDb()
+    repo = ModSheetRepRepository(db)
+    repo.replace(('Old Rep',), {'Old Rep': 2})
+    # A storage failure between the two writes must roll back the names as well.
+    db.conn.execute("CREATE TRIGGER fail_totals BEFORE UPDATE ON meta "
+                    "WHEN NEW.key='mod_sheet_rep_totals' "
+                    "BEGIN SELECT RAISE(ABORT, 'storage failed'); END")
+    with pytest.raises(sqlite3.IntegrityError, match='storage failed'):
+        repo.replace(('New Rep',), {'New Rep': 1})
+    assert repo.snapshot() == (('Old Rep',), {'Old Rep': 2})
+
+
+@pytest.mark.parametrize('missing', ['FSSK__FSK_Work_Order__c', 'SchedStartTime'])
+def test_incomplete_assignment_does_not_replace_saved_total(missing):
+    row = appointment(1, 'New Rep')
+    del row[missing]
+    repo = ModSheetRepRepository(MemoryDb())
+    repo.replace(('Old Rep',), {'Old Rep': 3.5})
+    service, _ = source_pages([[row]], repo)
+    assert service.refresh_reps(**SCOPE).error
+    assert service.field(RESOURCE).totals == {'Old Rep': 3.5}
+
+
+@pytest.mark.parametrize('mode', ['manual', 'settings'])
+def test_single_counter_labels_keep_plain_rep_values_and_refresh_behavior(mode):
+    script = BROWSER.replace("reply(['Olympia Rep','Shared Rep'])",
+                             "reply(['Olympia Rep','Shared Rep'],true,{'Olympia Rep':8.5,'Shared Rep':1})")
+    script += r'''
+assert.deepEqual(rep.options.map(o=>o.textContent),['All','Olympia Rep — 8.5','Shared Rep — 1']);
+assert.equal(rep.value,'Shared Rep');
+assert.equal(requests.length,0);
+change('Seattle'); await tick();
+assert.equal(requests.length,0,'Do not auto-query just to count.');
+assert.equal(rep.value,'Shared Rep');
+refresh(); await tick(); requests[0].reject(new Error('failed')); await tick();
+assert.equal(rep.options[2].textContent,'Shared Rep — 1');
+refresh(); await tick(); requests[1].resolve(['Shared Rep'],{'Shared Rep':2.5}); await tick();
+assert.deepEqual(rep.options.map(o=>o.textContent),['All','Shared Rep — 2.5']);
+assert.equal(rep.value,'Shared Rep','Counts must never become part of the report filter value.');
+assert.equal(submit(),true);
+assert.match(ids.modSourceLog.textContent,/"assignedServiceResource":"Shared Rep"/);
+assert.doesNotMatch(ids.modSourceLog.textContent,/"assignedServiceResource":"Shared Rep —/);
+'''
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node is required for MOD runtime tests.')
+    result = subprocess.run([node, '--input-type=module', '-', str(RUNTIME), mode],
                             input=script, text=True, capture_output=True, timeout=15)
     assert result.returncode == 0, result.stdout + result.stderr

@@ -64,7 +64,7 @@
     select.disabled = true;
   }
 
-  function setOptions(item, values, preserveSelection = false) {
+  function setOptions(item, values, preserveSelection = false, totals = {}) {
     const selected = currentSelection(item);
     const select = item.select;
     select.replaceChildren();
@@ -75,7 +75,8 @@
     for (const value of values || []) {
       const option = document.createElement('option');
       option.value = value;
-      option.textContent = value;
+      option.textContent = item === resourceField && Number.isFinite(totals[value])
+        ? value + ' — ' + totals[value] : value;
       select.appendChild(option);
     }
     let choices = Array.from(select.options).map(option => option.value);
@@ -155,7 +156,7 @@
     try {
       const payload = await requestJson(url, 100000, options);
       const selected = currentSelection(resourceField);
-      setOptions(resourceField, payload.field.values, !refresh && mode === 'settings');
+      setOptions(resourceField, payload.field.values, !refresh && mode === 'settings', payload.field.totals);
       resourceReady = true;
       repsStatus.textContent = payload.saved
         ? (refresh ? 'Rep list replaced.' : 'Using saved reps.')
