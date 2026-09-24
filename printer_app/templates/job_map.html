@@ -11,14 +11,6 @@
   <div><p class="eyebrow">JOBS</p><h1>Map</h1></div>
   <p id="jobMapStatus" class="muted" role="status" aria-live="polite">Loading jobs…</p>
 </div>
-<div class="job-map-filters" aria-label="Map filters">
-  <label>Market
-    <select id="jobMapMarket"><option value="">All markets</option></select>
-  </label>
-  <label>Rep
-    <select id="jobMapRep"><option value="">All reps</option></select>
-  </label>
-</div>
 <p id="jobMapError" class="notice error" hidden></p>
 <div id="jobMap" class="job-map" data-jobs-url="{{ url_for('job_map.jobs') }}" data-mod-sheet-url="{{ url_for('job_map.mod_sheet') }}" aria-label="Job map"></div>
 {% endblock %}
