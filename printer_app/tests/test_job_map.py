@@ -259,3 +259,4 @@ def test_job_map_stays_vendor_neutral_and_uses_openfreemap_with_client_filters()
     app = (root / 'app.py').read_text()
     assert 'https://tiles.openfreemap.org' in app
     assert 'https://tile.openstreetmap.org' not in app
+    assert "worker-src 'self' blob:" in app
