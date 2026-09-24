@@ -1,4 +1,4 @@
-"""Job map source, workflow, web, and architecture regressions."""
+"""Job map source, filters, workflow, web, and architecture regressions."""
 from __future__ import annotations
 
 import json
@@ -12,75 +12,174 @@ from printer_app.job_map.service import JobMapService
 from printer_app.salesforce_sandbox.adapter import SalesforceCliAdapter
 
 
+WORK_ORDER_OBJECT = 'Field_Work_Order__c'
+LEAD_FIELD = 'Linked_Lead__c'
+WORK_ONE = 'a01000000000000001'
+WORK_TWO = 'a01000000000000002'
+LEAD_ONE = '00Q000000000001AAA'
+LEAD_TWO = '00Q000000000002AAA'
+
+
 def _result(payload):
     return SimpleNamespace(stdout=json.dumps(payload), stderr='', returncode=0)
 
 
-def _row(ident, *, work='0WO000000000001AAA', number='02257311', lead='00Q000000000001AAA',
-         name='Customer One', status='Working', lat='47.25', lon='-122.45',
-         scheduled='2026-09-24T17:00:00.000+0000', created='2026-09-24T16:00:00.000+0000',
-         appointment_status='Scheduled'):
+def _field(name, kind='string', **extra):
+    return {'name': name, 'type': kind, 'filterable': True, 'sortable': True, **extra}
+
+
+def _metadata(name):
+    fields = [_field('Id', 'id')]
+    if name == 'ServiceAppointment':
+        fields.append(_field('FSSK__FSK_Work_Order__c', 'reference', referenceTo=[WORK_ORDER_OBJECT]))
+    elif name == WORK_ORDER_OBJECT:
+        fields.extend([
+            _field('WorkOrderNumber'),
+            _field(LEAD_FIELD, 'reference', referenceTo=['Lead'], relationshipName='Lead__r'),
+        ])
+    else:
+        raise AssertionError(name)
+    return {'name': name, 'queryable': True, 'fields': fields}
+
+
+def _work_order(ident, number, lead_id, name, status, market, lat, lon):
     return {
         'Id': ident,
-        'StatusCategory': appointment_status,
-        'SchedStartTime': scheduled,
-        'CreatedDate': created,
-        'FSSK__FSK_Work_Order__c': work,
-        'FSSK__FSK_Work_Order__r': {
-            'WorkOrderNumber': number,
-            'Lead__r': {
-                'Id': lead,
-                'Name': name,
-                'Status': status,
-                'Latitude': lat,
-                'Longitude': lon,
-            },
+        'WorkOrderNumber': number,
+        LEAD_FIELD: lead_id,
+        'Lead__r': {
+            'Id': lead_id,
+            'Name': name,
+            'Status': status,
+            'Market__c': market,
+            'Latitude': lat,
+            'Longitude': lon,
         },
     }
 
 
-def test_map_source_reads_lead_coordinates_and_keeps_one_active_job_per_work_order():
-    calls = []
-    rows = [
-        _row('08p000000000001AAA', scheduled='2026-09-23T17:00:00.000+0000'),
-        _row('08p000000000002AAA', name='Canceled duplicate', scheduled='2026-09-25T17:00:00.000+0000',
-             appointment_status='Canceled'),
-        _row('08p000000000003AAA', work='0WO000000000002AAA', number='02257312',
-             lead='00Q000000000002AAA', name='No Coordinates', lat='', lon=''),
-    ]
+def _assignment(ident, work_order, resource, status='Scheduled'):
+    return {
+        'Id': ident,
+        'StatusCategory': status,
+        'FSSK__FSK_Work_Order__c': work_order,
+        'FSSK__FSK_Assigned_Service_Resource__r': {'Name': resource} if resource else None,
+    }
 
-    def runner(command, **kwargs):
-        calls.append(command)
+
+class MapRunner:
+    def __init__(self):
+        self.calls = []
+        self.work_orders = [
+            _work_order(WORK_ONE, '02257311', LEAD_ONE, 'Customer One', 'Working',
+                        'Olympia', '47.25', '-122.45'),
+            _work_order(WORK_TWO, '02257312', LEAD_TWO, 'Customer Two', 'Scheduled Confirmed',
+                        'Seattle', '47.60', '-122.33'),
+        ]
+        self.assignments = [
+            _assignment('08p000000000001AAA', WORK_ONE, 'Alex'),
+            _assignment('08p000000000002AAA', WORK_ONE, 'Sam'),
+            _assignment('08p000000000003AAA', WORK_ONE, 'Former Rep', 'Canceled'),
+            _assignment('08p000000000004AAA', WORK_TWO, 'Jordan'),
+        ]
+
+    def __call__(self, command, **kwargs):
+        self.calls.append(command)
         if command[1:3] == ['org', 'display']:
             return _result({'status': 0, 'result': {
-                'username': 'rep@example.test', 'alias': 'work',
+                'username': 'rep@example.test',
+                'alias': 'work',
                 'instanceUrl': 'https://example.my.salesforce.com',
-                'id': '00D000000000123', 'connectedStatus': 'Connected',
+                'id': '00D000000000123',
+                'connectedStatus': 'Connected',
             }})
+        if command[1:3] == ['sobject', 'describe']:
+            return _result({'status': 0, 'result': _metadata(command[command.index('--sobject') + 1])})
+
         query = command[command.index('--query') + 1]
-        assert 'FROM ServiceAppointment' in query
-        page = [] if ' AND Id > ' in query else rows
-        return _result({'status': 0, 'result': {'records': page}})
+        if f' FROM {WORK_ORDER_OBJECT} ' in query:
+            rows = [] if ' AND Id > ' in query else self.work_orders
+        elif ' FROM ServiceAppointment ' in query:
+            assert 'FSSK__FSK_Work_Order__c IN (' in query
+            rows = [] if ' AND Id > ' in query else self.assignments
+        else:
+            raise AssertionError(query)
+        return _result({'status': 0, 'result': {
+            'records': rows,
+            'done': True,
+            'totalSize': len(rows),
+        }})
 
-    adapter = SalesforceCliAdapter(runner=runner, executable='/fake/sf')
-    jobs = adapter.map_jobs()
+    @property
+    def queries(self):
+        return [call[call.index('--query') + 1] for call in self.calls if '--query' in call]
 
-    assert len(jobs) == 1
-    assert jobs[0] == MapJob(
-        source_id='0WO000000000001AAA', work_order_number='02257311',
-        lead_name='Customer One', lead_status='Working', latitude=47.25, longitude=-122.45,
-        source_record_url='https://example.my.salesforce.com/lightning/r/Lead/00Q000000000001AAA/view',
+
+def test_map_source_queries_work_orders_directly_and_only_targeted_rep_assignments():
+    runner = MapRunner()
+    jobs = SalesforceCliAdapter(runner=runner, executable='/fake/sf').map_jobs()
+
+    assert jobs == (
+        MapJob(
+            source_id=WORK_ONE,
+            work_order_number='02257311',
+            lead_name='Customer One',
+            lead_status='Working',
+            market_segment='Olympia',
+            assigned_service_resources=('Alex', 'Sam'),
+            latitude=47.25,
+            longitude=-122.45,
+            source_record_url='https://example.my.salesforce.com/lightning/r/Lead/'
+                              + LEAD_ONE + '/view',
+        ),
+        MapJob(
+            source_id=WORK_TWO,
+            work_order_number='02257312',
+            lead_name='Customer Two',
+            lead_status='Scheduled Confirmed',
+            market_segment='Seattle',
+            assigned_service_resources=('Jordan',),
+            latitude=47.60,
+            longitude=-122.33,
+            source_record_url='https://example.my.salesforce.com/lightning/r/Lead/'
+                              + LEAD_TWO + '/view',
+        ),
     )
-    query = next(call[call.index('--query') + 1] for call in calls if call[1:3] == ['data', 'query'])
-    assert 'Lead__r.Latitude' in query and 'Lead__r.Longitude' in query
-    assert "WorkType.Name LIKE '%Sales%'" in query
-    assert 'Do Not Call' not in query and 'Scheduled Confirmed' not in query
+
+    work_query = next(query for query in runner.queries if f' FROM {WORK_ORDER_OBJECT} ' in query)
+    assert 'Lead__r.Latitude' in work_query and 'Lead__r.Longitude' in work_query
+    assert 'Lead__r.Market__c' in work_query
+    assert "WorkType.Name LIKE '%Sales%'" in work_query
+    assert "Lead__r.Status NOT IN ('New', 'Scheduled', 'Do Not Call')" in work_query
+
+    assignment_query = next(query for query in runner.queries if ' FROM ServiceAppointment ' in query)
+    assert 'FSSK__FSK_Work_Order__c IN (' in assignment_query
+    assert 'Lead__r.Latitude' not in assignment_query
+    assert 'WorkOrderNumber' not in assignment_query
+    assert 'Former Rep' not in jobs[0].assigned_service_resources
+
+
+def test_map_source_skips_work_orders_without_coordinates():
+    runner = MapRunner()
+    runner.work_orders.append(
+        _work_order('a01000000000000003', '02257313', '00Q000000000003AAA',
+                    'No Coordinates', 'Working', 'Olympia', '', '')
+    )
+    jobs = SalesforceCliAdapter(runner=runner, executable='/fake/sf').map_jobs()
+    assert [job.work_order_number for job in jobs] == ['02257311', '02257312']
 
 
 def test_map_service_excludes_only_requested_lead_statuses():
     jobs = tuple(
-        MapJob(str(i), f'WO{i}', f'Lead {i}', status, 47 + i / 100, -122, f'https://example/{i}')
-        for i, status in enumerate(('New', 'Scheduled', 'Do Not Call', 'Scheduled Confirmed', 'Working'))
+        MapJob(
+            source_id=str(i), work_order_number=f'WO{i}', lead_name=f'Lead {i}',
+            lead_status=status, market_segment='Olympia',
+            assigned_service_resources=('Alex',), latitude=47 + i / 100, longitude=-122,
+            source_record_url=f'https://example/{i}',
+        )
+        for i, status in enumerate(
+            ('New', 'Scheduled', 'Do Not Call', 'Scheduled Confirmed', 'Working')
+        )
     )
 
     class Source:
@@ -105,7 +204,7 @@ def test_map_service_opens_one_current_mod_sheet():
     assert seen == [(record,)]
 
 
-def test_map_web_returns_jobs_and_mod_pdf():
+def test_map_web_returns_filter_tags_and_mod_pdf():
     flask = pytest.importorskip('flask')
     from printer_app.job_map.web import blueprint
 
@@ -114,8 +213,13 @@ def test_map_web_returns_jobs_and_mod_pdf():
 
     class Service:
         def jobs(self):
-            return (MapJob('wo', '02257311', 'Customer', 'Working', 47.25, -122.45,
-                           'https://example.my.salesforce.com/lightning/r/Lead/00Q/view'),)
+            return (MapJob(
+                source_id='wo', work_order_number='02257311', lead_name='Customer',
+                lead_status='Working', market_segment='Olympia',
+                assigned_service_resources=('Alex', 'Sam'), latitude=47.25, longitude=-122.45,
+                source_record_url='https://example.my.salesforce.com/lightning/r/Lead/00Q/view',
+            ),)
+
         def mod_sheet(self, number):
             assert number == '02257311'
             return b'%PDF-map'
@@ -127,22 +231,31 @@ def test_map_web_returns_jobs_and_mod_pdf():
 
     payload = client.get('/map/api/jobs').get_json()
     assert payload['ok'] is True
-    assert payload['jobs'][0]['work_order_number'] == '02257311'
+    assert payload['jobs'][0]['market_segment'] == 'Olympia'
+    assert payload['jobs'][0]['assigned_service_resources'] == ['Alex', 'Sam']
     pdf = client.get('/map/mod-sheet?work_order=02257311')
     assert pdf.status_code == 200 and pdf.mimetype == 'application/pdf'
     assert pdf.data == b'%PDF-map'
 
 
-def test_job_map_python_stays_vendor_neutral_and_frontend_uses_free_osm_tiles():
+def test_job_map_stays_vendor_neutral_and_uses_openfreemap_with_client_filters():
     root = Path(__file__).resolve().parents[1]
     for path in (root / 'job_map').glob('*.py'):
         assert 'salesforce' not in path.read_text().casefold()
+
     template = (root / 'templates/job_map.html').read_text()
-    assert 'leaflet@1.9.4' in template
+    assert 'maplibre-gl@5' in template
+    assert 'id="jobMapMarket"' in template
+    assert 'id="jobMapRep"' in template
+
     runtime = (root / 'static/job_map/map.js').read_text()
-    assert 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' in runtime
+    assert "style: 'https://tiles.openfreemap.org/styles/liberty'" in runtime
+    assert 'tile.openstreetmap.org' not in runtime
+    assert 'market_segment' in runtime
+    assert 'assigned_service_resources' in runtime
     assert "action('MOD Sheet'" in runtime
     assert "action('Open in Salesforce'" in runtime
+
     app = (root / 'app.py').read_text()
-    assert 'https://tile.openstreetmap.org' in app
-    assert 'https://unpkg.com' in app
+    assert 'https://tiles.openfreemap.org' in app
+    assert 'https://tile.openstreetmap.org' not in app
