@@ -12,6 +12,8 @@ class MapJob:
     work_order_number: str
     lead_name: str
     lead_status: str
+    market_segment: str
+    assigned_service_resources: tuple[str, ...]
     latitude: float
     longitude: float
     source_record_url: str
