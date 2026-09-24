@@ -226,7 +226,9 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         response.headers['Referrer-Policy'] = 'same-origin'
         response.headers.setdefault('Content-Security-Policy',
             "default-src 'self'; script-src 'self' https://unpkg.com; "
-            "style-src 'self' https://unpkg.com; img-src 'self' data: https://unpkg.com https://tile.openstreetmap.org; "
+            "style-src 'self' https://unpkg.com; "
+            "img-src 'self' data: blob: https://unpkg.com https://tiles.openfreemap.org; "
+            "connect-src 'self' https://tiles.openfreemap.org; worker-src blob:; "
             "frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'")
         return response
 
