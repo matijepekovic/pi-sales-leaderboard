@@ -467,11 +467,11 @@ class SalesforceCliAdapter:
         return tuple(normalized)
 
     def map_jobs(self):
-        """Return mapped work orders directly, without scanning appointment history."""
+        """Return mapped work orders directly, plus only the rep tags needed for filtering."""
         object_name, lead_field = self._lead_status_fields()
         fields = (
             'Id', 'WorkOrderNumber',
-            'Lead__r.Id', 'Lead__r.Name', 'Lead__r.Status',
+            'Lead__r.Id', 'Lead__r.Name', 'Lead__r.Status', 'Lead__r.Market__c',
             'Lead__r.Latitude', 'Lead__r.Longitude',
         )
         condition = (
@@ -497,8 +497,32 @@ class SalesforceCliAdapter:
                 source_id, number, lead_id,
                 _nested(row, 'Lead__r.Name').strip(),
                 _nested(row, 'Lead__r.Status').strip(),
+                _nested(row, 'Lead__r.Market__c').strip(),
                 latitude, longitude,
             ))
+
+        resources = {source_id: set() for source_id, *_ in resolved}
+        source_ids = tuple(resources)
+        resource_path = 'FSSK__FSK_Assigned_Service_Resource__r.Name'
+        for offset in range(0, len(source_ids), 100):
+            batch = source_ids[offset:offset + 100]
+            if not batch:
+                continue
+            conditions = [
+                'FSSK__FSK_Work_Order__c IN ('
+                + ', '.join(_soql_literal(value) for value in batch) + ')'
+            ]
+            for row in self._appointment_rows(
+                    ('Id', 'StatusCategory', 'FSSK__FSK_Work_Order__c', resource_path),
+                    conditions):
+                work_order_id = str(row.get('FSSK__FSK_Work_Order__c') or '').strip()
+                if work_order_id not in resources:
+                    raise SalesforceAdapterError('Salesforce returned an unexpected map assignment.')
+                if str(row.get('StatusCategory') or '').strip().casefold() == 'canceled':
+                    continue
+                name = _nested(row, resource_path).strip()
+                if name:
+                    resources[work_order_id].add(name)
 
         if resolved and not self._instance_url:
             self.status()
@@ -507,11 +531,13 @@ class SalesforceCliAdapter:
             work_order_number=number,
             lead_name=name,
             lead_status=lead_status,
+            market_segment=market,
+            assigned_service_resources=tuple(sorted(resources[source_id], key=str.casefold)),
             latitude=latitude,
             longitude=longitude,
             source_record_url=(self._instance_url + '/lightning/r/Lead/' + lead_id + '/view')
                 if self._instance_url else '',
-        ) for source_id, number, lead_id, name, lead_status, latitude, longitude in resolved)
+        ) for source_id, number, lead_id, name, lead_status, market, latitude, longitude in resolved)
 
     def explorer_objects(self):
         """List only names; opening the explorer never describes or queries objects."""
