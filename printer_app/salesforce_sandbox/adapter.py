@@ -510,8 +510,9 @@ class SalesforceCliAdapter:
             if not batch:
                 continue
             conditions = [
+                "WorkType.Name LIKE '%Sales%'",
                 'FSSK__FSK_Work_Order__c IN ('
-                + ', '.join(_soql_literal(value) for value in batch) + ')'
+                + ', '.join(_soql_literal(value) for value in batch) + ')',
             ]
             for row in self._appointment_rows(
                     ('Id', 'StatusCategory', 'FSSK__FSK_Work_Order__c', resource_path),
