@@ -467,65 +467,51 @@ class SalesforceCliAdapter:
         return tuple(normalized)
 
     def map_jobs(self):
-        """Return one normalized mapped job per work order using Lead coordinates."""
+        """Return mapped work orders directly, without scanning appointment history."""
+        object_name, lead_field = self._lead_status_fields()
         fields = (
-            'Id', 'StatusCategory', 'SchedStartTime', 'CreatedDate',
-            'FSSK__FSK_Work_Order__c',
-            'FSSK__FSK_Work_Order__r.WorkOrderNumber',
-            'FSSK__FSK_Work_Order__r.Lead__r.Id',
-            'FSSK__FSK_Work_Order__r.Lead__r.Name',
-            'FSSK__FSK_Work_Order__r.Lead__r.Status',
-            'FSSK__FSK_Work_Order__r.Lead__r.Latitude',
-            'FSSK__FSK_Work_Order__r.Lead__r.Longitude',
+            'Id', 'WorkOrderNumber',
+            'Lead__r.Id', 'Lead__r.Name', 'Lead__r.Status',
+            'Lead__r.Latitude', 'Lead__r.Longitude',
         )
-        grouped = {}
-        conditions = ["WorkType.Name LIKE '%Sales%'"]
-        for item in self._appointment_rows(fields, conditions):
-            work_order_id = str(item.get('FSSK__FSK_Work_Order__c') or '').strip()
-            work_order_number = _nested(item, 'FSSK__FSK_Work_Order__r.WorkOrderNumber').strip()
-            lead_id = _nested(item, 'FSSK__FSK_Work_Order__r.Lead__r.Id').strip()
-            scheduled = _sf_datetime(item.get('SchedStartTime'))
-            if not work_order_id or not work_order_number or not lead_id or scheduled is None:
+        condition = (
+            f"{lead_field} != null AND WorkOrderNumber != null "
+            "AND Lead__r.Status NOT IN ('New', 'Scheduled', 'Do Not Call')"
+        )
+        resolved = []
+        for row in self._lead_status_query(fields, object_name, condition):
+            number = str(row.get('WorkOrderNumber') or '').strip()
+            lead_id = _nested(row, 'Lead__r.Id').strip()
+            if not number or not lead_id:
                 continue
             try:
+                source_id = explorer.record_id(row.get('Id'))
                 lead_id = explorer.record_id(lead_id)
-                latitude = float(_nested(item, 'FSSK__FSK_Work_Order__r.Lead__r.Latitude'))
-                longitude = float(_nested(item, 'FSSK__FSK_Work_Order__r.Lead__r.Longitude'))
+                latitude = float(_nested(row, 'Lead__r.Latitude'))
+                longitude = float(_nested(row, 'Lead__r.Longitude'))
             except (ValueError, TypeError):
                 continue
             if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
                 continue
-            canceled = str(item.get('StatusCategory') or '').strip().casefold() == 'canceled'
-            created = _sf_datetime(item.get('CreatedDate')) or datetime.min.replace(tzinfo=timezone.utc)
-            current = grouped.get(work_order_id)
-            candidate = dict(
-                item=item, work_order_number=work_order_number, lead_id=lead_id,
-                latitude=latitude, longitude=longitude, scheduled=scheduled,
-                created=created, canceled=canceled,
-            )
-            if current is None:
-                grouped[work_order_id] = candidate
-                continue
-            if current['canceled'] and not canceled:
-                grouped[work_order_id] = candidate
-                continue
-            if canceled and not current['canceled']:
-                continue
-            if (scheduled, created) > (current['scheduled'], current['created']):
-                grouped[work_order_id] = candidate
+            resolved.append((
+                source_id, number, lead_id,
+                _nested(row, 'Lead__r.Name').strip(),
+                _nested(row, 'Lead__r.Status').strip(),
+                latitude, longitude,
+            ))
 
-        if grouped and not self._instance_url:
+        if resolved and not self._instance_url:
             self.status()
         return tuple(MapJob(
-            source_id=work_order_id,
-            work_order_number=value['work_order_number'],
-            lead_name=_nested(value['item'], 'FSSK__FSK_Work_Order__r.Lead__r.Name').strip(),
-            lead_status=_nested(value['item'], 'FSSK__FSK_Work_Order__r.Lead__r.Status').strip(),
-            latitude=value['latitude'],
-            longitude=value['longitude'],
-            source_record_url=(self._instance_url + '/lightning/r/Lead/' + value['lead_id'] + '/view')
+            source_id=source_id,
+            work_order_number=number,
+            lead_name=name,
+            lead_status=lead_status,
+            latitude=latitude,
+            longitude=longitude,
+            source_record_url=(self._instance_url + '/lightning/r/Lead/' + lead_id + '/view')
                 if self._instance_url else '',
-        ) for work_order_id, value in grouped.items())
+        ) for source_id, number, lead_id, name, lead_status, latitude, longitude in resolved)
 
     def explorer_objects(self):
         """List only names; opening the explorer never describes or queries objects."""
