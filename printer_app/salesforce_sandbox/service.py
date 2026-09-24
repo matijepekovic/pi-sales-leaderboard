@@ -6,6 +6,7 @@ from dataclasses import dataclass, field as dataclass_field
 from datetime import date
 from threading import Lock
 
+from ..job_map.contract import JobMapSourceError
 from ..mod_sheet_contract import ModSheetSourceError, NO_MOD_SHEET_RECORDS, SourceStatus
 from .adapter import PortalField, SalesforceAdapterError
 
@@ -179,6 +180,13 @@ class SalesforceSandboxService:
             return tuple(self.adapter.lead_statuses(work_order_numbers))
         except SalesforceAdapterError as exc:
             raise ModSheetSourceError(str(exc)) from exc
+
+    def map_jobs(self):
+        """Return normalized map jobs without exposing Salesforce structures downstream."""
+        try:
+            return tuple(self.adapter.map_jobs())
+        except SalesforceAdapterError as exc:
+            raise JobMapSourceError(str(exc)) from exc
 
     def work_orders(self, work_order_numbers):
         """Resolve complete normalized appointment data directly by work-order number."""
