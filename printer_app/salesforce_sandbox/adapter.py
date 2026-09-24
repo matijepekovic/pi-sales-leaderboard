@@ -467,26 +467,22 @@ class SalesforceCliAdapter:
         return tuple(normalized)
 
     def map_jobs(self):
-        """Return mapped work orders directly, plus only the rep tags needed for filtering."""
+        """Return mapped work orders directly, without scanning appointment history."""
         object_name, lead_field = self._lead_status_fields()
         fields = (
             'Id', 'WorkOrderNumber',
-            'Lead__r.Id', 'Lead__r.Name', 'Lead__r.Status', 'Lead__r.Market__c',
+            'Lead__r.Id', 'Lead__r.Name', 'Lead__r.Status',
             'Lead__r.Latitude', 'Lead__r.Longitude',
         )
-        condition = (
-            f"{lead_field} != null AND WorkOrderNumber != null "
-            "AND WorkType.Name LIKE '%Sales%' "
-            "AND Lead__r.Status NOT IN ('New', 'Scheduled', 'Do Not Call')"
-        )
-        resolved = []
-        for row in self._lead_status_query(fields, object_name, condition):
-            number = str(row.get('WorkOrderNumber') or '').strip()
+        jobs = []
+        for row in self._lead_status_query(fields, object_name, f'{lead_field} != null'):
+            work_order_id = str(row.get('Id') or '').strip()
+            work_order_number = str(row.get('WorkOrderNumber') or '').strip()
             lead_id = _nested(row, 'Lead__r.Id').strip()
-            if not number or not lead_id:
+            if not work_order_id or not work_order_number or not lead_id:
                 continue
             try:
-                source_id = explorer.record_id(row.get('Id'))
+                work_order_id = explorer.record_id(work_order_id)
                 lead_id = explorer.record_id(lead_id)
                 latitude = float(_nested(row, 'Lead__r.Latitude'))
                 longitude = float(_nested(row, 'Lead__r.Longitude'))
@@ -494,52 +490,20 @@ class SalesforceCliAdapter:
                 continue
             if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
                 continue
-            resolved.append((
-                source_id, number, lead_id,
-                _nested(row, 'Lead__r.Name').strip(),
-                _nested(row, 'Lead__r.Status').strip(),
-                _nested(row, 'Lead__r.Market__c').strip(),
-                latitude, longitude,
-            ))
+            jobs.append((work_order_id, work_order_number, lead_id, row, latitude, longitude))
 
-        resources = {source_id: set() for source_id, *_ in resolved}
-        source_ids = tuple(resources)
-        resource_path = 'FSSK__FSK_Assigned_Service_Resource__r.Name'
-        for offset in range(0, len(source_ids), 100):
-            batch = source_ids[offset:offset + 100]
-            if not batch:
-                continue
-            conditions = [
-                "WorkType.Name LIKE '%Sales%'",
-                'FSSK__FSK_Work_Order__c IN ('
-                + ', '.join(_soql_literal(value) for value in batch) + ')',
-            ]
-            for row in self._appointment_rows(
-                    ('Id', 'StatusCategory', 'FSSK__FSK_Work_Order__c', resource_path),
-                    conditions):
-                work_order_id = str(row.get('FSSK__FSK_Work_Order__c') or '').strip()
-                if work_order_id not in resources:
-                    raise SalesforceAdapterError('Salesforce returned an unexpected map assignment.')
-                if str(row.get('StatusCategory') or '').strip().casefold() == 'canceled':
-                    continue
-                name = _nested(row, resource_path).strip()
-                if name:
-                    resources[work_order_id].add(name)
-
-        if resolved and not self._instance_url:
+        if jobs and not self._instance_url:
             self.status()
         return tuple(MapJob(
-            source_id=source_id,
-            work_order_number=number,
-            lead_name=name,
-            lead_status=lead_status,
-            market_segment=market,
-            assigned_service_resources=tuple(sorted(resources[source_id], key=str.casefold)),
+            source_id=work_order_id,
+            work_order_number=work_order_number,
+            lead_name=_nested(row, 'Lead__r.Name').strip(),
+            lead_status=_nested(row, 'Lead__r.Status').strip(),
             latitude=latitude,
             longitude=longitude,
             source_record_url=(self._instance_url + '/lightning/r/Lead/' + lead_id + '/view')
                 if self._instance_url else '',
-        ) for source_id, number, lead_id, name, lead_status, market, latitude, longitude in resolved)
+        ) for work_order_id, work_order_number, lead_id, row, latitude, longitude in jobs)
 
     def explorer_objects(self):
         """List only names; opening the explorer never describes or queries objects."""
