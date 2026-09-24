@@ -18,6 +18,7 @@ from threading import Lock
 from time import monotonic
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from ..job_map.contract import MapJob
 from ..mod_sheet_contract import ModSheetRecord, SourceStatus, WorkOrderLeadStatus, WorkOrderReference
 from . import explorer
 
@@ -153,6 +154,7 @@ class SalesforceCliAdapter:
             raise ValueError('Salesforce target org alias is required.')
         self._portal_fields_cache = {}
         self._username = ''
+        self._instance_url = ''
         self._timezone = None
         self._explorer_cache = OrderedDict()
         self._explorer_cache_lock = Lock()
@@ -464,6 +466,67 @@ class SalesforceCliAdapter:
             ))
         return tuple(normalized)
 
+    def map_jobs(self):
+        """Return one normalized mapped job per work order using Lead coordinates."""
+        fields = (
+            'Id', 'StatusCategory', 'SchedStartTime', 'CreatedDate',
+            'FSSK__FSK_Work_Order__c',
+            'FSSK__FSK_Work_Order__r.WorkOrderNumber',
+            'FSSK__FSK_Work_Order__r.Lead__r.Id',
+            'FSSK__FSK_Work_Order__r.Lead__r.Name',
+            'FSSK__FSK_Work_Order__r.Lead__r.Status',
+            'FSSK__FSK_Work_Order__r.Lead__r.Latitude',
+            'FSSK__FSK_Work_Order__r.Lead__r.Longitude',
+        )
+        grouped = {}
+        conditions = ["WorkType.Name LIKE '%Sales%'"]
+        for item in self._appointment_rows(fields, conditions):
+            work_order_id = str(item.get('FSSK__FSK_Work_Order__c') or '').strip()
+            work_order_number = _nested(item, 'FSSK__FSK_Work_Order__r.WorkOrderNumber').strip()
+            lead_id = _nested(item, 'FSSK__FSK_Work_Order__r.Lead__r.Id').strip()
+            scheduled = _sf_datetime(item.get('SchedStartTime'))
+            if not work_order_id or not work_order_number or not lead_id or scheduled is None:
+                continue
+            try:
+                lead_id = explorer.record_id(lead_id)
+                latitude = float(_nested(item, 'FSSK__FSK_Work_Order__r.Lead__r.Latitude'))
+                longitude = float(_nested(item, 'FSSK__FSK_Work_Order__r.Lead__r.Longitude'))
+            except (ValueError, TypeError):
+                continue
+            if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+                continue
+            canceled = str(item.get('StatusCategory') or '').strip().casefold() == 'canceled'
+            created = _sf_datetime(item.get('CreatedDate')) or datetime.min.replace(tzinfo=timezone.utc)
+            current = grouped.get(work_order_id)
+            candidate = dict(
+                item=item, work_order_number=work_order_number, lead_id=lead_id,
+                latitude=latitude, longitude=longitude, scheduled=scheduled,
+                created=created, canceled=canceled,
+            )
+            if current is None:
+                grouped[work_order_id] = candidate
+                continue
+            if current['canceled'] and not canceled:
+                grouped[work_order_id] = candidate
+                continue
+            if canceled and not current['canceled']:
+                continue
+            if (scheduled, created) > (current['scheduled'], current['created']):
+                grouped[work_order_id] = candidate
+
+        if grouped and not self._instance_url:
+            self.status()
+        return tuple(MapJob(
+            source_id=work_order_id,
+            work_order_number=value['work_order_number'],
+            lead_name=_nested(value['item'], 'FSSK__FSK_Work_Order__r.Lead__r.Name').strip(),
+            lead_status=_nested(value['item'], 'FSSK__FSK_Work_Order__r.Lead__r.Status').strip(),
+            latitude=value['latitude'],
+            longitude=value['longitude'],
+            source_record_url=(self._instance_url + '/lightning/r/Lead/' + value['lead_id'] + '/view')
+                if self._instance_url else '',
+        ) for work_order_id, value in grouped.items())
+
     def explorer_objects(self):
         """List only names; opening the explorer never describes or queries objects."""
         result = self._run(['sobject', 'list', '--sobject', 'all', *self._target_args()])
@@ -585,6 +648,7 @@ class SalesforceCliAdapter:
         instance = str(result.get('instanceUrl') or '')
         org_id = str(result.get('id') or '')
         self._username = username
+        self._instance_url = instance.rstrip('/')
         if trace:
             trace[-1]['result'] = json.dumps({
                 'connectedStatus': str(result.get('connectedStatus') or 'Connected'),
