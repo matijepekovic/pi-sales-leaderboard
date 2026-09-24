@@ -725,31 +725,17 @@ class SalesforceCliAdapter:
             'FSSK__FSK_Work_Order__r.Lead__r.Canvass_Set_By__r.Name',
         ]
 
-    def mod_sheets(
-        self,
-        *,
-        start_date='',
-        end_date='',
-        market_segment='',
-        product_category='',
-        source_type='',
-        remove_canceled=True,
-        remove_unconfirmed=True,
-        limit=1000,
-        trace=None,
-    ):
-        """Read normalized sheets; limit=None fetches every matching appointment."""
+    def _appointment_scope(self, *, start_date='', end_date='', market_segment='',
+                           product_category='', source_type='', remove_canceled=True,
+                           remove_unconfirmed=True):
+        """Shared report scope; dropdown reads deliberately omit status exclusions."""
         start = self._parse_date(start_date)
         end = self._parse_date(end_date)
         if end < start:
             raise SalesforceAdapterError('End Date must be on or after Start Date.')
-        if limit is not None:
-            limit = max(1, min(int(limit), 1000))
         user_zone = self._salesforce_timezone()
         start_local = datetime.combine(start, time.min, tzinfo=user_zone)
         end_local = datetime.combine(end + timedelta(days=1), time.min, tzinfo=user_zone)
-
-        select_fields = self._mod_select_fields()
 
         query_start = start_local.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         query_end = end_local.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -789,7 +775,10 @@ class SalesforceCliAdapter:
         if remove_unconfirmed:
             conditions.append('FSSK__FSK_Work_Order__r.Lead__r.LastModifiedDate != null')
 
-        records = []
+        return conditions, start_local, end_local
+
+    def _appointment_rows(self, select_fields, conditions, *, limit=None, trace=None):
+        """Read the requested projection with the existing complete-page policy."""
         cursor = ''
         seen_ids = set()
         while True:
@@ -810,8 +799,8 @@ class SalesforceCliAdapter:
             if not isinstance(page, list) or (limit is None and len(page) > 1000):
                 raise SalesforceAdapterError('Salesforce query returned an invalid records page.')
             if limit is not None:
-                records = page
-                break
+                yield from page
+                return
             if not page:
                 if result.get('done') is False or result.get('totalSize', 0):
                     raise SalesforceAdapterError('Salesforce query returned an incomplete records page.')
@@ -823,10 +812,54 @@ class SalesforceCliAdapter:
                     or len(set(page_ids)) != len(page_ids)
                     or seen_ids.intersection(page_ids)):
                 raise SalesforceAdapterError('Salesforce query pagination did not advance safely.')
-            records.extend(page)
+            yield from page
             seen_ids.update(page_ids)
             cursor = page_ids[-1]
             # A short response can still have more rows; only an empty query ends the read.
+
+    def assigned_resource_names(self, *, start_date='', end_date='', market_segment='',
+                                product_category='', source_type='', trace=None):
+        """Only assignment names and pagination IDs; never construct MOD sheets."""
+        conditions, _, _ = self._appointment_scope(
+            start_date=start_date, end_date=end_date, market_segment=market_segment,
+            product_category=product_category, source_type=source_type,
+            remove_canceled=False, remove_unconfirmed=False,
+        )
+        path = 'FSSK__FSK_Assigned_Service_Resource__r.Name'
+        names = set()
+        for row in self._appointment_rows(('Id', path), conditions, trace=trace):
+            name = _nested(row, path).strip()
+            if name:
+                names.add(name)
+        return tuple(sorted(names, key=str.casefold))
+
+    def mod_sheets(
+        self,
+        *,
+        start_date='',
+        end_date='',
+        market_segment='',
+        product_category='',
+        source_type='',
+        remove_canceled=True,
+        remove_unconfirmed=True,
+        limit=1000,
+        trace=None,
+    ):
+        """Read normalized sheets; limit=None fetches every matching appointment."""
+        # Validate dates before limits/connection exactly as in the existing workflow.
+        if self._parse_date(end_date) < self._parse_date(start_date):
+            raise SalesforceAdapterError('End Date must be on or after Start Date.')
+        if limit is not None:
+            limit = max(1, min(int(limit), 1000))
+        conditions, start_local, end_local = self._appointment_scope(
+            start_date=start_date, end_date=end_date, market_segment=market_segment,
+            product_category=product_category, source_type=source_type,
+            remove_canceled=remove_canceled, remove_unconfirmed=remove_unconfirmed,
+        )
+        user_zone = start_local.tzinfo
+        records = list(self._appointment_rows(self._mod_select_fields(), conditions,
+                                              limit=limit, trace=trace))
 
         if not records:
             raise SalesforceAdapterError('No Records Found for Selected Criteria')

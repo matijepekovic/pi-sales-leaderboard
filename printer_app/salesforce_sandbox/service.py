@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 from datetime import date
+from threading import Lock
 
 from ..mod_sheet_contract import ModSheetSourceError, NO_MOD_SHEET_RECORDS, SourceStatus
 from .adapter import PortalField, SalesforceAdapterError
@@ -29,6 +30,7 @@ class FieldSnapshot:
     field: object | None = None
     trace: tuple = dataclass_field(default_factory=tuple)
     error: str = ''
+    saved: bool = False
 
 
 @dataclass(frozen=True)
@@ -54,8 +56,11 @@ class GeneratedSnapshot:
 
 
 class SalesforceSandboxService:
-    def __init__(self, adapter):
+    def __init__(self, adapter, *, rep_repository=None):
         self.adapter = adapter
+        # The worker only consumes records; the web composition supplies rep storage.
+        self.rep_repository = rep_repository
+        self._rep_refresh_lock = Lock()
 
     def portal(self):
         """Return the MOD portal shell without blocking on Salesforce CLI."""
@@ -78,28 +83,45 @@ class SalesforceSandboxService:
                 error=str(exc),
             )
 
-    def field(self, key, *, market_segment='', start_date='', end_date='',
-              product_category='', source_type='', remove_canceled=True,
-              remove_unconfirmed=True):
-        """Rep options come from the same normalized records as the MOD PDF."""
+    def field(self, key):
+        """Read saved rep options locally; only explicit refresh may query their source."""
+        if key == 'assigned_service_resource':
+            names = self.rep_repository.names() if self.rep_repository is not None else None
+            return FieldSnapshot(
+                key=key, saved=names is not None,
+                field=PortalField('Assigned Service Resource', 'assigned_service_resources', names or ()),
+            )
         trace = []
         try:
-            if key == 'assigned_service_resource':
-                if (not isinstance(market_segment, str) or len(market_segment) > 128
-                        or any(not char.isprintable() for char in market_segment)):
-                    raise ModSheetSourceError('Market Segment must be a short single-line value.')
-                records = self.records(
+            resolved = self.adapter.portal_field(key, trace=trace)
+            return FieldSnapshot(key=key, field=resolved, trace=tuple(trace))
+        except SalesforceAdapterError as exc:
+            return FieldSnapshot(key=key, trace=tuple(trace), error=str(exc))
+
+    def refresh_reps(self, *, start_date='', end_date='', market_segment='',
+                     product_category='', source_type=''):
+        """Replace saved names after a complete lightweight lookup; reports are separate."""
+        key, trace = 'assigned_service_resource', []
+        try:
+            if self.rep_repository is None:
+                raise ModSheetSourceError('Rep-list storage is not configured.')
+            if (not isinstance(market_segment, str) or len(market_segment) > 128
+                    or any(not char.isprintable() for char in market_segment)):
+                raise ModSheetSourceError('Market Segment must be a short single-line value.')
+            with self._rep_refresh_lock:
+                names = tuple(self.adapter.assigned_resource_names(
                     start_date=start_date, end_date=end_date,
                     market_segment=market_segment.strip(), product_category=product_category,
-                    source_type=source_type, remove_canceled=remove_canceled,
-                    remove_unconfirmed=remove_unconfirmed, limit=None, trace=trace,
-                )
-                names = {name for record in records for name in record.assigned_service_resources if name}
-                resolved = PortalField('Assigned Service Resource', 'assigned_service_resources',
-                                       tuple(sorted(names, key=str.casefold)))
-            else:
-                resolved = self.adapter.portal_field(key, trace=trace)
-            return FieldSnapshot(key=key, field=resolved, trace=tuple(trace))
+                    source_type=source_type, trace=trace,
+                ))
+                if any(not isinstance(name, str) for name in names):
+                    raise ModSheetSourceError('Rep lookup returned invalid names.')
+                names = tuple(sorted({name.strip() for name in names if name.strip()}, key=str.casefold))
+                self.rep_repository.replace(names)
+            return FieldSnapshot(
+                key=key, saved=True, trace=tuple(trace),
+                field=PortalField('Assigned Service Resource', 'assigned_service_resources', names),
+            )
         except (SalesforceAdapterError, ModSheetSourceError) as exc:
             return FieldSnapshot(key=key, trace=tuple(trace), error=str(exc))
 

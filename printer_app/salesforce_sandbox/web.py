@@ -17,7 +17,7 @@ def _bool_arg(name, default=False):
 
 
 def _record_filters():
-    """One HTTP-to-MOD filter mapping for both rep options and PDF generation."""
+    """HTTP-to-MOD filter mapping for PDF generation; rep names do not use status flags."""
     return dict(
         start_date=request.args.get('startdate', ''),
         end_date=request.args.get('enddate', ''),
@@ -98,31 +98,35 @@ def blueprint(service):
             trace=list(snapshot.trace),
         )
 
-    @bp.get('/salesforce-sandbox/api/field/<key>')
-    def field(key):
-        context = _record_filters() if key == 'assigned_service_resource' else {}
-        if key == 'assigned_service_resource' and request.args.get('dateScope') == 'today':
-            # Daily settings/Test Print use the configured local day, even if
-            # the browser tab has remained open across midnight.
-            today = datetime.now(ZoneInfo(g.printer_config.timezone)).date().isoformat()
-            context.update(start_date=today, end_date=today)
-        snapshot = service.field(key, **context)
+    def field_response(snapshot):
         if snapshot.error:
-            return jsonify(
-                ok=False,
-                error=snapshot.error,
-                trace=list(snapshot.trace),
-            ), 503
-        return jsonify(
-            ok=True,
-            key=key,
-            field={
-                'label': snapshot.field.label,
-                'path': snapshot.field.path,
-                'values': list(snapshot.field.values),
-            },
+            return jsonify(ok=False, error=snapshot.error, trace=list(snapshot.trace)), 503
+        response = jsonify(
+            ok=True, key=snapshot.key, saved=snapshot.saved,
+            field={'label': snapshot.field.label, 'path': snapshot.field.path,
+                   'values': list(snapshot.field.values)},
             trace=list(snapshot.trace),
         )
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+
+    @bp.get('/salesforce-sandbox/api/field/<key>')
+    def field(key):
+        # Filter changes/page loads may read saved names, never refresh them.
+        return field_response(service.field(key))
+
+    @bp.post('/salesforce-sandbox/api/reps/refresh')
+    def refresh_reps():
+        # Explicit persisted write, protected by the app's existing admin/CSRF guard.
+        filters = {key: request.form.get(param, '') for key, param in (
+            ('start_date', 'startdate'), ('end_date', 'enddate'),
+            ('market_segment', 'marketsegment'), ('product_category', 'productCategory'),
+            ('source_type', 'sourceType'),
+        )}
+        if request.form.get('dateScope') == 'today':
+            today = datetime.now(ZoneInfo(g.printer_config.timezone)).date().isoformat()
+            filters.update(start_date=today, end_date=today)
+        return field_response(service.refresh_reps(**filters))
 
     @bp.get('/salesforce-sandbox/mod-sheet')
     def mod_sheet():

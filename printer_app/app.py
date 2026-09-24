@@ -33,6 +33,7 @@ from .salesforce_sandbox.service import SalesforceSandboxService
 from .salesforce_sandbox.web import blueprint as salesforce_sandbox_blueprint
 from .mod_sheets.pdf_renderer import render_mod_pdf
 from .mod_sheets.repository import ModSheetAutomationRepository
+from .mod_sheets.rep_repository import ModSheetRepRepository
 from .mod_sheets.service import ModSheetSettingsService, ModSheetTestPrintService, ModSheetReferenceDeliveryService
 from .mod_sheets.web import blueprint as mod_sheets_blueprint
 
@@ -84,7 +85,8 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     # Beta-only, read-only external source. Salesforce details stay behind the
     # adapter and this composition boundary; Gallery and printing do not depend on it.
     salesforce_sandbox = SalesforceSandboxService(
-        SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')
+        SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work'),
+        rep_repository=ModSheetRepRepository(db),
     )
     app.extensions['salesforce_sandbox'] = salesforce_sandbox
     app.register_blueprint(salesforce_sandbox_blueprint(salesforce_sandbox))
