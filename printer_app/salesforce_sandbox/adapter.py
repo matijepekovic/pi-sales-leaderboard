@@ -467,51 +467,69 @@ class SalesforceCliAdapter:
         return tuple(normalized)
 
     def map_jobs(self):
-        """Return normalized mapped sales work orders without scanning appointments."""
+        """Return mapped work orders through the existing direct work-order/Lead boundary."""
         object_name, lead_field = self._lead_status_fields()
-        fields = (
-            'Id',
-            'WorkOrderNumber',
-            'Lead__r.Id',
-            'Lead__r.Name',
-            'Lead__r.Status',
-            'Lead__r.Latitude',
-            'Lead__r.Longitude',
-        )
-        condition = f"{lead_field} != null AND WorkType.Name LIKE '%Sales%'"
-        jobs = []
-        for row in self._lead_status_query(fields, object_name, condition):
-            try:
-                work_order_id = explorer.record_id(row.get('Id'))
-                lead_id = explorer.record_id(_nested(row, 'Lead__r.Id'))
-                latitude = float(_nested(row, 'Lead__r.Latitude'))
-                longitude = float(_nested(row, 'Lead__r.Longitude'))
-            except (ValueError, TypeError) as exc:
-                # A row with missing coordinates is simply not mappable; an
-                # invalid identity is a source-contract failure.
-                if not _nested(row, 'Lead__r.Latitude') or not _nested(row, 'Lead__r.Longitude'):
-                    continue
-                raise SalesforceAdapterError(
-                    'Salesforce returned an invalid mapped work order.'
-                ) from exc
-            number = str(row.get('WorkOrderNumber') or '').strip()
-            if not number or not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        links = []
+        lead_ids = set()
+        for row in self._lead_status_query(
+                ('Id', 'WorkOrderNumber', lead_field), object_name, 'WorkOrderNumber != null'):
+            work_order_id = str(row.get('Id') or '').strip()
+            work_order_number = str(row.get('WorkOrderNumber') or '').strip()
+            lead_id = row.get(lead_field)
+            if not work_order_id or not work_order_number or not lead_id:
                 continue
-            jobs.append((work_order_id, number, lead_id, row, latitude, longitude))
+            try:
+                work_order_id = explorer.record_id(work_order_id)
+                lead_id = explorer.record_id(lead_id)
+            except ValueError as exc:
+                raise SalesforceAdapterError('Salesforce returned an invalid map identity.') from exc
+            links.append((work_order_id, work_order_number, lead_id))
+            lead_ids.add(lead_id)
 
-        if jobs and not self._instance_url:
+        leads = {}
+        ordered_ids = sorted(lead_ids)
+        for offset in range(0, len(ordered_ids), 100):
+            batch = ordered_ids[offset:offset + 100]
+            condition = 'Id IN (' + ', '.join(_soql_literal(value) for value in batch) + ')'
+            for row in self._lead_status_query(
+                    ('Id', 'Name', 'Status', 'Latitude', 'Longitude'), 'Lead', condition):
+                lead_id = row.get('Id')
+                if lead_id not in batch:
+                    raise SalesforceAdapterError('Salesforce returned an unexpected map Lead.')
+                try:
+                    latitude = float(row.get('Latitude'))
+                    longitude = float(row.get('Longitude'))
+                except (TypeError, ValueError):
+                    continue
+                if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+                    continue
+                name = row.get('Name')
+                status = row.get('Status')
+                if name is not None and not isinstance(name, str):
+                    raise SalesforceAdapterError('Salesforce returned an invalid Lead name.')
+                if status is not None and not isinstance(status, str):
+                    raise SalesforceAdapterError('Salesforce returned an invalid Lead status.')
+                leads[lead_id] = ((name or '').strip(), (status or '').strip(), latitude, longitude)
+
+        if links and not self._instance_url:
             self.status()
-        return tuple(MapJob(
-            source_id=work_order_id,
-            work_order_number=number,
-            lead_name=_nested(row, 'Lead__r.Name').strip(),
-            lead_status=_nested(row, 'Lead__r.Status').strip(),
-            latitude=latitude,
-            longitude=longitude,
-            source_record_url=(
-                self._instance_url + '/lightning/r/Lead/' + lead_id + '/view'
-            ) if self._instance_url else '',
-        ) for work_order_id, number, lead_id, row, latitude, longitude in jobs)
+        jobs = []
+        for work_order_id, work_order_number, lead_id in links:
+            lead = leads.get(lead_id)
+            if lead is None:
+                continue
+            name, status, latitude, longitude = lead
+            jobs.append(MapJob(
+                source_id=work_order_id,
+                work_order_number=work_order_number,
+                lead_name=name,
+                lead_status=status,
+                latitude=latitude,
+                longitude=longitude,
+                source_record_url=(self._instance_url + '/lightning/r/Lead/' + lead_id + '/view')
+                    if self._instance_url else '',
+            ))
+        return tuple(jobs)
 
     def explorer_objects(self):
         """List only names; opening the explorer never describes or queries objects."""
