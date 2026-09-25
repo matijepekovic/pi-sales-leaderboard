@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from io import BytesIO
 
-from flask import Blueprint, abort, jsonify, render_template, request, send_file
+from flask import Blueprint, abort, jsonify, make_response, render_template, request, send_file
 
 from .contract import JobMapSourceError
 
@@ -14,7 +14,16 @@ def blueprint(service):
     @bp.get('')
     @bp.get('/')
     def page():
-        return render_template('job_map.html')
+        response = make_response(render_template('job_map.html'))
+        response.headers['Content-Security-Policy'] = (
+            "default-src 'self'; script-src 'self' https://unpkg.com; "
+            "style-src 'self' https://unpkg.com; "
+            "img-src 'self' data: blob: https://unpkg.com https://tiles.openfreemap.org; "
+            "connect-src 'self' https://tiles.openfreemap.org; worker-src 'self' blob:; "
+            "frame-src 'self'; object-src 'none'; base-uri 'none'; "
+            "frame-ancestors 'self'; form-action 'self'"
+        )
+        return response
 
     @bp.get('/api/jobs')
     def jobs():
