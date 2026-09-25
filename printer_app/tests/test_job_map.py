@@ -185,7 +185,7 @@ def test_job_map_stays_vendor_neutral_and_uses_openfreemap():
         assert 'salesforce' not in path.read_text().casefold()
 
     template = (root / 'templates/job_map.html').read_text()
-    assert 'maplibre-gl@5' in template
+    assert 'maplibre-gl@5.22.0' in template
     assert 'jobMapMarket' not in template
     assert 'jobMapRep' not in template
 
