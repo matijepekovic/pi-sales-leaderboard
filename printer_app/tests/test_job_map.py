@@ -200,6 +200,8 @@ def test_job_map_stays_vendor_neutral_and_uses_openfreemap():
     assert "action('Open in Salesforce'" in runtime
 
     app = (root / 'app.py').read_text()
-    assert 'https://tiles.openfreemap.org' in app
+    web = (root / 'job_map/web.py').read_text()
+    assert 'https://tiles.openfreemap.org' not in app
     assert 'https://tile.openstreetmap.org' not in app
-    assert "worker-src 'self' blob:" in app
+    assert 'https://tiles.openfreemap.org' in web
+    assert "worker-src 'self' blob:" in web
