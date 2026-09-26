@@ -424,7 +424,8 @@ class GalleryService:
         assigned = cls._resource_names(reference) if include_resources else ''
         return authoritative_reference_text(
             text, reference.get('lead_name', ''), reference.get('address', ''),
-            assigned, appointment_date=day,
+            assigned, work_order_number=reference.get('work_order_number', ''),
+            appointment_date=day,
             clear_assigned_resource=include_resources and not assigned, **fields)
 
     def _remove_morning_cards(self):
