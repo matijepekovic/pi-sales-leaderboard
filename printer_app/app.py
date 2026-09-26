@@ -225,9 +225,8 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         # while still withholding referrers from every external destination.
         response.headers['Referrer-Policy'] = 'same-origin'
         response.headers.setdefault('Content-Security-Policy',
-            "default-src 'self'; script-src 'self' https://unpkg.com; "
-            "style-src 'self' https://unpkg.com; img-src 'self' data: https://unpkg.com https://tile.openstreetmap.org; "
-            "frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'")
+            "default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; "
+            "object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'")
         return response
 
     def dispatch():
