@@ -397,6 +397,78 @@ def test_import_retains_exact_ocr_field_image_for_admin_diagnostics(tmp_path):
     assert admin_item['work_order_reads'][0]['candidate'] == '02257311'
 
 
+def test_scan_without_work_order_matches_cached_reference_by_phone_address_or_name(tmp_path):
+    gallery = _gallery(tmp_path)
+    gallery.publish_reference_snapshot(
+        DAY, 'final', [
+            WorkOrderReference(
+                source_id='identity-source',
+                work_order_number='02283948',
+                appointment_date=DAY,
+                lead_name='Michel Kearney',
+                address='932 Oakcrest Dr SE, Lacey, WA 98503',
+                phone='3609701655',
+                assigned_service_resources=('Resolved Rep',),
+            )
+        ], 100.0,
+    )
+
+    job = {'id': '9' * 64, 'filename': 'identity-scan.pdf'}
+    gallery.repository.enqueue(job['id'], job['filename'])
+    directory = gallery.files.path('work', job['id'])
+    directory.mkdir()
+    (directory / 'card.png').write_bytes(b'identity-card')
+    manifest = {'items': [{
+        'file': 'card.png', 'page': 1, 'part': 1, 'bytes': 13,
+        'text': (
+            'Lead Name: Michel Kearney\n'
+            'Address: 932 Oakcrest Dr SE, Lacey, WA 98503\n'
+            'Phone: 3609701655\n'
+        ),
+        'lead_text': 'Lead Name: Michel Kearney',
+        'work_order_candidates': (),
+        'work_order_reads': (),
+        'document_date': DAY,
+        'date_status': 'printed',
+        'mod_notes_present': True,
+    }]}
+
+    gallery.publish(job, manifest, directory)
+    item_id = hashlib.sha256(f"{job['id']}:1:1".encode()).hexdigest()
+    item = gallery.item(item_id)
+
+    assert item['work_order_number'] == '02283948'
+    assert item['lead_name'] == 'Michel Kearney'
+    assert item['address'] == '932 Oakcrest Dr SE, Lacey, WA 98503'
+    assert item['state'] == 'ACTIVE'
+
+
+def test_scan_with_empty_mod_notes_is_discarded_before_gallery_publish(tmp_path):
+    gallery = _gallery(tmp_path)
+    job = {'id': '8' * 64, 'filename': 'blank-notes.pdf'}
+    gallery.repository.enqueue(job['id'], job['filename'])
+    directory = gallery.files.path('work', job['id'])
+    directory.mkdir()
+    (directory / 'card.png').write_bytes(b'blank-mod-card')
+    manifest = {'items': [{
+        'file': 'card.png', 'page': 6, 'part': 1, 'bytes': 14,
+        'text': 'Work Order Number: 02286248',
+        'lead_text': 'Lead Name: Example Customer',
+        'work_order_candidates': ('02286248',),
+        'work_order_reads': (),
+        'document_date': '2026-09-26',
+        'date_status': 'printed',
+        'mod_notes_present': False,
+    }]}
+
+    gallery.publish(job, manifest, directory)
+    job_view = gallery.repository.import_job(job['id'])
+
+    assert job_view['retained'] == 0
+    assert job_view['count'] == 0
+    assert 'Discarded 1 blank MOD card' in job_view['error']
+
+
 def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_path):
     gallery = _gallery(tmp_path)
     ident = 'candidate-card'
