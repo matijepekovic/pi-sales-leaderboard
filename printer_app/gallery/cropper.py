@@ -319,19 +319,18 @@ def orient_work_order_page(image):
     pages remain untouched when the template provides no evidence or when two
     orientations are too close to call.
     """
-    orientations = [(0, image)]
-    orientations.extend(
-        (turns, np.rot90(image, turns).copy())
-        for turns in (1, 2, 3)
-    )
-
+    # Orientation evidence needs only the bounded geometry raster. Rotate the
+    # full-resolution page once, after a winner is proven, to keep Pi memory use
+    # close to the previous two-orientation implementation.
+    analysis, _, _ = _analysis_image(image)
     evidence = []
-    for turns, candidate in orientations:
+    for turns in (0, 1, 2, 3):
+        candidate = analysis if turns == 0 else np.rot90(analysis, turns).copy()
         matches, score = _template_orientation_evidence(candidate)
-        evidence.append((matches, score, turns, candidate))
+        evidence.append((matches, score, turns))
 
     best = max(evidence, key=lambda item: (item[0], item[1], -item[2]))
-    best_matches, best_score, best_turns, best_image = best
+    best_matches, best_score, best_turns = best
     if best_matches <= 0 or best_turns == 0:
         return image
 
@@ -342,10 +341,10 @@ def orient_work_order_page(image):
     runner_matches, runner_score = runner[:2]
 
     if best_matches > runner_matches:
-        return best_image
+        return np.rot90(image, best_turns).copy()
     if (best_matches == runner_matches
             and best_score > runner_score + (0.05 * best_matches)):
-        return best_image
+        return np.rot90(image, best_turns).copy()
     return image
 
 
