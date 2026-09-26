@@ -275,11 +275,12 @@ def _label_extent(crop, field, registration):
 
 
 def template_ocr_canvas(source, registration):
-    """Pack the work-order field into one OCR image.
+    """Return only the known Work Order Number value area.
 
-    Measured black borders bound every field. The two first-row fields use a
-    straight cut after the colon; name, address and Scheduled Start keep the full
-    width below their labels. Segments preserve each field's ownership after OCR.
+    The MOD template already owns this field. Do not rediscover the printed label
+    from scan pixels: that was clipping leading digits on some cards and leaving
+    the whole label on others. The template's measured label boundary is the
+    single source of truth for where numeric OCR begins.
     """
     import numpy as np
 
@@ -293,9 +294,13 @@ def template_ocr_canvas(source, registration):
         if field.key not in _OCR_FIELD_KEYS or right <= left or bottom <= top:
             continue
 
-        crop = source[top:bottom, left:right].copy()
-        label_end, label_bottom = _label_extent(crop, field, registration)
-        crop[:label_bottom, :label_end] = 255
+        _, _, label_right, _ = map_box(registration, field.label_box)
+        # A tiny positive inset keeps the colon/label out while leaving far more
+        # than enough room before the first printed digit on the known template.
+        value_left = max(left, min(right, label_right + max(1, int(round(frame_width * .001)))))
+        if value_left >= right:
+            continue
+        crop = source[top:bottom, value_left:right].copy()
 
         box = _meaningful_bbox(crop, minimum_area)
         if box is None:
