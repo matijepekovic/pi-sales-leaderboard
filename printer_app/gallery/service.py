@@ -252,6 +252,18 @@ class GalleryService:
                     number = ''
             else:
                 _, reference = self._reference_for(day, number)
+
+            # If the work-order field did not resolve, use broader OCR identity
+            # against the normalized cached source. Phone wins over address,
+            # which wins over customer name; ambiguity still goes to manual review.
+            if origin == 'scan' and reference is None and not number:
+                identity_reference = self._identity_reference_for(
+                    day, entry.get('text', ''), entry.get('lead_text', '')
+                )
+                if identity_reference is not None:
+                    reference = identity_reference
+                    number = str(reference.get('work_order_number') or '')
+                    candidates_pending = ()
             if reference and not day:
                 day = reference.get('day') or day
             if origin == 'morning' and day and self.repository.scans_received(day):
@@ -356,6 +368,44 @@ class GalleryService:
             if any(row.get('work_order_key') == work_order_key(number) for row in references):
                 return kind, None  # Preserve ambiguity; never fall back to older data.
         return '', None
+
+    def _identity_reference_for(self, day, text, lead_text=''):
+        """Resolve one OCR card from cached normalized source identity fields."""
+        name = printed_lead(lead_text) or printed_lead(text)
+        address = printed_address(text)
+        _, phone = printed_phone(text)
+        if not name and not address and not phone:
+            return None
+
+        rows = self.repository.reference_identity_candidates(
+            day, name, address, include_phone=bool(phone)
+        )
+        if not rows:
+            return None
+
+        scored = {}
+        for row in rows:
+            score = 0
+            if phone:
+                _, row_phone = usable_phone(row.get('phone', ''))
+                if row_phone and row_phone == phone:
+                    score += 100
+            if address and address_key(row.get('address', '')) == address_key(address):
+                score += 50
+            if name and related_identity(name, '', row.get('lead_name', ''), ''):
+                score += 20
+            key = work_order_key(row.get('work_order_number', ''))
+            if score <= 0 or not key:
+                continue
+            current = scored.get(key)
+            if current is None or score > current[0]:
+                scored[key] = (score, row)
+
+        if not scored:
+            return None
+        best_score = max(value[0] for value in scored.values())
+        winners = [value[1] for value in scored.values() if value[0] == best_score]
+        return winners[0] if len(winners) == 1 else None
 
     @staticmethod
     def _resource_names(reference):
