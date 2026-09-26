@@ -82,32 +82,15 @@ def test_right_angle_template_pages_are_normalized_before_cropping(turns):
     cv2 = pytest.importorskip('cv2')
     np = pytest.importorskip('numpy')
     from printer_app.gallery.cropper import cut_forms, orient_work_order_page
-    from printer_app.gallery.form_template import TEMPLATE_ASPECT_HEIGHT, TEMPLATE_HORIZONTAL
+    from printer_app.tests.gallery_form_fixture import form_image
 
-    image = np.full((980, 1000, 3), 255, np.uint8)
-    left, right = 50, 950
-    width = right - left
-    height = int(round(width * TEMPLATE_ASPECT_HEIGHT))
-    tops = (45, 505)
-
-    for top in tops:
-        bottom = top + height
-        cv2.line(image, (left, top), (right, top), (0, 0, 0), 3)
-        cv2.line(image, (left, bottom), (right, bottom), (0, 0, 0), 3)
-        cv2.line(image, (left, top), (left, bottom), (0, 0, 0), 3)
-        cv2.line(image, (right, top), (right, bottom), (0, 0, 0), 3)
-        for ratio in TEMPLATE_HORIZONTAL[1:-1]:
-            y = top + int(round(ratio * height))
-            cv2.line(image, (left, y), (right, y), (0, 0, 0), 2)
-        # Header partition exists only near the real top, so quarter-turn and
-        # upside-down candidates cannot accidentally score as the same orientation.
-        cv2.line(
-            image,
-            (430, top),
-            (430, top + int(height * .20)),
-            (0, 0, 0),
-            2,
-        )
+    form, _ = form_image((cv2, np), scale=0.45)
+    margin = 28
+    height, width = form.shape
+    image = np.full((height * 2 + margin * 3, width + margin * 2), 255, np.uint8)
+    image[margin:margin + height, margin:margin + width] = form
+    second = margin * 2 + height
+    image[second:second + height, margin:margin + width] = form
 
     assert len(list(cut_forms(image))) == 2
 
@@ -116,7 +99,6 @@ def test_right_angle_template_pages_are_normalized_before_cropping(turns):
 
     assert np.array_equal(corrected, image)
     assert len(list(cut_forms(corrected))) == 2
-
 
 def test_template_registration_cannot_bypass_report_rejection(monkeypatch):
     np = pytest.importorskip('numpy')
