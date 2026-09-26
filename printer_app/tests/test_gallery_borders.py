@@ -77,7 +77,8 @@ def test_large_template_page_uses_same_card_count_as_normal_scale():
     assert len(list(cut_forms(base))) == len(list(cut_forms(large))) == 3
 
 
-def test_upside_down_template_page_is_rotated_before_cropping():
+@pytest.mark.parametrize('turns', [1, 2, 3])
+def test_right_angle_template_pages_are_normalized_before_cropping(turns):
     cv2 = pytest.importorskip('cv2')
     np = pytest.importorskip('numpy')
     from printer_app.gallery.cropper import cut_forms, orient_work_order_page
@@ -98,8 +99,8 @@ def test_upside_down_template_page_is_rotated_before_cropping():
         for ratio in TEMPLATE_HORIZONTAL[1:-1]:
             y = top + int(round(ratio * height))
             cv2.line(image, (left, y), (right, y), (0, 0, 0), 2)
-        # Header partition exists only near the real top, so a 180-degree page
-        # cannot accidentally score as the same orientation.
+        # Header partition exists only near the real top, so quarter-turn and
+        # upside-down candidates cannot accidentally score as the same orientation.
         cv2.line(
             image,
             (430, top),
@@ -110,11 +111,30 @@ def test_upside_down_template_page_is_rotated_before_cropping():
 
     assert len(list(cut_forms(image))) == 2
 
-    upside_down = np.rot90(image, 2).copy()
-    corrected = orient_work_order_page(upside_down)
+    rotated = np.rot90(image, turns).copy()
+    corrected = orient_work_order_page(rotated)
 
     assert np.array_equal(corrected, image)
     assert len(list(cut_forms(corrected))) == 2
+
+
+def test_template_registration_cannot_bypass_report_rejection(monkeypatch):
+    np = pytest.importorskip('numpy')
+    from printer_app.gallery import cropper
+    from printer_app.gallery.form_template import FormRegistration
+
+    image = np.full((700, 900, 3), 255, np.uint8)
+    top = np.full(image.shape[1], 20, dtype=int)
+
+    monkeypatch.setattr(cropper, 'form_tops', lambda image: [top])
+    monkeypatch.setattr(
+        cropper,
+        'register_form',
+        lambda crop: FormRegistration(1.0, 0, crop.shape[1], 0, min(crop.shape[0], 300)),
+    )
+    monkeypatch.setattr(cropper, 'is_work_order_form', lambda crop: False)
+
+    assert list(cropper.cut_forms(image)) == []
 
 
 def test_orientation_check_leaves_non_template_gallery_pages_unchanged():
