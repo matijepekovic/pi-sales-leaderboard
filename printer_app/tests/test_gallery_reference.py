@@ -395,7 +395,7 @@ def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_p
     assert gallery.work_order_lookup_numbers() == ['02257311', '02257317']
 
     # Admin diagnostics must expose exactly what OCR proposed versus what Stats accepted.
-    admin_item = gallery.import_job(import_id)['items'][0]
+    admin_item = gallery.repository.import_job(import_id)['items'][0]
     assert admin_item['work_order_candidates'] == ('02257311', '02257317')
     assert admin_item['work_order_number'] == ''
     assert gallery.import_item(import_id, ident)['work_order_candidates'] == (
@@ -424,7 +424,7 @@ def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_p
     assert item['assigned_service_resource'] == 'Resolved Rep'
     assert item['sales_lead_status'] == 'Sold'
 
-    accepted = gallery.import_job(import_id)['items'][0]
+    accepted = gallery.repository.import_job(import_id)['items'][0]
     assert accepted['work_order_candidates'] == ()
     assert accepted['work_order_number'] == '02257311'
     assert accepted['reference_kind'] == 'work-order'
