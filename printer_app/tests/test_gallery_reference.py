@@ -367,6 +367,36 @@ def test_direct_work_order_record_supplies_date_identity_and_rep_to_undated_card
     assert job['items'][0]['work_order_number'] == '00002001'
 
 
+def test_import_retains_exact_ocr_field_image_for_admin_diagnostics(tmp_path):
+    gallery = _gallery(tmp_path)
+    job = {'id': 'f' * 64, 'filename': 'diagnostic.pdf'}
+    gallery.repository.enqueue(job['id'], job['filename'])
+    directory = gallery.files.path('work', job['id'])
+    directory.mkdir()
+    (directory / 'card.png').write_bytes(b'full-card')
+    (directory / 'card.ocr.png').write_bytes(b'exact-ocr-field')
+    manifest = {'items': [{
+        'file': 'card.png', 'ocr_file': 'card.ocr.png',
+        'page': 1, 'part': 1, 'bytes': 9,
+        'text': 'Work Order Number: 02257311',
+        'lead_text': '',
+        'work_order_candidates': ('02257311',),
+        'work_order_reads': ({
+            'label': 'Original field', 'psm': 7, 'text': '02257311',
+            'candidate': '02257311', 'ok': True,
+        },),
+        'document_date': None, 'date_status': 'needs-date',
+    }]}
+
+    gallery.publish(job, manifest, directory)
+    ident = hashlib.sha256(f"{job['id']}:1:1".encode()).hexdigest()
+
+    assert gallery.files.path('ocr', ident).read_bytes() == b'exact-ocr-field'
+    admin_item = gallery.import_job(job['id'])['items'][0]
+    assert admin_item['ocr_field_available'] is True
+    assert admin_item['work_order_reads'][0]['candidate'] == '02257311'
+
+
 def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_path):
     gallery = _gallery(tmp_path)
     ident = 'candidate-card'
