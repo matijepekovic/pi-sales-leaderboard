@@ -437,7 +437,7 @@ def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_p
         '02257311', '02257317',
     ]
     assert admin_item['work_order_number'] == ''
-    assert gallery.import_item(import_id, ident)['work_order_candidates'] == (
+    assert gallery.repository.import_item(import_id, ident)['work_order_candidates'] == (
         '02257311', '02257317',
     )
 
