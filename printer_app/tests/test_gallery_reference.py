@@ -381,6 +381,12 @@ def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_p
         'text': 'Work Order Number: 02257311',
         'lead_text': '',
         'work_order_candidates': ('02257311', '02257317'),
+        'work_order_reads': (
+            {'label': 'Original field', 'psm': 7, 'text': '02257311',
+             'candidate': '02257311', 'ok': True},
+            {'label': 'Thresholded', 'psm': 6, 'text': '02257317',
+             'candidate': '02257317', 'ok': True},
+        ),
         'document_date': None,
         'date_status': 'needs-date',
         'bytes': 100,
@@ -397,6 +403,9 @@ def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_p
     # Admin diagnostics must expose exactly what OCR proposed versus what Stats accepted.
     admin_item = gallery.repository.import_job(import_id)['items'][0]
     assert admin_item['work_order_candidates'] == ('02257311', '02257317')
+    assert [read['candidate'] for read in admin_item['work_order_reads']] == [
+        '02257311', '02257317',
+    ]
     assert admin_item['work_order_number'] == ''
     assert gallery.import_item(import_id, ident)['work_order_candidates'] == (
         '02257311', '02257317',
@@ -426,6 +435,9 @@ def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_p
 
     accepted = gallery.repository.import_job(import_id)['items'][0]
     assert accepted['work_order_candidates'] == ()
+    assert [read['candidate'] for read in accepted['work_order_reads']] == [
+        '02257311', '02257317',
+    ]
     assert accepted['work_order_number'] == '02257311'
     assert accepted['reference_kind'] == 'work-order'
 
@@ -434,6 +446,9 @@ def test_gallery_job_template_shows_ocr_and_taken_work_order():
     template = (Path(__file__).resolve().parents[1] / 'templates/gallery_job.html').read_text()
     assert '<strong>OCR saw:</strong>' in template
     assert '<strong>Stats took:</strong>' in template
+    assert 'Exact OCR input field' in template
+    assert 'OCR passes' in template
+    assert "gallery.import_item_ocr_field" in template
     assert 'OCR candidate saved; waiting for Salesforce confirmation' in template
 
 
