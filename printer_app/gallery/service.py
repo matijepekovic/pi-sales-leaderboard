@@ -276,6 +276,10 @@ class GalleryService:
             ocr_file = entry.get('ocr_file')
             if ocr_file:
                 self.files.publish(directory / ocr_file, ident, category='ocr')
+            else:
+                # A replacement card must never display a stale OCR field from
+                # an older image revision.
+                self.files.remove('ocr', ident)
             items[ident] = dict(id=ident, import_id=job['id'], filename=job['filename'],
                 page=entry['page'], part=entry['part'], bytes=entry['bytes'], text=text,
                 document_date=day, date_status='reference' if origin == 'morning' else entry['date_status'], created=time.time(),
