@@ -1,6 +1,7 @@
 """Optional MOD reference enrichment for Gallery."""
 from dataclasses import replace
 import hashlib
+from pathlib import Path
 import time
 
 import pytest
@@ -393,6 +394,14 @@ def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_p
     assert waiting['work_order_number'] == ''
     assert gallery.work_order_lookup_numbers() == ['02257311', '02257317']
 
+    # Admin diagnostics must expose exactly what OCR proposed versus what Stats accepted.
+    admin_item = gallery.repository.import_job(import_id)['items'][0]
+    assert admin_item['work_order_candidates'] == ('02257311', '02257317')
+    assert admin_item['work_order_number'] == ''
+    assert gallery.import_item(import_id, ident)['work_order_candidates'] == (
+        '02257311', '02257317',
+    )
+
     record = WorkOrderReference(
         source_id='source-02257311',
         work_order_number='02257311',
@@ -414,6 +423,18 @@ def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_p
     assert item['lead_name'] == 'Resolved Customer'
     assert item['assigned_service_resource'] == 'Resolved Rep'
     assert item['sales_lead_status'] == 'Sold'
+
+    accepted = gallery.repository.import_job(import_id)['items'][0]
+    assert accepted['work_order_candidates'] == ()
+    assert accepted['work_order_number'] == '02257311'
+    assert accepted['reference_kind'] == 'work-order'
+
+
+def test_gallery_job_template_shows_ocr_and_taken_work_order():
+    template = (Path(__file__).resolve().parents[1] / 'templates/gallery_job.html').read_text()
+    assert '<strong>OCR saw:</strong>' in template
+    assert '<strong>Stats took:</strong>' in template
+    assert 'OCR candidate saved; waiting for Salesforce confirmation' in template
 
 
 def test_two_source_valid_ocr_candidates_remain_in_review(tmp_path):

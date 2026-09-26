@@ -74,6 +74,23 @@ class GalleryRepository:
     def __init__(self, path):
         self.path = path
 
+    @staticmethod
+    def _recognition_view(row):
+        """Decode stored OCR candidates at the repository boundary for admin display."""
+        if row is None:
+            return None
+        value = dict(row)
+        raw = value.get('work_order_candidates', '[]')
+        try:
+            candidates = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError, json.JSONDecodeError):
+            candidates = []
+        value['work_order_candidates'] = tuple(
+            candidate for candidate in candidates if isinstance(candidate, str)
+            and len(candidate) == 8 and candidate.isascii() and candidate.isdecimal()
+        )
+        return value
+
     @contextmanager
     def connect(self):
         conn = sqlite3.connect(self.path, timeout=2)
@@ -357,11 +374,11 @@ class GalleryRepository:
     def import_item(self, import_id, item_id):
         with self.connect() as c:
             row = c.execute("""SELECT id,import_id,page,part,bytes,document_date,date_status,
-                    lead_name,lead_status,sales_lead_status,address,work_order_number,assigned_service_resource,
-                    reference_kind,reference_source_id,state FROM items
+                    lead_name,lead_status,sales_lead_status,address,work_order_number,work_order_candidates,
+                    assigned_service_resource,reference_kind,reference_source_id,state FROM items
                 WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
                 (item_id, import_id)).fetchone()
-            return dict(row) if row else None
+            return self._recognition_view(row)
 
     def correct_import_item_lead(self, import_id, item_id, value, key):
         """Internal compatibility path; no Gallery UI exposes name editing."""
@@ -697,7 +714,9 @@ class GalleryRepository:
                 "SELECT count(*) FROM items WHERE import_id=? AND state='REVIEW'", (ident,)
             ).fetchone()[0]
             result['retained'] = result['published'] + result['pending_review']
-            result['items'] = [dict(i) for i in c.execute("""SELECT id,page,part,bytes,document_date,date_status,lead_name,sales_lead_status,work_order_number,state
+            result['items'] = [self._recognition_view(i) for i in c.execute(
+                """SELECT id,page,part,bytes,document_date,date_status,lead_name,sales_lead_status,
+                    work_order_number,work_order_candidates,reference_kind,state
                 FROM items WHERE import_id=? AND state IN ('ACTIVE','REVIEW')
                 ORDER BY CASE state WHEN 'REVIEW' THEN 0 ELSE 1 END,page,part,id LIMIT 24 OFFSET ?""",
                 (ident,offset))]
