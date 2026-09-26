@@ -274,11 +274,13 @@ class GalleryService:
                     lead_text = 'Lead Name: ' + reference['lead_name']
             self.files.publish(directory / entry['file'], ident)
             ocr_file = entry.get('ocr_file')
-            if ocr_file:
-                self.files.publish(directory / ocr_file, ident, category='ocr')
+            ocr_source = directory / ocr_file if ocr_file else None
+            if ocr_source is not None and ocr_source.is_file():
+                self.files.publish(ocr_source, ident, category='ocr')
             else:
-                # A replacement card must never display a stale OCR field from
-                # an older image revision.
+                # Diagnostics are optional metadata. A copied/replayed manifest
+                # may not carry its debug image, and a replacement card must
+                # never display a stale OCR field from an older image revision.
                 self.files.remove('ocr', ident)
             items[ident] = dict(id=ident, import_id=job['id'], filename=job['filename'],
                 page=entry['page'], part=entry['part'], bytes=entry['bytes'], text=text,
