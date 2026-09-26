@@ -20,8 +20,25 @@
 <article id="item-{{ item.id }}">
 <h3>{{ item.lead_name or ('Work order ' ~ item.work_order_number if item.work_order_number else 'Work order needs correction') }} · Page {{ item.page }} · Card {{ item.part }}</h3>
 <p>{{ item.document_date or 'Date needs checking' }}</p>
+<div class="notice">
+<strong>Recognition</strong>
+<p><strong>OCR saw:</strong>
+{% if item.work_order_candidates %}{{ item.work_order_candidates|join(', ') }}
+{% elif item.work_order_number %}candidate cleared after acceptance
+{% else %}no 8-digit work-order candidate{% endif %}</p>
+<p><strong>Stats took:</strong> {{ item.work_order_number or 'nothing yet' }}</p>
+<p><strong>Result:</strong>
+{% if item.work_order_number and item.reference_kind == 'work-order' %}confirmed by Salesforce
+{% elif item.work_order_number %}accepted work order; Salesforce enrichment not confirmed yet
+{% elif item.work_order_candidates %}OCR candidate saved; waiting for Salesforce confirmation
+{% else %}no usable work-order number was detected{% endif %}</p>
+</div>
 {% if item.state == 'REVIEW' %}
-<p class="notice error"><strong>Work order needs correction.</strong> Enter the correct work order number below. A valid work order publishes the card and retries Salesforce enrichment.</p>
+{% if item.work_order_candidates %}
+<p class="notice error"><strong>Work order not confirmed yet.</strong> OCR found {{ item.work_order_candidates|join(', ') }}, but Stats has not accepted a work order from Salesforce. You can enter the correct number below.</p>
+{% else %}
+<p class="notice error"><strong>Work order needs correction.</strong> OCR did not produce a usable 8-digit work order. Enter the correct work order number below.</p>
+{% endif %}
 {% else %}
 <p class="good"><strong>In Gallery</strong></p>
 {% endif %}
