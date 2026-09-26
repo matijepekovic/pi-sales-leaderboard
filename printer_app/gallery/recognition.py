@@ -380,6 +380,55 @@ def _first_work_order_candidate(text):
     return match[0][:8] if match else ''
 
 
+def mod_notes_present(source, registration):
+    """Return whether the known MOD Notes cell contains meaningful variable ink.
+
+    None means the card could not be registered confidently enough to judge it;
+    callers must retain those cards rather than guessing.
+    """
+    import cv2
+    import numpy as np
+
+    if source is None or not registration.matched:
+        return None
+    field = next(field for field in TEMPLATE_FIELDS if field.key == 'mod_notes')
+    boxes = dict((item.key, bounds) for item, bounds in field_boxes(source, registration))
+    left, top, right, bottom = boxes.get(field.key, (0, 0, 0, 0))
+    if right <= left or bottom <= top:
+        return None
+    crop = source[top:bottom, left:right].copy()
+
+    # Remove only the printed MOD Notes label. The rest of the cell, including
+    # handwriting beneath the label, remains available for the emptiness check.
+    label_left, label_top, label_right, label_bottom = map_box(registration, field.label_box)
+    x0 = max(0, label_left - left - 3)
+    y0 = max(0, label_top - top - 3)
+    x1 = min(crop.shape[1], label_right - left + 5)
+    y1 = min(crop.shape[0], label_bottom - top + 5)
+    if x1 > x0 and y1 > y0:
+        crop[y0:y1, x0:x1] = 255
+
+    ink = cv2.threshold(crop, 225, 255, cv2.THRESH_BINARY_INV)[1]
+    # Eliminate residual printed rules before judging handwriting/notes.
+    h, w = crop.shape
+    horizontal = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN, np.ones((1, max(18, w // 12)), np.uint8)
+    )
+    vertical = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN, np.ones((max(14, h // 8), 1), np.uint8)
+    )
+    variable = ink.copy()
+    variable[(horizontal > 0) | (vertical > 0)] = 0
+
+    count, _, stats, _ = cv2.connectedComponentsWithStats((variable > 0).astype(np.uint8), 8)
+    meaningful = sum(
+        int(stats[label, cv2.CC_STAT_AREA])
+        for label in range(1, count)
+        if stats[label, cv2.CC_STAT_AREA] >= 4
+    )
+    return meaningful >= max(40, int(round(crop.size * .0004)))
+
+
 def _candidate_result(candidates, known_date, reads=()):
     unique = tuple(dict.fromkeys(value for value in candidates if value))
     number = unique[0] if len(unique) == 1 else ''
@@ -434,7 +483,7 @@ def _recognize_template(source, registration, ocr_copy, known_date, debug_path=N
 
 
 def _recognize_legacy(source, ocr_copy, known_date):
-    """Fallback may inspect the card, but only explicit work-order candidates leave OCR."""
+    """Fallback OCR the whole isolated card so other identity fields can match it."""
     import cv2
     import numpy as np
 
@@ -446,8 +495,11 @@ def _recognize_legacy(source, ocr_copy, known_date):
     )
     disposable = source.copy()
     disposable[cv2.dilate(rules, np.ones((3, 3), np.uint8)) > 0] = 255
+
     candidates = []
     reads = []
+    best = None
+    labels = ('Work Order', 'Lead Name', 'Address', 'Phone', 'Scheduled Start', 'MOD Notes')
     for psm in (6, 11):
         label = 'Fallback whole card'
         try:
@@ -455,12 +507,28 @@ def _recognize_legacy(source, ocr_copy, known_date):
         except subprocess.SubprocessError:
             reads.append(dict(label=label, psm=psm, text='', candidate='', ok=False))
             continue
-        raw = ' '.join(search_text(words).split())[:256]
+        raw = search_text(words)[:100000]
         number = printed_work_order_number(raw)
-        reads.append(dict(label=label, psm=psm, text=raw, candidate=number, ok=True))
+        compact = ' '.join(raw.split())[:256]
+        reads.append(dict(label=label, psm=psm, text=compact, candidate=number, ok=True))
         if number:
             candidates.append(number)
-    return _candidate_result(candidates, known_date, reads)
+        day, date_status = document_date(words, h, known_date)
+        lead_text = lead_cell_text(words, source)
+        score = sum(1 for value in labels if value.casefold() in raw.casefold())
+        score += int(bool(lead_text)) + int(bool(day))
+        candidate = (score, len(raw), raw, lead_text, day, date_status)
+        if best is None or candidate[:2] > best[:2]:
+            best = candidate
+
+    result = _candidate_result(candidates, known_date, reads)
+    if best is not None:
+        _, _, raw, lead_text, day, date_status = best
+        result['text'] = raw
+        result['lead_text'] = lead_text
+        result['document_date'] = day
+        result['date_status'] = date_status
+    return result
 
 
 def recognize(path, work, known_date=None, debug_path=None):
@@ -472,26 +540,32 @@ def recognize(path, work, known_date=None, debug_path=None):
     ocr_copy = Path(work) / 'ocr.png'
     try:
         registration = register_form(source)
-        if registration.matched:
-            return _recognize_template(
-                source, registration, ocr_copy, known_date, debug_path=debug_path,
-            )
-
-        # The card was already isolated by the Gallery form detector. Reuse the
-        # same work-order mask with the best available registration even when
-        # the full template score is low, then keep the legacy label-aware read
-        # as an independent fallback. The normalized source validates candidates later.
+        notes_present = mod_notes_present(source, registration)
         template = _recognize_template(
             source, registration, ocr_copy, known_date, debug_path=debug_path,
         )
+        template_candidates = tuple(template.get('work_order_candidates', ()))
+        if registration.matched and len(template_candidates) == 1:
+            template['mod_notes_present'] = notes_present
+            return template
+
+        # If the dedicated work-order cell does not produce one clear result,
+        # OCR the whole isolated card once. Name/address/phone/date text then
+        # remains available for normalized source matching before manual review.
         legacy = _recognize_legacy(source, ocr_copy, known_date)
-        return _candidate_result(
-            (*template.get('work_order_candidates', ()),
-             *legacy.get('work_order_candidates', ())),
-            known_date,
+        result = _candidate_result(
+            (*template_candidates, *legacy.get('work_order_candidates', ())),
+            legacy.get('document_date') or known_date,
             (*template.get('work_order_reads', ()),
              *legacy.get('work_order_reads', ())),
         )
+        if legacy.get('text'):
+            result['text'] = legacy['text']
+        result['lead_text'] = legacy.get('lead_text', '')
+        result['document_date'] = legacy.get('document_date')
+        result['date_status'] = legacy.get('date_status', 'needs-date')
+        result['mod_notes_present'] = notes_present
+        return result
     finally:
         ocr_copy.unlink(missing_ok=True)
 
