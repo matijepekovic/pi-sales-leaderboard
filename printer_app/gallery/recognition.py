@@ -435,7 +435,15 @@ def mod_notes_present(source, registration):
 
 
 def _candidate_result(candidates, known_date, reads=()):
-    unique = tuple(dict.fromkeys(value for value in candidates if value))
+    values = tuple(value for value in candidates if value)
+    unique = tuple(dict.fromkeys(values))
+    # Independent OCR passes are votes. Two agreeing reads beat one outlier;
+    # preserve multiple candidates only when there is no clear repeated result.
+    counts = {value: values.count(value) for value in unique}
+    repeated = [value for value in unique if counts[value] >= 2]
+    if len(repeated) == 1 and counts[repeated[0]] > max(
+            (count for value, count in counts.items() if value != repeated[0]), default=0):
+        unique = (repeated[0],)
     number = unique[0] if len(unique) == 1 else ''
     return dict(
         text=('Work Order Number: ' + number) if number else '',
