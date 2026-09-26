@@ -224,7 +224,11 @@ class GalleryService:
         items = {}
         identities = {}
         origin = job.get('origin', 'scan')
+        discarded_blank_notes = 0
         for entry in manifest['items']:
+            if origin == 'scan' and entry.get('mod_notes_present') is False:
+                discarded_blank_notes += 1
+                continue
             revision = hashlib.sha256(f"{job['id']}:{entry['page']}:{entry['part']}".encode()).hexdigest()
             day = job.get('reference_day') if origin == 'morning' else entry['document_date']
             candidates = tuple(entry.get('work_order_candidates') or ())
@@ -291,7 +295,11 @@ class GalleryService:
                 recognition_revision=1 if (candidates or
                     ('lead_text' in entry and entry['text'].strip())) else 0,
                 origin=origin, image_revision=revision, replace_existing=bool(existing), require_identity=True)
-        warnings = manifest.get('warnings', [])
+        warnings = list(manifest.get('warnings', []))
+        if discarded_blank_notes:
+            warnings.append(
+                f'Discarded {discarded_blank_notes} blank MOD card(s) with no MOD Notes.'
+            )
         if manifest.get('skipped'):
             warnings.append('No recognized form boxes on pages: ' + ', '.join(map(str, manifest['skipped'])))
         self.repository.finish(job['id'], list(items.values()), '; '.join(warnings))
