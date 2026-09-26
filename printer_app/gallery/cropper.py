@@ -9,9 +9,9 @@ import cv2
 import numpy as np
 
 if __package__:
-    from .form_template import register_form, trim_last_form
+    from .form_template import register_form, template_geometry_score, trim_last_form
 else:
-    from form_template import register_form, trim_last_form
+    from form_template import register_form, template_geometry_score, trim_last_form
 
 
 def _runs(mask):
@@ -287,7 +287,7 @@ def form_tops(image):
 
 
 def _template_orientation_evidence(image):
-    """Return conservative template evidence for one page orientation."""
+    """Return full-template evidence for one page orientation."""
     h, w = image.shape[:2]
     tops = form_tops(image)
     if not tops:
@@ -306,9 +306,13 @@ def _template_orientation_evidence(image):
         rows = np.arange(y0, y1)[:, None]
         crop[(rows < top[None, :]) | (rows >= bottom[None, :])] = 255
         registration = register_form(crop)
-        if registration.matched:
-            matches += 1
-            score += float(registration.score)
+        if not registration.matched:
+            continue
+        geometry = template_geometry_score(crop, registration)
+        if geometry < .58:
+            continue
+        matches += 1
+        score += geometry
     return matches, score
 
 
@@ -330,22 +334,13 @@ def orient_work_order_page(image):
         evidence.append((matches, score, turns))
 
     best = max(evidence, key=lambda item: (item[0], item[1], -item[2]))
-    best_matches, best_score, best_turns = best
+    best_matches, _, best_turns = best
     if best_matches <= 0 or best_turns == 0:
         return image
 
-    runner = max(
-        (item for item in evidence if item[2] != best_turns),
-        key=lambda item: (item[0], item[1], -item[2]),
-    )
-    runner_matches, runner_score = runner[:2]
-
-    if best_matches > runner_matches:
-        return np.rot90(image, best_turns).copy()
-    if (best_matches == runner_matches
-            and best_score > runner_score + (0.05 * best_matches)):
-        return np.rot90(image, best_turns).copy()
-    return image
+    # One page has one scan orientation. The complete template geometry chooses
+    # that orientation once; every card on the page inherits it.
+    return np.rot90(image, best_turns).copy()
 
 
 def cut_forms(image):
