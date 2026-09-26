@@ -26,6 +26,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         'gallery.queue_page',
         'gallery.import_job_page',
         'gallery.import_item_image',
+        'gallery.import_item_ocr_field',
         'gallery.import_item_work_order_number',
         'gallery.approve_import_item',
         'gallery.delete_import_item',
@@ -264,6 +265,17 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         require_admin()
         retained_job_item(ident, item_id)
         path = service.files.path('crops', item_id)
+        if not path.is_file():
+            abort(404)
+        return send_file(path, mimetype='image/png', conditional=True)
+
+    @bp.get('/jobs/<ident>/items/<item_id>/ocr-field')
+    def import_item_ocr_field(ident, item_id):
+        require_admin()
+        item = retained_job_item(ident, item_id)
+        if not item.get('ocr_field_available'):
+            abort(404)
+        path = service.files.path('ocr', item_id)
         if not path.is_file():
             abort(404)
         return send_file(path, mimetype='image/png', conditional=True)
