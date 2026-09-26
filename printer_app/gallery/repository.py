@@ -76,7 +76,7 @@ class GalleryRepository:
 
     @staticmethod
     def _recognition_view(row):
-        """Decode stored OCR candidates at the repository boundary for admin display."""
+        """Decode stored OCR diagnostics at the repository boundary for admin display."""
         if row is None:
             return None
         value = dict(row)
@@ -89,6 +89,29 @@ class GalleryRepository:
             candidate for candidate in candidates if isinstance(candidate, str)
             and len(candidate) == 8 and candidate.isascii() and candidate.isdecimal()
         )
+
+        raw_reads = value.get('work_order_reads', '[]')
+        try:
+            reads = json.loads(raw_reads) if isinstance(raw_reads, str) else raw_reads
+        except (TypeError, ValueError, json.JSONDecodeError):
+            reads = []
+        clean_reads = []
+        for entry in reads if isinstance(reads, list) else ():
+            if not isinstance(entry, dict):
+                continue
+            label = str(entry.get('label') or '')[:80]
+            text = str(entry.get('text') or '')[:256]
+            candidate = str(entry.get('candidate') or '')
+            psm = entry.get('psm')
+            if candidate and not (len(candidate) == 8 and candidate.isascii() and candidate.isdecimal()):
+                candidate = ''
+            if type(psm) is not int or not 0 <= psm <= 99:
+                psm = None
+            clean_reads.append(dict(
+                label=label, psm=psm, text=text, candidate=candidate,
+                ok=bool(entry.get('ok')),
+            ))
+        value['work_order_reads'] = tuple(clean_reads)
         return value
 
     @contextmanager
@@ -145,6 +168,7 @@ class GalleryRepository:
                 ('work_order_number', "TEXT NOT NULL DEFAULT ''"),
                 ('work_order_key', "TEXT NOT NULL DEFAULT ''"),
                 ('work_order_candidates', "TEXT NOT NULL DEFAULT '[]'"),
+                ('work_order_reads', "TEXT NOT NULL DEFAULT '[]'"),
                 ('assigned_service_resource', "TEXT NOT NULL DEFAULT ''"),
                 ('sales_lead_status', "TEXT NOT NULL DEFAULT ''"),
                 ('lead_source_id', "TEXT NOT NULL DEFAULT ''"),
@@ -260,6 +284,18 @@ class GalleryRepository:
                     if isinstance(value, str) and len(value) == 8
                     and value.isascii() and value.isdecimal()
                 ))
+                raw_reads = item.get('work_order_reads') or ()
+                reads = []
+                for entry in raw_reads if isinstance(raw_reads, (list, tuple)) else ():
+                    if not isinstance(entry, dict):
+                        continue
+                    reads.append({
+                        'label': str(entry.get('label') or '')[:80],
+                        'psm': entry.get('psm') if type(entry.get('psm')) is int else None,
+                        'text': str(entry.get('text') or '')[:256],
+                        'candidate': str(entry.get('candidate') or '')[:8],
+                        'ok': bool(entry.get('ok')),
+                    })
                 state = 'ACTIVE' if name else 'REVIEW'
                 if item.get('require_identity'):
                     # Scanned OCR candidates are source-validated before becoming
@@ -279,6 +315,7 @@ class GalleryRepository:
                               address=address, address_key=address_key(address),
                               work_order_number=work_order, work_order_key=work_order_key(work_order),
                               work_order_candidates=json.dumps(candidates if origin == 'scan' else []),
+                              work_order_reads=json.dumps(reads if origin == 'scan' else []),
                               recognition_revision=item.get('recognition_revision', 0), origin=origin,
                               image_revision=item.get('image_revision', item['id']))
                 if item.get('replace_existing'):
@@ -288,7 +325,7 @@ class GalleryRepository:
                         bytes=:bytes,state=:state,lead_name=:lead_name,lead_key=:lead_key,
                         lead_status=:lead_status,address=:address,address_key=:address_key,
                         work_order_number=:work_order_number,work_order_key=:work_order_key,
-                        work_order_candidates=:work_order_candidates,
+                        work_order_candidates=:work_order_candidates,work_order_reads=:work_order_reads,
                         recognition_revision=:recognition_revision,origin=:origin,
                         image_revision=:image_revision,search_revision=search_revision+1
                         WHERE id=:id AND state IN ('ACTIVE','REVIEW')
@@ -298,11 +335,11 @@ class GalleryRepository:
                 c.execute('''INSERT OR IGNORE INTO items(
                     id,import_id,page,part,filename,text,document_date,date_status,bytes,created,state,
                     lead_name,lead_key,lead_status,address,address_key,work_order_number,work_order_key,
-                    work_order_candidates,recognition_revision,origin,image_revision)
+                    work_order_candidates,work_order_reads,recognition_revision,origin,image_revision)
                     VALUES (
                     :id,:import_id,:page,:part,:filename,:text,:document_date,:date_status,:bytes,:created,:state,
                     :lead_name,:lead_key,:lead_status,:address,:address_key,:work_order_number,:work_order_key,
-                    :work_order_candidates,:recognition_revision,:origin,:image_revision)''', values)
+                    :work_order_candidates,:work_order_reads,:recognition_revision,:origin,:image_revision)''', values)
                 self._refresh_sales_lead_statuses(c, ' AND id=?', (item['id'],))
             now = time.time()
             for day in {item.get('document_date') for item in items
@@ -375,7 +412,7 @@ class GalleryRepository:
         with self.connect() as c:
             row = c.execute("""SELECT id,import_id,page,part,bytes,document_date,date_status,
                     lead_name,lead_status,sales_lead_status,address,work_order_number,work_order_candidates,
-                    assigned_service_resource,reference_kind,reference_source_id,state FROM items
+                    work_order_reads,assigned_service_resource,reference_kind,reference_source_id,state FROM items
                 WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
                 (item_id, import_id)).fetchone()
             return self._recognition_view(row)
@@ -716,7 +753,7 @@ class GalleryRepository:
             result['retained'] = result['published'] + result['pending_review']
             result['items'] = [self._recognition_view(i) for i in c.execute(
                 """SELECT id,page,part,bytes,document_date,date_status,lead_name,sales_lead_status,
-                    work_order_number,work_order_candidates,reference_kind,state
+                    work_order_number,work_order_candidates,work_order_reads,reference_kind,state
                 FROM items WHERE import_id=? AND state IN ('ACTIVE','REVIEW')
                 ORDER BY CASE state WHEN 'REVIEW' THEN 0 ELSE 1 END,page,part,id LIMIT 24 OFFSET ?""",
                 (ident,offset))]
