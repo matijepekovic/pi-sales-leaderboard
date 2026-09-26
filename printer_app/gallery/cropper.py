@@ -313,21 +313,39 @@ def _template_orientation_evidence(image):
 
 
 def orient_work_order_page(image):
-    """Turn a page 180 degrees only when the known form proves it is upside down.
+    """Normalize right-angle page rotation only when the known form proves it.
 
-    The existing generic/legacy Gallery path is left untouched when neither
-    orientation confidently matches the known template. This prevents an OCR
-    heuristic from rotating unrelated pages or changing older Gallery behavior.
+    Evaluate all four right-angle orientations independently. Unrelated/legacy
+    pages remain untouched when the template provides no evidence or when two
+    orientations are too close to call.
     """
-    upright_matches, upright_score = _template_orientation_evidence(image)
-    rotated = np.rot90(image, 2).copy()
-    rotated_matches, rotated_score = _template_orientation_evidence(rotated)
+    orientations = [(0, image)]
+    orientations.extend(
+        (turns, np.rot90(image, turns).copy())
+        for turns in (1, 2, 3)
+    )
 
-    if rotated_matches > upright_matches:
-        return rotated
-    if (rotated_matches == upright_matches and rotated_matches > 0
-            and rotated_score > upright_score + (0.05 * rotated_matches)):
-        return rotated
+    evidence = []
+    for turns, candidate in orientations:
+        matches, score = _template_orientation_evidence(candidate)
+        evidence.append((matches, score, turns, candidate))
+
+    best = max(evidence, key=lambda item: (item[0], item[1], -item[2]))
+    best_matches, best_score, best_turns, best_image = best
+    if best_matches <= 0 or best_turns == 0:
+        return image
+
+    runner = max(
+        (item for item in evidence if item[2] != best_turns),
+        key=lambda item: (item[0], item[1], -item[2]),
+    )
+    runner_matches, runner_score = runner[:2]
+
+    if best_matches > runner_matches:
+        return best_image
+    if (best_matches == runner_matches
+            and best_score > runner_score + (0.05 * best_matches)):
+        return best_image
     return image
 
 
@@ -344,10 +362,11 @@ def cut_forms(image):
         rows = np.arange(y0, y1)[:, None]
         crop[(rows < top[None, :]) | (rows >= bottom[None, :])] = 255
 
-        # The supplied blank-card template is a fast positive registration only.
-        # If it does not confidently match, preserve the existing generic validator.
+        # Template registration can refine a real work order, but it must never
+        # override report rejection. Every candidate still passes the generic
+        # structural validator before it can become a Gallery card.
         registration = register_form(crop)
-        if not registration.matched and not is_work_order_form(crop):
+        if not is_work_order_form(crop):
             continue
         if last and registration.matched:
             crop = trim_last_form(crop, registration)
