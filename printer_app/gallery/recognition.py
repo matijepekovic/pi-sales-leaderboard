@@ -380,7 +380,7 @@ def _first_work_order_candidate(text):
     return match[0][:8] if match else ''
 
 
-def _candidate_result(candidates, known_date):
+def _candidate_result(candidates, known_date, reads=()):
     unique = tuple(dict.fromkeys(value for value in candidates if value))
     number = unique[0] if len(unique) == 1 else ''
     return dict(
@@ -389,29 +389,48 @@ def _candidate_result(candidates, known_date):
         document_date=known_date,
         date_status='printed' if known_date else 'needs-date',
         work_order_candidates=unique,
+        work_order_reads=tuple(reads),
     )
 
 
-def _recognize_template(source, registration, ocr_copy, known_date):
-    """Read the same masked work-order value several independent ways."""
+def _recognize_template(source, registration, ocr_copy, known_date, debug_path=None):
+    """Read the same masked work-order value several independent ways.
+
+    When requested, persist the exact field canvas used by the first OCR pass.
+    Diagnostic pass results are normalized data; callers never need Tesseract TSV.
+    """
     import cv2
 
     canvas, segments = template_ocr_canvas(source, registration)
     if canvas is None:
         return _candidate_result((), known_date)
 
+    if debug_path is not None and not cv2.imwrite(str(debug_path), canvas):
+        raise OSError('OCR diagnostic image cannot be written')
+
     enlarged = cv2.resize(canvas, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
     thresholded = cv2.threshold(enlarged, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
     candidates = []
-    for image, psm in ((canvas, 7), (enlarged, 13), (thresholded, 6)):
+    reads = []
+    passes = (
+        ('Original field', canvas, 7),
+        ('2× enlarged', enlarged, 13),
+        ('Thresholded', thresholded, 6),
+    )
+    for label, image, psm in passes:
         try:
             words = _run_tesseract(image, ocr_copy, digits_only=True, psm=psm)
         except subprocess.SubprocessError:
+            reads.append(dict(label=label, psm=psm, text='', candidate='', ok=False))
             continue
-        candidate = _first_work_order_candidate(search_text(words))
+        raw = ' '.join(search_text(words).split())[:128]
+        candidate = _first_work_order_candidate(raw)
+        reads.append(dict(
+            label=label, psm=psm, text=raw, candidate=candidate, ok=True,
+        ))
         if candidate:
             candidates.append(candidate)
-    return _candidate_result(candidates, known_date)
+    return _candidate_result(candidates, known_date, reads)
 
 
 def _recognize_legacy(source, ocr_copy, known_date):
@@ -428,18 +447,23 @@ def _recognize_legacy(source, ocr_copy, known_date):
     disposable = source.copy()
     disposable[cv2.dilate(rules, np.ones((3, 3), np.uint8)) > 0] = 255
     candidates = []
+    reads = []
     for psm in (6, 11):
+        label = 'Fallback whole card'
         try:
             words = _run_tesseract(disposable, ocr_copy, psm=psm)
         except subprocess.SubprocessError:
+            reads.append(dict(label=label, psm=psm, text='', candidate='', ok=False))
             continue
-        number = printed_work_order_number(search_text(words))
+        raw = ' '.join(search_text(words).split())[:256]
+        number = printed_work_order_number(raw)
+        reads.append(dict(label=label, psm=psm, text=raw, candidate=number, ok=True))
         if number:
             candidates.append(number)
-    return _candidate_result(candidates, known_date)
+    return _candidate_result(candidates, known_date, reads)
 
 
-def recognize(path, work, known_date=None):
+def recognize(path, work, known_date=None, debug_path=None):
     import cv2
 
     source = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
@@ -449,18 +473,24 @@ def recognize(path, work, known_date=None):
     try:
         registration = register_form(source)
         if registration.matched:
-            return _recognize_template(source, registration, ocr_copy, known_date)
+            return _recognize_template(
+                source, registration, ocr_copy, known_date, debug_path=debug_path,
+            )
 
         # The card was already isolated by the Gallery form detector. Reuse the
         # same work-order mask with the best available registration even when
         # the full template score is low, then keep the legacy label-aware read
         # as an independent fallback. The normalized source validates candidates later.
-        template = _recognize_template(source, registration, ocr_copy, known_date)
+        template = _recognize_template(
+            source, registration, ocr_copy, known_date, debug_path=debug_path,
+        )
         legacy = _recognize_legacy(source, ocr_copy, known_date)
         return _candidate_result(
             (*template.get('work_order_candidates', ()),
              *legacy.get('work_order_candidates', ())),
             known_date,
+            (*template.get('work_order_reads', ()),
+             *legacy.get('work_order_reads', ())),
         )
     finally:
         ocr_copy.unlink(missing_ok=True)

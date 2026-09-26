@@ -244,10 +244,16 @@ def test_work_order_field_uses_three_independent_reads_without_changing_mask(ras
                      page_num=1, block_num=1, par_num=1, line_num=1)]
 
     monkeypatch.setattr(recognition, '_run_tesseract', fake_tesseract)
+    debug = tmp_path / 'ocr-field.png'
     result = recognition._recognize_template(
         source, registration, tmp_path / 'ocr.png', '2026-09-19',
+        debug_path=debug,
     )
 
+    assert debug.is_file()
+    debug_pixels = cv2.imread(str(debug), cv2.IMREAD_GRAYSCALE)
+    assert debug_pixels is not None
+    assert np.array_equal(debug_pixels, calls[0][0])
     assert len(calls) == 3
     assert [call[2] for call in calls] == [
         {'digits_only': True, 'psm': 7},
@@ -257,6 +263,11 @@ def test_work_order_field_uses_three_independent_reads_without_changing_mask(ras
     assert _value_count(raster, calls[0][0]) > 0
     assert np.array_equal(source, before)
     assert result['work_order_candidates'] == ('02275180',)
+    assert result['work_order_reads'] == (
+        {'label': 'Original field', 'psm': 7, 'text': '02275180', 'candidate': '02275180', 'ok': True},
+        {'label': '2× enlarged', 'psm': 13, 'text': '02275180', 'candidate': '02275180', 'ok': True},
+        {'label': 'Thresholded', 'psm': 6, 'text': '02275180', 'candidate': '02275180', 'ok': True},
+    )
     assert result['text'] == 'Work Order Number: 02275180'
     assert result['document_date'] == '2026-09-19'
     assert result['date_status'] == 'printed'

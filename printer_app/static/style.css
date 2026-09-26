@@ -14,3 +14,5 @@ nav{display:flex;gap:20px}nav a{color:#fff;text-decoration:none;font-size:14px}.
 .gallery-job-name-form button{flex:none;margin-bottom:0}
 @media(max-width:750px){.gallery-job-name-form{align-items:stretch;flex-direction:column}.gallery-job-name-form button{width:100%}}
 .print-activity-list{max-height:520px;overflow:auto;overscroll-behavior:contain;padding-right:8px}@media(max-width:750px){.print-activity-list{max-height:460px}}
+
+.gallery-job-ocr-field{display:block;max-width:760px;width:100%;height:auto;margin:10px 0 16px;border:1px solid #dbe3eb;border-radius:7px;background:#fff}.gallery-ocr-passes p{margin:8px 0}

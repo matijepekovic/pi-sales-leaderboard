@@ -28,6 +28,7 @@ CHECKPOINT_VERSION = 1
 CHECKPOINT = 'checkpoint.json'
 MANIFEST = 'manifest.json'
 CROP_FILE = re.compile(r'^\d{4}-\d{3}\.png$')
+OCR_FILE = re.compile(r'^\d{4}-\d{3}\.ocr\.png$')
 
 
 def write_json_atomic(path, value):
@@ -65,18 +66,20 @@ def clear_resume_state(output):
         if path.is_dir():
             shutil.rmtree(path)
         elif path.name in (CHECKPOINT, MANIFEST, '.' + CHECKPOINT + '.tmp',
-                           '.' + MANIFEST + '.tmp') or CROP_FILE.fullmatch(path.name):
+                           '.' + MANIFEST + '.tmp') or CROP_FILE.fullmatch(path.name) or OCR_FILE.fullmatch(path.name):
             path.unlink(missing_ok=True)
 
 
 def cleanup_uncommitted(output, manifest):
     committed = {str(item.get('file', '')) for item in manifest['items']}
+    committed.update(str(item.get('ocr_file', '')) for item in manifest['items'] if item.get('ocr_file'))
     for path in output.iterdir():
         if path.is_symlink():
             continue
         if path.is_dir():
             shutil.rmtree(path)
-        elif CROP_FILE.fullmatch(path.name) and path.name not in committed:
+        elif ((CROP_FILE.fullmatch(path.name) or OCR_FILE.fullmatch(path.name))
+              and path.name not in committed):
             path.unlink(missing_ok=True)
 
 
@@ -115,6 +118,14 @@ def load_checkpoint(output, pages):
             if int(item.get('bytes', -1)) != size:
                 raise ValueError('committed crop size changed')
             used += size
+            ocr_filename = str(item.get('ocr_file', '') or '')
+            if ocr_filename:
+                if not OCR_FILE.fullmatch(ocr_filename):
+                    raise ValueError('invalid OCR diagnostic file')
+                ocr_path = output / ocr_filename
+                if ocr_path.is_symlink() or not ocr_path.is_file():
+                    raise ValueError('OCR diagnostic file is missing')
+                used += ocr_path.stat().st_size
         skipped = [int(value) for value in manifest['skipped']]
         if any(value < 1 or value > completed for value in skipped):
             raise ValueError('invalid skipped-page checkpoint')
@@ -207,23 +218,35 @@ def process(source, output, budget):
                 if used > budget:
                     raise OSError('Rendered crops exceed gallery storage budget')
                 report_progress(output, 'search', page, pages, len(manifest['items']))
+                ocr_filename = f'{page:04d}-{part:03d}.ocr.png'
+                ocr_path = output / ocr_filename
                 try:
                     # A gallery PDF has one document date. Keep checking cards only
                     # until one reliable printed date is found, then reuse it.
-                    reading = recognize(path, work, known_date=pdf_date)
+                    reading = recognize(
+                        path, work, known_date=pdf_date, debug_path=ocr_path,
+                    )
                     if (pdf_date is None and reading.get('date_status') == 'printed'
                             and reading.get('document_date')):
                         pdf_date = reading['document_date']
                 except (OSError, ValueError, subprocess.SubprocessError):
+                    ocr_path.unlink(missing_ok=True)
                     reading = dict(
                         text='',
                         lead_text='',
                         document_date=None,
                         date_status='needs-date',
+                        work_order_candidates=(),
+                        work_order_reads=(),
                     )
                     manifest['warnings'].append(
                         f'Page {page} crop {part}: search text unavailable'
                     )
+                if ocr_path.is_file():
+                    used += ocr_path.stat().st_size
+                    if used > budget:
+                        raise OSError('Rendered crops exceed gallery storage budget')
+                    reading['ocr_file'] = ocr_filename
                 manifest['items'].append(
                     dict(file=filename, page=page, part=part, bytes=size, **reading)
                 )

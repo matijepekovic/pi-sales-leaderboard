@@ -96,7 +96,7 @@ def test_processor_reuses_first_reliable_day_and_backfills_earlier_card(tmp_path
     observed_dates = []
     texts = ['Card one at 8:00 AM', 'Card two at 10:30 AM', 'Card three at 2:15 PM']
 
-    def read_card(path, work, known_date=None):
+    def read_card(path, work, known_date=None, debug_path=None):
         observed_dates.append(known_date)
         part = int(path.stem.split('-')[1])
         day = known_date or ('2026-09-21' if part == 2 else None)
@@ -149,7 +149,7 @@ def test_processor_resumes_saved_pdf_date_without_rereading_completed_pages(tmp_
     ]))
     readings = []
 
-    def read_card(path, work, known_date=None):
+    def read_card(path, work, known_date=None, debug_path=None):
         page = int(path.stem.split('-')[0])
         readings.append((page, known_date))
         day = known_date or ('2026-09-21' if page == 1 else '2026-09-22')

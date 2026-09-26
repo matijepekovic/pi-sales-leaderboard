@@ -367,6 +367,36 @@ def test_direct_work_order_record_supplies_date_identity_and_rep_to_undated_card
     assert job['items'][0]['work_order_number'] == '00002001'
 
 
+def test_import_retains_exact_ocr_field_image_for_admin_diagnostics(tmp_path):
+    gallery = _gallery(tmp_path)
+    job = {'id': 'f' * 64, 'filename': 'diagnostic.pdf'}
+    gallery.repository.enqueue(job['id'], job['filename'])
+    directory = gallery.files.path('work', job['id'])
+    directory.mkdir()
+    (directory / 'card.png').write_bytes(b'full-card')
+    (directory / 'card.ocr.png').write_bytes(b'exact-ocr-field')
+    manifest = {'items': [{
+        'file': 'card.png', 'ocr_file': 'card.ocr.png',
+        'page': 1, 'part': 1, 'bytes': 9,
+        'text': 'Work Order Number: 02257311',
+        'lead_text': '',
+        'work_order_candidates': ('02257311',),
+        'work_order_reads': ({
+            'label': 'Original field', 'psm': 7, 'text': '02257311',
+            'candidate': '02257311', 'ok': True,
+        },),
+        'document_date': None, 'date_status': 'needs-date',
+    }]}
+
+    gallery.publish(job, manifest, directory)
+    ident = hashlib.sha256(f"{job['id']}:1:1".encode()).hexdigest()
+
+    assert gallery.files.path('ocr', ident).read_bytes() == b'exact-ocr-field'
+    admin_item = gallery.import_job(job['id'])['items'][0]
+    assert admin_item['ocr_field_available'] is True
+    assert admin_item['work_order_reads'][0]['candidate'] == '02257311'
+
+
 def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_path):
     gallery = _gallery(tmp_path)
     ident = 'candidate-card'
@@ -381,6 +411,12 @@ def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_p
         'text': 'Work Order Number: 02257311',
         'lead_text': '',
         'work_order_candidates': ('02257311', '02257317'),
+        'work_order_reads': (
+            {'label': 'Original field', 'psm': 7, 'text': '02257311',
+             'candidate': '02257311', 'ok': True},
+            {'label': 'Thresholded', 'psm': 6, 'text': '02257317',
+             'candidate': '02257317', 'ok': True},
+        ),
         'document_date': None,
         'date_status': 'needs-date',
         'bytes': 100,
@@ -397,8 +433,11 @@ def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_p
     # Admin diagnostics must expose exactly what OCR proposed versus what Stats accepted.
     admin_item = gallery.repository.import_job(import_id)['items'][0]
     assert admin_item['work_order_candidates'] == ('02257311', '02257317')
+    assert [read['candidate'] for read in admin_item['work_order_reads']] == [
+        '02257311', '02257317',
+    ]
     assert admin_item['work_order_number'] == ''
-    assert gallery.import_item(import_id, ident)['work_order_candidates'] == (
+    assert gallery.repository.import_item(import_id, ident)['work_order_candidates'] == (
         '02257311', '02257317',
     )
 
@@ -426,6 +465,9 @@ def test_ocr_candidates_require_exactly_one_source_match_before_publishing(tmp_p
 
     accepted = gallery.repository.import_job(import_id)['items'][0]
     assert accepted['work_order_candidates'] == ()
+    assert [read['candidate'] for read in accepted['work_order_reads']] == [
+        '02257311', '02257317',
+    ]
     assert accepted['work_order_number'] == '02257311'
     assert accepted['reference_kind'] == 'work-order'
 
@@ -434,6 +476,9 @@ def test_gallery_job_template_shows_ocr_and_taken_work_order():
     template = (Path(__file__).resolve().parents[1] / 'templates/gallery_job.html').read_text()
     assert '<strong>OCR saw:</strong>' in template
     assert '<strong>Stats took:</strong>' in template
+    assert 'Exact OCR input field' in template
+    assert 'OCR passes' in template
+    assert "gallery.import_item_ocr_field" in template
     assert 'OCR candidate saved; waiting for Salesforce confirmation' in template
 
 

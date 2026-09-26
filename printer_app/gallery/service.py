@@ -207,6 +207,7 @@ class GalleryService:
         cutoff = (today - timedelta(days=days)).isoformat()
         for ident in self.repository.expiring(cutoff):
             self.files.remove('crops', ident)
+            self.files.remove('ocr', ident)
             self.repository.forget(ident)
         self.repository.housekeeping(time.time() - days * 86400)
 
@@ -272,11 +273,21 @@ class GalleryService:
                 if reference.get('lead_name'):
                     lead_text = 'Lead Name: ' + reference['lead_name']
             self.files.publish(directory / entry['file'], ident)
+            ocr_file = entry.get('ocr_file')
+            ocr_source = directory / ocr_file if ocr_file else None
+            if ocr_source is not None and ocr_source.is_file():
+                self.files.publish(ocr_source, ident, category='ocr')
+            else:
+                # Diagnostics are optional metadata. A copied/replayed manifest
+                # may not carry its debug image, and a replacement card must
+                # never display a stale OCR field from an older image revision.
+                self.files.remove('ocr', ident)
             items[ident] = dict(id=ident, import_id=job['id'], filename=job['filename'],
                 page=entry['page'], part=entry['part'], bytes=entry['bytes'], text=text,
                 document_date=day, date_status='reference' if origin == 'morning' else entry['date_status'], created=time.time(),
                 lead_text=lead_text,
                 work_order_candidates=candidates_pending,
+                work_order_reads=entry.get('work_order_reads') or (),
                 recognition_revision=1 if (candidates or
                     ('lead_text' in entry and entry['text'].strip())) else 0,
                 origin=origin, image_revision=revision, replace_existing=bool(existing), require_identity=True)
@@ -362,6 +373,7 @@ class GalleryService:
         for ident in self.repository.retired_morning_cards():
             try:
                 self.files.remove('crops', ident)
+                self.files.remove('ocr', ident)
             except OSError:
                 log.warning('Temporary card file cleanup will retry; the scanned cards are available.')
                 continue
@@ -528,12 +540,17 @@ class GalleryService:
         result = self.repository.import_job(ident, max(0,min(offset,1000000)))
         if result:
             result['source_available'] = self.files.path('spool',ident).is_file()
+            for item in result.get('items', ()):
+                item['ocr_field_available'] = self.files.path('ocr', item['id']).is_file()
         return result
 
     def import_item(self, import_id, item_id):
         """Administrative view of one retained card, including review-only cards."""
         self.initialize()
-        return self.repository.import_item(import_id, item_id)
+        item = self.repository.import_item(import_id, item_id)
+        if item:
+            item['ocr_field_available'] = self.files.path('ocr', item['id']).is_file()
+        return item
 
     def approve_import_item(self, import_id, item_id):
         """Publish one review-only generated card to the normal Gallery."""
@@ -547,6 +564,7 @@ class GalleryService:
         try:
             with self.files.lock():
                 self.files.remove('crops', item_id)
+                self.files.remove('ocr', item_id)
         except (OSError, ValueError):
             self.repository.restore_import_item(import_id, item_id, claimed['state'])
             raise
@@ -561,6 +579,7 @@ class GalleryService:
         with self.files.lock():
             for item_id in reset['item_ids']:
                 self.files.remove('crops', item_id)
+                self.files.remove('ocr', item_id)
             self.files.remove('spool', ident)
             self.files.remove('work', ident)
         return reset

@@ -17,7 +17,7 @@ class GalleryFiles:
         if self.root.is_symlink():
             raise ValueError('Gallery root cannot be a symlink')
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        for name in ('spool', 'crops', 'work'):
+        for name in ('spool', 'crops', 'ocr', 'work'):
             path = self.root / name
             if path.is_symlink():
                 raise ValueError('Gallery directories cannot be symlinks')
@@ -45,9 +45,9 @@ class GalleryFiles:
                 path.unlink()
 
     def path(self, category, ident):
-        if category not in ('spool', 'crops', 'work') or not re.fullmatch(r'[a-f0-9]{64}', ident):
+        if category not in ('spool', 'crops', 'ocr', 'work') or not re.fullmatch(r'[a-f0-9]{64}', ident):
             raise ValueError('Invalid gallery file identity')
-        suffix = {'spool': '.pdf', 'crops': '.png', 'work': ''}[category]
+        suffix = {'spool': '.pdf', 'crops': '.png', 'ocr': '.png', 'work': ''}[category]
         parent = self.root / category
         path = parent / (ident + suffix)
         if self.root.is_symlink() or parent.is_symlink() or path.is_symlink():
@@ -68,7 +68,7 @@ class GalleryFiles:
     def usage(self):
         self.initialize()
         sizes = {}
-        for category in ('spool', 'crops', 'work'):
+        for category in ('spool', 'crops', 'ocr', 'work'):
             sizes[category] = sum(p.stat().st_size for p in (self.root / category).rglob('*')
                                   if not p.is_symlink() and p.is_file())
         sizes['database'] = sum(p.stat().st_size for p in self.root.glob('gallery.db*') if p.is_file() and not p.is_symlink())
@@ -103,13 +103,15 @@ class GalleryFiles:
         else:
             path.unlink(missing_ok=True)
 
-    def publish(self, temporary, ident):
+    def publish(self, temporary, ident, *, category='crops'):
+        if category not in ('crops', 'ocr'):
+            raise ValueError('Invalid gallery publish category')
         source = Path(temporary)
         if not source.resolve().is_relative_to((self.root / 'work').resolve()) or source.is_symlink():
             raise ValueError('Invalid gallery crop source')
         with source.open('rb') as stream:
             os.fsync(stream.fileno())
-        source.replace(self.path('crops', ident))
+        source.replace(self.path(category, ident))
 
     def read_progress(self, ident):
         # Only a small gallery-owned progress file, never arbitrary filesystem browsing.

@@ -32,6 +32,28 @@
 {% elif item.work_order_number %}accepted work order; Salesforce enrichment not confirmed yet
 {% elif item.work_order_candidates %}OCR candidate saved; waiting for Salesforce confirmation
 {% else %}no usable work-order number was detected{% endif %}</p>
+
+{% if item.ocr_field_available %}
+<p><strong>Exact OCR input field</strong></p>
+<img class="gallery-job-ocr-field" loading="lazy" src="{{ url_for('gallery.import_item_ocr_field', ident=job.id, item_id=item.id) }}" alt="Exact work-order field sent to OCR for page {{ item.page }}, card {{ item.part }}">
+{% else %}
+<p class="muted">Exact OCR field image was not retained for this older recognition result.</p>
+{% endif %}
+
+{% if item.work_order_reads %}
+<p><strong>OCR passes</strong></p>
+<div class="gallery-ocr-passes">
+{% for read in item.work_order_reads %}
+<p><strong>{{ read.label }}{% if read.psm is not none %} · PSM {{ read.psm }}{% endif %}:</strong>
+{% if not read.ok %}OCR pass failed
+{% elif read.text %}{{ read.text }}
+{% else %}no text{% endif %}
+{% if read.candidate %}<br><span class="muted">Candidate: {{ read.candidate }}</span>{% endif %}</p>
+{% endfor %}
+</div>
+{% else %}
+<p class="muted">Per-pass OCR output was not retained for this older recognition result.</p>
+{% endif %}
 </div>
 {% if item.state == 'REVIEW' %}
 {% if item.work_order_candidates %}
