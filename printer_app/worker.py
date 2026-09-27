@@ -30,7 +30,9 @@ from .retention_files import RetentionFiles
 from .gmail_cleanup import GmailCleanup
 from .mod_sheets.pdf_renderer import render_mod_pdf
 from .mod_sheets.repository import ModSheetAutomationRepository
-from .mod_sheets.service import DailyModSheetService, ModSheetReferenceDeliveryService
+from .mod_sheets.service import (
+    DailyModSheetService, ModSheetManualGalleryPullService, ModSheetReferenceDeliveryService,
+)
 from .salesforce_sandbox.adapter import SalesforceCliAdapter
 from .salesforce_sandbox.service import SalesforceSandboxService
 
@@ -306,16 +308,24 @@ def main():
                 captured.data_dir,
                 captured.timezone,
             )
+            gallery_sink = GalleryReferenceInbox(captured.data_dir, captured.gallery)
             references = ModSheetReferenceDeliveryService(
                 repository,
                 source,
                 queue,
-                GalleryReferenceInbox(captured.data_dir, captured.gallery),
+                gallery_sink,
                 captured.timezone,
             )
-            return daily, references
+            manual_gallery = ModSheetManualGalleryPullService(
+                repository,
+                source,
+                render_mod_pdf,
+                gallery_sink,
+                captured.timezone,
+            )
+            return daily, references, manual_gallery
 
-        daily_mod_sheets, mod_references = make_mod_workflows(cfg)
+        daily_mod_sheets, mod_references, manual_mod_gallery = make_mod_workflows(cfg)
 
         def heartbeat():
             while not stop.is_set():
@@ -350,7 +360,7 @@ def main():
                                 engine = Engine(cfg, db, stop=stop)
                                 gmail = GmailClient(cfg, db, stop=stop, gallery=GalleryInbox(cfg.data_dir, cfg.gallery))
                                 retention = make_retention(cfg)
-                                daily_mod_sheets, mod_references = make_mod_workflows(cfg)
+                                daily_mod_sheets, mod_references, manual_mod_gallery = make_mod_workflows(cfg)
                                 next_poll, next_status = 0, 0
                             active_revision = revision
                             db.set('settings_revision', revision)
@@ -402,6 +412,8 @@ def main():
                     mod_references.deliver_printed_mornings()
                     if mod_reference_task is None and mod_references.final_due(now):
                         mod_reference_task = background.submit(mod_references.run_final)
+                    elif mod_reference_task is None and manual_mod_gallery.requested_due():
+                        mod_reference_task = background.submit(manual_mod_gallery.run_requested)
                     elif mod_reference_task is None and mod_references.requested_due():
                         mod_reference_task = background.submit(mod_references.run_requested)
                     elif mod_reference_task is None and mod_references.hourly_due(now):

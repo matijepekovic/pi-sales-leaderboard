@@ -137,6 +137,7 @@
       <div class="mod-actions">
         <button type="submit" id="modSubmit" name="action" value="save">Save Settings</button>
         <button type="submit" id="modTestPrint" name="action" value="test" disabled>Test Print Now</button>
+        <button type="submit" id="modPullGallery" name="action" value="pull-gallery"{% if not snapshot.configured %} disabled{% endif %}>Pull Today to Gallery</button>
       </div>
       <br>
       <p class="limit">*A maximum of 1000 appointments will be displayed</p>
@@ -155,7 +156,7 @@
             <p><strong>Last automatic run:</strong> Not run yet</p>
           {% endif %}
         {% else %}
-          <p><strong>Status:</strong> Not configured — save once to enable the weekday automatic print.</p>
+          <p><strong>Status:</strong> Not configured — save once to enable the automatic print.</p>
         {% endif %}
 
         {% if snapshot.test_state %}
@@ -168,6 +169,14 @@
           {% endif %}
         {% endif %}
 
+        {% if snapshot.manual_gallery_state %}
+          <p><strong>Manual Gallery pull:</strong> {{ snapshot.manual_gallery_state.message or snapshot.manual_gallery_state.status or '—' }}</p>
+          {% if snapshot.manual_gallery_state.error %}
+            <p class="error"><strong>Manual pull error:</strong> {{ snapshot.manual_gallery_state.error }}</p>
+          {% endif %}
+        {% endif %}
+
+        <p>Pull Today to Gallery uses the saved automatic MOD Sheet settings, does not print, and is a backup for a missed automatic Gallery pull.</p>
         <p>Test Print Now uses the values currently on this form, does not save them, and goes ahead of waiting software-queue jobs. It does not count as the 7:00 AM run.</p>
         <p>No appointments = no print. Automatic generation failures retry once after 2 minutes.</p>
       </div>

@@ -15,6 +15,7 @@ from printer_app.mod_sheets.repository import (
 )
 from printer_app.mod_sheets.service import (
     DailyModSheetService,
+    ModSheetManualGalleryPullService,
     ModSheetReferenceDeliveryService,
     ModSheetSettingsService,
     ModSheetTestPrintService,
@@ -187,7 +188,109 @@ def test_refresh_request_arriving_during_running_pull_is_not_lost(tmp_path):
     assert repeated['rerun'] is True
 
 
-def test_daily_schedule_is_weekdays_at_seven_and_catches_up_same_day():
+def test_manual_gallery_pull_uses_saved_settings_and_does_not_print(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 19, 10, 30))
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    repository.save_settings(ModSheetAutomationSettings(
+        market_segment='Olympia',
+        product_category='All',
+        source_type='All',
+        assigned_service_resource='Sales Rep One',
+        remove_canceled=True,
+        remove_unconfirmed=True,
+        color_code=True,
+        print_options=_mod_print_options(),
+    ))
+    records = (
+        ModSheetRecord(source_id='manual-1', work_order_number='00009999', lead_name='Saturday Customer'),
+    )
+    source = FakeSource([records])
+    sink = FakeReferenceSink()
+    rendered = []
+
+    def renderer(values, color_code=False):
+        rendered.append((tuple(values), color_code))
+        return b'%PDF-manual-gallery'
+
+    service = ModSheetManualGalleryPullService(
+        repository, source, renderer, sink, 'America/Los_Angeles', clock=clock,
+    )
+
+    requested = service.request()
+    assert requested['status'] == 'queued'
+    assert requested['day'] == '2026-09-19'
+    assert service.requested_due()
+
+    result = service.run_requested()
+
+    assert result['status'] == 'complete'
+    assert result['appointments'] == 1
+    assert result['message'] == 'Pulled 1 appointments into Gallery'
+    assert source.calls == [{
+        'start_date': '9/19/2026',
+        'end_date': '9/19/2026',
+        'market_segment': 'Olympia',
+        'product_category': 'All',
+        'source_type': 'All',
+        'assigned_service_resource': 'Sales Rep One',
+        'remove_canceled': True,
+        'remove_unconfirmed': True,
+        'limit': 1000,
+    }]
+    assert rendered == [(records, True)]
+    assert sink.published[0][0:3] == ('2026-09-19', 'morning', records)
+    assert sink.pdf_payloads == [b'%PDF-manual-gallery']
+    assert not service.requested_due()
+
+
+def test_manual_gallery_pull_coalesces_clicks_and_survives_worker_restart(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 19, 9, 0))
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    repository.save_settings(ModSheetAutomationSettings())
+    first = ModSheetManualGalleryPullService(
+        repository, None, None, None, 'America/Los_Angeles', clock=clock,
+    ).request()
+    second = ModSheetManualGalleryPullService(
+        repository, None, None, None, 'America/Los_Angeles', clock=clock,
+    ).request()
+
+    assert second == first
+
+    records = (ModSheetRecord(source_id='manual-2', work_order_number='00008888'),)
+    restarted = ModSheetManualGalleryPullService(
+        ModSheetAutomationRepository(Database(tmp_path / 'printer.db')),
+        FakeSource([records]),
+        lambda values, color_code=False: b'%PDF-restarted',
+        FakeReferenceSink(),
+        'America/Los_Angeles',
+        clock=clock,
+    )
+
+    assert restarted.requested_due()
+    assert restarted.run_requested()['status'] == 'complete'
+
+
+def test_manual_gallery_pull_failure_is_visible_and_next_click_can_retry(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 19, 9, 0))
+    repository = ModSheetAutomationRepository(Database(tmp_path / 'printer.db'))
+    repository.save_settings(ModSheetAutomationSettings())
+    source = FakeSource([RuntimeError('source unavailable'), ()])
+    service = ModSheetManualGalleryPullService(
+        repository, source, lambda values, color_code=False: b'%PDF',
+        FakeReferenceSink(), 'America/Los_Angeles', clock=clock,
+    )
+
+    first = service.request()
+    failed = service.run_requested()
+
+    assert failed['status'] == 'failed'
+    assert 'source unavailable' in failed['error']
+    retried = service.request()
+    assert retried['id'] != first['id']
+    assert service.run_requested()['status'] == 'no_appointments'
+
+
+def test_daily_schedule_is_monday_through_saturday_at_seven_and_catches_up_same_day():
     schedule = DailyModSheetSchedule('America/Los_Angeles')
 
     assert schedule.occurrence_due(_stamp(2026, 9, 21, 6, 59)) is None
@@ -197,7 +300,30 @@ def test_daily_schedule_is_weekdays_at_seven_and_catches_up_same_day():
 
     late = schedule.occurrence_due(_stamp(2026, 9, 21, 15, 30))
     assert late.day == '2026-09-21'
-    assert schedule.occurrence_due(_stamp(2026, 9, 19, 9, 0)) is None
+
+    saturday = schedule.occurrence_due(_stamp(2026, 9, 19, 9, 0))
+    assert saturday.day == '2026-09-19'
+    assert saturday.display_date == '9/19/2026'
+    assert schedule.occurrence_due(_stamp(2026, 9, 20, 9, 0)) is None
+    assert schedule.description() == 'Monday through Saturday at 7:00 AM (America/Los_Angeles)'
+
+
+def test_saturday_daily_run_generates_same_morning_reference_for_gallery(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 19, 7, 0))
+    records = (
+        ModSheetRecord(source_id='sat-source', work_order_number='00009999', lead_name='Saturday Customer'),
+    )
+    service, repository, queue = _service(tmp_path, FakeSource([records]), clock)
+
+    state = service.run_due()
+
+    assert state['status'] == 'queued'
+    assert state['day'] == '2026-09-19'
+    assert queue.enqueued[0][0] == 'pdf:daily-mod:2026-09-19'
+    pending = repository.pending_morning_references()
+    assert len(pending) == 1
+    assert pending[0]['day'] == '2026-09-19'
+    assert pending[0]['records'] == records
 
 
 def test_daily_run_uses_current_day_and_mod_owned_print_settings(tmp_path):
@@ -1262,6 +1388,8 @@ def test_mod_settings_page_has_separate_print_settings_and_immediate_test():
 
     assert 'Save Settings' in template
     assert 'Test Print Now' in template
+    assert 'Pull Today to Gallery' in template
+    assert 'backup for a missed automatic Gallery pull' in template
     assert 'MOD Print Settings' in template
     for field in (
         'printPaper', 'printOrientation', 'printColor',
