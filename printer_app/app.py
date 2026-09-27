@@ -36,7 +36,10 @@ from .salesforce_sandbox.web import blueprint as salesforce_sandbox_blueprint
 from .mod_sheets.pdf_renderer import render_mod_pdf
 from .mod_sheets.repository import ModSheetAutomationRepository
 from .mod_sheets.rep_repository import ModSheetRepRepository
-from .mod_sheets.service import ModSheetSettingsService, ModSheetTestPrintService, ModSheetReferenceDeliveryService
+from .mod_sheets.service import (
+    ModSheetManualGalleryPullService, ModSheetReferenceDeliveryService,
+    ModSheetSettingsService, ModSheetTestPrintService,
+)
 from .mod_sheets.web import blueprint as mod_sheets_blueprint
 
 
@@ -118,9 +121,19 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         render_mod_pdf,
         cfg.data_dir,
     )
+    mod_sheet_manual_gallery = ModSheetManualGalleryPullService(
+        mod_sheet_repository,
+        salesforce_sandbox,
+        render_mod_pdf,
+        GalleryReferenceInbox(cfg.data_dir, cfg.gallery),
+        cfg.timezone,
+    )
     app.extensions['mod_sheet_settings'] = mod_sheet_settings
     app.extensions['mod_sheet_test_print'] = mod_sheet_test_print
-    app.register_blueprint(mod_sheets_blueprint(mod_sheet_settings, mod_sheet_test_print))
+    app.extensions['mod_sheet_manual_gallery'] = mod_sheet_manual_gallery
+    app.register_blueprint(mod_sheets_blueprint(
+        mod_sheet_settings, mod_sheet_test_print, mod_sheet_manual_gallery
+    ))
 
     @app.template_filter('localtime')
     def localtime(value):
