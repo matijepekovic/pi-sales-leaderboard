@@ -7,9 +7,10 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .policy import (
-    address_key, authoritative_reference_text, checked_date, checked_date_filter,
+    address_key, authoritative_reference_text, checked_date, checked_date_filter, clear_work_order_identity,
     checked_lead_name, checked_work_order_number, lead_key, printed_address, printed_lead, printed_work_order_number,
-    printed_phone, related_identity, search_expression, usable_phone, work_order_key,
+    normalize_work_order_evidence, printed_phone, related_identity, search_expression,
+    select_work_order_candidate, usable_phone, work_order_key,
 )
 
 log = logging.getLogger(__name__)
@@ -231,11 +232,15 @@ class GalleryService:
                 continue
             revision = hashlib.sha256(f"{job['id']}:{entry['page']}:{entry['part']}".encode()).hexdigest()
             day = job.get('reference_day') if origin == 'morning' else entry['document_date']
-            candidates = tuple(entry.get('work_order_candidates') or ())
-            number = printed_work_order_number(entry['text'])
+            strict_scan = origin == 'scan' and 'work_order_candidates' in entry
+            candidates = tuple(dict.fromkeys(
+                value for value in (entry.get('work_order_candidates') or ())
+                if isinstance(value, str) and len(value) == 8 and value.isascii() and value.isdecimal()
+            ))
+            number = '' if strict_scan else printed_work_order_number(entry['text'])
             reference = None
             candidates_pending = candidates
-            if origin == 'scan' and candidates:
+            if strict_scan:
                 # An already-saved normalized source record can validate the
                 # candidate immediately (for example the morning-card handoff).
                 # Otherwise the candidates remain untrusted until the fresh
@@ -243,9 +248,12 @@ class GalleryService:
                 resolved = []
                 for candidate in candidates:
                     kind, match = self._reference_for(day, candidate)
-                    if match is not None:
+                    if match is not None and match.get('work_order_number') == candidate:
                         resolved.append((candidate, kind, match))
-                if len(resolved) == 1:
+                # A cache miss does not establish that another independently
+                # observed candidate is absent from the source. Multiple reads
+                # must wait for a completed lookup covering every candidate.
+                if len(candidates) == 1 and len(resolved) == 1:
                     number, _, reference = resolved[0]
                     candidates_pending = ()
                 else:
@@ -256,7 +264,7 @@ class GalleryService:
             # If the work-order field did not resolve, use broader OCR identity
             # against the normalized cached source. Phone wins over address,
             # which wins over customer name; ambiguity still goes to manual review.
-            if origin == 'scan' and reference is None and not number:
+            if origin == 'scan' and not strict_scan and reference is None and not number:
                 identity_reference = self._identity_reference_for(
                     day, entry.get('text', ''), entry.get('lead_text', '')
                 )
@@ -275,7 +283,7 @@ class GalleryService:
             ident = existing['id'] if existing else identities.get(key, revision) if all(key) else revision
             if all(key):
                 identities[key] = ident
-            text = entry['text']
+            text = clear_work_order_identity(entry['text']) if strict_scan else entry['text']
             lead_text = entry.get('lead_text', '')
             previous = self.repository.reference_item(ident) if existing else None
             if previous and previous.get('reference_kind'):
@@ -298,15 +306,24 @@ class GalleryService:
                 # may not carry its debug image, and a replacement card must
                 # never display a stale OCR field from an older image revision.
                 self.files.remove('ocr', ident)
+            reads = entry.get('work_order_reads') or ()
+            if strict_scan and not reads and entry['text'].strip():
+                reads = (dict(label='Original recognition', psm=None, text=entry['text'], candidate='', ok=True),)
             items[ident] = dict(id=ident, import_id=job['id'], filename=job['filename'],
                 page=entry['page'], part=entry['part'], bytes=entry['bytes'], text=text,
                 document_date=day, date_status='reference' if origin == 'morning' else entry['date_status'], created=time.time(),
                 lead_text=lead_text,
-                work_order_candidates=candidates_pending,
-                work_order_reads=entry.get('work_order_reads') or (),
-                recognition_revision=1 if (candidates or
+                work_order_number=number,
+                work_order_reads=reads,
+                recognition_revision=1 if (strict_scan or
                     ('lead_text' in entry and entry['text'].strip())) else 0,
                 origin=origin, image_revision=revision, replace_existing=bool(existing), require_identity=True)
+            if strict_scan:
+                items[ident]['work_order_candidates'] = candidates_pending
+                evidence = normalize_work_order_evidence(entry.get('work_order_evidence'))
+                if day and entry.get('date_status') == 'printed':
+                    evidence['dates'] = (checked_date(day),)
+                items[ident]['work_order_evidence'] = evidence
         warnings = list(manifest.get('warnings', []))
         if discarded_blank_notes:
             warnings.append(
@@ -322,7 +339,7 @@ class GalleryService:
         for item in items.values():
             self._enrich_reference_item(item['id'])
             lookup_numbers.extend(item.get('work_order_candidates') or ())
-            number = printed_work_order_number(item.get('text', ''))
+            number = item['work_order_number']
             if number:
                 lookup_numbers.append(number)
         self.files.remove('spool', job['id'])
@@ -504,19 +521,28 @@ class GalleryService:
         self.initialize()
         requested = {work_order_key(number) for number in work_order_numbers if work_order_key(number)}
         normalized = {}
+        ambiguous = set()
         for record in records:
             value = self._reference_record(record)
             key = work_order_key(value.get('work_order_number', ''))
-            if key in requested and key not in normalized:
-                normalized[key] = value
+            if key in requested and key not in ambiguous:
+                if key in normalized and normalized[key] != value:
+                    ambiguous.add(key)
+                    normalized.pop(key)
+                else:
+                    normalized[key] = value
 
         def fields(record):
             day = str(record.get('appointment_date') or '').strip()
             if day:
                 day = checked_date(day)
+            assigned = self._resource_names(record)
+            # An undated source row still confirms the work order and customer.
+            # With no rep values it supplies no dated assignment fact to replace
+            # one already saved on the card. A dated empty assignment may clear it.
             return (
                 day,
-                self._resource_names(record),
+                assigned if day or assigned else None,
                 ' '.join(str(record.get('lead_name') or '').split()),
                 ' '.join(str(record.get('address') or '').split()),
                 ' '.join(str(record.get('lead_source_id') or '').split()),
@@ -529,31 +555,41 @@ class GalleryService:
             number = record.get('work_order_number', '')
             day, assigned, name, address, lead_source_id, sales_status = fields(record)
             for item in self.repository.work_order_items(number):
-                text = self._reference_text(item.get('text', ''), record, day, include_resources=True)
+                text = self._reference_text(item.get('text', ''), record, day,
+                                            include_resources=assigned is not None)
                 changed += self.repository.apply_work_order_reference(
                     item['id'], item['work_order_key'], str(record.get('source_id') or ''),
                     text, name, address, assigned, day, lead_source_id, sales_status,
                 )
 
-        # A scanned card accepts an OCR number only when exactly one of its
-        # independent candidates resolves through the normalized source.
+        # Every candidate must be looked up before accepting an OCR number.
+        # If more than one exists, independent printed card details can identify
+        # which record belongs to this scan; a shared or conflicting match cannot.
         validated = 0
         for item in self.repository.work_order_candidate_items():
+            candidate_keys = {work_order_key(candidate) for candidate in item['candidates']}
+            if not candidate_keys.issubset(requested) or candidate_keys & ambiguous:
+                continue
             matches = [
                 (candidate, normalized[work_order_key(candidate)])
                 for candidate in item['candidates']
                 if work_order_key(candidate) in normalized
+                and normalized[work_order_key(candidate)].get('work_order_number') == candidate
             ]
-            if len(matches) != 1:
+            selected = (matches[0] if len(matches) == 1 else
+                        select_work_order_candidate(matches, item.get('work_order_evidence')))
+            if selected is None:
                 continue
-            number, record = matches[0]
+            number, record = selected
             day, assigned, name, address, lead_source_id, sales_status = fields(record)
             text = self._reference_text(
-                'Work Order Number: ' + number, record, day, include_resources=True
+                item.get('text', ''), record, day, include_resources=assigned is not None
             )
             applied = self.repository.apply_validated_work_order_reference(
                 item['id'], item['candidates'], number, str(record.get('source_id') or ''),
                 text, name, address, assigned, day, lead_source_id, sales_status,
+                expected_evidence=item.get('work_order_evidence'),
+                expected_image_revision=item.get('image_revision'),
             )
             changed += applied
             validated += applied
@@ -674,6 +710,26 @@ class GalleryService:
                 raise ValueError('Invalid recognition result')
             text = result['text'][:100000]
             candidates = tuple(result.get('work_order_candidates') or ())
+            if 'work_order_candidates' in result:
+                # A new scan reader never overrides an accepted/manual identity.
+                # Unidentified cards retain pending candidates until the source
+                # confirms exactly one, including when this read found nothing.
+                if item.get('work_order_key'):
+                    raise ValueError('Preserve the existing work order until source confirmation')
+                reads = result.get('work_order_reads') or (
+                    dict(label='Original recognition', psm=None, text=text, candidate='', ok=True),
+                )
+                evidence_args = {}
+                if 'work_order_evidence' in result:
+                    evidence = normalize_work_order_evidence(result['work_order_evidence'])
+                    if item.get('document_date') and item.get('date_status') == 'printed':
+                        evidence['dates'] = (checked_date(item['document_date']),)
+                    evidence_args['evidence'] = evidence
+                if not self.repository.save_work_order_candidates(
+                        item['id'], candidates, expected_text=item['text'], reads=reads,
+                        expected_image_revision=item.get('image_revision'), **evidence_args):
+                    raise ValueError('Work-order candidate changed during recognition')
+                return True
             if item.get('state') == 'REVIEW' and not item.get('work_order_key'):
                 if not candidates:
                     raise ValueError('No readable work order; retry later')

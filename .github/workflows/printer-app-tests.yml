@@ -20,7 +20,7 @@ jobs:
       - name: Independent printer and browser test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcups2-dev cups-client cups-daemon libreoffice-calc fonts-liberation fonts-dejavu-core python3-opencv python3-pil python3-pytest poppler-utils tesseract-ocr tesseract-ocr-eng
+          sudo apt-get install -y libcups2-dev cups-client cups-daemon libreoffice-calc fonts-liberation fonts-dejavu-core python3-opencv python3-pil python3-pypdf python3-pytest poppler-utils tesseract-ocr tesseract-ocr-eng
           python -m pip install -r printer_app/requirements.txt pytest xlwt 'playwright>=1.55,<2' 'opencv-python-headless>=4.10,<5'
           python -m playwright install --with-deps chromium webkit
       - name: MOD Sheet source and automation regressions
@@ -62,6 +62,7 @@ jobs:
             printer_app/tests/test_gallery_template_ocr.py \
             printer_app/tests/test_gallery_field_crops.py \
             printer_app/tests/test_gallery_field_geometry.py \
+            printer_app/tests/test_gallery_render_size.py \
             printer_app/tests/test_gallery_recognition.py::test_tsv_quotes_cannot_swallow_rows_or_leak_geometry \
             printer_app/tests/test_gallery_recognition.py::test_header_geometry_works_when_address_label_is_unreadable \
             printer_app/tests/test_gallery_recognition.py::test_new_normalized_header_is_used_without_address_or_number_guessing \
@@ -87,7 +88,7 @@ jobs:
           python -m compileall -q printer_app
           bash -n printer_app/install.sh printer_app/launch.sh scripts/update-printer-app.sh
           python -m pytest printer_app/tests -v
-          /usr/bin/python3 -m pytest printer_app/tests/test_gallery_borders.py printer_app/tests/test_gallery_recognition.py -v
+          /usr/bin/python3 -m pytest printer_app/tests/test_gallery_borders.py printer_app/tests/test_gallery_recognition.py printer_app/tests/test_gallery_render_size.py -v
       - name: Standalone systemd deployment smoke test (no Stats service)
         run: |
           sudo useradd --create-home --shell /bin/bash scoreboard

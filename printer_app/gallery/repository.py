@@ -5,11 +5,35 @@ import time
 from contextlib import contextmanager
 
 from .policy import (
-    address_key, lead_key, printed_address, printed_lead,
-    printed_work_order_number, work_order_key,
+    address_key, clear_work_order_identity, lead_key, printed_address, printed_lead,
+    normalize_work_order_evidence, printed_work_order_number, work_order_key,
 )
 
 _UNSET = object()
+
+
+def _work_order_evidence(raw):
+    """Decode persisted scan evidence without interpreting it as card identity."""
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        value = {}
+    return normalize_work_order_evidence(value)
+
+
+def _work_order_reads(raw):
+    reads = []
+    for entry in raw if isinstance(raw, (list, tuple)) else ():
+        if isinstance(entry, dict):
+            reads.append({
+                'label': str(entry.get('label') or '')[:80],
+                'psm': entry.get('psm') if type(entry.get('psm')) is int else None,
+                'text': str(entry.get('text') or '')[:256],
+                'candidate': str(entry.get('candidate') or '')[:8],
+                'ok': bool(entry.get('ok')),
+            })
+    return reads
+
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS imports (
@@ -112,6 +136,7 @@ class GalleryRepository:
                 ok=bool(entry.get('ok')),
             ))
         value['work_order_reads'] = tuple(clean_reads)
+        value['work_order_evidence'] = _work_order_evidence(value.get('work_order_evidence'))
         return value
 
     @contextmanager
@@ -169,6 +194,7 @@ class GalleryRepository:
                 ('work_order_key', "TEXT NOT NULL DEFAULT ''"),
                 ('work_order_candidates', "TEXT NOT NULL DEFAULT '[]'"),
                 ('work_order_reads', "TEXT NOT NULL DEFAULT '[]'"),
+                ('work_order_evidence', "TEXT NOT NULL DEFAULT '{}'"),
                 ('assigned_service_resource', "TEXT NOT NULL DEFAULT ''"),
                 ('sales_lead_status', "TEXT NOT NULL DEFAULT ''"),
                 ('lead_source_id', "TEXT NOT NULL DEFAULT ''"),
@@ -275,38 +301,31 @@ class GalleryRepository:
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             for item in items:
+                origin = item.get('origin', 'scan')
+                strict_scan = origin == 'scan' and 'work_order_candidates' in item
+                work_order = str(item.get('work_order_number') or '') if strict_scan else printed_work_order_number(item['text'])
+                if strict_scan and (item.get('work_order_candidates') or len(work_order) != 8
+                                    or not work_order.isascii() or not work_order.isdecimal()):
+                    work_order = ''
+                if strict_scan and not work_order:
+                    item = dict(item, text=clear_work_order_identity(item['text']))
                 name = printed_lead(item.get('lead_text') or item['text'])
                 address = printed_address(item['text'])
-                work_order = printed_work_order_number(item['text'])
                 raw_candidates = item.get('work_order_candidates') or ()
                 candidates = tuple(dict.fromkeys(
                     value for value in raw_candidates
                     if isinstance(value, str) and len(value) == 8
                     and value.isascii() and value.isdecimal()
                 ))
-                raw_reads = item.get('work_order_reads') or ()
-                reads = []
-                for entry in raw_reads if isinstance(raw_reads, (list, tuple)) else ():
-                    if not isinstance(entry, dict):
-                        continue
-                    reads.append({
-                        'label': str(entry.get('label') or '')[:80],
-                        'psm': entry.get('psm') if type(entry.get('psm')) is int else None,
-                        'text': str(entry.get('text') or '')[:256],
-                        'candidate': str(entry.get('candidate') or '')[:8],
-                        'ok': bool(entry.get('ok')),
-                    })
+                reads = _work_order_reads(item.get('work_order_reads') or ())
                 state = 'ACTIVE' if name else 'REVIEW'
-                if item.get('require_identity'):
+                if strict_scan:
+                    state = 'ACTIVE' if work_order else 'REVIEW'
+                elif item.get('require_identity'):
                     # Scanned OCR candidates are source-validated before becoming
                     # the durable work-order identity. Morning cards already come
                     # from normalized source data and retain their existing path.
-                    if item.get('origin', 'scan') == 'scan' and candidates:
-                        work_order = ''
-                        state = 'REVIEW'
-                    else:
-                        state = 'ACTIVE' if work_order else 'REVIEW'
-                origin = item.get('origin', 'scan')
+                    state = 'ACTIVE' if work_order else 'REVIEW'
                 if origin == 'morning' and c.execute(
                         'SELECT 1 FROM scan_days WHERE day=?', (item.get('document_date'),)).fetchone():
                     continue
@@ -316,6 +335,8 @@ class GalleryRepository:
                               work_order_number=work_order, work_order_key=work_order_key(work_order),
                               work_order_candidates=json.dumps(candidates if origin == 'scan' else []),
                               work_order_reads=json.dumps(reads if origin == 'scan' else []),
+                              work_order_evidence=json.dumps(normalize_work_order_evidence(
+                                  item.get('work_order_evidence') if origin == 'scan' else {})),
                               recognition_revision=item.get('recognition_revision', 0), origin=origin,
                               image_revision=item.get('image_revision', item['id']))
                 if item.get('replace_existing'):
@@ -326,6 +347,7 @@ class GalleryRepository:
                         lead_status=:lead_status,address=:address,address_key=:address_key,
                         work_order_number=:work_order_number,work_order_key=:work_order_key,
                         work_order_candidates=:work_order_candidates,work_order_reads=:work_order_reads,
+                        work_order_evidence=:work_order_evidence,
                         recognition_revision=:recognition_revision,origin=:origin,
                         image_revision=:image_revision,search_revision=search_revision+1
                         WHERE id=:id AND state IN ('ACTIVE','REVIEW')
@@ -335,11 +357,11 @@ class GalleryRepository:
                 c.execute('''INSERT OR IGNORE INTO items(
                     id,import_id,page,part,filename,text,document_date,date_status,bytes,created,state,
                     lead_name,lead_key,lead_status,address,address_key,work_order_number,work_order_key,
-                    work_order_candidates,work_order_reads,recognition_revision,origin,image_revision)
+                    work_order_candidates,work_order_reads,work_order_evidence,recognition_revision,origin,image_revision)
                     VALUES (
                     :id,:import_id,:page,:part,:filename,:text,:document_date,:date_status,:bytes,:created,:state,
                     :lead_name,:lead_key,:lead_status,:address,:address_key,:work_order_number,:work_order_key,
-                    :work_order_candidates,:work_order_reads,:recognition_revision,:origin,:image_revision)''', values)
+                    :work_order_candidates,:work_order_reads,:work_order_evidence,:recognition_revision,:origin,:image_revision)''', values)
                 self._refresh_sales_lead_statuses(c, ' AND id=?', (item['id'],))
             now = time.time()
             for day in {item.get('document_date') for item in items
@@ -412,7 +434,8 @@ class GalleryRepository:
         with self.connect() as c:
             row = c.execute("""SELECT id,import_id,page,part,bytes,document_date,date_status,
                     lead_name,lead_status,sales_lead_status,address,work_order_number,work_order_candidates,
-                    work_order_reads,assigned_service_resource,reference_kind,reference_source_id,state FROM items
+                    work_order_reads,work_order_evidence,image_revision,
+                    assigned_service_resource,reference_kind,reference_source_id,state FROM items
                 WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
                 (item_id, import_id)).fetchone()
             return self._recognition_view(row)
@@ -568,6 +591,7 @@ class GalleryRepository:
             r = c.execute("SELECT * FROM items WHERE id=? AND state='ACTIVE'", (ident,)).fetchone()
             if r:
                 result = dict(r)
+                result['work_order_evidence'] = _work_order_evidence(result.get('work_order_evidence'))
                 result['notes'] = [dict(n) for n in c.execute('SELECT id,author,body,created FROM notes WHERE item_id=? ORDER BY created,id', (ident,))]
                 return result
 
@@ -753,7 +777,8 @@ class GalleryRepository:
             result['retained'] = result['published'] + result['pending_review']
             result['items'] = [self._recognition_view(i) for i in c.execute(
                 """SELECT id,page,part,bytes,document_date,date_status,lead_name,sales_lead_status,
-                    work_order_number,work_order_candidates,work_order_reads,reference_kind,state
+                    work_order_number,work_order_candidates,work_order_reads,work_order_evidence,
+                    image_revision,reference_kind,state
                 FROM items WHERE import_id=? AND state IN ('ACTIVE','REVIEW')
                 ORDER BY CASE state WHEN 'REVIEW' THEN 0 ELSE 1 END,page,part,id LIMIT 24 OFFSET ?""",
                 (ident,offset))]
@@ -762,14 +787,18 @@ class GalleryRepository:
 
     def recognition_candidate(self, now):
         with self.connect() as c:
-            row = c.execute("""SELECT id,text,lead_status,state,work_order_key,work_order_candidates FROM items
+            row = c.execute("""SELECT id,text,lead_status,state,work_order_key,work_order_candidates,
+                    work_order_evidence,image_revision,document_date,date_status FROM items
                 WHERE recognition_attempts<3 AND recognition_retry_at<=? AND (
                     (state='ACTIVE' AND recognition_revision<1)
                     OR (state='REVIEW' AND work_order_key='' AND work_order_candidates='[]')
                 )
                 ORDER BY (state='ACTIVE'),(lead_key!=''),created,id LIMIT 1""",
                 (now,)).fetchone()
-            return dict(row) if row else None
+            if row:
+                result = dict(row)
+                result['work_order_evidence'] = _work_order_evidence(result.get('work_order_evidence'))
+                return result
 
     def repair_recognition(
             self, ident, text, name, key, address, address_normalized,
@@ -957,9 +986,13 @@ class GalleryRepository:
         with self.connect() as c:
             row = c.execute("""SELECT id,text,document_date,lead_name,lead_key,address,address_key,
                 work_order_number,work_order_key,assigned_service_resource,reference_kind,
-                reference_source_id,sales_lead_status,lead_source_id,state,origin FROM items
+                reference_source_id,sales_lead_status,lead_source_id,state,origin,
+                work_order_evidence,image_revision FROM items
                 WHERE id=? AND state IN ('ACTIVE','REVIEW')""", (ident,)).fetchone()
-            return dict(row) if row else None
+            if row:
+                result = dict(row)
+                result['work_order_evidence'] = _work_order_evidence(result.get('work_order_evidence'))
+                return result
 
     def work_order_items(self, number):
         """All retained cards carrying this exact normalized work-order identity."""
@@ -983,7 +1016,7 @@ class GalleryRepository:
                 state='ACTIVE',
                 document_date=CASE WHEN ?='' THEN document_date ELSE ? END,
                 date_status=CASE WHEN ?='' THEN date_status ELSE 'reference' END,
-                assigned_service_resource=?,
+                assigned_service_resource=coalesce(?,assigned_service_resource),
                 reference_kind='work-order',reference_source_id=?,text=?,
                 lead_name=CASE WHEN ?='' THEN lead_name ELSE ? END,
                 lead_key=CASE WHEN ?='' THEN lead_key ELSE ? END,
@@ -1058,10 +1091,12 @@ class GalleryRepository:
         """Cards waiting for one source-confirmed OCR work-order candidate."""
         with self.connect() as c:
             result = []
-            for row in c.execute("""SELECT id,text,work_order_candidates,state
+            for row in c.execute("""SELECT id,text,work_order_candidates,work_order_evidence,
+                    image_revision,state
                 FROM items WHERE state='REVIEW' AND work_order_key='' AND work_order_candidates!='[]'
                 ORDER BY created,id"""):
                 value = dict(row)
+                value['work_order_evidence'] = _work_order_evidence(value.get('work_order_evidence'))
                 try:
                     candidates = json.loads(value['work_order_candidates'])
                 except (TypeError, ValueError, json.JSONDecodeError):
@@ -1073,33 +1108,59 @@ class GalleryRepository:
                 result.append(value)
             return result
 
-    def save_work_order_candidates(self, ident, candidates):
+    def save_work_order_candidates(self, ident, candidates, *, expected_text=None, reads=(),
+                                   evidence=_UNSET, expected_image_revision=None):
         """Persist one completed multi-read OCR result without accepting its identity."""
         clean = tuple(dict.fromkeys(
             value for value in candidates if isinstance(value, str)
             and len(value) == 8 and value.isascii() and value.isdecimal()
         ))
-        if not clean:
-            return 0
         with self.connect() as c:
-            return c.execute("""UPDATE items SET work_order_candidates=?,recognition_revision=1,
-                recognition_attempts=0,recognition_retry_at=0
-                WHERE id=? AND state='REVIEW' AND work_order_key='' AND work_order_candidates='[]'""",
-                (json.dumps(clean), ident)).rowcount
+            c.execute('BEGIN IMMEDIATE')
+            row = c.execute("""SELECT text,work_order_evidence,image_revision FROM items
+                WHERE id=? AND work_order_key=''
+                AND work_order_candidates='[]' AND (state='REVIEW'
+                    OR (state='ACTIVE' AND recognition_revision<1))""", (ident,)).fetchone()
+            if not row or (expected_text is not None and row['text'] != expected_text):
+                return 0
+            if expected_image_revision is not None and row['image_revision'] != expected_image_revision:
+                return 0
+            saved_evidence = (row['work_order_evidence'] if evidence is _UNSET else
+                              json.dumps(normalize_work_order_evidence(evidence)))
+            return c.execute("""UPDATE items SET text=?,state='REVIEW',work_order_candidates=?,
+                work_order_reads=?,work_order_evidence=?,recognition_revision=1,
+                search_revision=search_revision+1,
+                recognition_attempts=CASE WHEN ? THEN 0 ELSE recognition_attempts+1 END,
+                recognition_retry_at=? WHERE id=?""",
+                (clear_work_order_identity(row['text']), json.dumps(clean), json.dumps(_work_order_reads(reads)),
+                 saved_evidence,
+                 bool(clean), 0 if clean else time.time() + 300, ident)).rowcount
 
     def apply_validated_work_order_reference(
             self, ident, expected_candidates, number, source_id, text, name, address,
-            assigned_resource, appointment_date, lead_source_id, sales_lead_status):
+            assigned_resource, appointment_date, lead_source_id, sales_lead_status, *,
+            expected_evidence=_UNSET, expected_image_revision=None):
         """Atomically accept one OCR candidate only after the source resolved it."""
         serialized = json.dumps(list(expected_candidates))
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
+            row = c.execute('SELECT work_order_evidence,image_revision FROM items WHERE id=?',
+                            (ident,)).fetchone()
+            if not row:
+                return 0
+            if expected_image_revision is not None and row['image_revision'] != expected_image_revision:
+                return 0
+            if (expected_evidence is not _UNSET and
+                    _work_order_evidence(row['work_order_evidence']) !=
+                    normalize_work_order_evidence(expected_evidence)):
+                return 0
             return c.execute("""UPDATE items SET
                 search_revision=search_revision+1,state='ACTIVE',
                 work_order_number=?,work_order_key=?,work_order_candidates='[]',
                 document_date=CASE WHEN ?='' THEN document_date ELSE ? END,
                 date_status=CASE WHEN ?='' THEN date_status ELSE 'reference' END,
-                assigned_service_resource=?,reference_kind='work-order',reference_source_id=?,text=?,
+                assigned_service_resource=coalesce(?,assigned_service_resource),
+                reference_kind='work-order',reference_source_id=?,text=?,
                 lead_name=CASE WHEN ?='' THEN lead_name ELSE ? END,
                 lead_key=CASE WHEN ?='' THEN lead_key ELSE ? END,
                 lead_status=CASE WHEN ?='' THEN lead_status ELSE 'printed' END,

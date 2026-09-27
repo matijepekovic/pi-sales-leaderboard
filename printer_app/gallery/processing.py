@@ -6,6 +6,7 @@ restart or Pi reboot resumes from the next page instead of starting the PDF over
 Only finished crops and a manifest leave the temporary workspace. No cloud APIs.
 """
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -153,6 +154,64 @@ def save_checkpoint(output, pages, completed_page, manifest, pdf_date):
     )
 
 
+def native_render_sizes(source, pages):
+    """Avoid resampling a sole full-page scan before OCR; keep Poppler as renderer.
+
+    A page containing anything beyond one ordinary image keeps the existing
+    render size. In particular, image metadata alone cannot establish that a
+    mixed page has no text, vector marks, annotations, masks or transformations.
+    Metadata inspection is optional so an unavailable or damaged PDF reader
+    cannot prevent the established Poppler path from processing the document.
+    """
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(source)
+        if len(reader.pages) != pages:
+            return {}
+    except Exception:
+        return {}
+
+    sizes = {}
+    for index in range(1, pages + 1):
+        try:
+            page = reader.pages[index - 1]
+            if page.get('/Rotate', 0) or page.get('/UserUnit', 1) != 1 or page.get('/Annots'):
+                continue
+            media, crop = tuple(map(float, page.mediabox)), tuple(map(float, page.cropbox))
+            if not all(math.isfinite(value) for value in media + crop):
+                continue
+            if any(abs(a - b) > .01 for a, b in zip(media, crop)):
+                continue
+            operations = page.get_contents().operations
+            if [operator for _, operator in operations] != [b'q', b'cm', b'Do', b'Q']:
+                continue
+            if operations[0][0] or operations[3][0] or len(operations[2][0]) != 1:
+                continue
+            matrix = tuple(map(float, operations[1][0]))
+            expected = (media[2] - media[0], 0, 0, media[3] - media[1], media[0], media[1])
+            if (len(matrix) != 6 or not all(math.isfinite(value) for value in matrix)
+                    or any(abs(a - b) > .01 for a, b in zip(matrix, expected))):
+                continue
+            objects = page['/Resources']['/XObject'].get_object()
+            if len(objects) != 1:
+                continue
+            image = objects[operations[2][0][0]].get_object()
+            if (image.get('/Subtype') != '/Image' or image.get('/ImageMask')
+                    or image.get('/Mask') is not None or image.get('/SMask') is not None):
+                continue
+            width, height = int(image['/Width']), int(image['/Height'])
+            if width <= 0 or height <= 0 or min(expected[0], expected[3]) <= 0:
+                continue
+            if abs((width / height) / (expected[0] / expected[3]) - 1) > .005:
+                continue
+            sizes[index] = min(3300, max(width, height))
+        except Exception:
+            # Unrecognized page metadata uses the complete existing renderer.
+            continue
+    return sizes
+
+
 def process(source, output, budget):
     output.mkdir(parents=True, exist_ok=True)
     report_progress(output, 'inspect')
@@ -169,6 +228,7 @@ def process(source, output, budget):
 
     pages = int(match[1])
     manifest, completed_page, pdf_date, used = load_checkpoint(output, pages)
+    render_sizes = native_render_sizes(source, pages)
 
     # The only durable work state is page-complete. If the previous process died
     # halfway through page N, that page has no checkpoint and is rendered again.
@@ -182,7 +242,7 @@ def process(source, output, budget):
             subprocess.run(
                 [
                     'pdftoppm', '-f', str(page), '-l', str(page), '-singlefile',
-                    '-scale-to', '3300', '-png', str(source), str(prefix),
+                    '-scale-to', str(render_sizes.get(page, 3300)), '-png', str(source), str(prefix),
                 ],
                 check=True,
                 stdout=subprocess.DEVNULL,
@@ -267,6 +327,10 @@ def process(source, output, budget):
         for item in manifest['items']:
             item['document_date'] = pdf_date
             item['date_status'] = 'printed'
+            if 'work_order_evidence' in item:
+                # All cards share the independently established printed PDF
+                # date, including cards read before that date was available.
+                item['work_order_evidence']['dates'] = (pdf_date,)
 
     save_checkpoint(output, pages, pages, manifest, pdf_date)
     report_progress(output, 'publish', pages, pages, len(manifest['items']))

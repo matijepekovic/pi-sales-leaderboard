@@ -1,8 +1,14 @@
 """Gallery settings and normalized search/date rules, without IO or vendor data."""
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import date
 import re
 import unicodedata
+
+if __package__:
+    from .numeric_parser import numeric_token_from_text
+else:
+    from numeric_parser import numeric_token_from_text
 
 FIELDS = {'GALLERY_ENABLED', 'GALLERY_SUBJECT_CONTAINS', 'GALLERY_FROM_CONTAINS',
           'GALLERY_KEEP_DAYS', 'GALLERY_MAX_MB', 'GALLERY_CROPS_PER_DAY',
@@ -136,13 +142,7 @@ def address_key(value):
     return ' '.join(re.findall(r'[a-z0-9]+', value))
 
 
-def printed_work_order_number(text):
-    """Read the first complete eight digits from an explicit Work Order Number field.
-
-    OCR sometimes appends an extra digit to the printed identifier. Never join
-    separate digit fragments; when one contiguous token contains more than eight
-    digits, the printed work-order identity is its first eight digits.
-    """
+def _work_order_field_spans(text):
     original = str(text or '')
     labels = list(re.finditer(
         r'\bWork[ \t]+Order[ \t]+Number\b[ \t]*[:;]?[ \t]*', original, re.I))
@@ -151,12 +151,56 @@ def printed_work_order_number(text):
     boundary = r'[\r\n|]|\b(?:' + fields + r')\b|\b[A-Za-z][A-Za-z0-9 /_-]*[:;]'
     for index, label in enumerate(labels):
         end = labels[index + 1].start() if index + 1 < len(labels) else len(original)
-        field = re.split(boundary, original[label.end():end], maxsplit=1, flags=re.I)[0]
-        for match in re.finditer(r'[0-9]{8,}', field):
+        boundary_match = re.search(boundary, original[label.end():end], flags=re.I)
+        yield label.end(), label.end() + boundary_match.start() if boundary_match else end
+
+
+def work_order_fields(text):
+    """Yield explicit single-line work-order values, without normalizing OCR glyphs."""
+    original = str(text or '')
+    for start, end in _work_order_field_spans(original):
+        yield original[start:end]
+
+
+def clear_work_order_identity(text):
+    """Remove unconfirmed work-order values from normalized text, preserving other fields."""
+    original = str(text or '')
+    for start, end in reversed(tuple(_work_order_field_spans(original))):
+        original = original[:start] + original[end:]
+    return original
+
+
+def printed_work_order_number(text):
+    """Read the existing stored/reference text contract, without scan-only rules.
+
+    Historical normalized text keeps its first-eight-digit behavior. New scan
+    candidates must use scanned_work_order_candidates before becoming identity.
+    """
+    for field in work_order_fields(text):
+        value = numeric_token_from_text(field, allow_overflow=True)
+        if value:
+            return value
+    return ''
+
+
+def scanned_work_order_candidates(text, *, labeled=False):
+    """Return every distinct literal eight-digit 02 candidate, in reading order.
+
+    Pass an isolated work-order field, or labeled=True for full-card OCR text.
+    This boundary never pads, trims digits, joins fragments, or changes glyphs;
+    a reader's position-preserving glyph normalization must happen before it.
+    """
+    fields = work_order_fields(text) if labeled else (str(text or ''),)
+    candidates = {}
+    for field in fields:
+        for match in re.finditer(r'[0-9]+', field):
+            token = match[0]
+            if not re.fullmatch(r'02[0-9]{6}', token):
+                continue
             edges = field[max(0, match.start() - 1):match.start()] + field[match.end():match.end() + 1]
             if all(char.isspace() or unicodedata.category(char)[0] in 'PS' for char in edges):
-                return match[0][:8]
-    return ''
+                candidates.setdefault(token, None)
+    return tuple(candidates)
 
 
 def checked_work_order_number(value):
@@ -189,6 +233,157 @@ def usable_phone(value):
     if not valid or len(set(digits)) < 2:
         return '', ''
     return display, ('+' if international else '') + digits
+
+
+def normalize_work_order_evidence(value):
+    """Canonicalize explicit observed fields, retaining every distinct reading.
+
+    This does not extract values from arbitrary text or correct OCR. Dates and
+    times must already be ISO dates and 24-hour minutes; work_order_schedule
+    parses an explicitly isolated printed schedule field. Malformed or absent
+    evidence cannot contribute to a match.
+    """
+    source = value if isinstance(value, Mapping) else {}
+    result = {}
+    for field in ('names', 'dates', 'times', 'phones'):
+        values = source.get(field, ())
+        normalized = {}
+        for raw in values if isinstance(values, (tuple, list)) else ():
+            if not isinstance(raw, str):
+                continue
+            clean = ' '.join(raw.split())
+            if field == 'names':
+                clean = unicodedata.normalize('NFC', clean).casefold()
+                if (len(clean) > 160 or not any(char.isalnum() for char in clean)
+                        or not clean.isprintable()):
+                    continue
+            elif field == 'dates':
+                if not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', clean):
+                    continue
+                try:
+                    clean = checked_date(clean)
+                except ValueError:
+                    continue
+            elif field == 'times':
+                if not re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]', clean):
+                    continue
+            else:
+                clean = usable_phone(clean)[1]
+            if clean:
+                normalized.setdefault(clean, None)
+        result[field] = tuple(normalized)
+    return result
+
+
+def work_order_schedule(value):
+    """Parse one literal local schedule field as (ISO date, 24-hour minute).
+
+    Accept only explicit numeric or English-month dates and explicit clock
+    values. There is no timezone conversion, meridiem guess, OCR substitution,
+    or time window. Nonzero seconds cannot be represented by this contract and
+    are not silently truncated. Bare dates/times are returned independently.
+    """
+    if not isinstance(value, str) or len(value) > 120:
+        return '', ''
+    clean = ' '.join(value.split())
+    iso_date = bool(re.match(r'[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[ T]|$)', clean))
+    months = ('January February March April May June July August September October November December').split()
+    month_numbers = {name.casefold(): number for number, name in enumerate(months, 1)}
+    month_numbers.update({name[:3].casefold(): number for number, name in enumerate(months, 1)})
+    patterns = (
+        r'(?P<year>[0-9]{4})[-.](?P<month>[0-9]{1,2})[-.](?P<day>[0-9]{1,2})',
+        r'(?P<month>[0-9]{1,2})/(?P<day>[0-9]{1,2})/(?P<year>[0-9]{4})',
+        r'(?P<month_name>' + '|'.join(month_numbers) + r') (?P<day>[0-9]{1,2}),? (?P<year>[0-9]{4})',
+    )
+    day = ''
+    for pattern in patterns:
+        match = re.match(pattern + r'(?=$|[ T;,])', clean, re.I)
+        if match is None:
+            continue
+        parts = match.groupdict()
+        try:
+            month = month_numbers[parts['month_name'].casefold()] if parts.get('month_name') else int(parts['month'])
+            day = checked_date(date(int(parts['year']), month, int(parts['day'])).isoformat())
+        except (KeyError, ValueError):
+            return '', ''
+        clean = clean[match.end():]
+        if clean:
+            separator = re.match(r'[ T;,]+', clean)
+            clean = clean[separator.end():] if separator else clean
+        break
+    if not clean:
+        return day, ''
+    clock = re.fullmatch(r'([0-9]{1,2}):([0-9]{2})(?::([0-9]{2}))? ?(AM|PM)?', clean, re.I)
+    if clock is None:
+        return '', ''
+    hour, minute = int(clock[1]), int(clock[2])
+    if minute > 59 or (clock[3] is not None and clock[3] != '00'):
+        return '', ''
+    if clock[4]:
+        if not 1 <= hour <= 12:
+            return '', ''
+        hour = hour % 12 + (12 if clock[4].upper() == 'PM' else 0)
+    elif hour > 23 or len(clock[1]) != 2 or (day and not iso_date):
+        return '', ''
+    return day, f'{hour:02d}:{minute:02d}'
+
+
+def _reference_work_order_evidence(record):
+    # The printed local field owns its date/time. Scheduled Start is a fallback
+    # only when that field is absent, never an alternative timezone reading.
+    local = record.get('local_scheduled_start_time')
+    present = bool(local.strip()) if isinstance(local, str) else local is not None
+    schedule = local if present else record.get('scheduled_start', '')
+    day, clock = work_order_schedule(schedule)
+    return normalize_work_order_evidence({
+        'names': (record.get('lead_name', ''),),
+        'dates': (day or record.get('appointment_date', ''),),
+        'times': (clock,),
+        'phones': (record.get('phone', ''),),
+    })
+
+
+def select_work_order_candidate(matches, evidence):
+    """Select a source-confirmed candidate only with unopposed exact evidence.
+
+    The caller must first finish looking up ALL independent OCR candidates and
+    reject incomplete/conflicting source results. A sole source match needs no
+    additional evidence. For competing work orders, each unique exact name,
+    phone, or date match identifies that candidate; a shared match is neutral.
+    Time distinguishes candidates only with one unambiguous observed date. Every
+    positive unique observation must agree, so neither majority votes nor a
+    preferred field can conceal contradictory readings. Return the original
+    (candidate, normalized reference) pair, or None.
+    """
+    candidates = {}
+    for match in matches:
+        if not isinstance(match, (tuple, list)) or len(match) != 2:
+            return None
+        candidate, record = match
+        if (not isinstance(candidate, str) or not candidate or not isinstance(record, Mapping)
+                or record.get('work_order_number') != candidate):
+            return None
+        if candidate in candidates and candidates[candidate][1] != record:
+            return None
+        candidates.setdefault(candidate, match)
+    if len(candidates) == 1:
+        return next(iter(candidates.values()))
+    observed = normalize_work_order_evidence(evidence)
+    references = {candidate: _reference_work_order_evidence(match[1])
+                  for candidate, match in candidates.items()}
+    choices = set()
+    for field in ('names', 'dates', 'phones'):
+        for value in observed[field]:
+            matching = {candidate for candidate, reference in references.items() if value in reference[field]}
+            if len(matching) == 1:
+                choices.update(matching)
+    if len(observed['dates']) == 1:
+        for clock in observed['times']:
+            matching = {candidate for candidate, reference in references.items()
+                        if observed['dates'][0] in reference['dates'] and clock in reference['times']}
+            if len(matching) == 1:
+                choices.update(matching)
+    return candidates[next(iter(choices))] if len(choices) == 1 else None
 
 
 def printed_phone(text):

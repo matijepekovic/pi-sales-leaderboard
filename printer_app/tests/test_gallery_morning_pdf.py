@@ -31,7 +31,7 @@ def test_rendered_morning_pdf_becomes_searchable_cards_then_yields_to_scan(tmp_p
     day = '2026-09-21'
     records = (
         ModSheetRecord(
-            source_id='synthetic-morning-one', work_order_number='00012345',
+            source_id='synthetic-morning-one', work_order_number='02012345',
             lead_name='Morgan Example', address='123 Harbor Street, Lacey, WA, 98503',
             local_scheduled_start_time='9/21/2026 8:00 AM',
             scheduled_start='2026.09.21 ; 08:00:00 AM', phone='3605550121',
@@ -42,7 +42,7 @@ def test_rendered_morning_pdf_becomes_searchable_cards_then_yields_to_scan(tmp_p
             assigned_service_resources=('Morning Representative',),
         ),
         ModSheetRecord(
-            source_id='synthetic-morning-two', work_order_number='00023456',
+            source_id='synthetic-morning-two', work_order_number='02023456',
             lead_name='Taylor Sample', address='456 Orchard Avenue, Olympia, WA, 98501',
             local_scheduled_start_time='9/21/2026 10:30 AM',
             scheduled_start='2026.09.21 ; 10:30:00 AM', phone='3605550182',
@@ -72,6 +72,8 @@ def test_rendered_morning_pdf_becomes_searchable_cards_then_yields_to_scan(tmp_p
     manifest = json.loads((directory / 'manifest.json').read_text(encoding='utf-8'))
     assert len(manifest['items']) == 2
     assert [(entry['page'], entry['part']) for entry in manifest['items']] == [(1, 1), (1, 2)]
+    # This end-to-end handoff uses the real eight-digit 02 scan contract;
+    # generic morning/source numbers remain covered by the non-OCR tests.
     # Retain one real crop and its actual recognition result for the scan handoff below.
     scan_entry = dict(manifest['items'][0])
     scan_image = (directory / scan_entry['file']).read_bytes()
@@ -90,20 +92,20 @@ def test_rendered_morning_pdf_becomes_searchable_cards_then_yields_to_scan(tmp_p
         assert card['address'] == record.address
         assert gallery.files.path('crops', card['id']).is_file()
     for query, number in (
-        ('3605550121', '00012345'), ('Showcase', '00012345'),
-        ('Skyline', '00012345'), ('Neighborhood', '00012345'),
-        ('Energy', '00012345'), ('Windows', '00012345'),
-        ('3605550182', '00023456'), ('Homeowner', '00023456'),
-        ('Valley', '00023456'), ('Meadow', '00023456'),
-        ('Entryway', '00023456'), ('Doors', '00023456'),
+        ('3605550121', '02012345'), ('Showcase', '02012345'),
+        ('Skyline', '02012345'), ('Neighborhood', '02012345'),
+        ('Energy', '02012345'), ('Windows', '02012345'),
+        ('3605550182', '02023456'), ('Homeowner', '02023456'),
+        ('Valley', '02023456'), ('Meadow', '02023456'),
+        ('Entryway', '02023456'), ('Doors', '02023456'),
     ):
         assert [item['work_order_number'] for item in gallery.search(query, 0)['items']] == [number]
     assert gallery.repository.import_state(job['id']) == 'COMPLETE'
     assert not source.exists()
     assert not directory.exists()
 
-    first = by_number['00012345']
-    removed_id = by_number['00023456']['id']
+    first = by_number['02012345']
+    removed_id = by_number['02023456']['id']
     gallery.note(first['id'], 'a' * 32, 'Synthetic Reviewer', 'Keep this appointment note')
     # The arriving scan is a one-card PDF of the produced raster. Its already-read
     # manifest tests publication/replacement without running the same OCR twice.
@@ -116,15 +118,16 @@ def test_rendered_morning_pdf_becomes_searchable_cards_then_yields_to_scan(tmp_p
     scan_directory = gallery.files.path('work', scan_id)
     scan_directory.mkdir()
     (scan_directory / scan_entry['file']).write_bytes(scan_image)
-    # Returned scans now OCR only the work order. The saved Salesforce
-    # reference supplies the date/name/address when this scan is published.
-    assert scan_entry['document_date'] is None
+    # The scan reader supplies only the exact work order; the source reference
+    # supplies its date and customer fields even when OCR has no document date.
+    assert tuple(scan_entry['work_order_candidates']) == ('02012345',)
     gallery.publish(scan_job, {'items': [scan_entry], 'warnings': [], 'skipped': []}, scan_directory)
 
     retained = gallery.search('', 0)['items']
     assert len(retained) == 1
     assert retained[0]['id'] == first['id']
     assert retained[0]['origin'] == 'scan'
+    assert retained[0]['document_date'] == day
     assert retained[0]['image_revision'] != first['image_revision']
     assert gallery.item(first['id'])['notes'][0]['body'] == 'Keep this appointment note'
     assert gallery.files.path('crops', first['id']).read_bytes() == scan_image

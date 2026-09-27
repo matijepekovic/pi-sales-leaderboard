@@ -1,7 +1,10 @@
-"""Work order OCR must preserve the fixed-length identifier and token boundaries."""
+"""Strict scan candidates stay separate from stored and manual work-order text."""
 import pytest
 
-from printer_app.gallery.policy import checked_work_order_number, printed_work_order_number, work_order_key
+from printer_app.gallery.policy import (
+    checked_work_order_number, printed_work_order_number,
+    scanned_work_order_candidates, work_order_key,
+)
 
 
 @pytest.mark.parametrize('text,expected', [
@@ -20,6 +23,7 @@ from printer_app.gallery.policy import checked_work_order_number, printed_work_o
     ('Work Order Number: 022788501', '02278850'),
     ('Work Order Number: 102278850', '10227885'),
     ('Work Order Number: 0227885012345678', '02278850'),
+    ('Work Order Number: O2278B5!', '02278851'),
 ])
 def test_reads_a_complete_eight_digit_token_without_joining_ocr_noise(text, expected):
     assert printed_work_order_number(text) == expected
@@ -85,3 +89,59 @@ def test_manual_work_order_uses_same_first_eight_digit_rule(value, expected):
 def test_manual_work_order_requires_one_contiguous_eight_digit_token(value):
     with pytest.raises(ValueError):
         checked_work_order_number(value)
+
+
+@pytest.mark.parametrize('value', [
+    None, '', '0227885', '2278850', '022788501', '102278850', '0227885012345678',
+    '00000001', '03456789', '32278850',
+    '0227 8850', '0227-8850', '0227/8850',
+    'WO02278850', '02278850A', 'A02278850B',
+    '０２２７８８５０', '٠٢٢٧٨٨٥٠', '0227885０',
+    'é02278850', '02278850é', '٢02278850', '02278850٢',
+    'A\u030102278850', '02278850\u0301', '02278850\u200dA',
+    'O2278850', '02278B50', '0227885!',
+])
+def test_scan_candidate_validation_never_repairs_an_invalid_number(value):
+    assert scanned_work_order_candidates(value) == ()
+    assert scanned_work_order_candidates('Work Order Number: ' + str(value or ''), labeled=True) == ()
+
+
+@pytest.mark.parametrize('value,expected', [
+    ('02278850', ('02278850',)),
+    (' [02278850] ', ('02278850',)),
+    ('—02278850—', ('02278850',)),
+    ('02278850 02345678 02278850', ('02278850', '02345678')),
+    ('00000001 02278850 02345678', ('02278850', '02345678')),
+    ('022788501 02345678 0227885', ('02345678',)),
+])
+def test_scan_candidates_preserve_every_valid_unique_answer_without_reordering(value, expected):
+    assert scanned_work_order_candidates(value) == expected
+
+
+def test_labeled_scan_reads_every_work_order_field_without_crossing_other_fields():
+    text = (
+        'Work Order Number: 02278850 02345678 Address: 02999999 Main Street\n'
+        'Work Order Number: 022788501 Phone: 02111111\n'
+        'Work Order Number: 02456789\n'
+        'Work Order Number: 02278850\n'
+        'Work Order Number:\n02555555\n'
+        'Notes: 02666666'
+    )
+    assert scanned_work_order_candidates(text, labeled=True) == ('02278850', '02345678', '02456789')
+
+
+def test_scan_validation_does_not_change_stored_or_manual_identity_compatibility():
+    for raw, expected in [('00000001', '00000001'), ('03456789', '03456789'),
+                          ('102278850', '10227885'), ('022788501', '02278850')]:
+        assert printed_work_order_number('Work Order Number: ' + raw) == expected
+        assert checked_work_order_number(raw) == expected
+        assert scanned_work_order_candidates(raw) == ()
+
+
+def test_reader_glyph_normalization_must_preserve_positions_before_scan_validation():
+    from printer_app.gallery.numeric_parser import normalize_numeric_token
+
+    assert scanned_work_order_candidates('O2278B5!') == ()
+    assert scanned_work_order_candidates(normalize_numeric_token('O2278B5!')) == ('02278851',)
+    assert scanned_work_order_candidates(normalize_numeric_token('O2278B5!1')) == ()
+    assert scanned_work_order_candidates(normalize_numeric_token('O2278B5')) == ()

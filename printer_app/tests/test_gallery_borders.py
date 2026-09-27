@@ -131,3 +131,47 @@ def test_orientation_check_leaves_non_template_gallery_pages_unchanged():
     )
 
     assert orient_work_order_page(image) is image
+
+
+def test_shifted_outer_edges_do_not_hide_first_header_or_cut_its_value():
+    cv2 = pytest.importorskip('cv2')
+    np = pytest.importorskip('numpy')
+    from printer_app.gallery.cropper import cut_forms
+    from printer_app.tests.gallery_form_fixture import form_image
+    from printer_app.gallery.form_template import TEMPLATE_FIELDS, map_box
+
+    form, registration = form_image((cv2, np), scale=.45)
+    field = next(field for field in TEMPLATE_FIELDS if field.key == 'work_order_number')
+    left, top, right, bottom = map_box(registration, field.box)
+    form[top + 7:bottom - 4, right - 35:right - 15] = 80
+    height, width = form.shape
+    page = np.full((height * 3 + 160, width + 160), 255, np.uint8)
+    # Both first-card sides lie outside the strongest lower-card edge bands.
+    for index, x in enumerate((80, 30, 30)):
+        y = 30 + index * (height + 35)
+        page[y:y + height, x:x + width] = form
+
+    crops = list(cut_forms(page))
+
+    assert len(crops) == 3
+    expected = np.count_nonzero(form == 80)
+    assert all(np.count_nonzero(crop == 80) == expected for _, crop in crops)
+
+
+@pytest.mark.parametrize('slant', [0, 18])
+def test_landscape_report_with_few_or_slanted_columns_is_rejected(slant):
+    cv2 = pytest.importorskip('cv2')
+    np = pytest.importorskip('numpy')
+    from printer_app.gallery.cropper import is_dense_grid_page, cut_forms
+
+    image = np.full((800, 1400), 255, np.uint8)
+    for y in range(35, 750, 23):
+        cv2.line(image, (10, y), (1380, y), 0, 2)
+    # These reports have fewer columns than the older 12/14-column rejectors.
+    for x in (10, 100, 210, 420, 680, 870, 1050, 1380):
+        cv2.line(image, (x, 35), (x - slant, 748), 0, 2)
+    for y in (242, 426, 610):
+        cv2.rectangle(image, (10, y), (1380, y + 19), 60, -1)
+
+    assert is_dense_grid_page(image)
+    assert list(cut_forms(image)) == []

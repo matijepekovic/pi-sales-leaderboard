@@ -205,20 +205,11 @@ def _inside_rule(mask, expected, span_start, span_stop, radius, inward, fallback
     return stop if inward > 0 else start
 
 
-def field_boxes(image, registration):
-    """Return ordered template fields with observed, inside-the-rule bounds.
-
-    Template coordinates identify each cell; shared rule masks refine its edges
-    locally. Bounds use exclusive right/bottom coordinates. A missing rule keeps
-    the expected edge with only a small stroke-width inset, rather than looking
-    farther away and accidentally including a neighboring field. Labels belong
-    to recognition and do not affect this geometric contract.
-    """
+def _field_rules(image, registration):
+    """Observe shared printed rules once for rectangular and curved cell crops."""
     import cv2
     import numpy as np
 
-    if image is None or not image.size:
-        return [(field, (0, 0, 0, 0)) for field in TEMPLATE_FIELDS]
     gray = image if image.ndim == 2 else (
         cv2.cvtColor(image, cv2.COLOR_RGBA2GRAY)
         if image.shape[2] == 4 else cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
@@ -280,6 +271,24 @@ def field_boxes(image, registration):
         # rules. Its fallback should exclude that stroke, not a fixed crop margin.
         fallback = max(fallback, int(np.ceil(np.median(thicknesses) / 2.0)))
 
+    return horizontal, vertical, expected_boxes, horizontal_bands, fallback
+
+
+def field_boxes(image, registration):
+    """Return ordered template fields with observed, inside-the-rule bounds.
+
+    Template coordinates identify each cell; shared rule masks refine its edges
+    locally. Bounds use exclusive right/bottom coordinates. A missing rule keeps
+    the expected edge with only a small stroke-width inset, rather than looking
+    farther away and accidentally including a neighboring field. Labels belong
+    to recognition and do not affect this geometric contract.
+    """
+    if image is None or not image.size:
+        return [(field, (0, 0, 0, 0)) for field in TEMPLATE_FIELDS]
+    horizontal, vertical, expected_boxes, horizontal_bands, fallback = _field_rules(image, registration)
+    height, width = image.shape[:2]
+    frame_width = max(1, registration.right - registration.left)
+
     result = []
     for field, (left, top, right, bottom) in expected_boxes:
         cell_width, cell_height = max(1, right - left), max(1, bottom - top)
@@ -317,6 +326,84 @@ def field_boxes(image, registration):
         y1 = max(y0, min(height, int(refined_bottom)))
         result.append((field, (x0, y0, x1, y1)))
     return result
+
+
+def _rule_trace(mask, band, span_start, span_stop, inward, fallback):
+    """Trace a cell's inner edge along a selected rule, bridging only its gaps."""
+    import numpy as np
+
+    across = mask.shape[1]
+    if band is None:
+        return np.full(across, fallback, dtype=int)
+    start, stop = band
+    first, last = max(0, int(span_start)), min(across, int(span_stop))
+    window = mask[start:stop, first:last] > 0
+    valid = window.any(axis=0)
+    if not np.any(valid):
+        return np.full(across, fallback, dtype=int)
+    positions = np.flatnonzero(valid) + first
+    if inward > 0:
+        edge = stop - window[::-1, valid].argmax(axis=0)
+    else:
+        edge = start + window[:, valid].argmax(axis=0)
+    return np.rint(np.interp(np.arange(across), positions, edge)).astype(int)
+
+
+def field_crop(image, registration, key):
+    """Extract one observed cell, masking its curved borders without clipping ink.
+
+    A sloped row has no rectangular interior that contains every printed digit.
+    Keep the bounding envelope and whiten pixels outside each observed edge.
+    Returned bounds are absolute, with exclusive right/bottom coordinates; the
+    archived image is unchanged. Label removal remains the recognition owner's job.
+    """
+    import numpy as np
+
+    if image is None or not image.size:
+        return None, (0, 0, 0, 0)
+    horizontal, vertical, expected, bands, fallback = _field_rules(image, registration)
+    chosen = next(((field, box) for field, box in expected if field.key == key), None)
+    if chosen is None:
+        return None, (0, 0, 0, 0)
+    field, (left, top, right, bottom) = chosen
+    width = max(1, registration.right - registration.left)
+    height = max(1, registration.bottom - registration.top)
+    pad = max(2, int(round((right - left) * .025)))
+    edges = []
+    for ratio, expected_y, inward in ((field.box[1], top, 1), (field.box[3], bottom, -1)):
+        shared = bands[ratio]
+        center = (shared[0] + shared[1] - 1) / 2.0 if shared else expected_y
+        radius = max(5, shared[1] - shared[0] + width * .003) if shared else max(4, height * .075)
+        local = _rule_band(horizontal, center, left + pad, right - pad, radius)
+        edges.append(_rule_trace(
+            horizontal, local or shared, left + pad, right - pad, inward,
+            expected_y + inward * fallback))
+    upper, lower = edges
+    span_left, span_right = max(0, left), min(image.shape[1], right)
+    if span_right <= span_left:
+        return None, (0, 0, 0, 0)
+    y0 = max(0, int(upper[span_left:span_right].min()))
+    y1 = min(image.shape[0], int(lower[span_left:span_right].max()))
+    if y1 <= y0:
+        return None, (0, 0, 0, 0)
+    vertical_pad = max(1, int(round((bottom - top) * .025)))
+    radius = max(3, min(width * .04, (right - left) * .30))
+    left_trace = _rule_trace(
+        vertical, _rule_band(vertical, left, y0 + vertical_pad, y1 - vertical_pad, radius),
+        y0 + vertical_pad, y1 - vertical_pad, 1, left + fallback)
+    right_trace = _rule_trace(
+        vertical, _rule_band(vertical, right, y0 + vertical_pad, y1 - vertical_pad, radius),
+        y0 + vertical_pad, y1 - vertical_pad, -1, right - fallback)
+    x0 = max(0, int(left_trace[y0:y1].min()))
+    x1 = min(image.shape[1], int(right_trace[y0:y1].max()))
+    if x1 <= x0:
+        return None, (0, 0, 0, 0)
+    crop = image[y0:y1, x0:x1].copy()
+    xx, yy = np.arange(x0, x1)[None, :], np.arange(y0, y1)[:, None]
+    outside = ((yy < upper[x0:x1]) | (yy >= lower[x0:x1])
+               | (xx < left_trace[y0:y1, None]) | (xx >= right_trace[y0:y1, None]))
+    crop[outside] = 255
+    return crop, (x0, y0, x1, y1)
 
 
 def template_geometry_score(image, registration):
@@ -438,6 +525,21 @@ def register_form(image):
     left = int(votes[:max(1, w // 5)].argmax())
     right_start = max(0, 4 * w // 5)
     right = int(votes[right_start:].argmax()) + right_start
+    # A bowed outer edge can occupy many columns while an internal partition
+    # remains straight and wins the vertical vote. The endpoints of long printed
+    # horizontal rules independently identify the outside frame in that case.
+    # Broken horizontal rules can begin or end inside a valid vertical frame,
+    # so this evidence may expand the frame but must never move it inward.
+    joined = cv2.morphologyEx(horizontal, cv2.MORPH_CLOSE, np.ones((3, 9), np.uint8))
+    count, _, stats, _ = cv2.connectedComponentsWithStats(joined)
+    wide = [(x, x + width - 1) for x, y, width, height, area in stats[1:count]
+            if width >= .60 * w and height < .08 * w]
+    left_edges = [edge[0] for edge in wide if edge[0] < w * .20]
+    right_edges = [edge[1] for edge in wide if edge[1] > w * .80]
+    if len(left_edges) >= 3:
+        left = min(left, int(round(float(np.median(left_edges)))))
+    if len(right_edges) >= 3:
+        right = max(right, int(round(float(np.median(right_edges)))))
     printed_width = right - left
     if printed_width < 0.60 * w:
         return FormRegistration(0.0, 0, original_w, 0, original_h)
