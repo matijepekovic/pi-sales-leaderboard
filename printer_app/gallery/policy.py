@@ -152,10 +152,15 @@ def printed_work_order_number(text):
     for index, label in enumerate(labels):
         end = labels[index + 1].start() if index + 1 < len(labels) else len(original)
         field = re.split(boundary, original[label.end():end], maxsplit=1, flags=re.I)[0]
-        for match in re.finditer(r'[0-9]{8,}', field):
-            edges = field[max(0, match.start() - 1):match.start()] + field[match.end():match.end() + 1]
-            if all(char.isspace() or unicodedata.category(char)[0] in 'PS' for char in edges):
-                return match[0][:8]
+        for match in re.finditer(
+                r'(?<![0-9OoBb!])[0-9OoBb!]{8}(?![0-9OoBb!])', field):
+            value = match[0].translate(str.maketrans({
+                'O': '0', 'o': '0',
+                'B': '8', 'b': '8',
+                '!': '1',
+            }))
+            if value.isascii() and value.isdecimal():
+                return value
     return ''
 
 
