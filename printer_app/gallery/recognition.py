@@ -203,8 +203,9 @@ def _run_tesseract(image, ocr_copy, *, digits_only=False, psm=None):
 
 
 def _first_work_order_candidate(text):
-    """Compatibility helper for normalized eight-position OCR tokens."""
-    return numeric_token_from_text(text)
+    """Apply the work-order contract after a parser returns eight positions."""
+    candidate = numeric_token_from_text(text)
+    return candidate if candidate.startswith('02') else ''
 
 
 def mod_notes_present(source, registration):
@@ -257,15 +258,9 @@ def mod_notes_present(source, registration):
 
 
 def _candidate_result(candidates, known_date, reads=()):
-    values = tuple(value for value in candidates if value)
-    unique = tuple(dict.fromkeys(values))
-    # Independent OCR passes are votes. Two agreeing reads beat one outlier;
-    # preserve multiple candidates only when there is no clear repeated result.
-    counts = {value: values.count(value) for value in unique}
-    repeated = [value for value in unique if counts[value] >= 2]
-    if len(repeated) == 1 and counts[repeated[0]] > max(
-            (count for value, count in counts.items() if value != repeated[0]), default=0):
-        unique = (repeated[0],)
+    # Independent systems keep independent answers. Source validation gets every
+    # unique candidate; one parser is never allowed to erase another parser's read.
+    unique = tuple(dict.fromkeys(value for value in candidates if value))
     number = unique[0] if len(unique) == 1 else ''
     return dict(
         text=('Work Order Number: ' + number) if number else '',
@@ -278,7 +273,7 @@ def _candidate_result(candidates, known_date, reads=()):
 
 
 def _recognize_template(source, registration, ocr_copy, known_date, debug_path=None):
-    """Parse eight visible digit positions from the known work-order field."""
+    """Run independent recognition systems against the same work-order field."""
     import cv2
 
     canvas, _ = template_ocr_canvas(source, registration)
@@ -288,6 +283,10 @@ def _recognize_template(source, registration, ocr_copy, known_date, debug_path=N
     if debug_path is not None and not cv2.imwrite(str(debug_path), canvas):
         raise OSError('OCR diagnostic image cannot be written')
 
+    candidates = []
+    reads = []
+
+    # System 1: locate eight visible slots, then classify each glyph independently.
     def read_digit(glyph, psm):
         try:
             return _run_tesseract(glyph, ocr_copy, digits_only=True, psm=psm)
@@ -296,18 +295,61 @@ def _recognize_template(source, registration, ocr_copy, known_date, debug_path=N
 
     parsed = parse_numeric_image(canvas, read_digit)
     positions = tuple(parsed.get('positions') or ())
-    candidate = str(parsed.get('candidate') or '')
-    text = ''.join(value or '?' for value in positions)
+    parsed_text = ''.join(value or '?' for value in positions)
+    parsed_candidate = str(parsed.get('candidate') or '')
+    parsed_candidate = parsed_candidate if parsed_candidate.startswith('02') else ''
     psms = sorted({attempt.get('psm') for attempt in parsed.get('attempts', ())
                    if attempt.get('psm')})
-    reads = (dict(
+    reads.append(dict(
         label='Numerical parser',
         psm='/'.join(map(str, psms)) if psms else '',
-        text=text,
-        candidate=candidate,
-        ok=bool(candidate),
-    ),)
-    return _candidate_result((candidate,) if candidate else (), known_date, reads)
+        text=parsed_text,
+        candidate=parsed_candidate,
+        ok=bool(parsed_candidate),
+    ))
+    if parsed_candidate:
+        candidates.append(parsed_candidate)
+
+    # Systems 2-4: whole-field OCR. They see the same field but use independent
+    # preprocessing/page-segmentation choices; each answer remains available to
+    # source validation instead of being voted away.
+    enlarged = cv2.resize(canvas, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    thresholded = cv2.threshold(
+        enlarged, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )[1]
+    passes = (
+        ('Whole field', canvas, 7),
+        ('2x whole field', enlarged, 13),
+        ('Thresholded whole field', thresholded, 6),
+    )
+    for label, image, psm in passes:
+        try:
+            words = _run_tesseract(image, ocr_copy, digits_only=True, psm=psm)
+            raw = ' '.join(search_text(words).split())[:128]
+            candidate = _first_work_order_candidate(raw)
+            reads.append(dict(
+                label=label, psm=psm, text=raw, candidate=candidate, ok=True,
+            ))
+            if candidate:
+                candidates.append(candidate)
+        except subprocess.SubprocessError:
+            reads.append(dict(label=label, psm=psm, text='', candidate='', ok=False))
+
+    # System 5: unrestricted text OCR on the same field. This can recover glyph
+    # confusions such as O/0, B/8 or !/1 that a digits-only pass may drop.
+    try:
+        words = _run_tesseract(canvas, ocr_copy, digits_only=False, psm=7)
+        raw = ' '.join(search_text(words).split())[:128]
+        candidate = _first_work_order_candidate(raw)
+        reads.append(dict(
+            label='Text field', psm=7, text=raw, candidate=candidate, ok=True,
+        ))
+        if candidate:
+            candidates.append(candidate)
+    except subprocess.SubprocessError:
+        reads.append(dict(label='Text field', psm=7, text='', candidate='', ok=False))
+
+    return _candidate_result(candidates, known_date, reads)
 
 
 def _recognize_legacy(source, ocr_copy, known_date):
