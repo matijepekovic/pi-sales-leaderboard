@@ -116,9 +116,9 @@ def test_rendered_morning_pdf_becomes_searchable_cards_then_yields_to_scan(tmp_p
     scan_directory = gallery.files.path('work', scan_id)
     scan_directory.mkdir()
     (scan_directory / scan_entry['file']).write_bytes(scan_image)
-    # Returned scans now OCR only the work order. The saved Salesforce
-    # reference supplies the date/name/address when this scan is published.
-    assert scan_entry['document_date'] is None
+    # The rendered MOD form can establish its printed day before publication;
+    # the saved normalized reference still owns customer/address enrichment.
+    assert scan_entry['document_date'] == day
     gallery.publish(scan_job, {'items': [scan_entry], 'warnings': [], 'skipped': []}, scan_directory)
 
     retained = gallery.search('', 0)['items']
