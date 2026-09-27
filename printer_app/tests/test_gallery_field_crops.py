@@ -79,7 +79,7 @@ def test_numeric_search_field_survives_small_registration_offsets(raster, dx, dy
     assert _value_count(np, canvas) > 0
 
 
-def test_template_recognition_classifies_eight_independent_digit_positions(
+def test_template_recognition_runs_independent_systems_on_same_field(
         raster, monkeypatch, tmp_path):
     cv2, np = raster
     source, registration = _form(raster)
@@ -97,19 +97,30 @@ def test_template_recognition_classifies_eight_independent_digit_positions(
         cv2.LINE_AA,
     )
 
-    expected = iter('02275180')
+    monkeypatch.setattr(recognition, 'parse_numeric_image', lambda image, reader: {
+        'candidate': '02275180',
+        'positions': tuple('02275180'),
+        'attempts': ({'psm': 10},),
+    })
+
+    outputs = iter([
+        '02275188',
+        '02275180',
+        '02275108',
+        'O227518O',
+    ])
     calls = []
 
     def fake_tesseract(canvas, path, **kwargs):
-        digit = next(expected)
-        calls.append((canvas.copy(), kwargs, digit))
+        text = next(outputs)
+        calls.append((canvas.copy(), kwargs, text))
         return [dict(
-            text=digit,
+            text=text,
             left=0,
             top=0,
-            width=20,
+            width=80,
             height=30,
-            conf=95,
+            conf=90,
             page_num=1,
             block_num=1,
             par_num=1,
@@ -128,20 +139,27 @@ def test_template_recognition_classifies_eight_independent_digit_positions(
     )
 
     assert debug.is_file()
-    assert len(calls) == 8
-    assert all(call[1] == {'digits_only': True, 'psm': 10} for call in calls)
-    assert result['work_order_candidates'] == ('02275180',)
-    assert result['text'] == 'Work Order Number: 02275180'
-    assert result['work_order_reads'][0]['label'] == 'Numerical parser'
-    assert result['work_order_reads'][0]['text'] == '02275180'
-    assert result['work_order_reads'][0]['candidate'] == '02275180'
+    assert [read['label'] for read in result['work_order_reads']] == [
+        'Numerical parser',
+        'Whole field',
+        '2x whole field',
+        'Thresholded whole field',
+        'Text field',
+    ]
+    assert result['work_order_candidates'] == (
+        '02275180',
+        '02275188',
+        '02275108',
+    )
+    assert result['text'] == ''
+    assert len(calls) == 4
 
 
-def test_candidate_vote_still_prefers_repeated_source_candidate():
+def test_independent_candidate_answers_are_never_voted_away():
     result = recognition._candidate_result(
         ('02283948', '02283048', '02283948'),
         '2026-09-24',
     )
 
-    assert result['work_order_candidates'] == ('02283948',)
-    assert result['text'] == 'Work Order Number: 02283948'
+    assert result['work_order_candidates'] == ('02283948', '02283048')
+    assert result['text'] == ''
