@@ -12,6 +12,22 @@ from flask import (
 ACCESS_COOKIE = 'gallery_access'
 
 
+def _job_view(job):
+    """Present terminal results without replaying a stale processing update."""
+    result = dict(job)
+    progress = job.get('progress') or {}
+    result['saved_count'] = progress.get('publication', {}).get('saved', job['count'])
+    if job['state'] == 'COMPLETE':
+        result['status_message'] = (
+            progress.get('message') if progress.get('stage') == 'complete' else ''
+        ) or f"Completed. {result['saved_count']} card(s) saved."
+    elif job['state'] == 'ERROR':
+        result['status_message'] = ''
+    else:
+        result['status_message'] = progress.get('message', '')
+    return result
+
+
 def blueprint(service, access, intake_reader=None, reprocessor=None, admin_session=None, https_access=None,
               refresh_references=None, reference_refresh_status=None):
     bp = Blueprint('gallery', __name__, url_prefix='/gallery')
@@ -234,9 +250,16 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         state = request.args.get('state', '')
         offset = max(0, min(int(request.args.get('offset', '0')), 1000000))
         queue = service.queue(state, offset)
+        queue = dict(queue, items=[_job_view(item) for item in queue['items']])
         intake = intake_reader() if intake_reader else []
         return render_template('gallery_queue.html', queue=queue, intake=intake,
-                               state_filter=state, offset=offset)
+                               state_filter=state, offset=offset,
+                               salesforce_pull_url=salesforce_pull_url())
+
+    def salesforce_pull_url():
+        # Gallery can run without the optional MOD Sheet settings screen.
+        endpoint = 'mod_sheets.settings_page'
+        return url_for(endpoint) if endpoint in current_app.view_functions else None
 
     @bp.get('/jobs/<ident>')
     def import_job_page(ident):
@@ -247,7 +270,8 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         job = service.import_job(ident, offset)
         if not job:
             abort(404)
-        return render_template('gallery_job.html', job=job, offset=offset)
+        return render_template('gallery_job.html', job=_job_view(job), offset=offset,
+                               salesforce_pull_url=salesforce_pull_url())
 
     def retained_job_item(import_id, item_id):
         if not re.fullmatch(r'[a-f0-9]{64}', import_id) or not re.fullmatch(r'[a-f0-9]{64}', item_id):

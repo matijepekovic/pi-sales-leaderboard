@@ -165,6 +165,7 @@ def test_processor_resumes_saved_pdf_date_without_rereading_completed_pages(tmp_
 
     checkpoint = json.loads((directory / 'checkpoint.json').read_text(encoding='utf-8'))
     first_image = (directory / '0001-001.png').read_bytes()
+    assert checkpoint['version'] == processor.CHECKPOINT_VERSION
     assert checkpoint['completed_page'] == 1
     assert checkpoint['pdf_date'] == '2026-09-21'
     assert not (directory / 'manifest.json').exists()
@@ -181,3 +182,94 @@ def test_processor_resumes_saved_pdf_date_without_rereading_completed_pages(tmp_
         'Page 1 at 10:30 AM', 'Page 2 at 10:30 AM',
     ]
     assert (directory / '0001-001.png').read_bytes() == first_image
+
+
+def test_pre_notes_check_checkpoint_is_reread_before_choosing_batch_date(tmp_path, monkeypatch):
+    processor, np, image_module = _processor(monkeypatch)
+    directory = tmp_path / 'processed'
+    directory.mkdir()
+    old_crop = directory / '0001-001.png'
+    image_module.new('RGB', (120, 30), 'white').save(old_crop)
+    old_manifest = dict(items=[dict(file=old_crop.name, page=1, part=1,
+        bytes=old_crop.stat().st_size, text='Old blank placeholder', lead_text='',
+        mod_notes_present=False, document_date='2026-09-22', date_status='printed')],
+        skipped=[], warnings=[])
+    (directory / 'checkpoint.json').write_text(json.dumps(dict(
+        version=1, pages=2, completed_page=1, manifest=old_manifest,
+        pdf_date='2026-09-22')), encoding='utf-8')
+    rendered, readings = [], []
+
+    def poppler(command, **kwargs):
+        if command[0] == 'pdfinfo':
+            return SimpleNamespace(stdout='Pages: 2\n')
+        page = int(command[command.index('-f') + 1])
+        rendered.append(page)
+        image_module.new('RGB', (120, 180), 'white').save(command[-1] + '.png')
+        return SimpleNamespace(returncode=0)
+
+    def read_card(path, work, known_date=None, debug_path=None):
+        page = int(path.stem.split('-')[0])
+        readings.append((page, known_date))
+        return dict(text=f'Read page {page}', lead_text='', mod_notes_present=page == 2,
+                    document_date=known_date or ('2026-09-22' if page == 1 else '2026-09-21'),
+                    date_status='printed')
+
+    monkeypatch.setattr(processor.subprocess, 'run', poppler)
+    monkeypatch.setattr(processor.shutil, 'disk_usage', lambda path: SimpleNamespace(free=2**30))
+    monkeypatch.setattr(processor, 'deskew_page', lambda raster: raster)
+    monkeypatch.setattr(processor, 'orient_work_order_page', lambda raster: raster)
+    monkeypatch.setattr(processor, 'is_dense_grid_page', lambda raster: False)
+    monkeypatch.setattr(processor, 'cut_forms', lambda raster: iter([
+        (1, np.full((30, 120, 3), 240, dtype=np.uint8)),
+    ]))
+    monkeypatch.setattr(processor, 'recognize', read_card)
+    source = tmp_path / 'batch.pdf'
+    source.write_bytes(b'%PDF-test-boundary')
+
+    processor.process(source, directory, 1048576)
+
+    assert rendered == [1, 2]
+    assert readings == [(1, None), (2, None)]
+    manifest = json.loads((directory / 'manifest.json').read_text(encoding='utf-8'))
+    assert [item['text'] for item in manifest['items']] == ['Read page 1', 'Read page 2']
+    assert [item['document_date'] for item in manifest['items']] == ['2026-09-21'] * 2
+    checkpoint = json.loads((directory / 'checkpoint.json').read_text(encoding='utf-8'))
+    assert checkpoint['version'] == processor.CHECKPOINT_VERSION == 2
+    assert checkpoint['pdf_date'] == '2026-09-21'
+
+
+@pytest.mark.parametrize('notes', [False, None])
+@pytest.mark.parametrize('origin', ['scan', 'morning'])
+def test_only_eligible_cards_establish_the_batch_date(tmp_path, monkeypatch, notes, origin):
+    processor, np, image_module = _processor(monkeypatch)
+
+    def poppler(command, **kwargs):
+        if command[0] == 'pdfinfo':
+            return SimpleNamespace(stdout='Pages: 1\n')
+        image_module.new('RGB', (120, 180), 'white').save(command[-1] + '.png')
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(processor.subprocess, 'run', poppler)
+    monkeypatch.setattr(processor.shutil, 'disk_usage', lambda path: SimpleNamespace(free=2**30))
+    monkeypatch.setattr(processor, 'deskew_page', lambda image: image)
+    monkeypatch.setattr(processor, 'orient_work_order_page', lambda image: image)
+    monkeypatch.setattr(processor, 'is_dense_grid_page', lambda image: False)
+    monkeypatch.setattr(processor, 'cut_forms', lambda image: iter(
+        (part, np.full((30, 120, 3), 240, dtype=np.uint8)) for part in (1, 2)))
+    observed = []
+
+    def recognize(path, work, known_date=None, **kwargs):
+        observed.append(known_date)
+        first = path.stem.endswith('001')
+        return dict(text='', document_date=known_date or ('2026-09-22' if first else '2026-09-21'),
+                    date_status='printed', mod_notes_present=notes if first else True)
+
+    monkeypatch.setattr(processor, 'recognize', recognize)
+    source = tmp_path / 'uploaded-on-an-unrelated-date.pdf'
+    source.write_bytes(b'%PDF-synthetic')
+    output = tmp_path / 'out'
+    processor.process(source, output, 1048576, origin=origin)
+    expected = '2026-09-21' if origin == 'scan' else '2026-09-22'
+    assert observed == [None, None if origin == 'scan' else expected]
+    manifest = json.loads((output / 'manifest.json').read_text())
+    assert {item['document_date'] for item in manifest['items']} == {expected}

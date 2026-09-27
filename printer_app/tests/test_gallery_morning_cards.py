@@ -55,7 +55,7 @@ def _record(work_order='00000011', **changes):
     return replace(record, **changes)
 
 
-def _publish(gallery, token, cards, *, morning=False, day=DAY):
+def _publish(gallery, token, cards, *, morning=False, day=DAY, pending=False):
     """Supply the existing processor's prepared images and manifest to publishing."""
     payload = b'%PDF-1.4\n' + token.encode()
     options = GalleryOptions(enabled=True)
@@ -89,6 +89,8 @@ def _publish(gallery, token, cards, *, morning=False, day=DAY):
             'text': text, 'lead_text': 'Lead Name: Printed Customer',
             'document_date': card_day, 'date_status': 'printed',
         })
+        if pending:
+            manifest['items'][-1].update(work_order_candidates=(work_order,), mod_notes_present=True)
     gallery.publish(job, manifest, directory)
     return import_id
 
@@ -160,7 +162,6 @@ def test_hourly_reference_refresh_preserves_cards_and_enriches_later_scans(galle
     assert gallery.files.path('crops', matched_id).read_bytes() == b'today-morning:1'
     assert gallery.item(earlier_id) == earlier
     assert gallery.item(absent_id) is not None
-    assert not gallery.repository.scans_received(DAY)
     assert gallery.repository.claim() is None
     assert gallery.search('', 0)['total'] == 3
 
@@ -204,16 +205,15 @@ def test_hourly_reference_refresh_preserves_cards_and_enriches_later_scans(galle
     assert gallery.repository.reference_snapshot(DAY, 'final') == final_snapshot
     assert gallery.item(matched_id)['assigned_service_resource'] == 'Final Rep'
     assert gallery.item(earlier_id) == earlier
-    assert not gallery.repository.scans_received(DAY)
     assert gallery.repository.claim() is None
 
-    # Only an actual scan reconciles the morning cards. The prior day's final
+    # An actual scan replaces only its matching morning card. The prior day's final
     # snapshot still supplies every resource when an appointment arrives later.
     _publish(gallery, 'late-scan', [('00000011', DAY), ('00000033', DAY)])
     assert gallery.item(matched_id)['assigned_service_resource'] == 'Final Rep'
     assert gallery.item(matched_id)['notes'] == before['notes']
     assert gallery.item(_row(gallery, '00000033')['id'])['assigned_service_resource'] == 'Cancelled Rep'
-    assert gallery.item(absent_id) is None
+    assert gallery.item(absent_id)['origin'] == 'morning'
     assert gallery.item(earlier_id) == earlier
     assert gallery.files.path('crops', matched_id).read_bytes() == b'late-scan:1'
     assert gallery.repository.reference_snapshot(DAY, 'final') == final_snapshot
@@ -273,7 +273,7 @@ def test_same_work_order_on_different_date_does_not_replace_morning_card(gallery
     assert gallery.search('', 0)['total'] == 2
 
 
-def test_different_work_order_is_not_merged_and_unmatched_morning_card_is_removed(gallery):
+def test_different_work_order_is_not_merged_and_unmatched_morning_card_remains(gallery):
     _publish(gallery, 'morning', [('00000011', DAY)], morning=True)
     morning_id = _row(gallery, '00000011')['id']
     gallery.note(morning_id, 'c' * 32, 'Reviewer', 'Belongs to another work order')
@@ -283,12 +283,12 @@ def test_different_work_order_is_not_merged_and_unmatched_morning_card_is_remove
 
     assert scanned['id'] != morning_id
     assert scanned['notes'] == []
-    assert gallery.item(morning_id) is None
-    assert not gallery.files.path('crops', morning_id).exists()
-    assert gallery.search('', 0)['total'] == 1
+    assert gallery.item(morning_id)['notes'][0]['body'] == 'Belongs to another work order'
+    assert gallery.files.path('crops', morning_id).read_bytes() == b'morning:1'
+    assert gallery.search('', 0)['total'] == 2
 
 
-def test_scan_reconciles_only_its_dates_and_never_deletes_existing_scans(gallery):
+def test_scan_reconciles_only_matching_orders_and_dates_and_keeps_existing_scans(gallery):
     _publish(gallery, 'morning', [('00000011', DAY), ('00000022', DAY)], morning=True)
     matched_id = _row(gallery, '00000011')['id']
     absent_id = _row(gallery, '00000022')['id']
@@ -298,31 +298,32 @@ def test_scan_reconciles_only_its_dates_and_never_deletes_existing_scans(gallery
     _publish(gallery, 'current-scan', [('00000011', DAY)])
     _publish(gallery, 'additional-scan', [('00000044', DAY)])
 
-    assert gallery.item(absent_id) is None
+    assert gallery.item(absent_id)['origin'] == 'morning'
     assert gallery.item(matched_id)['origin'] == 'scan'
     assert gallery.item(older_scan_id)['origin'] == 'scan'
-    assert gallery.search('', 0)['total'] == 3
+    assert gallery.search('', 0)['total'] == 4
 
 
-def test_completed_day_does_not_recreate_morning_cards(gallery):
+def test_later_morning_import_fills_missing_orders_without_replacing_scans(gallery):
     _publish(gallery, 'scanned-first', [('00000011', DAY)])
     original_id = _row(gallery, '00000011')['id']
 
     _publish(gallery, 'late-morning', [('00000011', DAY), ('00000022', DAY)], morning=True)
 
-    assert gallery.search('', 0)['total'] == 1
+    assert gallery.search('', 0)['total'] == 2
     assert _row(gallery, '00000011')['id'] == original_id
     assert gallery.item(original_id)['origin'] == 'scan'
     assert gallery.files.path('crops', original_id).read_bytes() == b'scanned-first:1'
+    assert gallery.item(_row(gallery, '00000022')['id'])['origin'] == 'morning'
 
 
 def test_reconciliation_keeps_complete_reference_snapshot_for_later_scans(gallery):
     records = [_record('00000011'), _record('00000022', lead_name='Later Customer')]
     gallery.publish_reference_snapshot(DAY, 'morning', records, 1.0)
     _publish(gallery, 'morning', [('00000011', DAY), ('00000022', DAY)], morning=True)
-    removed_id = _row(gallery, '00000022')['id']
+    later_id = _row(gallery, '00000022')['id']
     _publish(gallery, 'first-scan', [('00000011', DAY)])
-    assert gallery.item(removed_id) is None
+    assert gallery.item(later_id)['origin'] == 'morning'
 
     snapshot, stored = gallery.repository.reference_snapshot(DAY, 'morning')
     assert snapshot['count'] == 2
@@ -332,6 +333,7 @@ def test_reconciliation_keeps_complete_reference_snapshot_for_later_scans(galler
 
     _publish(gallery, 'later-scan', [('00000022', DAY)])
     item = gallery.item(_row(gallery, '00000022')['id'])
+    assert item['id'] == later_id
     assert item['lead_name'] == 'Later Customer'
     assert item['address'] == '101 Reference Street'
     assert item['assigned_service_resource'] == ''
@@ -446,13 +448,12 @@ def test_yesterdays_morning_cards_remain_until_scans_or_normal_retention(gallery
     assert gallery.item(ident)['origin'] == 'morning'
     assert gallery.files.path('crops', ident).read_bytes() == b'yesterday-morning:1'
     assert gallery.repository.reference_snapshot(EARLIER_DAY, 'morning')[0]['count'] == 1
-    assert not gallery.repository.scans_received(EARLIER_DAY)
 
 
 def test_cleanup_failure_does_not_block_scanned_card_and_retries_later(gallery, monkeypatch):
-    gallery.publish_reference_snapshot(DAY, 'final', [_record()], 2.0)
     _publish(gallery, 'morning', [('00000011', DAY), ('00000022', DAY)], morning=True)
-    retired = _row(gallery, '00000022')['id']
+    retired = _row(gallery, '00000011')['id']
+    other = _row(gallery, '00000022')['id']
     remove = gallery.files.remove
 
     def unavailable(category, ident):
@@ -461,12 +462,15 @@ def test_cleanup_failure_does_not_block_scanned_card_and_retries_later(gallery, 
         return remove(category, ident)
 
     monkeypatch.setattr(gallery.files, 'remove', unavailable)
-    _publish(gallery, 'scan', [('00000011', DAY)])
+    _publish(gallery, 'scan', [('00000011', DAY)], pending=True)
+    assert gallery.item(retired) is not None
+    assert gallery.publish_work_order_records(['00000011'], [_record()], 2.0)['enriched'] > 0
 
-    assert gallery.search('', 0)['total'] == 1
+    assert gallery.search('', 0)['total'] == 2
     assert gallery.search('Second Resource', 0)['total'] == 1
     assert gallery.item(retired) is None
     assert gallery.files.path('crops', retired).exists()
+    assert gallery.item(other)['origin'] == 'morning'
     monkeypatch.setattr(gallery.files, 'remove', remove)
     gallery.expire(90, 'America/Los_Angeles')
     assert not gallery.files.path('crops', retired).exists()

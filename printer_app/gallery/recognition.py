@@ -14,13 +14,15 @@ import subprocess
 import sys
 
 if __package__:
-    from .form_template import TEMPLATE_FIELDS, field_boxes, field_crop, map_box, register_form
+    from .form_template import (TEMPLATE_FIELDS, field_boxes, field_crop,
+                                labelled_notes_crop, map_box, register_form)
     from .numeric_parser import numeric_tokens_from_text, parse_numeric_image
     from .policy import (REFERENCE_FIELD_LABELS, normalize_work_order_evidence,
                          scanned_work_order_candidates, work_order_fields,
                          work_order_schedule)
 else:
-    from form_template import TEMPLATE_FIELDS, field_boxes, field_crop, map_box, register_form
+    from form_template import (TEMPLATE_FIELDS, field_boxes, field_crop,
+                               labelled_notes_crop, map_box, register_form)
     from numeric_parser import numeric_tokens_from_text, parse_numeric_image
     from policy import (REFERENCE_FIELD_LABELS, normalize_work_order_evidence,
                         scanned_work_order_candidates, work_order_fields,
@@ -220,31 +222,74 @@ def _work_order_candidates(text, *, labeled=False):
     ))
 
 
-def mod_notes_present(source, registration):
-    """Return whether the known MOD Notes cell contains meaningful variable ink.
+def _notes_labels(words, offset):
+    """Return literal printed MOD Notes label bounds, without fuzzy text guesses."""
+    normalize = lambda value: re.sub(r'[^a-z]', '', value.lower())
+    labels = []
+    for index, word in enumerate(words):
+        group = []
+        if normalize(word['text']) == 'modnotes':
+            group = [word]
+        elif normalize(word['text']) == 'mod' and index + 1 < len(words):
+            following = words[index + 1]
+            size = max(word['height'], following['height'])
+            if (normalize(following['text']) == 'notes'
+                    and abs(word['top'] - following['top']) <= size
+                    and 0 <= following['left'] - word['left'] - word['width'] <= size * 2):
+                group = [word, following]
+        if group:
+            labels.append((
+                min(item['left'] for item in group) + offset[0],
+                min(item['top'] for item in group) + offset[1],
+                max(item['left'] + item['width'] for item in group) + offset[0],
+                max(item['top'] + item['height'] for item in group) + offset[1],
+            ))
+    return labels
 
-    None means the card could not be registered confidently enough to judge it;
-    callers must retain those cards rather than guessing.
-    """
+
+def mod_notes_present(source, registration, ocr_copy):
+    """Check only an observed, bordered MOD Notes cell; uncertainty stays None."""
     import cv2
     import numpy as np
 
-    if source is None or not registration.matched:
+    if source is None or not source.size:
         return None
-    field = next(field for field in TEMPLATE_FIELDS if field.key == 'mod_notes')
-    boxes = dict((item.key, bounds) for item, bounds in field_boxes(source, registration))
-    left, top, right, bottom = boxes.get(field.key, (0, 0, 0, 0))
-    if right <= left or bottom <= top:
-        return None
-    crop = source[top:bottom, left:right].copy()
+    # A template crop is a cheap label-search proposal, never proof of the cell.
+    # Screenshots can register while placing its edge inside neighboring fields.
+    proposed, bounds = field_crop(source, registration, 'mod_notes')
+    probes = []
+    if proposed is not None and proposed.size:
+        height, width = proposed.shape
+        for fraction_y, fraction_x, psm in ((.10, .25, 6), (.20, .30, 6), (.20, .30, 11)):
+            probes.append((proposed[:round(height * fraction_y), :round(width * fraction_x)],
+                           bounds[:2], psm))
+    height, width = source.shape
+    left, top = round(width * .30), round(min(height * .15, width * .08))
+    stop = round(min(height * .75, width * .60))
+    for psm in (11, 6):
+        probes.append((source[top:stop, left:], (left, top), psm))
 
-    # Remove only the printed MOD Notes label. The rest of the cell, including
-    # handwriting beneath the label, remains available for the emptiness check.
-    label_left, label_top, label_right, label_bottom = map_box(registration, field.label_box)
-    x0 = max(0, label_left - left - 3)
-    y0 = max(0, label_top - top - 3)
-    x1 = min(crop.shape[1], label_right - left + 5)
-    y1 = min(crop.shape[0], label_bottom - top + 5)
+    crop = None
+    for image, (x, y), psm in probes:
+        if not image.size:
+            continue
+        padded = cv2.copyMakeBorder(image, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=255)
+        words = _run_tesseract(padded, ocr_copy, psm=psm)
+        labels = _notes_labels(words, (x - 12, y - 12))
+        if len(labels) != 1:
+            continue
+        label = labels[0]
+        crop, bounds = labelled_notes_crop(source, label)
+        if crop is not None:
+            break
+    if crop is None:
+        return None
+    # Mask the observed printed glyphs, not a template-sized rectangle whose
+    # location can drift into the blank area or nearby handwriting.
+    left, top = bounds[:2]
+    x0, y0 = max(0, label[0] - left - 1), max(0, label[1] - top - 1)
+    x1 = min(crop.shape[1], label[2] - left + 1)
+    y1 = min(crop.shape[0], label[3] - top + 1)
     if x1 > x0 and y1 > y0:
         crop[y0:y1, x0:x1] = 255
 
@@ -517,7 +562,7 @@ def recognize(path, work, known_date=None, debug_path=None):
     ocr_copy = Path(work) / 'ocr.png'
     try:
         registration = register_form(source)
-        notes_present = mod_notes_present(source, registration)
+        notes_present = mod_notes_present(source, registration, ocr_copy)
         template = _recognize_template(
             source, registration, ocr_copy, known_date, debug_path=debug_path,
         )

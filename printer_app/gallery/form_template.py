@@ -349,6 +349,67 @@ def _rule_trace(mask, band, span_start, span_stop, inward, fallback):
     return np.rint(np.interp(np.arange(across), positions, edge)).astype(int)
 
 
+def labelled_notes_crop(image, label_box):
+    """Locate the notes cell from its observed label and four observed rules.
+
+    This does not trust a global template match: a screenshot can resemble the
+    form while its rows have different heights. Broken rules must still meet
+    the same coverage check as other field borders; missing evidence returns
+    no crop. The label itself is left for recognition to remove.
+    """
+    import cv2
+    import numpy as np
+
+    if image is None or not image.size:
+        return None, (0, 0, 0, 0)
+    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    height, width = gray.shape
+    label_left, label_top, label_right, label_bottom = label_box
+    label_height = max(8, label_bottom - label_top)
+    ink = cv2.threshold(gray, 225, 255, cv2.THRESH_BINARY_INV)[1]
+    # Short surviving segments recover faded printed rules. Coverage over the
+    # entire cell still has to pass _rule_band; text cannot supply a border.
+    horizontal = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN, np.ones((1, max(16, round(width * .02))), np.uint8),
+    )
+    vertical = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN, np.ones((max(12, round(width * .018)), 1), np.uint8),
+    ).T
+    span_top = label_top + label_height * 2
+    span_bottom = min(height, label_top + width * .16)
+    left = _rule_band(vertical, label_left - label_height * .5,
+                      span_top, span_bottom, label_height * 2)
+    right = _rule_band(vertical, width * .93, span_top, span_bottom, width * .10)
+    if left is None or right is None:
+        return None, (0, 0, 0, 0)
+    start, stop = left[1], right[0]
+    top = _rule_band(horizontal, label_top, start + 8, stop - 8, label_height * 2)
+    bottom = _rule_band(horizontal, label_top + width * .20,
+                        start + 8, stop - 8, width * .08)
+    if (top is None or bottom is None or stop - start < width * .30
+            or bottom[0] - top[1] < width * .10):
+        return None, (0, 0, 0, 0)
+    # Recheck both sides over the actual observed cell height, not the probe.
+    left = _rule_band(vertical, start, top[1] + 8, bottom[0] - 8, label_height)
+    right = _rule_band(vertical, stop, top[1] + 8, bottom[0] - 8, label_height)
+    if left is None or right is None:
+        return None, (0, 0, 0, 0)
+    x0, x1, y0, y1 = left[0], right[1], top[0], bottom[1]
+    if not (x0 <= label_left < label_right <= x1
+            and y0 <= label_bottom <= y1
+            and label_left - x0 < label_height * 2):
+        return None, (0, 0, 0, 0)
+    upper = _rule_trace(horizontal, top, x0, x1, 1, top[1])[x0:x1]
+    lower = _rule_trace(horizontal, bottom, x0, x1, -1, bottom[0])[x0:x1]
+    before = _rule_trace(vertical, left, y0, y1, 1, left[1])[y0:y1]
+    after = _rule_trace(vertical, right, y0, y1, -1, right[0])[y0:y1]
+    cell = gray[y0:y1, x0:x1].copy()
+    rows, columns = np.ogrid[y0:y1, x0:x1]
+    cell[(rows < upper) | (rows >= lower)
+         | (columns < before[:, None]) | (columns >= after[:, None])] = 255
+    return cell, (x0, y0, x1, y1)
+
+
 def field_crop(image, registration, key):
     """Extract one observed cell, masking its curved borders without clipping ink.
 

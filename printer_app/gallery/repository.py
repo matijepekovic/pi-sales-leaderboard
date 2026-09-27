@@ -89,8 +89,6 @@ CREATE INDEX IF NOT EXISTS gallery_reference_address
  ON appointment_references(day,kind,address_key);
 CREATE INDEX IF NOT EXISTS gallery_reference_lead
  ON appointment_references(day,kind,lead_key);
-CREATE TABLE IF NOT EXISTS scan_days (
- day TEXT PRIMARY KEY, reconciled REAL NOT NULL);
 '''
 
 
@@ -108,6 +106,8 @@ class GalleryRepository:
         try:
             candidates = json.loads(raw) if isinstance(raw, str) else raw
         except (TypeError, ValueError, json.JSONDecodeError):
+            candidates = []
+        if not isinstance(candidates, (list, tuple)):
             candidates = []
         value['work_order_candidates'] = tuple(
             candidate for candidate in candidates if isinstance(candidate, str)
@@ -201,6 +201,7 @@ class GalleryRepository:
                 ('reference_kind', "TEXT NOT NULL DEFAULT ''"),
                 ('reference_source_id', "TEXT NOT NULL DEFAULT ''"),
                 ('origin', "TEXT NOT NULL DEFAULT 'scan'"),
+                ('mod_notes_status', "TEXT NOT NULL DEFAULT 'legacy'"),
                 ('image_revision', "TEXT NOT NULL DEFAULT ''"),
                 ('search_revision', 'INTEGER NOT NULL DEFAULT 0'),
             ):
@@ -211,9 +212,6 @@ class GalleryRepository:
                          'sales_lead_status', 'lead_source_id'):
                 if name not in reference_columns:
                     c.execute(f"ALTER TABLE appointment_references ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
-            c.execute("""INSERT OR IGNORE INTO scan_days(day,reconciled)
-                SELECT DISTINCT document_date,? FROM items
-                WHERE origin='scan' AND document_date IS NOT NULL AND state IN ('ACTIVE','REVIEW')""", (time.time(),))
             if not c.execute("SELECT 1 FROM meta WHERE key='work_order_backfill_v1'").fetchone():
                 for row in list(c.execute("SELECT id,text FROM items WHERE work_order_key=''")):
                     number = printed_work_order_number(row['text'])
@@ -297,9 +295,10 @@ class GalleryRepository:
                 self._step(c, row['id'], now, 'Gallery worker started processing the PDF.')
                 return dict(row)
 
-    def finish(self, ident, items, warning=''):
+    def finish(self, ident, items, warning='', *, publication=None):
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
+            saved = skipped_existing = 0
             for item in items:
                 origin = item.get('origin', 'scan')
                 strict_scan = origin == 'scan' and 'work_order_candidates' in item
@@ -326,8 +325,18 @@ class GalleryRepository:
                     # the durable work-order identity. Morning cards already come
                     # from normalized source data and retain their existing path.
                     state = 'ACTIVE' if work_order else 'REVIEW'
-                if origin == 'morning' and c.execute(
-                        'SELECT 1 FROM scan_days WHERE day=?', (item.get('document_date'),)).fetchone():
+                notes_status = item.get('mod_notes_status', 'legacy') if origin == 'scan' else 'legacy'
+                if notes_status not in ('legacy', 'present', 'unknown'):
+                    raise ValueError('Invalid MOD notes status')
+                if notes_status == 'unknown':
+                    state = 'REVIEW'
+                    if item.get('replace_existing'):
+                        raise ValueError('Unreadable MOD notes cannot replace an existing card')
+                if origin == 'morning' and work_order and c.execute("""SELECT 1 FROM items
+                        WHERE document_date=? AND work_order_key=? AND state IN ('ACTIVE','REVIEW')
+                        AND mod_notes_status!='unknown'""",
+                        (item.get('document_date'), work_order_key(work_order))).fetchone():
+                    skipped_existing += 1
                     continue
                 values = dict(item, state=state, lead_name=name, lead_key=lead_key(name),
                               lead_status='printed' if name else 'needs-name',
@@ -338,10 +347,11 @@ class GalleryRepository:
                               work_order_evidence=json.dumps(normalize_work_order_evidence(
                                   item.get('work_order_evidence') if origin == 'scan' else {})),
                               recognition_revision=item.get('recognition_revision', 0), origin=origin,
+                              mod_notes_status=notes_status,
                               image_revision=item.get('image_revision', item['id']))
                 if item.get('replace_existing'):
                     # The scan takes over the existing card; notes retain their item ID.
-                    c.execute('''UPDATE items SET import_id=:import_id,page=:page,part=:part,
+                    changed = c.execute('''UPDATE items SET import_id=:import_id,page=:page,part=:part,
                         filename=:filename,text=:text,document_date=:document_date,date_status=:date_status,
                         bytes=:bytes,state=:state,lead_name=:lead_name,lead_key=:lead_key,
                         lead_status=:lead_status,address=:address,address_key=:address_key,
@@ -349,26 +359,32 @@ class GalleryRepository:
                         work_order_candidates=:work_order_candidates,work_order_reads=:work_order_reads,
                         work_order_evidence=:work_order_evidence,
                         recognition_revision=:recognition_revision,origin=:origin,
+                        mod_notes_status=:mod_notes_status,
                         image_revision=:image_revision,search_revision=search_revision+1
                         WHERE id=:id AND state IN ('ACTIVE','REVIEW')
-                        AND document_date=:document_date AND work_order_key=:work_order_key''', values)
+                        AND document_date=:document_date AND work_order_key=:work_order_key''', values).rowcount
+                    saved += changed
+                    skipped_existing += not changed
                     self._refresh_sales_lead_statuses(c, ' AND id=?', (item['id'],))
+                    if changed and origin == 'scan' and state == 'ACTIVE':
+                        self._reconcile_morning_cards(c, item['id'], item.get('document_date'), work_order_key(work_order))
                     continue
-                c.execute('''INSERT OR IGNORE INTO items(
+                changed = c.execute('''INSERT OR IGNORE INTO items(
                     id,import_id,page,part,filename,text,document_date,date_status,bytes,created,state,
                     lead_name,lead_key,lead_status,address,address_key,work_order_number,work_order_key,
-                    work_order_candidates,work_order_reads,work_order_evidence,recognition_revision,origin,image_revision)
+                    work_order_candidates,work_order_reads,work_order_evidence,recognition_revision,origin,
+                    mod_notes_status,image_revision)
                     VALUES (
                     :id,:import_id,:page,:part,:filename,:text,:document_date,:date_status,:bytes,:created,:state,
                     :lead_name,:lead_key,:lead_status,:address,:address_key,:work_order_number,:work_order_key,
-                    :work_order_candidates,:work_order_reads,:work_order_evidence,:recognition_revision,:origin,:image_revision)''', values)
+                    :work_order_candidates,:work_order_reads,:work_order_evidence,:recognition_revision,:origin,
+                    :mod_notes_status,:image_revision)''', values).rowcount
+                saved += changed
+                skipped_existing += not changed
                 self._refresh_sales_lead_statuses(c, ' AND id=?', (item['id'],))
+                if changed and origin == 'scan' and state == 'ACTIVE':
+                    self._reconcile_morning_cards(c, item['id'], item.get('document_date'), work_order_key(work_order))
             now = time.time()
-            for day in {item.get('document_date') for item in items
-                        if item.get('origin', 'scan') == 'scan' and item.get('document_date')}:
-                c.execute('INSERT OR IGNORE INTO scan_days(day,reconciled) VALUES(?,?)', (day, now))
-                c.execute("""UPDATE items SET state='DELETING' WHERE origin='morning'
-                    AND document_date=? AND state IN ('ACTIVE','REVIEW')""", (day,))
             c.execute("UPDATE imports SET state='COMPLETE',count=?,error=?,updated=?,completed=? WHERE id=?",
                       (len(items), warning[:1000], now, now, ident))
             published = c.execute(
@@ -380,6 +396,21 @@ class GalleryRepository:
             message = f'Import completed: {len(items)} generated; {published} published to Gallery'
             if review:
                 message += f'; {review} need review of their name, work order, or date'
+            if publication is not None:
+                counts = {key: max(0, int(publication.get(key, 0))) for key in (
+                    'prepared', 'saved', 'skipped_existing', 'skipped_blank_notes', 'needs_notes_review')}
+                counts['saved'] = saved
+                counts['skipped_existing'] += skipped_existing
+                counts['needs_notes_review'] = c.execute("""SELECT count(*) FROM items
+                    WHERE import_id=? AND state='REVIEW' AND mod_notes_status='unknown'""", (ident,)).fetchone()[0]
+                message = (f"Import completed: {counts['prepared']} prepared; {saved} saved; "
+                           f"{published} published to Gallery; {counts['skipped_existing']} already present; "
+                           f"{counts['skipped_blank_notes']} skipped with blank MOD Notes; "
+                           f"{counts['needs_notes_review']} need MOD Notes review")
+                progress_row = c.execute('SELECT progress FROM imports WHERE id=?', (ident,)).fetchone()
+                progress = json.loads(progress_row['progress']) if progress_row else {}
+                progress.update(publication=counts, stage='complete', message=message + '.')
+                c.execute('UPDATE imports SET progress=? WHERE id=?', (json.dumps(progress), ident))
             self._step(c, ident, now, message + '.')
             if warning:
                 self._step(c, ident, now, warning[:1000])
@@ -389,18 +420,66 @@ class GalleryRepository:
             return None
         with self.connect() as c:
             rows = c.execute("""SELECT id,origin FROM items WHERE document_date=? AND work_order_key=?
-                AND state IN ('ACTIVE','REVIEW') ORDER BY created,id LIMIT 2""",
+                AND state IN ('ACTIVE','REVIEW') AND mod_notes_status!='unknown'
+                ORDER BY created,id LIMIT 2""",
                 (day, work_order_key(number))).fetchall()
             return dict(rows[0]) if len(rows) == 1 else None
 
-    def scans_received(self, day):
-        with self.connect() as c:
-            return c.execute('SELECT 1 FROM scan_days WHERE day=?', (day,)).fetchone() is not None
-
     def retired_morning_cards(self):
-        """Pending file cleanup from an already committed scan reconciliation."""
+        """Pending file cleanup after an exact card reconciliation committed."""
         with self.connect() as c:
             return [row['id'] for row in c.execute("SELECT id FROM items WHERE origin='morning' AND state='DELETING'")]
+
+    def update_notes_status(self, ident, expected_image_revision, status):
+        """Record a notes-only retry without changing accepted or pending identity."""
+        if status not in ('present', 'unknown'):
+            raise ValueError('Invalid MOD notes retry status')
+        with self.connect() as c:
+            return c.execute("""UPDATE items SET mod_notes_status=?,
+                recognition_attempts=CASE WHEN ?='present' THEN 0 ELSE recognition_attempts+1 END,
+                recognition_retry_at=CASE WHEN ?='present' THEN 0 ELSE ? END,
+                search_revision=search_revision+1
+                WHERE id=? AND image_revision=? AND origin='scan'
+                AND state='REVIEW' AND mod_notes_status='unknown'""",
+                (status, status, status, time.time() + 300, ident, expected_image_revision)).rowcount
+
+    def discard_candidate(self, ident, expected_image_revision):
+        """Claim only an unchanged unknown-notes scan now confirmed blank."""
+        with self.connect() as c:
+            return c.execute("""UPDATE items SET state='DELETING',mod_notes_status='blank'
+                WHERE id=? AND image_revision=? AND origin='scan'
+                AND state='REVIEW' AND mod_notes_status='unknown'""",
+                (ident, expected_image_revision)).rowcount
+
+    def discarded_scan_candidates(self):
+        """Retryable file cleanup claims, separate from manual card deletion."""
+        with self.connect() as c:
+            return [row['id'] for row in c.execute("""SELECT id FROM items
+                WHERE origin='scan' AND state='DELETING' AND mod_notes_status='blank'""")]
+
+    @staticmethod
+    def _reconcile_morning_cards(c, ident, day, key):
+        """Keep the accepted scan ID and move matching placeholders' user history."""
+        if not day or not key:
+            return
+        if not c.execute("""SELECT 1 FROM items WHERE id=? AND origin='scan'
+                AND state='ACTIVE' AND mod_notes_status!='unknown' AND work_order_key=?
+                AND document_date=? AND date_status IN ('printed','confirmed')""", (ident, key, day)).fetchone():
+            return
+        placeholders = [row['id'] for row in c.execute("""SELECT id FROM items
+            WHERE id!=? AND origin='morning' AND document_date=? AND work_order_key=?
+            AND state IN ('ACTIVE','REVIEW')""", (ident, day, key))]
+        if not placeholders:
+            return
+        for placeholder in placeholders:
+            # Calls and messages are notes too. Their IDs remain unchanged so
+            # contact history survives the handoff and retries stay idempotent.
+            c.execute('UPDATE notes SET item_id=? WHERE item_id=?', (ident, placeholder))
+            c.execute("UPDATE items SET state='DELETING',notes_text='' WHERE id=?", (placeholder,))
+        notes = '\n'.join(row['author'] + ': ' + row['body'] for row in c.execute(
+            'SELECT author,body FROM notes WHERE item_id=? ORDER BY created,id', (ident,)))
+        c.execute('UPDATE items SET notes_text=?,search_revision=search_revision+1 WHERE id=?',
+                  (notes, ident))
 
     def failed(self, ident, message, retry=False):
         with self.connect() as c:
@@ -434,7 +513,7 @@ class GalleryRepository:
         with self.connect() as c:
             row = c.execute("""SELECT id,import_id,page,part,bytes,document_date,date_status,
                     lead_name,lead_status,sales_lead_status,address,work_order_number,work_order_candidates,
-                    work_order_reads,work_order_evidence,image_revision,
+                    work_order_reads,work_order_evidence,image_revision,mod_notes_status,
                     assigned_service_resource,reference_kind,reference_source_id,state FROM items
                 WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
                 (item_id, import_id)).fetchone()
@@ -473,10 +552,17 @@ class GalleryRepository:
                 lead_name='',lead_key='',lead_status='needs-name',
                 address='',address_key='',assigned_service_resource='',
                 sales_lead_status='',lead_source_id='',reference_kind='',reference_source_id='',
-                document_date=NULL,date_status='needs-date',state='ACTIVE',
+                document_date=CASE WHEN origin='scan' AND date_status='reference' AND work_order_key!=?
+                    THEN NULL ELSE document_date END,
+                date_status=CASE WHEN origin='scan' AND date_status='reference' AND work_order_key!=?
+                    THEN 'needs-date' ELSE date_status END,
+                state=CASE WHEN mod_notes_status='unknown' THEN 'REVIEW' ELSE 'ACTIVE' END,
                 search_revision=search_revision+1
                 WHERE id=? AND import_id=? AND state IN ('ACTIVE','REVIEW')""",
-                ('Work Order Number: ' + number, number, work_order_key(number), item_id, import_id))
+                ('Work Order Number: ' + number, number, work_order_key(number),
+                 work_order_key(number), work_order_key(number), item_id, import_id))
+            day = c.execute('SELECT document_date FROM items WHERE id=?', (item_id,)).fetchone()['document_date']
+            self._reconcile_morning_cards(c, item_id, day, work_order_key(number))
             self._step(
                 c, import_id, time.time(),
                 f"Manually corrected work order on page {row['page']} card {row['part']} to {number}."
@@ -486,14 +572,17 @@ class GalleryRepository:
     def approve_import_item(self, import_id, item_id):
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
-            row = c.execute("""SELECT page,part,state FROM items
+            row = c.execute("""SELECT page,part,state,mod_notes_status,document_date,work_order_key FROM items
                 WHERE id=? AND import_id=?""", (item_id, import_id)).fetchone()
             if not row or row['state'] not in ('ACTIVE','REVIEW'):
                 raise LookupError('This generated card is unavailable.')
+            if row['mod_notes_status'] == 'unknown':
+                raise ValueError('MOD Notes could not be read. Reprocess this scan before publishing it.')
             if row['state'] == 'ACTIVE':
                 return False
             c.execute("UPDATE items SET state='ACTIVE' WHERE id=? AND import_id=? AND state='REVIEW'",
                       (item_id, import_id))
+            self._reconcile_morning_cards(c, item_id, row['document_date'], row['work_order_key'])
             self._step(c, import_id, time.time(),
                        f"Manual approval published page {row['page']} card {row['part']} to Gallery.")
             return True
@@ -514,7 +603,8 @@ class GalleryRepository:
         if state not in ('ACTIVE','REVIEW'):
             return
         with self.connect() as c:
-            c.execute("UPDATE items SET state=? WHERE id=? AND import_id=? AND state='DELETING'",
+            c.execute("""UPDATE items SET state=CASE WHEN mod_notes_status='unknown' THEN 'REVIEW' ELSE ? END
+                WHERE id=? AND import_id=? AND state='DELETING'""",
                       (state, item_id, import_id))
 
     def finish_import_item_delete(self, import_id, item_id, page, part):
@@ -661,19 +751,28 @@ class GalleryRepository:
                     lead_name='',lead_key='',lead_status='needs-name',
                     address='',address_key='',assigned_service_resource='',
                     sales_lead_status='',lead_source_id='',reference_kind='',reference_source_id='',
-                    document_date=NULL,date_status='needs-date',
+                    document_date=CASE WHEN origin='scan' AND date_status='reference' AND work_order_key!=?
+                        THEN NULL ELSE document_date END,
+                    date_status=CASE WHEN origin='scan' AND date_status='reference' AND work_order_key!=?
+                        THEN 'needs-date' ELSE date_status END,
                     search_revision=search_revision+1
                     WHERE id=? AND state='ACTIVE'""",
-                    ('Work Order Number: ' + number, number, work_order_key(number), ident)).rowcount:
+                    ('Work Order Number: ' + number, number, work_order_key(number),
+                     work_order_key(number), work_order_key(number), ident)).rowcount:
                 raise LookupError('This image has expired or is unavailable.')
+            day = c.execute('SELECT document_date FROM items WHERE id=?', (ident,)).fetchone()['document_date']
+            self._reconcile_morning_cards(c, ident, day, work_order_key(number))
 
     def correct_date(self, ident, value):
         with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
             if not c.execute("""UPDATE items SET
                     search_revision=search_revision+CASE WHEN document_date IS NOT ? THEN 1 ELSE 0 END,
                     document_date=?,date_status='confirmed'
                     WHERE id=? AND state='ACTIVE'""", (value, value, ident)).rowcount:
                 raise LookupError('This image has expired or is unavailable.')
+            key = c.execute('SELECT work_order_key FROM items WHERE id=?', (ident,)).fetchone()['work_order_key']
+            self._reconcile_morning_cards(c, ident, value, key)
 
     def expiring(self, cutoff):
         with self.connect() as c:
@@ -778,7 +877,7 @@ class GalleryRepository:
             result['items'] = [self._recognition_view(i) for i in c.execute(
                 """SELECT id,page,part,bytes,document_date,date_status,lead_name,sales_lead_status,
                     work_order_number,work_order_candidates,work_order_reads,work_order_evidence,
-                    image_revision,reference_kind,state
+                    image_revision,mod_notes_status,reference_kind,state
                 FROM items WHERE import_id=? AND state IN ('ACTIVE','REVIEW')
                 ORDER BY CASE state WHEN 'REVIEW' THEN 0 ELSE 1 END,page,part,id LIMIT 24 OFFSET ?""",
                 (ident,offset))]
@@ -788,17 +887,15 @@ class GalleryRepository:
     def recognition_candidate(self, now):
         with self.connect() as c:
             row = c.execute("""SELECT id,text,lead_status,state,work_order_key,work_order_candidates,
-                    work_order_evidence,image_revision,document_date,date_status FROM items
+                    work_order_evidence,image_revision,document_date,date_status,mod_notes_status FROM items
                 WHERE recognition_attempts<3 AND recognition_retry_at<=? AND (
                     (state='ACTIVE' AND recognition_revision<1)
                     OR (state='REVIEW' AND work_order_key='' AND work_order_candidates='[]')
+                    OR (state='REVIEW' AND mod_notes_status='unknown')
                 )
                 ORDER BY (state='ACTIVE'),(lead_key!=''),created,id LIMIT 1""",
                 (now,)).fetchone()
-            if row:
-                result = dict(row)
-                result['work_order_evidence'] = _work_order_evidence(result.get('work_order_evidence'))
-                return result
+            return self._recognition_view(row)
 
     def repair_recognition(
             self, ident, text, name, key, address, address_normalized,
@@ -813,7 +910,7 @@ class GalleryRepository:
                 sales_lead_status=CASE WHEN work_order_key!=? THEN '' ELSE sales_lead_status END,
                 search_revision=search_revision+CASE WHEN work_order_key!=? THEN 1 ELSE 0 END,
                 work_order_number=?,work_order_key=?,
-                state=CASE WHEN ?!='' THEN 'ACTIVE' ELSE state END,
+                state=CASE WHEN ?!='' AND mod_notes_status!='unknown' THEN 'ACTIVE' ELSE state END,
                 lead_name=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_name ELSE ? END,
                 lead_key=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_key ELSE ? END,
                 lead_status=CASE WHEN lead_status='confirmed' OR ?='' THEN lead_status ELSE 'printed' END
@@ -831,7 +928,7 @@ class GalleryRepository:
             c.execute("""UPDATE items SET recognition_attempts=recognition_attempts+1,
                 recognition_retry_at=? WHERE id=? AND (
                     (state='ACTIVE' AND recognition_revision<1)
-                    OR (state='REVIEW' AND work_order_key='')
+                    OR (state='REVIEW' AND (work_order_key='' OR mod_notes_status='unknown'))
                 )""",
                 (now+300,ident))
 
@@ -984,10 +1081,10 @@ class GalleryRepository:
 
     def reference_item(self, ident):
         with self.connect() as c:
-            row = c.execute("""SELECT id,text,document_date,lead_name,lead_key,address,address_key,
+            row = c.execute("""SELECT id,text,document_date,date_status,lead_name,lead_key,address,address_key,
                 work_order_number,work_order_key,assigned_service_resource,reference_kind,
                 reference_source_id,sales_lead_status,lead_source_id,state,origin,
-                work_order_evidence,image_revision FROM items
+                work_order_evidence,image_revision,mod_notes_status FROM items
                 WHERE id=? AND state IN ('ACTIVE','REVIEW')""", (ident,)).fetchone()
             if row:
                 result = dict(row)
@@ -1000,7 +1097,7 @@ class GalleryRepository:
         if not key:
             return []
         with self.connect() as c:
-            return [dict(row) for row in c.execute("""SELECT id,text,document_date,lead_name,address,
+            return [dict(row) for row in c.execute("""SELECT id,text,document_date,date_status,lead_name,address,
                     work_order_number,work_order_key,assigned_service_resource,state
                 FROM items WHERE work_order_key=? AND state IN ('ACTIVE','REVIEW')
                 ORDER BY created,id""", (key,))]
@@ -1011,11 +1108,12 @@ class GalleryRepository:
         """Apply authoritative normalized source data resolved directly by work order."""
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
-            return c.execute("""UPDATE items SET
+            row = c.execute('SELECT document_date,origin FROM items WHERE id=?', (ident,)).fetchone()
+            changed = c.execute("""UPDATE items SET
                 search_revision=search_revision+1,
                 state='ACTIVE',
-                document_date=CASE WHEN ?='' THEN document_date ELSE ? END,
-                date_status=CASE WHEN ?='' THEN date_status ELSE 'reference' END,
+                document_date=CASE WHEN coalesce(document_date,'')='' AND ?!='' THEN ? ELSE document_date END,
+                date_status=CASE WHEN coalesce(document_date,'')='' AND ?!='' THEN 'reference' ELSE date_status END,
                 assigned_service_resource=coalesce(?,assigned_service_resource),
                 reference_kind='work-order',reference_source_id=?,text=?,
                 lead_name=CASE WHEN ?='' THEN lead_name ELSE ? END,
@@ -1024,12 +1122,16 @@ class GalleryRepository:
                 address=CASE WHEN ?='' THEN address ELSE ? END,
                 address_key=CASE WHEN ?='' THEN address_key ELSE ? END,
                 lead_source_id=?,sales_lead_status=?
-                WHERE id=? AND state IN ('ACTIVE','REVIEW') AND work_order_key=?""",
+                WHERE id=? AND state IN ('ACTIVE','REVIEW') AND work_order_key=?
+                AND mod_notes_status!='unknown'""",
                 (appointment_date, appointment_date, appointment_date,
                  assigned_resource, source_id, text,
                  name, name, name, lead_key(name), name,
                  address, address, address, address_key(address),
                  lead_source_id, sales_lead_status, ident, expected_work_order_key)).rowcount
+            if changed and row['origin'] == 'scan':
+                self._reconcile_morning_cards(c, ident, row['document_date'], expected_work_order_key)
+            return changed
 
     def sales_status_for_lead(self, lead_source_id):
         with self.connect() as c:
@@ -1092,7 +1194,7 @@ class GalleryRepository:
         with self.connect() as c:
             result = []
             for row in c.execute("""SELECT id,text,work_order_candidates,work_order_evidence,
-                    image_revision,state
+                    image_revision,document_date,date_status,mod_notes_status,state
                 FROM items WHERE state='REVIEW' AND work_order_key='' AND work_order_candidates!='[]'
                 ORDER BY created,id"""):
                 value = dict(row)
@@ -1144,7 +1246,7 @@ class GalleryRepository:
         serialized = json.dumps(list(expected_candidates))
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
-            row = c.execute('SELECT work_order_evidence,image_revision FROM items WHERE id=?',
+            row = c.execute('SELECT work_order_evidence,image_revision,document_date,origin FROM items WHERE id=?',
                             (ident,)).fetchone()
             if not row:
                 return 0
@@ -1154,11 +1256,11 @@ class GalleryRepository:
                     _work_order_evidence(row['work_order_evidence']) !=
                     normalize_work_order_evidence(expected_evidence)):
                 return 0
-            return c.execute("""UPDATE items SET
+            changed = c.execute("""UPDATE items SET
                 search_revision=search_revision+1,state='ACTIVE',
                 work_order_number=?,work_order_key=?,work_order_candidates='[]',
-                document_date=CASE WHEN ?='' THEN document_date ELSE ? END,
-                date_status=CASE WHEN ?='' THEN date_status ELSE 'reference' END,
+                document_date=CASE WHEN coalesce(document_date,'')='' AND ?!='' THEN ? ELSE document_date END,
+                date_status=CASE WHEN coalesce(document_date,'')='' AND ?!='' THEN 'reference' ELSE date_status END,
                 assigned_service_resource=coalesce(?,assigned_service_resource),
                 reference_kind='work-order',reference_source_id=?,text=?,
                 lead_name=CASE WHEN ?='' THEN lead_name ELSE ? END,
@@ -1167,13 +1269,17 @@ class GalleryRepository:
                 address=CASE WHEN ?='' THEN address ELSE ? END,
                 address_key=CASE WHEN ?='' THEN address_key ELSE ? END,
                 lead_source_id=?,sales_lead_status=?
-                WHERE id=? AND state='REVIEW' AND work_order_key='' AND work_order_candidates=?""",
+                WHERE id=? AND state='REVIEW' AND work_order_key='' AND work_order_candidates=?
+                AND mod_notes_status!='unknown'""",
                 (number, work_order_key(number),
                  appointment_date, appointment_date, appointment_date,
                  assigned_resource, source_id, text,
                  name, name, name, lead_key(name), name,
                  address, address, address, address_key(address),
                  lead_source_id, sales_lead_status, ident, serialized)).rowcount
+            if changed and row['origin'] == 'scan':
+                self._reconcile_morning_cards(c, ident, row['document_date'], work_order_key(number))
+            return changed
 
     def replace_work_order_lead_statuses(self, work_order_numbers, records, captured, *, missing_only=False):
         """Publish one completed direct lookup; absent or ambiguous orders lose their mapping."""
