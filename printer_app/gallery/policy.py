@@ -3,7 +3,11 @@ from dataclasses import dataclass, replace
 from datetime import date
 import re
 import unicodedata
-from .numeric_parser import numeric_token_from_text
+
+if __package__:
+    from .numeric_parser import numeric_token_from_text
+else:
+    from numeric_parser import numeric_token_from_text
 
 FIELDS = {'GALLERY_ENABLED', 'GALLERY_SUBJECT_CONTAINS', 'GALLERY_FROM_CONTAINS',
           'GALLERY_KEEP_DAYS', 'GALLERY_MAX_MB', 'GALLERY_CROPS_PER_DAY',
