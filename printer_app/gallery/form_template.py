@@ -407,10 +407,17 @@ def labelled_notes_crop(image, label_box):
                 lo, hi = max(0, local[0] - 2), min(width, local[1] + 2)
                 joins = ((horizontal[a:b, lo:hi] > 0).any()
                          and (vertical[lo:hi, a:b] > 0).any())
-                after = vertical[lo:hi, min(height, b + 3):min(height, b + label_height * 3)]
-                continuation = (after > 0).any(axis=0)
-                continues = (continuation.size
-                             and continuation.mean() > .25)
+                # A faded gap does not prove that this side ended. Check the
+                # remaining image for its continuation, allowing local slope.
+                # Broad screenshot separators are horizontal rules, not sides.
+                later_lo = max(0, local[0] - label_height)
+                later_hi = min(width, local[1] + label_height)
+                later_y = min(height, b + 3)
+                after = ((vertical[later_lo:later_hi, later_y:] > 0)
+                         & (horizontal.T[later_lo:later_hi, later_y:] == 0))
+                continuation = after.any(axis=0)
+                continues = any(stop - start >= max(12, label_height)
+                                for start, stop in _runs(continuation, np))
                 if joins and not continues:
                     bottom = candidate
                     break

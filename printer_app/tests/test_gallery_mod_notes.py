@@ -122,7 +122,8 @@ def test_long_underline_cannot_hide_notes_below_it(raster, clipped):
     assert (crop == 80).any()
 
 
-def test_broken_side_below_underline_cannot_hide_later_notes(raster):
+@pytest.mark.parametrize('gap_bottom', [588, 610, 700])
+def test_broken_side_below_underline_cannot_hide_later_notes(raster, gap_bottom):
     from printer_app.tests.gallery_form_fixture import form_image
 
     cv2, _ = raster
@@ -132,7 +133,7 @@ def test_broken_side_below_underline_cannot_hide_later_notes(raster):
     left, _, right, _ = map_box(registration, field.box)
     cv2.line(source, (left, 560), (right, 560), 0, 3)
     cv2.putText(source, 'Call made', (left + 100, 650), cv2.FONT_HERSHEY_SIMPLEX, 1, 80, 2)
-    cv2.rectangle(source, (left - 4, 564), (left + 4, 588), 255, -1)
+    cv2.rectangle(source, (left - 4, 564), (left + 4, gap_bottom), 255, -1)
     source = source[:, :1550]
     crop, _ = labelled_notes_crop(source, label)
     # Uncertain geometry may be reviewed, but must never produce an apparently
@@ -204,6 +205,8 @@ def test_notes_near_printed_label_are_retained(rendered_blank, position, tmp_pat
 def test_blank_screenshot_clipped_right_still_excludes_footer(rendered_blank, tmp_path, raster):
     cv2, _ = raster
     source = rendered_blank[:, :round(rendered_blank.shape[1] * .80)].copy()
+    bottom = register_form(rendered_blank).bottom
+    cv2.rectangle(source, (0, bottom + 80), (source.shape[1] - 1, bottom + 130), 0, -1)
     cv2.putText(source, 'Next card', (500, 1400), cv2.FONT_HERSHEY_SIMPLEX, 1.2, 0, 3)
     assert recognition.mod_notes_present(
         source, register_form(source), tmp_path / 'notes.png',
