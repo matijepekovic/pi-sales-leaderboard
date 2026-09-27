@@ -192,18 +192,11 @@ def usable_phone(value):
 
 
 def printed_phone(text):
-    """Accept only an explicit, complete Phone field, including flattened row OCR."""
-    boundary = (
-        r'(?=\s*(?:\||\n)|\s+(?:Power\s+Questions|Scheduled\s+Start|'
-        r'Assigned\s+Service\s+Resource|Set\s+By|T\s+Close|Work\s+Type|'
-        r'Product\s+Interest|Source|Sub\s+Source|Hover\s*/\s*Flir|'
-        r'Lead\s+Description|Start\s+Price|Final\s+Price|Deposit\s*/\s*Payment|'
-        r'MOD\s+Notes)\s*:?[ \t]*|$)'
-    )
+    """Accept only an explicit, complete Phone field, never Phone inside free text."""
     readings = [
         usable_phone(' '.join(match[1].split()))
         for match in re.finditer(
-            r'\bPhone[ \t]*[:;][ \t]*([^\n|]+?)' + boundary,
+            r'(?:^|[\n|])[ \t]*Phone[ \t]*[:;][ \t]*([^\n|]*)',
             str(text or ''), re.I,
         )
     ]

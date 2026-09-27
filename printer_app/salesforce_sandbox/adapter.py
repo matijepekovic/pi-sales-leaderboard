@@ -374,7 +374,7 @@ class SalesforceCliAdapter:
         user_zone = self._salesforce_timezone()
         grouped = {}
         # Gallery validation is latency-sensitive and normally resolves only a
-        # handful of OCR candidates. Keep each relationship-heavy SOQL batch small.
+        # handful of work-order candidates. Keep each relationship-heavy SOQL batch small.
         for offset in range(0, len(numbers), 10):
             batch = list(numbers.values())[offset:offset + 10]
             query = (
