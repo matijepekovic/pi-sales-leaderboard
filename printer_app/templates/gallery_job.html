@@ -14,10 +14,18 @@
 </dl>
 {% if job.progress %}<p>{{ job.progress.message }}</p>{% endif %}{% if job.error %}<p class="error">{{ job.error }}</p>{% endif %}
 <p class="muted">{% if job.source_available %}Temporary source PDF is waiting for processing.{% else %}Source PDF is not retained.{% endif %} A card without a readable work order stays here until its work order is corrected. Customer names come from Salesforce and are not manually editable. Deleting a generated card removes that server copy and its gallery notes; it does not affect printing or copies already downloaded to a phone.</p></section>
-<section><h2>Processing log</h2>{% for step in job.steps %}<p><time>{{ step.at|localtime }}</time> — {{ step.message }}</p>{% else %}<p>No detailed log was recorded for this older import.</p>{% endfor %}</section>
-<section><h2>Generated work orders</h2>
+<section class="gallery-processing-section">
+<details class="gallery-processing-log">
+<summary>Processing log <span class="muted">{{ job.steps|length }} entr{{ 'y' if job.steps|length == 1 else 'ies' }}</span></summary>
+<div class="gallery-processing-log-body">
+{% for step in job.steps %}<p><time>{{ step.at|localtime }}</time> — {{ step.message }}</p>{% else %}<p>No detailed log was recorded for this older import.</p>{% endfor %}
+</div>
+</details>
+</section>
+<section><div class="heading"><h2>Generated work orders</h2><span class="muted">Swipe left/right between cards</span></div>
+<div class="gallery-job-diagnostics" aria-label="Generated work order diagnostics">
 {% for item in job['items'] %}
-<article id="item-{{ item.id }}">
+<article class="gallery-job-diagnostic" id="item-{{ item.id }}">
 <h3>{{ item.lead_name or ('Work order ' ~ item.work_order_number if item.work_order_number else 'Work order needs correction') }} · Page {{ item.page }} · Card {{ item.part }}</h3>
 <p>{{ item.document_date or 'Date needs checking' }}</p>
 <div class="notice">
@@ -78,5 +86,6 @@
 </div>
 </article>
 {% else %}<p>No retained images for this import yet.</p>{% endfor %}
+</div>
 <p>{% if offset %}<a class="button" href="{{ url_for('gallery.import_job_page', ident=job.id, offset=[0,offset-24]|max) }}">Previous images</a>{% endif %} {% if offset + job['items']|length < job.retained %}<a class="button" href="{{ url_for('gallery.import_job_page', ident=job.id, offset=offset+24) }}">More images</a>{% endif %}</p></section>
 {% endblock %}
