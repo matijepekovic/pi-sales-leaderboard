@@ -122,6 +122,24 @@ def test_long_underline_cannot_hide_notes_below_it(raster, clipped):
     assert (crop == 80).any()
 
 
+def test_broken_side_below_underline_cannot_hide_later_notes(raster):
+    from printer_app.tests.gallery_form_fixture import form_image
+
+    cv2, _ = raster
+    source, registration = form_image(raster)
+    field = next(item for item in TEMPLATE_FIELDS if item.key == 'mod_notes')
+    label = map_box(registration, field.label_box)
+    left, _, right, _ = map_box(registration, field.box)
+    cv2.line(source, (left, 560), (right, 560), 0, 3)
+    cv2.putText(source, 'Call made', (left + 100, 650), cv2.FONT_HERSHEY_SIMPLEX, 1, 80, 2)
+    cv2.rectangle(source, (left - 4, 564), (left + 4, 588), 255, -1)
+    source = source[:, :1550]
+    crop, _ = labelled_notes_crop(source, label)
+    # Uncertain geometry may be reviewed, but must never produce an apparently
+    # blank crop that silently excludes the note below the damaged underline.
+    assert crop is None or (crop == 80).any()
+
+
 @pytest.fixture(scope='module')
 def rendered_blank(tmp_path_factory):
     missing = [tool for tool in ('pdftoppm', 'tesseract') if not shutil.which(tool)]

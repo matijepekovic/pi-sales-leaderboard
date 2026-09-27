@@ -410,7 +410,6 @@ def labelled_notes_crop(image, label_box):
                 after = vertical[lo:hi, min(height, b + 3):min(height, b + label_height * 3)]
                 continuation = (after > 0).any(axis=0)
                 continues = (continuation.size
-                             and continuation[:max(3, label_height // 3)].any()
                              and continuation.mean() > .25)
                 if joins and not continues:
                     bottom = candidate
