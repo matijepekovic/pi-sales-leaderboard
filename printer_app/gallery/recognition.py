@@ -381,17 +381,22 @@ def _run_tesseract(image, ocr_copy, *, digits_only=False, psm=None):
 
 
 def _first_work_order_candidate(text):
-    """Accept only a complete eight-digit read, then enforce the known 02 prefix.
+    """Normalize one complete eight-position work-order OCR token.
 
-    Stats work orders always begin with 0 then 2. Those two positions are fixed,
-    but missing digits are never invented. A seven-digit OCR read is incomplete
-    and must fall through to the other recognition/source paths.
+    Never add, remove, or shift positions. Only correct the known glyph
+    confusions inside the token: O->0, B->8, and !->1.
     """
-    match = next(re.finditer(r'(?<![0-9])[0-9]{8}(?![0-9])', str(text or '')), None)
+    match = next(re.finditer(
+        r'(?<![0-9OoBb!])[0-9OoBb!]{8}(?![0-9OoBb!])',
+        str(text or ''),
+    ), None)
     if not match:
         return ''
-    digits = match[0]
-    return '02' + digits[2:]
+    return match[0].translate(str.maketrans({
+        'O': '0', 'o': '0',
+        'B': '8', 'b': '8',
+        '!': '1',
+    }))
 
 
 def mod_notes_present(source, registration):
