@@ -53,6 +53,7 @@ class ModSheetSettingsService:
             queue_state = self.queue.job_status(int(state['job_id']))
 
         test_state = self.repository.test_state()
+        manual_gallery_state = self.repository.manual_gallery_pull_state()
         test_queue_state = None
         if test_state.get('job_id'):
             test_queue_state = self.queue.job_status(int(test_state['job_id']))
@@ -78,6 +79,7 @@ class ModSheetSettingsService:
             'queue_state': queue_state,
             'test_state': test_state,
             'test_queue_state': test_queue_state,
+            'manual_gallery_state': manual_gallery_state,
         }
 
 
@@ -164,6 +166,95 @@ class ModSheetTestPrintService:
                 message='Test print failed',
                 error=detail,
             )
+
+
+class ModSheetManualGalleryPullService:
+    """Worker-owned backup pull that sends today's rendered MOD Sheet to Gallery only."""
+
+    def __init__(self, repository, source, renderer, reference_sink, timezone, clock=None):
+        self.repository = repository
+        self.source = source
+        self.renderer = renderer
+        self.reference_sink = reference_sink
+        self.timezone = timezone
+        self.zone = ZoneInfo(timezone)
+        self.clock = clock or time.time
+
+    def request(self):
+        if self.repository.settings() is None:
+            raise ValueError('Save MOD Sheet settings before using the manual Gallery pull.')
+        now = self.clock()
+        local = datetime.fromtimestamp(now, self.zone)
+        return self.repository.request_manual_gallery_pull(
+            str(uuid4()),
+            local.date().isoformat(),
+            local.date().strftime('%-m/%-d/%Y'),
+            now,
+        )
+
+    def status(self):
+        return self.repository.manual_gallery_pull_state()
+
+    def requested_due(self):
+        return self.status().get('status') in ('queued', 'running')
+
+    def run_requested(self):
+        state = self.status()
+        if state.get('status') not in ('queued', 'running'):
+            return state
+        settings = self.repository.settings()
+        now = self.clock()
+        running = dict(state, status='running', updated=now)
+        self.repository.save_manual_gallery_pull_state(running)
+        try:
+            if settings is None:
+                raise RuntimeError('MOD Sheet settings are not configured.')
+            if self.source is None or self.renderer is None or self.reference_sink is None:
+                raise RuntimeError('Manual Gallery pull is unavailable.')
+
+            records = tuple(self.source.records(
+                start_date=state['display_date'],
+                end_date=state['display_date'],
+                market_segment=settings.market_segment,
+                product_category=settings.product_category,
+                source_type=settings.source_type,
+                assigned_service_resource=settings.assigned_service_resource,
+                remove_canceled=settings.remove_canceled,
+                remove_unconfirmed=settings.remove_unconfirmed,
+                limit=1000,
+            ))
+            captured = self.clock()
+            if not records:
+                return self.repository.save_manual_gallery_pull_state(dict(
+                    running,
+                    status='no_appointments',
+                    updated=captured,
+                    appointments=0,
+                    message='No appointments',
+                ))
+
+            payload = self.renderer(records, color_code=settings.color_code)
+            result = self.reference_sink.publish(
+                state['day'], 'morning', records, captured, pdf_payload=payload
+            )
+            return self.repository.save_manual_gallery_pull_state(dict(
+                running,
+                status='complete',
+                updated=self.clock(),
+                appointments=len(records),
+                gallery_count=int(result.get('count', len(records))) if isinstance(result, dict) else len(records),
+                message=f'Pulled {len(records)} appointments into Gallery',
+            ))
+        except Exception as exc:
+            detail = str(exc).strip()[:500] or type(exc).__name__
+            log.warning('Manual MOD Gallery pull failed: %s', type(exc).__name__)
+            return self.repository.save_manual_gallery_pull_state(dict(
+                running,
+                status='failed',
+                updated=self.clock(),
+                message='Manual Gallery pull failed',
+                error=detail,
+            ))
 
 
 class DailyModSheetService:
