@@ -3,6 +3,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 import re
 import unicodedata
+from .numeric_parser import numeric_token_from_text
 
 FIELDS = {'GALLERY_ENABLED', 'GALLERY_SUBJECT_CONTAINS', 'GALLERY_FROM_CONTAINS',
           'GALLERY_KEEP_DAYS', 'GALLERY_MAX_MB', 'GALLERY_CROPS_PER_DAY',
@@ -137,11 +138,11 @@ def address_key(value):
 
 
 def printed_work_order_number(text):
-    """Read the first complete eight digits from an explicit Work Order Number field.
+    """Read one explicit eight-position work-order token from normalized OCR text.
 
-    OCR sometimes appends an extra digit to the printed identifier. Never join
-    separate digit fragments; when one contiguous token contains more than eight
-    digits, the printed work-order identity is its first eight digits.
+    The work-order field may contain OCR glyph confusions such as O/0, B/8 or
+    !/1. Numeric normalization is owned by the dedicated numeric parser. This
+    function only establishes the explicit Work Order Number field boundary.
     """
     original = str(text or '')
     labels = list(re.finditer(
@@ -149,20 +150,15 @@ def printed_work_order_number(text):
     fields = '|'.join(re.escape(label).replace(r'\ ', r'[ \t]+')
                       for label in sorted(REFERENCE_FIELD_LABELS, key=len, reverse=True))
     boundary = r'[\r\n|]|\b(?:' + fields + r')\b|\b[A-Za-z][A-Za-z0-9 /_-]*[:;]'
+    readings = []
     for index, label in enumerate(labels):
         end = labels[index + 1].start() if index + 1 < len(labels) else len(original)
         field = re.split(boundary, original[label.end():end], maxsplit=1, flags=re.I)[0]
-        for match in re.finditer(
-                r'(?<![0-9OoBb!])[0-9OoBb!]{8}(?![0-9OoBb!])', field):
-            value = match[0].translate(str.maketrans({
-                'O': '0', 'o': '0',
-                'B': '8', 'b': '8',
-                '!': '1',
-            }))
-            if value.isascii() and value.isdecimal():
-                return value
-    return ''
-
+        value = numeric_token_from_text(field)
+        if value:
+            readings.append(value)
+    unique = tuple(dict.fromkeys(readings))
+    return unique[0] if len(unique) == 1 else ''
 
 def checked_work_order_number(value):
     """Normalize a manually entered work order using the same eight-digit rule."""
