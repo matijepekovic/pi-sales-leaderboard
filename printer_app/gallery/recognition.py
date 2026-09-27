@@ -381,8 +381,18 @@ def _run_tesseract(image, ocr_copy, *, digits_only=False, psm=None):
 
 
 def _first_work_order_candidate(text):
-    match = next(re.finditer(r'[0-9]{8,}', str(text or '')), None)
-    return match[0][:8] if match else ''
+    """Normalize numeric OCR to the fixed eight-digit Stats work-order format.
+
+    Scanned work orders always begin with 0. The leftmost printed 0 is the glyph
+    most likely to be clipped or mistaken for 1/2/3, so OCR owns only the final
+    seven digits. A seven-digit read gets the known 0 prepended; an eight-digit
+    read keeps its final seven digits and replaces the unreliable first glyph.
+    """
+    match = next(re.finditer(r'(?<![0-9])[0-9]{7,8}(?![0-9])', str(text or '')), None)
+    if not match:
+        return ''
+    digits = match[0]
+    return '0' + (digits if len(digits) == 7 else digits[1:])
 
 
 def mod_notes_present(source, registration):

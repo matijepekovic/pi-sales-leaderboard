@@ -270,6 +270,24 @@ def test_work_order_field_uses_three_independent_reads_without_changing_mask(ras
     assert result['date_status'] == 'printed'
 
 
+@pytest.mark.parametrize(('raw', 'expected'), [
+    ('02283370', '02283370'),
+    ('32283370', '02283370'),
+    ('22283370', '02283370'),
+    ('32283836', '02283836'),
+    ('12283836', '02283836'),
+    ('32284215', '02284215'),
+    ('2284215', '02284215'),
+    ('32284444', '02284444'),
+    ('2284444', '02284444'),
+    ('32283700', '02283700'),
+    ('123456', ''),
+    ('123456789', ''),
+])
+def test_scanned_work_order_uses_known_leading_zero(raw, expected):
+    assert recognition._first_work_order_candidate(raw) == expected
+
+
 def test_two_agreeing_work_order_reads_outvote_one_outlier():
     result = recognition._candidate_result(
         ('02283948', '02283048', '02283948'),
