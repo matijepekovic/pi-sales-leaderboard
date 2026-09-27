@@ -173,8 +173,9 @@ def native_render_sizes(source, pages):
         return {}
 
     sizes = {}
-    for index, page in enumerate(reader.pages, 1):
+    for index in range(1, pages + 1):
         try:
+            page = reader.pages[index - 1]
             if page.get('/Rotate', 0) or page.get('/UserUnit', 1) != 1 or page.get('/Annots'):
                 continue
             media, crop = tuple(map(float, page.mediabox)), tuple(map(float, page.cropbox))

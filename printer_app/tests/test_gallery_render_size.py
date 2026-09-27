@@ -101,6 +101,22 @@ def test_unavailable_reader_or_malformed_pdf_keeps_poppler_fallback(tmp_path, mo
     assert processor.native_render_sizes(source, 1) == {}
 
 
+def test_unreadable_individual_page_metadata_keeps_poppler_fallback(tmp_path, monkeypatch):
+    import pypdf
+
+    processor, _, _ = _processor(monkeypatch)
+
+    class BrokenPages:
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, index):
+            raise ValueError('Broken page reference')
+
+    monkeypatch.setattr(pypdf, 'PdfReader', lambda source: SimpleNamespace(pages=BrokenPages()))
+    assert processor.native_render_sizes(tmp_path / 'broken.pdf', 1) == {}
+
+
 def test_processing_renders_entire_native_page_with_poppler(tmp_path, monkeypatch):
     processor, np, image_module = _processor(monkeypatch)
     source = tmp_path / 'scan.pdf'
