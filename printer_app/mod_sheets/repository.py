@@ -11,6 +11,7 @@ from .policy import ModSheetAutomationSettings
 SETTINGS_KEY = 'daily_mod_sheet_settings'
 STATE_KEY = 'daily_mod_sheet_state'
 TEST_STATE_KEY = 'daily_mod_sheet_test_state'
+MANUAL_GALLERY_PULL_STATE_KEY = 'daily_mod_sheet_manual_gallery_pull_state'
 REFERENCE_OUTBOX_KEY = 'daily_mod_sheet_reference_outbox'
 FINAL_REFERENCE_STATE_KEY = 'daily_mod_sheet_final_reference_state'
 HOURLY_REFERENCE_STATE_KEY = 'daily_mod_sheet_hourly_reference_state'
@@ -52,6 +53,35 @@ class ModSheetAutomationRepository:
     def save_test_state(self, state: dict) -> dict:
         value = dict(state)
         self.db.set(TEST_STATE_KEY, value)
+        return value
+
+    def manual_gallery_pull_state(self) -> dict:
+        value = self.db.get(MANUAL_GALLERY_PULL_STATE_KEY, {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def request_manual_gallery_pull(self, ident, day, display_date, now):
+        with self.db.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT value FROM meta WHERE key=?',
+                               (MANUAL_GALLERY_PULL_STATE_KEY,)).fetchone()
+            state = json.loads(row['value']) if row else {}
+            if isinstance(state, dict) and state.get('status') in ('queued', 'running'):
+                return state
+            state = {
+                'id': ident,
+                'status': 'queued',
+                'day': day,
+                'display_date': display_date,
+                'updated': float(now),
+            }
+            conn.execute('INSERT INTO meta(key,value) VALUES(?,?) '
+                         'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                         (MANUAL_GALLERY_PULL_STATE_KEY, json.dumps(state)))
+        return state
+
+    def save_manual_gallery_pull_state(self, state):
+        value = dict(state)
+        self.db.set(MANUAL_GALLERY_PULL_STATE_KEY, value)
         return value
 
 
