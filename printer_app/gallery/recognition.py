@@ -15,15 +15,16 @@ import sys
 
 if __package__:
     from .form_template import TEMPLATE_FIELDS, field_boxes, map_box, register_form
+    from .numeric_parser import numeric_token_from_text, parse_numeric_image
     from .policy import printed_work_order_number
 else:
     from form_template import TEMPLATE_FIELDS, field_boxes, map_box, register_form
+    from numeric_parser import numeric_token_from_text, parse_numeric_image
     from policy import printed_work_order_number
 
 # The scan supplies only the durable work-order identity. Customer, address,
 # appointment and rep data come from the existing normalized reference data.
 _OCR_FIELD_KEYS = frozenset({'work_order_number'})
-_WRAPPED_FIELD_KEYS = frozenset()
 
 
 def tsv_words(value):
@@ -155,207 +156,28 @@ def _template_document_date(values, known_date=None):
     return (per_field[0], 'printed') if len(per_field) >= 2 and len(set(per_field)) == 1 else (None, 'needs-date')
 
 
-def _meaningful_bbox(image, minimum_area):
-    """Cheap blank/dust test; return the bounding box of real variable ink."""
-    import cv2
-    import numpy as np
-
-    binary = (image < 225).astype(np.uint8)
-    count, _, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
-    kept = []
-    for label in range(1, count):
-        x, y, width, height, area = stats[label]
-        if area >= minimum_area and (width >= 2 or height >= 3):
-            kept.append((x, y, width, height))
-    if not kept:
-        return None
-    left = min(value[0] for value in kept)
-    top = min(value[1] for value in kept)
-    right = max(value[0] + value[2] for value in kept)
-    bottom = max(value[1] + value[3] for value in kept)
-    return left, top, right, bottom
-
-
-def _ink_runs(mask):
-    import numpy as np
-
-    edges = np.flatnonzero(np.diff(np.r_[False, mask, False].astype(np.int8)))
-    return list(zip(edges[::2], edges[1::2]))
-
-
-def _label_extent(crop, field, registration):
-    """Find the label exclusion area without another OCR-engine call.
-
-    The template only seeds a local search. Printed pixels determine the end of
-    the label and its line height. Clearance uses only the surrounding blank ink
-    gap. Only fields that can wrap regain the full width underneath their label.
-    An unreadable colon leaves the line intact rather than guessing into a value.
-    """
-    import cv2
-    import numpy as np
-
-    height, width = crop.shape
-    expected = map_box(registration, field.box)
-    label = map_box(registration, field.label_box)
-    expected_end = min(width, max(1, label[2] - expected[0]))
-    letter_height = max(6, label[3] - label[1])
-    tolerance = max(5, int(round(letter_height * 1.4)))
-    search_right = min(width, expected_end + tolerance)
-    search_bottom = min(height, max(int(letter_height * 3),
-                                    label[3] - expected[1]))
-    ink = crop[:search_bottom, :search_right] < 225
-
-    # Join tiny raster gaps within letters, but never join separate text lines.
-    occupied = ink[:, :min(width, expected_end)].any(axis=1)
-    for start, end in _ink_runs(~occupied):
-        if start and end < len(occupied) and end - start <= 1:
-            occupied[start:end] = True
-    lines = [(int(top), int(bottom)) for top, bottom in _ink_runs(occupied)
-             if bottom - top >= max(3, letter_height * .25)
-             and int(ink[top:bottom, :expected_end].sum()) >= letter_height * 2]
-    if not lines:
-        return 0, 0
-    top, bottom = lines[0]
-    mask_bottom = bottom
-    label_end = None
-
-    count, _, stats, _ = cv2.connectedComponentsWithStats(
-        ink[top:bottom].astype(np.uint8), 8
-    )
-    dots = []
-    for x, y, cw, ch, area in stats[1:count]:
-        if (area >= 1 and cw <= letter_height * .4 and ch <= letter_height * .4
-                and expected_end * .40 <= x + cw <= expected_end + tolerance):
-            dots.append((int(x), int(y), int(cw), int(ch), int(area)))
-    candidates = []
-    for upper in dots:
-        for lower in dots:
-            x, y, cw, ch, area = upper
-            lx, ly, lw, lh, larea = lower
-            if not (y + ch < ly and ly + lh - y <= letter_height * 1.1):
-                continue
-            if abs((x + cw / 2) - (lx + lw / 2)) > max(1.5, letter_height * .1):
-                continue
-            if not (.5 <= cw / lw <= 2 and .5 <= ch / lh <= 2
-                    and .4 <= area / larea <= 2.5):
-                continue
-            end = max(x + cw, lx + lw)
-            # A time in the value can contain another colon. Require the
-            # printed label's words before it, not extra value words.
-            prefix = ink[top:bottom, :min(x, lx)].any(axis=0)
-            for start, stop in _ink_runs(~prefix):
-                if start and stop < len(prefix) and stop - start < letter_height * .25:
-                    prefix[start:stop] = True
-            if len(_ink_runs(prefix)) != len(field.label.split()):
-                continue
-            candidates.append(end)
-    if candidates:
-        label_end = min(candidates)
-
-    if label_end is None:
-        # An uncertain boundary must not eat the first value character.
-        # Retain the line; exact known labels are removed from OCR text below.
-        return 0, 0
-
-    # Put the cut in the whitespace between the label and value, keeping room
-    # on both sides. Never extend a label mask into even a single value pixel.
-    padding = max(2, int(round(letter_height * .25)))
-    wraps = field.key in _WRAPPED_FIELD_KEYS
-    label_rows = mask_bottom if wraps else height
-    right_ink = np.flatnonzero((crop[:label_rows, label_end:] < 225).any(axis=0))
-    right_gap = int(right_ink[0]) if len(right_ink) else width - label_end
-    label_end += min(padding, right_gap // 2)
-    if not wraps:
-        return min(width, label_end), height
-
-    below_ink = np.flatnonzero((crop[mask_bottom:, :label_end] < 225).any(axis=1))
-    below_gap = int(below_ink[0]) if len(below_ink) else height - mask_bottom
-    mask_bottom += min(padding, below_gap // 2)
-    return min(width, label_end), min(height, mask_bottom)
-
-
 def template_ocr_canvas(source, registration):
-    """Return only the known Work Order Number value area.
+    """Return a generous Work Order Number search field for the numeric parser.
 
-    The MOD template already owns this field. Do not rediscover the printed label
-    from scan pixels: that was clipping leading digits on some cards and leaving
-    the whole label on others. The template's measured label boundary is the
-    single source of truth for where numeric OCR begins.
+    The search starts before the measured label boundary so small registration
+    errors cannot clip the first printed digit. The numeric parser, not this
+    template adapter, owns locating the eight glyph positions inside the field.
     """
-    import numpy as np
-
-    frame_width = max(1, registration.right - registration.left)
-    frame_height = max(1, registration.bottom - registration.top)
-    ink_pad = max(4, int(round(frame_width * .002)))
-    minimum_area = max(4, int(round(frame_width / 1200.0)))
-
-    active = []
-    for field, (left, top, right, bottom) in field_boxes(source, registration):
-        if field.key not in _OCR_FIELD_KEYS or right <= left or bottom <= top:
-            continue
-
-        _, _, label_right, _ = map_box(registration, field.label_box)
-        # A tiny positive inset keeps the colon/label out while leaving far more
-        # than enough room before the first printed digit on the known template.
-        value_left = max(left, min(right, label_right + max(1, int(round(frame_width * .001)))))
-        if value_left >= right:
-            continue
-        crop = source[top:bottom, value_left:right].copy()
-
-        box = _meaningful_bbox(crop, minimum_area)
-        if box is None:
-            continue
-        x0, y0, x1, y1 = box
-        x0 = max(0, x0 - ink_pad)
-        x1 = min(crop.shape[1], x1 + ink_pad)
-        y0 = max(0, y0 - ink_pad)
-        y1 = min(crop.shape[0], y1 + ink_pad)
-        active.append((field, crop[y0:y1, x0:x1]))
-
-    if not active:
+    field = next(field for field in TEMPLATE_FIELDS if field.key == 'work_order_number')
+    observed = dict((item.key, bounds) for item, bounds in field_boxes(source, registration))
+    left, top, right, bottom = observed.get(field.key, (0, 0, 0, 0))
+    if right <= left or bottom <= top:
         return None, []
 
-    gap = max(12, int(round(frame_height * .012)))
-    margin = gap
-    canvas_width = max(crop.shape[1] for _, crop in active) + margin * 2
-    canvas_height = sum(crop.shape[0] for _, crop in active) + gap * (len(active) - 1) + margin * 2
-    canvas = np.full((canvas_height, canvas_width), 255, np.uint8)
-    segments = []
-    y = margin
-    for field, crop in active:
-        canvas[y:y + crop.shape[0], margin:margin + crop.shape[1]] = crop
-        segments.append((field.key, y, y + crop.shape[0]))
-        y += crop.shape[0] + gap
-    return canvas, segments
+    frame_width = max(1, registration.right - registration.left)
+    _, _, label_right, _ = map_box(registration, field.label_box)
+    slack = max(8, int(round(frame_width * .015)))
+    search_left = max(left, label_right - slack)
+    if search_left >= right:
+        return None, []
 
-
-def _field_values(words, segments):
-    values = {}
-    fields = {field.key: field for field in TEMPLATE_FIELDS}
-    for key, top, bottom in segments:
-        if key not in _OCR_FIELD_KEYS:
-            continue
-        selected = [word for word in words
-                    if top <= word['top'] + word['height'] / 2.0 < bottom]
-        value = ' '.join(search_text(selected).split())
-        # When the printed colon/boundary was unreadable, retain the pixels and
-        # remove only an exact recognized label prefix, not arbitrary name text.
-        label = fields[key].label
-        value = re.sub(r'^' + re.escape(label) + r'\s*:\s*', '', value, flags=re.I)
-        if value:
-            values[key] = value
-    return values
-
-
-def _template_search_text(values):
-    lines = []
-    for field in TEMPLATE_FIELDS:
-        if field.key not in _OCR_FIELD_KEYS:
-            continue
-        value = values.get(field.key, '')
-        if value:
-            lines.append(f'{field.label}: {value}')
-    return '\n'.join(lines)[:100000]
+    canvas = source[top:bottom, search_left:right].copy()
+    return canvas, [(field.key, 0, canvas.shape[0])]
 
 
 def _run_tesseract(image, ocr_copy, *, digits_only=False, psm=None):
@@ -381,22 +203,8 @@ def _run_tesseract(image, ocr_copy, *, digits_only=False, psm=None):
 
 
 def _first_work_order_candidate(text):
-    """Normalize one complete eight-position work-order OCR token.
-
-    Never add, remove, or shift positions. Only correct the known glyph
-    confusions inside the token: O->0, B->8, and !->1.
-    """
-    match = next(re.finditer(
-        r'(?<![0-9OoBb!])[0-9OoBb!]{8}(?![0-9OoBb!])',
-        str(text or ''),
-    ), None)
-    if not match:
-        return ''
-    return match[0].translate(str.maketrans({
-        'O': '0', 'o': '0',
-        'B': '8', 'b': '8',
-        '!': '1',
-    }))
+    """Compatibility helper for normalized eight-position OCR tokens."""
+    return numeric_token_from_text(text)
 
 
 def mod_notes_present(source, registration):
@@ -470,43 +278,36 @@ def _candidate_result(candidates, known_date, reads=()):
 
 
 def _recognize_template(source, registration, ocr_copy, known_date, debug_path=None):
-    """Read the same masked work-order value several independent ways.
-
-    When requested, persist the exact field canvas used by the first OCR pass.
-    Diagnostic pass results are normalized data; callers never need Tesseract TSV.
-    """
+    """Parse eight visible digit positions from the known work-order field."""
     import cv2
 
-    canvas, segments = template_ocr_canvas(source, registration)
+    canvas, _ = template_ocr_canvas(source, registration)
     if canvas is None:
         return _candidate_result((), known_date)
 
     if debug_path is not None and not cv2.imwrite(str(debug_path), canvas):
         raise OSError('OCR diagnostic image cannot be written')
 
-    enlarged = cv2.resize(canvas, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
-    thresholded = cv2.threshold(enlarged, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-    candidates = []
-    reads = []
-    passes = (
-        ('Original field', canvas, 7),
-        ('2× enlarged', enlarged, 13),
-        ('Thresholded', thresholded, 6),
-    )
-    for label, image, psm in passes:
+    def read_digit(glyph, psm):
         try:
-            words = _run_tesseract(image, ocr_copy, digits_only=True, psm=psm)
+            return _run_tesseract(glyph, ocr_copy, digits_only=True, psm=psm)
         except subprocess.SubprocessError:
-            reads.append(dict(label=label, psm=psm, text='', candidate='', ok=False))
-            continue
-        raw = ' '.join(search_text(words).split())[:128]
-        candidate = _first_work_order_candidate(raw)
-        reads.append(dict(
-            label=label, psm=psm, text=raw, candidate=candidate, ok=True,
-        ))
-        if candidate:
-            candidates.append(candidate)
-    return _candidate_result(candidates, known_date, reads)
+            return ()
+
+    parsed = parse_numeric_image(canvas, read_digit)
+    positions = tuple(parsed.get('positions') or ())
+    candidate = str(parsed.get('candidate') or '')
+    text = ''.join(value or '?' for value in positions)
+    psms = sorted({attempt.get('psm') for attempt in parsed.get('attempts', ())
+                   if attempt.get('psm')})
+    reads = (dict(
+        label='Numerical parser',
+        psm='/'.join(map(str, psms)) if psms else '',
+        text=text,
+        candidate=candidate,
+        ok=bool(candidate),
+    ),)
+    return _candidate_result((candidate,) if candidate else (), known_date, reads)
 
 
 def _recognize_legacy(source, ocr_copy, known_date):
