@@ -157,7 +157,7 @@ def printed_work_order_number(text):
     for index, label in enumerate(labels):
         end = labels[index + 1].start() if index + 1 < len(labels) else len(original)
         field = re.split(boundary, original[label.end():end], maxsplit=1, flags=re.I)[0]
-        value = numeric_token_from_text(field)
+        value = numeric_token_from_text(field, prefix='', allow_overflow=True)
         if value:
             return value
     return ''
