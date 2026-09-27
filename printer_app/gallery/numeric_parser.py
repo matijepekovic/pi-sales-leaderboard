@@ -4,10 +4,10 @@ This module owns one job: turn an isolated printed numeric field into its digit
 positions. It does not know Gallery workflow, repositories, dates, customer data
 or any external source.
 
-The parser never inserts or removes positions. It first finds eight visible glyph
-slots, then asks the injected digit classifier to choose one of 0-9 for each slot.
-Known OCR glyph confusions are normalized only when parsing text produced by the
-whole-card fallback.
+The parser never inserts or removes positions. It first finds visible glyph slots,
+then asks the injected digit classifier to choose one of 0-9 for each slot. It has
+no knowledge of work-order prefixes or any other business rule. Known OCR glyph
+confusions are normalized only when parsing text produced by another OCR path.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ OCR_GLYPH_TRANSLATION = str.maketrans({
 })
 
 
-def normalize_numeric_token(value, *, length=8, prefix='02'):
+def normalize_numeric_token(value, *, length=8):
     """Normalize one complete OCR token without padding or shifting characters."""
     value = str(value or '').strip()
     if len(value) != length:
@@ -34,13 +34,11 @@ def normalize_numeric_token(value, *, length=8, prefix='02'):
     normalized = value.translate(OCR_GLYPH_TRANSLATION)
     if not normalized.isascii() or not normalized.isdecimal():
         return ''
-    if prefix and not normalized.startswith(prefix):
-        return ''
     return normalized
 
 
 def numeric_token_from_text(
-        value, *, length=8, prefix='02', allow_overflow=False):
+        value, *, length=8, allow_overflow=False):
     """Find the first numeric-looking token with safe field boundaries."""
     text = str(value or '')
     size = f'{{{length},}}' if allow_overflow else f'{{{length}}}'
@@ -54,9 +52,7 @@ def numeric_token_from_text(
         ):
             continue
         token = match[0][:length] if allow_overflow else match[0]
-        candidate = normalize_numeric_token(
-            token, length=length, prefix=prefix
-        )
+        candidate = normalize_numeric_token(token, length=length)
         if candidate:
             return candidate
     return ''
@@ -245,11 +241,9 @@ def _one_digit(words):
     return digit, confidence
 
 
-def _classify_glyph(glyph, position, read_words, prefix):
+def _classify_glyph(glyph, position, read_words):
+    """Classify one isolated glyph as one of ten digits, with no field knowledge."""
     attempts = []
-    first_digit = ''
-    first_confidence = -1.0
-
     for psm in (10, 13):
         words = read_words(glyph, psm)
         digit, confidence = _one_digit(words)
@@ -260,34 +254,32 @@ def _classify_glyph(glyph, position, read_words, prefix):
             'confidence': confidence,
         })
 
-        if psm == 10:
-            first_digit, first_confidence = digit, confidence
-
-        if position < len(prefix):
-            if digit == prefix[position]:
-                return digit, tuple(attempts)
-            continue
-
-        if digit and confidence >= 55:
-            return digit, tuple(attempts)
-
-    if position < len(prefix):
-        return '', tuple(attempts)
-
-    valid = [
-        (attempt['confidence'], attempt['digit'])
-        for attempt in attempts if attempt['digit']
-    ]
+    valid = [item for item in attempts if item['digit']]
     if not valid:
         return '', tuple(attempts)
-    confidence, digit = max(valid)
-    if (first_digit and digit != first_digit
-            and abs(confidence - first_confidence) < 10):
-        return '', tuple(attempts)
-    return digit, tuple(attempts)
+
+    by_digit = {}
+    for item in valid:
+        current = by_digit.get(item['digit'])
+        if current is None or item['confidence'] > current:
+            by_digit[item['digit']] = item['confidence']
+
+    if len(by_digit) == 1:
+        digit = next(iter(by_digit))
+        return digit, tuple(attempts)
+
+    ranked = sorted(
+        ((confidence, digit) for digit, confidence in by_digit.items()),
+        reverse=True,
+    )
+    best_confidence, best_digit = ranked[0]
+    second_confidence = ranked[1][0]
+    if best_confidence >= 70 and best_confidence - second_confidence >= 15:
+        return best_digit, tuple(attempts)
+    return '', tuple(attempts)
 
 
-def parse_numeric_image(image, read_words, *, length=8, prefix='02'):
+def parse_numeric_image(image, read_words, *, length=8):
     """Read one fixed-length printed number from an isolated search field.
 
     The read_words callback is the OCR-engine boundary. The parser controls
@@ -312,7 +304,7 @@ def parse_numeric_image(image, read_words, *, length=8, prefix='02'):
                 positions.append('')
                 failed = True
                 break
-            digit, reads = _classify_glyph(glyph, position, read_words, prefix)
+            digit, reads = _classify_glyph(glyph, position, read_words)
             attempts.extend(reads)
             positions.append(digit)
             if not digit:
@@ -326,8 +318,6 @@ def parse_numeric_image(image, read_words, *, length=8, prefix='02'):
             continue
 
         candidate = ''.join(positions)
-        if prefix and not candidate.startswith(prefix):
-            continue
         return {
             'candidate': candidate,
             'positions': tuple(positions),
