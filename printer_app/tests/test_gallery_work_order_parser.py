@@ -17,7 +17,6 @@ from printer_app.gallery.policy import checked_work_order_number, printed_work_o
     ('Work Order Number: 02278850 Work Order Number: 02278850', '02278850'),
     ('Work Order Number: O2278B5!', '02278851'),
 ])
-
 def test_reads_a_complete_eight_digit_token_without_joining_ocr_noise(text, expected):
     assert printed_work_order_number(text) == expected
 
@@ -40,7 +39,6 @@ def test_does_not_invent_a_number_from_fragments_or_unicode(value):
     ('Work Order Number: 02278850\nWork Order Number: 02278850', '02278850'),
     ('Work Order Number: 0227 8850\nWork Order Number: 02278850', '02278850'),
 ])
-
 def test_first_complete_eight_digits_win_without_joining_fragments(text, expected):
     assert printed_work_order_number(text) == expected
 
