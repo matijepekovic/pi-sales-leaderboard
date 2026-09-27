@@ -81,19 +81,19 @@ def _field(raster, text, *, font, blur=0, angle=0, contrast=1.0,
     ('02285011', '02285011'),
     ('O228501!', '02285011'),
     ('o22B501!', '02285011'),
+    ('32285011', '32285011'),
     ('0225558', ''),
     ('2285011', ''),
-    ('32285011', ''),
     ('022850111', ''),
 ])
 def test_text_token_normalization_changes_glyph_identity_not_position(raw, expected):
     assert normalize_numeric_token(raw) == expected
 
 
-def test_whole_card_token_parser_recovers_known_symbol_confusions_only():
-    assert numeric_token_from_text('Work Order Number: O22B501! Local') == '02285011'
-    assert numeric_token_from_text('Work Order Number: 0228501 Local') == ''
-    assert numeric_token_from_text('Work Order Number: 32285011 Local') == ''
+def test_generic_text_token_parser_has_no_work_order_prefix_knowledge():
+    assert numeric_token_from_text('Value: O22B501! End') == '02285011'
+    assert numeric_token_from_text('Value: 32285011 End') == '32285011'
+    assert numeric_token_from_text('Value: 0228501 End') == ''
 
 
 @pytest.mark.parametrize(('text', 'font_name', 'options'), [
