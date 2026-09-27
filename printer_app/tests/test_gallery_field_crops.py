@@ -272,19 +272,18 @@ def test_work_order_field_uses_three_independent_reads_without_changing_mask(ras
 
 @pytest.mark.parametrize(('raw', 'expected'), [
     ('02283370', '02283370'),
-    ('32283370', '02283370'),
-    ('22283370', '02283370'),
-    ('31283836', '02283836'),
-    ('32284215', '02284215'),
-    ('32284444', '02284444'),
-    ('32283700', '02283700'),
+    ('O2283370', '02283370'),
+    ('o2283370', '02283370'),
+    ('022B3370', '02283370'),
+    ('022b3370', '02283370'),
+    ('0228501!', '02285011'),
+    ('O22B501!', '02285011'),
     ('0225558', ''),
     ('2284215', ''),
-    ('2284444', ''),
-    ('123456', ''),
+    ('32283370', '32283370'),
     ('123456789', ''),
 ])
-def test_scanned_work_order_enforces_known_02_prefix_without_inventing_missing_digits(raw, expected):
+def test_scanned_work_order_corrects_known_glyphs_without_inventing_or_shifting(raw, expected):
     assert recognition._first_work_order_candidate(raw) == expected
 
 
