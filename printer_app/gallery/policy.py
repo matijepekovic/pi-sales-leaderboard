@@ -154,15 +154,13 @@ def printed_work_order_number(text):
     fields = '|'.join(re.escape(label).replace(r'\ ', r'[ \t]+')
                       for label in sorted(REFERENCE_FIELD_LABELS, key=len, reverse=True))
     boundary = r'[\r\n|]|\b(?:' + fields + r')\b|\b[A-Za-z][A-Za-z0-9 /_-]*[:;]'
-    readings = []
     for index, label in enumerate(labels):
         end = labels[index + 1].start() if index + 1 < len(labels) else len(original)
         field = re.split(boundary, original[label.end():end], maxsplit=1, flags=re.I)[0]
         value = numeric_token_from_text(field)
         if value:
-            readings.append(value)
-    unique = tuple(dict.fromkeys(readings))
-    return unique[0] if len(unique) == 1 else ''
+            return value
+    return ''
 
 def checked_work_order_number(value):
     """Normalize a manually entered work order using the same eight-digit rule."""
