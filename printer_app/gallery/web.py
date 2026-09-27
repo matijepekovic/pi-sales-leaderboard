@@ -254,9 +254,9 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         intake = intake_reader() if intake_reader else []
         return render_template('gallery_queue.html', queue=queue, intake=intake,
                                state_filter=state, offset=offset,
-                               salesforce_pull_url=salesforce_pull_url())
+                               morning_settings_url=morning_settings_url())
 
-    def salesforce_pull_url():
+    def morning_settings_url():
         # Gallery can run without the optional MOD Sheet settings screen.
         endpoint = 'mod_sheets.settings_page'
         return url_for(endpoint) if endpoint in current_app.view_functions else None
@@ -271,7 +271,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         if not job:
             abort(404)
         return render_template('gallery_job.html', job=_job_view(job), offset=offset,
-                               salesforce_pull_url=salesforce_pull_url())
+                               morning_settings_url=morning_settings_url())
 
     def retained_job_item(import_id, item_id):
         if not re.fullmatch(r'[a-f0-9]{64}', import_id) or not re.fullmatch(r'[a-f0-9]{64}', item_id):

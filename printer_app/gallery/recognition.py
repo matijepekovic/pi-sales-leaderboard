@@ -224,7 +224,7 @@ def _work_order_candidates(text, *, labeled=False):
 
 def _notes_labels(words, offset):
     """Return literal printed MOD Notes label bounds, without fuzzy text guesses."""
-    normalize = lambda value: re.sub(r'[^a-z]', '', value.lower())
+    normalize = lambda value: re.sub(r'[^a-z0-9]', '', value.lower())
     labels = []
     for index, word in enumerate(words):
         group = []
@@ -264,17 +264,24 @@ def mod_notes_present(source, registration, ocr_copy):
             probes.append((proposed[:round(height * fraction_y), :round(width * fraction_x)],
                            bounds[:2], psm))
     height, width = source.shape
-    left, top = round(width * .30), round(min(height * .15, width * .08))
+    top = round(min(height * .15, width * .08))
     stop = round(min(height * .75, width * .60))
-    for psm in (11, 6):
-        probes.append((source[top:stop, left:], (left, top), psm))
+    # A clipped screenshot can leave the label in the right half while nearby
+    # printed cells confuse whole-region line grouping. Keep both bounded views.
+    for fraction in (.50, .30):
+        left = round(width * fraction)
+        for psm in (11, 6):
+            probes.append((source[top:stop, left:], (left, top), psm))
 
     crop = None
     for image, (x, y), psm in probes:
         if not image.size:
             continue
         padded = cv2.copyMakeBorder(image, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=255)
-        words = _run_tesseract(padded, ocr_copy, psm=psm)
+        try:
+            words = _run_tesseract(padded, ocr_copy, psm=psm)
+        except subprocess.SubprocessError:
+            continue
         labels = _notes_labels(words, (x - 12, y - 12))
         if len(labels) != 1:
             continue

@@ -14,7 +14,7 @@
 <dt>Images retained</dt><dd>{{ job.retained }}</dd>
 </dl>
 {% if job.status_message %}<p>{{ job.status_message }}</p>{% endif %}{% if job.error %}<p class="error">{{ job.error }}</p>{% endif %}
-{% if job.origin == 'morning' %}<p>These Salesforce cards are placeholders until returned scans arrive. Fresh placeholders can be pulled for today in MOD Settings.</p>{% if salesforce_pull_url %}<p><a class="button" href="{{ salesforce_pull_url }}">Pull today from Salesforce</a></p>{% endif %}{% endif %}
+{% if job.origin == 'morning' %}<p>These Salesforce cards are placeholders until returned scans arrive. Fresh placeholders can be pulled for today in MOD Settings.</p>{% if morning_settings_url %}<p><a class="button" href="{{ morning_settings_url }}">Pull today from Salesforce</a></p>{% endif %}{% endif %}
 <p class="muted">{% if job.source_available %}Temporary source PDF is waiting for processing.{% else %}Source PDF is not retained.{% endif %} A card without a readable work order stays here until its work order is corrected. Customer names come from Salesforce and are not manually editable. Deleting a generated card removes that server copy and its gallery notes; it does not affect printing or copies already downloaded to a phone.</p></section>
 <section class="gallery-processing-section">
 <details class="gallery-processing-log">

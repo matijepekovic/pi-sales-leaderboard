@@ -466,7 +466,7 @@ class GalleryService:
                 self.files.remove('crops', ident)
                 self.files.remove('ocr', ident)
             except OSError:
-                log.warning('Temporary card file cleanup will retry; the scanned cards are available.')
+                log.warning('Temporary card file cleanup will retry.')
                 continue
             self.repository.forget(ident)
 
