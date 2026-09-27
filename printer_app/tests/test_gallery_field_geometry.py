@@ -2,7 +2,8 @@
 import pytest
 
 from printer_app.gallery.form_template import (
-    FormRegistration, TEMPLATE_ASPECT_HEIGHT, TEMPLATE_FIELDS, field_boxes, map_box,
+    FormRegistration, TEMPLATE_ASPECT_HEIGHT, TEMPLATE_FIELDS, field_boxes, field_crop,
+    map_box, register_form,
 )
 
 
@@ -138,3 +139,70 @@ def test_missing_grid_uses_bounded_fallback_and_clamps_partial_card(raster):
         assert x1 - x0 >= min(source.shape[1], right) - max(0, left) - 10
         assert y1 - y0 >= min(source.shape[0], bottom) - max(0, top) - 10
     assert np.array_equal(source, before)
+
+
+@pytest.mark.parametrize('slope', [-.018, .018])
+def test_sloped_field_keeps_all_value_ink_and_masks_neighboring_cell(raster, slope):
+    cv2, np = raster
+    source, registration, centers = _grid(raster, stroke=3)
+    left, top, right, bottom = centers['work_order_number']
+    cv2.rectangle(source, (left + 12, top + 6), (left + 18, top + 12), 80, -1)
+    cv2.rectangle(source, (right - 20, bottom - 12), (right - 14, bottom - 6), 80, -1)
+    cv2.rectangle(source, (right - 20, bottom + 6), (right - 14, bottom + 12), 70, -1)
+    offset = 36 if slope < 0 else 0
+    source = cv2.warpAffine(source, np.array([[1, 0, 0], [slope, 1, offset]], dtype=float),
+                           (source.shape[1], source.shape[0] + 36),
+                           flags=cv2.INTER_NEAREST, borderValue=255)
+    approximate = FormRegistration(registration.score, registration.left, registration.right,
+                                   registration.top + offset, registration.bottom + offset)
+    before = source.copy()
+
+    crop, (x0, y0, x1, y1) = field_crop(source, approximate, 'work_order_number')
+
+    assert crop is not None
+    assert crop.shape == (y1 - y0, x1 - x0)
+    assert np.count_nonzero(crop == 80) == np.count_nonzero(source == 80)
+    assert not np.any(crop == 70)
+    assert np.array_equal(source, before)
+
+
+def test_registration_uses_outer_rule_ends_when_inner_partition_wins_vertical_vote(raster):
+    _, np = raster
+    source, registration, _ = _grid(raster, stroke=3)
+    # Lose most of the outer vertical rule while every long row keeps its end.
+    source[:, registration.left - 3:registration.left + 4] = 255
+
+    observed = register_form(source)
+
+    assert observed.matched
+    assert abs(observed.left - registration.left) < 12
+    assert abs(observed.right - registration.right) < 12
+
+
+def test_broken_horizontal_ends_do_not_shrink_the_observed_outer_frame(raster):
+    cv2, _ = raster
+    source, registration, centers = _grid(raster, stroke=3)
+    # Several long rules survive only through their middle. Their endpoints
+    # provide no reason to replace the intact vertical outside frame.
+    rows = sorted({edge for _, top, _, bottom in centers.values() for edge in (top, bottom)})
+    for row in rows:
+        source[row - 3:row + 4, registration.left + 4:registration.left + 160] = 255
+        source[row - 3:row + 4, registration.right - 160:registration.right - 3] = 255
+    cv2.line(source, (registration.left, registration.top),
+             (registration.left, registration.bottom), 0, 3)
+    cv2.line(source, (registration.right, registration.top),
+             (registration.right, registration.bottom), 0, 3)
+
+    observed = register_form(source)
+
+    assert observed.matched
+    assert abs(observed.left - registration.left) < 12
+    assert abs(observed.right - registration.right) < 12
+
+
+def test_unknown_or_empty_observed_field_has_no_crop(raster):
+    _, np = raster
+    source, registration, _ = _grid(raster)
+    assert field_crop(source, registration, 'unknown') == (None, (0, 0, 0, 0))
+    assert field_crop(np.empty((0, 0), dtype=np.uint8), registration,
+                      'work_order_number') == (None, (0, 0, 0, 0))

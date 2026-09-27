@@ -14,13 +14,13 @@ import subprocess
 import sys
 
 if __package__:
-    from .form_template import TEMPLATE_FIELDS, field_boxes, map_box, register_form
-    from .numeric_parser import numeric_token_from_text, parse_numeric_image
-    from .policy import printed_work_order_number
+    from .form_template import TEMPLATE_FIELDS, field_boxes, field_crop, map_box, register_form
+    from .numeric_parser import numeric_tokens_from_text, parse_numeric_image
+    from .policy import scanned_work_order_candidates, work_order_fields
 else:
-    from form_template import TEMPLATE_FIELDS, field_boxes, map_box, register_form
-    from numeric_parser import numeric_token_from_text, parse_numeric_image
-    from policy import printed_work_order_number
+    from form_template import TEMPLATE_FIELDS, field_boxes, field_crop, map_box, register_form
+    from numeric_parser import numeric_tokens_from_text, parse_numeric_image
+    from policy import scanned_work_order_candidates, work_order_fields
 
 # The scan supplies only the durable work-order identity. Customer, address,
 # appointment and rep data come from the existing normalized reference data.
@@ -50,7 +50,7 @@ def search_text(words):
     for word in words:
         key = tuple(word[k] for k in ('page_num', 'block_num', 'par_num', 'line_num'))
         lines.setdefault(key, []).append(word['text'])
-    return '\n'.join(' '.join(line) for line in lines.values())[:100000]
+    return '\n'.join(' '.join(line) for line in lines.values())
 
 
 def lead_cell_text(words, gray):
@@ -164,9 +164,9 @@ def template_ocr_canvas(source, registration):
     template adapter, owns locating the eight glyph positions inside the field.
     """
     field = next(field for field in TEMPLATE_FIELDS if field.key == 'work_order_number')
-    observed = dict((item.key, bounds) for item, bounds in field_boxes(source, registration))
-    left, top, right, bottom = observed.get(field.key, (0, 0, 0, 0))
-    if right <= left or bottom <= top:
+    cell, bounds = field_crop(source, registration, field.key)
+    left, top, right, bottom = bounds
+    if cell is None or right <= left or bottom <= top:
         return None, []
 
     frame_width = max(1, registration.right - registration.left)
@@ -176,7 +176,7 @@ def template_ocr_canvas(source, registration):
     if search_left >= right:
         return None, []
 
-    canvas = source[top:bottom, search_left:right].copy()
+    canvas = cell[:, search_left - left:].copy()
     return canvas, [(field.key, 0, canvas.shape[0])]
 
 
@@ -197,15 +197,21 @@ def _run_tesseract(image, ocr_copy, *, digits_only=False, psm=None):
         check=True,
         capture_output=True,
         text=True,
+        encoding='utf-8',
         timeout=120,
     )
     return tsv_words(result.stdout)
 
 
-def _first_work_order_candidate(text):
-    """Apply the work-order contract after a parser returns eight positions."""
-    candidate = numeric_token_from_text(text)
-    return candidate if candidate.startswith('02') else ''
+def _work_order_candidates(text, *, labeled=False):
+    """Normalize observed glyphs, then apply the single scan-policy boundary."""
+    fields = work_order_fields(text) if labeled else (text,)
+    return tuple(dict.fromkeys(
+        candidate
+        for field in fields
+        for token in numeric_tokens_from_text(field, allow_separated=True)
+        for candidate in scanned_work_order_candidates(token)
+    ))
 
 
 def mod_notes_present(source, registration):
@@ -296,19 +302,22 @@ def _recognize_template(source, registration, ocr_copy, known_date, debug_path=N
     parsed = parse_numeric_image(canvas, read_digit)
     positions = tuple(parsed.get('positions') or ())
     parsed_text = ''.join(value or '?' for value in positions)
-    parsed_candidate = str(parsed.get('candidate') or '')
-    parsed_candidate = parsed_candidate if parsed_candidate.startswith('02') else ''
+    parsed_candidates = tuple(dict.fromkeys(
+        candidate
+        for token in (parsed.get('candidates') or (parsed.get('candidate', ''),))
+        for candidate in scanned_work_order_candidates(token)
+    ))
     psms = sorted({attempt.get('psm') for attempt in parsed.get('attempts', ())
                    if attempt.get('psm')})
-    reads.append(dict(
-        label='Numerical parser',
-        psm='/'.join(map(str, psms)) if psms else '',
-        text=parsed_text,
-        candidate=parsed_candidate,
-        ok=bool(parsed_candidate),
-    ))
-    if parsed_candidate:
-        candidates.append(parsed_candidate)
+    for candidate in parsed_candidates or ('',):
+        reads.append(dict(
+            label='Numerical parser',
+            psm='/'.join(map(str, psms)) if psms else '',
+            text=parsed_text,
+            candidate=candidate,
+            ok=bool(candidate),
+        ))
+    candidates.extend(parsed_candidates)
 
     # Systems 2-4: whole-field OCR. They see the same field but use independent
     # preprocessing/page-segmentation choices; each answer remains available to
@@ -317,21 +326,29 @@ def _recognize_template(source, registration, ocr_copy, known_date, debug_path=N
     thresholded = cv2.threshold(
         enlarged, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
     )[1]
-    passes = (
+    passes = [
         ('Whole field', canvas, 7),
         ('2x whole field', enlarged, 13),
         ('Thresholded whole field', thresholded, 6),
-    )
+    ]
+    for left, top, right, bottom in parsed.get('regions', ()):
+        # Segmentation supplies only observed ink bounds, independently of its
+        # digit answers. This reader sees the original gray pixels as one number.
+        tight = cv2.resize(canvas[top:bottom, left:right], None,
+                           fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
+        tight = cv2.copyMakeBorder(tight, 10, 10, 10, 10,
+                                   cv2.BORDER_CONSTANT, value=255)
+        passes.append(('Tight whole field', tight, 7))
     for label, image, psm in passes:
         try:
             words = _run_tesseract(image, ocr_copy, digits_only=True, psm=psm)
-            raw = ' '.join(search_text(words).split())[:128]
-            candidate = _first_work_order_candidate(raw)
-            reads.append(dict(
-                label=label, psm=psm, text=raw, candidate=candidate, ok=True,
-            ))
-            if candidate:
-                candidates.append(candidate)
+            raw = ' '.join(search_text(words).split())
+            found = _work_order_candidates(raw)
+            for candidate in found or ('',):
+                reads.append(dict(
+                    label=label, psm=psm, text=raw[:128], candidate=candidate, ok=True,
+                ))
+            candidates.extend(found)
         except subprocess.SubprocessError:
             reads.append(dict(label=label, psm=psm, text='', candidate='', ok=False))
 
@@ -339,13 +356,13 @@ def _recognize_template(source, registration, ocr_copy, known_date, debug_path=N
     # confusions such as O/0, B/8 or !/1 that a digits-only pass may drop.
     try:
         words = _run_tesseract(canvas, ocr_copy, digits_only=False, psm=7)
-        raw = ' '.join(search_text(words).split())[:128]
-        candidate = _first_work_order_candidate(raw)
-        reads.append(dict(
-            label='Text field', psm=7, text=raw, candidate=candidate, ok=True,
-        ))
-        if candidate:
-            candidates.append(candidate)
+        raw = ' '.join(search_text(words).split())
+        found = _work_order_candidates(raw)
+        for candidate in found or ('',):
+            reads.append(dict(
+                label='Text field', psm=7, text=raw[:128], candidate=candidate, ok=True,
+            ))
+        candidates.extend(found)
     except subprocess.SubprocessError:
         reads.append(dict(label='Text field', psm=7, text='', candidate='', ok=False))
 
@@ -377,17 +394,17 @@ def _recognize_legacy(source, ocr_copy, known_date):
         except subprocess.SubprocessError:
             reads.append(dict(label=label, psm=psm, text='', candidate='', ok=False))
             continue
-        raw = search_text(words)[:100000]
-        number = printed_work_order_number(raw)
+        raw = search_text(words)
+        found = _work_order_candidates(raw, labeled=True)
         compact = ' '.join(raw.split())[:256]
-        reads.append(dict(label=label, psm=psm, text=compact, candidate=number, ok=True))
-        if number:
-            candidates.append(number)
+        for number in found or ('',):
+            reads.append(dict(label=label, psm=psm, text=compact, candidate=number, ok=True))
+        candidates.extend(found)
         day, date_status = document_date(words, h, known_date)
         lead_text = lead_cell_text(words, source)
         score = sum(1 for value in labels if value.casefold() in raw.casefold())
         score += int(bool(lead_text)) + int(bool(day))
-        candidate = (score, len(raw), raw, lead_text, day, date_status)
+        candidate = (score, len(raw), raw[:100000], lead_text, day, date_status)
         if best is None or candidate[:2] > best[:2]:
             best = candidate
 
@@ -415,13 +432,18 @@ def recognize(path, work, known_date=None, debug_path=None):
             source, registration, ocr_copy, known_date, debug_path=debug_path,
         )
         template_candidates = tuple(template.get('work_order_candidates', ()))
-        if registration.matched and len(template_candidates) == 1:
+        numerical_candidates = {
+            read.get('candidate') for read in template.get('work_order_reads', ())
+            if read.get('label') == 'Numerical parser' and read.get('candidate')
+        }
+        if (registration.matched and len(template_candidates) == 1
+                and numerical_candidates == set(template_candidates)):
             template['mod_notes_present'] = notes_present
             return template
 
-        # If the dedicated work-order cell does not produce one clear result,
-        # OCR the whole isolated card once. Name/address/phone/date text then
-        # remains available for normalized source matching before manual review.
+        # An incomplete numerical reading cannot make another reader's lone
+        # answer definitive. Keep the independent whole-card readings available
+        # before source validation, even when one field reader found a candidate.
         legacy = _recognize_legacy(source, ocr_copy, known_date)
         result = _candidate_result(
             (*template_candidates, *legacy.get('work_order_candidates', ())),

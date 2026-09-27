@@ -141,13 +141,7 @@ def address_key(value):
     return ' '.join(re.findall(r'[a-z0-9]+', value))
 
 
-def printed_work_order_number(text):
-    """Read one explicit eight-position work-order token from normalized OCR text.
-
-    The work-order field may contain OCR glyph confusions such as O/0, B/8 or
-    !/1. Numeric normalization is owned by the dedicated numeric parser. This
-    function only establishes the explicit Work Order Number field boundary.
-    """
+def _work_order_field_spans(text):
     original = str(text or '')
     labels = list(re.finditer(
         r'\bWork[ \t]+Order[ \t]+Number\b[ \t]*[:;]?[ \t]*', original, re.I))
@@ -156,11 +150,57 @@ def printed_work_order_number(text):
     boundary = r'[\r\n|]|\b(?:' + fields + r')\b|\b[A-Za-z][A-Za-z0-9 /_-]*[:;]'
     for index, label in enumerate(labels):
         end = labels[index + 1].start() if index + 1 < len(labels) else len(original)
-        field = re.split(boundary, original[label.end():end], maxsplit=1, flags=re.I)[0]
+        boundary_match = re.search(boundary, original[label.end():end], flags=re.I)
+        yield label.end(), label.end() + boundary_match.start() if boundary_match else end
+
+
+def work_order_fields(text):
+    """Yield explicit single-line work-order values, without normalizing OCR glyphs."""
+    original = str(text or '')
+    for start, end in _work_order_field_spans(original):
+        yield original[start:end]
+
+
+def clear_work_order_identity(text):
+    """Remove unconfirmed work-order values from normalized text, preserving other fields."""
+    original = str(text or '')
+    for start, end in reversed(tuple(_work_order_field_spans(original))):
+        original = original[:start] + original[end:]
+    return original
+
+
+def printed_work_order_number(text):
+    """Read the existing stored/reference text contract, without scan-only rules.
+
+    Historical normalized text keeps its first-eight-digit behavior. New scan
+    candidates must use scanned_work_order_candidates before becoming identity.
+    """
+    for field in work_order_fields(text):
         value = numeric_token_from_text(field, allow_overflow=True)
-        if value.startswith('02'):
+        if value:
             return value
     return ''
+
+
+def scanned_work_order_candidates(text, *, labeled=False):
+    """Return every distinct literal eight-digit 02 candidate, in reading order.
+
+    Pass an isolated work-order field, or labeled=True for full-card OCR text.
+    This boundary never pads, trims digits, joins fragments, or changes glyphs;
+    a reader's position-preserving glyph normalization must happen before it.
+    """
+    fields = work_order_fields(text) if labeled else (str(text or ''),)
+    candidates = {}
+    for field in fields:
+        for match in re.finditer(r'[0-9]+', field):
+            token = match[0]
+            if not re.fullmatch(r'02[0-9]{6}', token):
+                continue
+            edges = field[max(0, match.start() - 1):match.start()] + field[match.end():match.end() + 1]
+            if all(char.isspace() or unicodedata.category(char)[0] in 'PS' for char in edges):
+                candidates.setdefault(token, None)
+    return tuple(candidates)
+
 
 def checked_work_order_number(value):
     """Normalize a manually entered work order using the same eight-digit rule."""

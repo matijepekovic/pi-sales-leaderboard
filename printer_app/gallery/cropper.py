@@ -118,6 +118,9 @@ def is_dense_grid_page(image):
         ink, cv2.MORPH_OPEN,
         np.ones((1, max(50, int(w * .18))), np.uint8))
 
+    if _repeated_report_rows(horizontal, minimum=20):
+        return True
+
     vertical_rules = _runs((vertical > 0).mean(axis=0) > .42)
     horizontal_rules = _runs((horizontal > 0).mean(axis=1) > .42)
     if len(vertical_rules) < 14 or len(horizontal_rules) < 6:
@@ -133,6 +136,22 @@ def is_dense_grid_page(image):
 
 def _rule_centers(runs):
     return np.asarray([(start + end) / 2.0 for start, end in runs], dtype=float)
+
+
+def _repeated_report_rows(horizontal, minimum=8):
+    """Recognize tightly repeated report rows even when column rules are faint.
+
+    MOD forms have a short identity row followed by taller, irregular cells.
+    Tabular reports repeat much smaller row pitches across most of their height;
+    requiring both cadence and coverage avoids treating a few header rules as a
+    report. Slanted or broken vertical lines do not remove that evidence.
+    """
+    h, w = horizontal.shape
+    centers = _rule_centers(_runs((horizontal > 0).mean(axis=1) > .22))
+    if len(centers) < minimum or centers[-1] - centers[0] < h * .60:
+        return False
+    gaps = np.diff(centers)
+    return bool(np.median(gaps) < w * .025 and np.mean(gaps < w * .035) >= .80)
 
 
 def is_work_order_form(image):
@@ -159,6 +178,9 @@ def is_work_order_form(image):
     vertical_rules = _runs((vertical > 0).mean(axis=0) > .16)
     h_centers = _rule_centers(horizontal_rules)
     v_centers = _rule_centers(vertical_rules)
+
+    if _repeated_report_rows(horizontal):
+        return False
 
     # The existing top-border detector already proved this is a plausible form.
     # Only reject here when the candidate has strong report/table evidence.
@@ -199,9 +221,10 @@ def _form_tops_native(image):
     """Return per-column top-border coordinates, excluding footer/empty frames.
 
     RETR_EXTERNAL on the whole grid is deliberately not used: a pen stroke can
-    connect two outer rectangles. Instead, follow the outside vertical edges and
-    validate their starts against the printed header grid. An open bottom edge
-    is valid; a blank footer frame without a header grid is not a new form.
+    connect two outer rectangles. Follow outside edges and connected horizontal
+    rules, validating starts against the printed header grid. A bowed outer edge
+    can break into short vertical runs while its complete header remains clear.
+    An open bottom edge is valid; an empty footer frame is not a new form.
     """
     h, w = image.shape[:2]
     if w < 100 or h < 60:
@@ -265,7 +288,49 @@ def _form_tops_native(image):
             continue
         if not tops or np.median(top - tops[-1]) > .10 * w:
             tops.append(top)
-    return tops
+
+    # A single connected printed rule cannot jump between a preceding bottom
+    # border and the next header, unlike independent first-hit column searches.
+    # The short first row and two taller equal rows prove that this is the MOD
+    # header rather than a Lead Name row or a report section heading.
+    joined = cv2.morphologyEx(horizontal, cv2.MORPH_CLOSE, np.ones((3, 9), np.uint8))
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(joined)
+    headers = []
+    for label in range(1, count):
+        x, y, width, height, _ = map(int, stats[label])
+        if width < w * .55 or height > w * .05:
+            continue
+        rule = labels[y:y + height, x:x + width] == label
+        valid = rule.any(axis=0)
+        xs = np.flatnonzero(valid) + x
+        ys = rule[:, valid].argmax(axis=0) + y
+        top = np.rint(np.interp(np.arange(w), xs, ys)).astype(int)
+        depth = min(round(.19 * w), h - int(top.max()) - 1)
+        if depth < .08 * w:
+            continue
+        xx = np.arange(x, x + width)
+        yy = top[xx][None, :] + np.arange(depth)[:, None]
+        rows = _rule_centers(_runs((horizontal[yy, xx[None, :]] > 0).mean(axis=1) > .42))
+        rows = rows[rows > .008 * w]
+        if len(rows) < 3:
+            continue
+        first, second, third = np.diff(np.r_[0.0, rows[:3]])
+        if not (.015 * width <= first <= .04 * width
+                and .03 * width <= second <= .065 * width
+                and first < second * .80 and .75 <= third / second <= 1.25):
+            continue
+        y0, y1 = int(np.median(top) + first * .20), int(np.median(top) + first * .85)
+        partitions = (vertical[max(0, y0):min(h, y1), x + band:x + width - band] > 0).mean(axis=0)
+        if not partitions.size or not np.any(partitions > .55):
+            continue
+        headers.append(top)
+    if headers:
+        # A proven header owns the following header/work rows. Side fragments
+        # inside those rows cannot create another card or cut its first line.
+        tops = [top for top in tops if not any(
+            -.10 * w < np.median(top - header) < .30 * w for header in headers)]
+        tops.extend(headers)
+    return sorted(tops, key=lambda top: float(np.median(top)))
 
 
 def form_tops(image):

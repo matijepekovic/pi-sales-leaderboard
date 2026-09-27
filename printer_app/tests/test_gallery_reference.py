@@ -397,7 +397,8 @@ def test_import_retains_exact_ocr_field_image_for_admin_diagnostics(tmp_path):
     assert admin_item['work_order_reads'][0]['candidate'] == '02257311'
 
 
-def test_scan_without_work_order_matches_cached_reference_by_phone_address_or_name(tmp_path):
+@pytest.mark.parametrize('strict_scan', [False, True])
+def test_identity_fallback_is_only_for_legacy_manifests_without_scan_candidates(tmp_path, strict_scan):
     gallery = _gallery(tmp_path)
     gallery.publish_reference_snapshot(
         DAY, 'final', [
@@ -432,9 +433,17 @@ def test_scan_without_work_order_matches_cached_reference_by_phone_address_or_na
         'date_status': 'printed',
         'mod_notes_present': True,
     }]}
+    if not strict_scan:
+        manifest['items'][0].pop('work_order_candidates')
 
     gallery.publish(job, manifest, directory)
     item_id = hashlib.sha256(f"{job['id']}:1:1".encode()).hexdigest()
+    if strict_scan:
+        item = gallery.repository.import_item(job['id'], item_id)
+        assert item['work_order_number'] == ''
+        assert item['state'] == 'REVIEW'
+        assert gallery.item(item_id) is None
+        return
     item = gallery.item(item_id)
 
     assert item['work_order_number'] == '02283948'

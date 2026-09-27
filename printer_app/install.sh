@@ -23,7 +23,7 @@ done
 # Optional gallery tools use the system Python, never the printer venv.
 # A gallery package failure must not prevent the existing printer update.
 if ! "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y --no-install-recommends --no-upgrade \
-  python3-opencv python3-pil poppler-utils tesseract-ocr tesseract-ocr-eng; then
+  python3-opencv python3-pil python3-pypdf poppler-utils tesseract-ocr tesseract-ocr-eng; then
   echo 'Gallery tools could not be installed; printing will still update. Retry Update before enabling gallery imports.' >&2
 fi
 # Full-access phone Offline uses a local HTTPS adapter. Failure is optional:

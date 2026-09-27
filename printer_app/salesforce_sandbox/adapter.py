@@ -391,8 +391,11 @@ class SalesforceCliAdapter:
             rows = result.get('records') if isinstance(result, dict) else None
             if not isinstance(rows, list) or len(rows) > 1000:
                 raise SalesforceAdapterError('Salesforce work-order query returned an invalid records page.')
-            if result.get('done') is False and len(rows) >= 1000:
-                raise SalesforceAdapterError('Salesforce work-order query exceeded its safe result limit.')
+            if (result.get('done') is False or len(rows) >= 1000
+                    or result.get('totalSize', len(rows)) != len(rows)):
+                # Candidate validation treats a missing row as an absent work
+                # order. A partial response or a filled LIMIT cannot prove that.
+                raise SalesforceAdapterError('Salesforce work-order query returned an incomplete records page.')
 
             for item in rows:
                 number = _nested(item, 'FSSK__FSK_Work_Order__r.WorkOrderNumber').strip()
@@ -400,16 +403,14 @@ class SalesforceCliAdapter:
                 if key not in numbers:
                     raise SalesforceAdapterError('Salesforce returned an unexpected work order.')
                 scheduled = _sf_datetime(item.get('SchedStartTime'))
-                if scheduled is None:
-                    continue
-                local_start = scheduled.astimezone(user_zone)
+                local_start = scheduled.astimezone(user_zone) if scheduled is not None else None
                 work_order_id = str(item.get('FSSK__FSK_Work_Order__c') or '').strip()
                 if not work_order_id:
                     continue
                 resource = _nested(item, 'FSSK__FSK_Assigned_Service_Resource__r.Name').strip()
                 created = _sf_datetime(item.get('CreatedDate')) or datetime.max.replace(tzinfo=timezone.utc)
                 canceled = str(item.get('StatusCategory') or '').strip().casefold() == 'canceled'
-                group_key = (key, local_start.date())
+                group_key = (key, local_start.date() if local_start is not None else None)
                 current = grouped.get(group_key)
                 if current is None or (current['canceled'] and not canceled):
                     grouped[group_key] = {
@@ -437,10 +438,12 @@ class SalesforceCliAdapter:
                           if group_key[0] == key]
             if not candidates:
                 continue
-            active = [entry for entry in candidates if not entry[1]['canceled']]
+            dated = [entry for entry in candidates if entry[1]['local_start'] is not None]
+            available = dated or candidates
+            active = [entry for entry in available if not entry[1]['canceled']]
             group_key, selected = max(
-                active or candidates,
-                key=lambda entry: entry[1]['local_start'],
+                active or available,
+                key=lambda entry: entry[1]['local_start'] or entry[1]['created'],
             )
             day = group_key[1]
             item = selected['item']
@@ -449,13 +452,14 @@ class SalesforceCliAdapter:
             normalized.append(WorkOrderReference(
                 source_id=selected['work_order_id'],
                 work_order_number=requested,
-                appointment_date=day.isoformat(),
+                appointment_date=day.isoformat() if day is not None else '',
                 local_scheduled_start_time=str(item.get('Local_Scheduled_Start_Time__c') or ''),
                 canvass_set_by=_nested(lead, 'Canvass_Set_By__r.Name'),
                 lead_name=_nested(lead, 'Name'),
                 address=_address(work_order),
                 phone=_nested(lead, 'Phone'),
-                scheduled_start=selected['local_start'].strftime('%Y.%m.%d ; %I:%M:%S %p'),
+                scheduled_start=(selected['local_start'].strftime('%Y.%m.%d ; %I:%M:%S %p')
+                                 if selected['local_start'] is not None else ''),
                 assigned_service_resources=tuple(selected['resources']),
                 set_by=_nested(lead, 'Set_By__r.Name'),
                 work_type=_nested(work_order, 'WorkType.Name'),

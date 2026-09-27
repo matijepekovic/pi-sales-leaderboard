@@ -287,6 +287,73 @@ def test_direct_work_order_lookup_needs_no_date_and_returns_current_normalized_a
     assert record.assigned_service_resources == ('Current Rep', 'Second Rep')
 
 
+@pytest.mark.parametrize('count,metadata', [
+    (0, {'done': False}),
+    (1, {'done': False, 'totalSize': 2}),
+    (1, {'done': True, 'totalSize': 2}),
+    (1000, {'done': True, 'totalSize': 1000}),
+    (1000, {}),
+])
+def test_direct_work_order_lookup_rejects_incomplete_or_limit_filled_results(count, metadata):
+    rows = [_appointment('08p000000000001AAA')] * count
+    adapter = SalesforceCliAdapter(runner=_paged_salesforce_runner([], [
+        _result({'status': 0, 'result': dict(records=rows, **metadata)}),
+    ]))
+    with pytest.raises(SalesforceAdapterError, match='incomplete records page'):
+        adapter.work_orders(['00012345', '00023456'])
+
+
+@pytest.mark.parametrize('appointment_status,lead_status', [
+    ('Canceled', 'Canceled'), ('Completed', 'Closed - Sale'), (None, 'Out of Scope'),
+])
+def test_direct_work_order_lookup_keeps_customer_identity_when_appointment_has_no_schedule(
+        appointment_status, lead_status):
+    calls = []
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner(calls, appointment_records=[
+        _appointment('08p000000000001AAA', scheduled=None, local_start=None, resource='',
+                     appointment_status=appointment_status, lead_status=lead_status),
+    ]))
+
+    records = adapter.work_orders(['00012345'])
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.work_order_number == '00012345'
+    assert record.source_id == '0WO000000000001AAA'
+    assert record.lead_source_id == '00Q000000000001AAA'
+    assert record.sales_lead_status == lead_status
+    assert record.lead_name == 'Jordan Example'
+    assert record.phone == '360-555-1212'
+    assert record.address == '123 Main St, Lacey, WA, 98503'
+    assert record.appointment_date == record.scheduled_start == record.local_scheduled_start_time == ''
+    assert record.assigned_service_resources == ()
+    assert len([query for query in _query_calls(calls) if 'FROM ServiceAppointment' in query]) == 1
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_direct_work_order_lookup_prefers_dated_appointment_over_unscheduled_row(reverse):
+    rows = [
+        _appointment('08p000000000001AAA', appointment_status='Canceled', resource='Dated Rep'),
+        _appointment('08p000000000002AAA', scheduled=None, local_start=None,
+                     appointment_status='Completed', resource='Undated Rep'),
+    ]
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner([], appointment_records=rows[::-1] if reverse else rows))
+    record = adapter.work_orders(['00012345'])[0]
+    assert record.appointment_date == '2026-09-19'
+    assert record.scheduled_start == '2026.09.19 ; 10:30:00 AM'
+    assert record.assigned_service_resources == ('Dated Rep',)
+
+
+def test_unscheduled_work_order_can_still_supply_actual_assigned_resource_names():
+    adapter = SalesforceCliAdapter(runner=_salesforce_runner([], appointment_records=[
+        _appointment('08p000000000001AAA', scheduled=None, resource='Actual Rep One', appointment_status='Canceled'),
+        _appointment('08p000000000002AAA', scheduled=None, resource='Actual Rep Two', appointment_status='Canceled'),
+    ]))
+    record = adapter.work_orders(['00012345'])[0]
+    assert record.appointment_date == ''
+    assert record.assigned_service_resources == ('Actual Rep One', 'Actual Rep Two')
+
+
 @pytest.mark.parametrize('second_lead_id', ['00Q000000000001AAA', '00Q000000000002AAA'])
 def test_work_orders_preserve_exact_lead_identity_even_when_names_match(second_lead_id):
     adapter = SalesforceCliAdapter(runner=_salesforce_runner([], appointment_records=[
