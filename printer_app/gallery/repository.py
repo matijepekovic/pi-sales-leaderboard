@@ -876,6 +876,56 @@ class GalleryRepository:
                     ))
                 ) ORDER BY created,id""", (day, day))]
 
+    def reference_identity_candidates(self, day, lead_name='', address='', include_phone=False):
+        """Return normalized cached source rows that could identify one OCR card."""
+        name = lead_key(lead_name)
+        address_normalized = address_key(address)
+        clauses = []
+        params = []
+        if day:
+            clauses.append('day=?')
+            params.append(day)
+        if name:
+            clauses.append('lead_key=?')
+            params.append(name)
+        if address_normalized:
+            clauses.append('address_key=?')
+            params.append(address_normalized)
+
+        with self.connect() as c:
+            if name or address_normalized:
+                identity_parts = []
+                identity_params = []
+                if name:
+                    identity_parts.append('lead_key=?')
+                    identity_params.append(name)
+                if address_normalized:
+                    identity_parts.append('address_key=?')
+                    identity_params.append(address_normalized)
+                where = ('day=? AND ' if day else '') + '(' + ' OR '.join(identity_parts) + ')'
+                query_params = ([day] if day else []) + identity_params
+                rows = c.execute(
+                    """SELECT * FROM appointment_references WHERE """ + where
+                    + """ ORDER BY CASE kind WHEN 'final' THEN 0 ELSE 1 END,day DESC LIMIT 100""",
+                    query_params,
+                )
+            elif include_phone and day:
+                rows = c.execute(
+                    """SELECT * FROM appointment_references
+                    WHERE day=? AND phone!=''
+                    ORDER BY CASE kind WHEN 'final' THEN 0 ELSE 1 END LIMIT 200""",
+                    (day,),
+                )
+            else:
+                return []
+
+            result = []
+            for row in rows:
+                value = dict(row)
+                value['assigned_service_resources'] = tuple(json.loads(value['assigned_service_resources']))
+                result.append(value)
+            return result
+
     def reference_matches(self, day, kind, number):
         """Read the indexed work-order candidates, using the latest day when undated."""
         with self.connect() as c:

@@ -64,24 +64,21 @@ def test_every_requested_field_keeps_ink_near_its_top_bottom_and_right_borders(r
 
 
 @pytest.mark.parametrize('key', sorted(OCR_KEYS))
-def test_value_starts_at_the_printed_colon_not_a_fixed_label_rectangle(raster, key):
+def test_work_order_ocr_uses_template_value_boundary_and_excludes_label(raster, key):
     cv2, np = raster
     source, registration = _form(raster)
-    left, top, right, bottom = map_box(registration, FIELDS[key].label_box)
-    ys, xs = np.nonzero(source[top:bottom + 1, left:right + 1] == 0)
-    printed_right = left + int(xs.max())
-    baseline = top + int(ys.max())
-    # The sample labels have ordinary font-width differences from the template.
-    # A value after the actual colon must survive even before label_box.right.
-    cv2.putText(source, 'Q', (printed_right + 3, baseline), cv2.FONT_HERSHEY_SIMPLEX,
+    _, label_top, label_right, label_bottom = map_box(registration, FIELDS[key].label_box)
+    baseline = label_top + max(8, (label_bottom - label_top) - 2)
+    cv2.putText(source, '02275180', (label_right + 8, baseline), cv2.FONT_HERSHEY_SIMPLEX,
                 0.65, VALUE_INK, 1, cv2.LINE_8)
     expected = _value_count(raster, source)
 
     canvas, segments = recognition.template_ocr_canvas(source, registration)
 
     assert [segment[0] for segment in segments] == [key]
-    assert _value_count(raster, _field_pixels(canvas, segments, key)) == expected
-    assert not np.any(canvas == 0)
+    pixels = _field_pixels(canvas, segments, key)
+    assert _value_count(raster, pixels) == expected
+    assert not np.any(pixels == 0)
 
 
 @pytest.mark.parametrize('key', sorted(OCR_KEYS & {'lead_name', 'address', 'scheduled_start'}))
@@ -271,6 +268,16 @@ def test_work_order_field_uses_three_independent_reads_without_changing_mask(ras
     assert result['text'] == 'Work Order Number: 02275180'
     assert result['document_date'] == '2026-09-19'
     assert result['date_status'] == 'printed'
+
+
+def test_two_agreeing_work_order_reads_outvote_one_outlier():
+    result = recognition._candidate_result(
+        ('02283948', '02283048', '02283948'),
+        '2026-09-24',
+    )
+
+    assert result['work_order_candidates'] == ('02283948',)
+    assert result['text'] == 'Work Order Number: 02283948'
 
 
 def test_all_unrequested_fields_are_ignored_even_when_populated(raster):

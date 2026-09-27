@@ -319,6 +319,76 @@ def field_boxes(image, registration):
     return result
 
 
+def template_geometry_score(image, registration):
+    """Score the observed printed grid against the complete known MOD template.
+
+    Horizontal and vertical cell segments both participate. Handwriting and
+    field values are suppressed by long-line morphology, so orientation is
+    decided by the form itself rather than OCR or page contents.
+    """
+    import cv2
+    import numpy as np
+
+    if image is None or not image.size:
+        return 0.0
+    frame_width = max(1, registration.right - registration.left)
+    frame_height = max(1, registration.bottom - registration.top)
+    if frame_width < 120 or frame_height < 60:
+        return 0.0
+
+    gray = image if image.ndim == 2 else (
+        cv2.cvtColor(image, cv2.COLOR_RGBA2GRAY)
+        if image.shape[2] == 4 else cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    )
+    ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+    horizontal = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN,
+        np.ones((1, max(18, int(round(frame_width * .025)))), np.uint8),
+    )
+    vertical = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN,
+        np.ones((max(14, int(round(frame_height * .035))), 1), np.uint8),
+    )
+
+    h_segments = set()
+    v_segments = set()
+    for field in TEMPLATE_FIELDS:
+        left, top, right, bottom = map_box(registration, field.box)
+        if right - left >= frame_width * .07:
+            h_segments.add((left, right, top))
+            h_segments.add((left, right, bottom))
+        if bottom - top >= frame_height * .035:
+            v_segments.add((top, bottom, left))
+            v_segments.add((top, bottom, right))
+
+    tolerance_y = max(2, int(round(frame_height * .006)))
+    tolerance_x = max(2, int(round(frame_width * .004)))
+
+    def horizontal_support(segment):
+        left, right, expected = segment
+        left, right = max(0, left), min(horizontal.shape[1], right)
+        first = max(0, expected - tolerance_y)
+        last = min(horizontal.shape[0], expected + tolerance_y + 1)
+        if right <= left or last <= first:
+            return 0.0
+        return float((horizontal[first:last, left:right] > 0).mean(axis=1).max())
+
+    def vertical_support(segment):
+        top, bottom, expected = segment
+        top, bottom = max(0, top), min(vertical.shape[0], bottom)
+        first = max(0, expected - tolerance_x)
+        last = min(vertical.shape[1], expected + tolerance_x + 1)
+        if bottom <= top or last <= first:
+            return 0.0
+        return float((vertical[top:bottom, first:last] > 0).mean(axis=0).max())
+
+    h_scores = [min(1.0, horizontal_support(segment) / .55) for segment in h_segments]
+    v_scores = [min(1.0, vertical_support(segment) / .55) for segment in v_segments]
+    if not h_scores or not v_scores:
+        return 0.0
+    return float(.35 * np.mean(h_scores) + .65 * np.mean(v_scores))
+
+
 def register_form(image):
     """Register one already-deskewed card to the known template.
 

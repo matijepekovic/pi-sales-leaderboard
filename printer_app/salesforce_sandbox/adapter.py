@@ -373,8 +373,10 @@ class SalesforceCliAdapter:
 
         user_zone = self._salesforce_timezone()
         grouped = {}
-        for offset in range(0, len(numbers), 25):
-            batch = list(numbers.values())[offset:offset + 25]
+        # Gallery validation is latency-sensitive and normally resolves only a
+        # handful of OCR candidates. Keep each relationship-heavy SOQL batch small.
+        for offset in range(0, len(numbers), 10):
+            batch = list(numbers.values())[offset:offset + 10]
             query = (
                 'SELECT ' + ', '.join(self._mod_select_fields())
                 + " FROM ServiceAppointment WHERE WorkType.Name LIKE '%Sales%'"
@@ -384,7 +386,7 @@ class SalesforceCliAdapter:
             )
             result = self._run(
                 ['data', 'query', '--query', query, *self._target_args()],
-                timeout=60,
+                timeout=120,
             )
             rows = result.get('records') if isinstance(result, dict) else None
             if not isinstance(rows, list) or len(rows) > 1000:

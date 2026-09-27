@@ -224,7 +224,11 @@ class GalleryService:
         items = {}
         identities = {}
         origin = job.get('origin', 'scan')
+        discarded_blank_notes = 0
         for entry in manifest['items']:
+            if origin == 'scan' and entry.get('mod_notes_present') is False:
+                discarded_blank_notes += 1
+                continue
             revision = hashlib.sha256(f"{job['id']}:{entry['page']}:{entry['part']}".encode()).hexdigest()
             day = job.get('reference_day') if origin == 'morning' else entry['document_date']
             candidates = tuple(entry.get('work_order_candidates') or ())
@@ -248,6 +252,18 @@ class GalleryService:
                     number = ''
             else:
                 _, reference = self._reference_for(day, number)
+
+            # If the work-order field did not resolve, use broader OCR identity
+            # against the normalized cached source. Phone wins over address,
+            # which wins over customer name; ambiguity still goes to manual review.
+            if origin == 'scan' and reference is None and not number:
+                identity_reference = self._identity_reference_for(
+                    day, entry.get('text', ''), entry.get('lead_text', '')
+                )
+                if identity_reference is not None:
+                    reference = identity_reference
+                    number = str(reference.get('work_order_number') or '')
+                    candidates_pending = ()
             if reference and not day:
                 day = reference.get('day') or day
             if origin == 'morning' and day and self.repository.scans_received(day):
@@ -291,7 +307,11 @@ class GalleryService:
                 recognition_revision=1 if (candidates or
                     ('lead_text' in entry and entry['text'].strip())) else 0,
                 origin=origin, image_revision=revision, replace_existing=bool(existing), require_identity=True)
-        warnings = manifest.get('warnings', [])
+        warnings = list(manifest.get('warnings', []))
+        if discarded_blank_notes:
+            warnings.append(
+                f'Discarded {discarded_blank_notes} blank MOD card(s) with no MOD Notes.'
+            )
         if manifest.get('skipped'):
             warnings.append('No recognized form boxes on pages: ' + ', '.join(map(str, manifest['skipped'])))
         self.repository.finish(job['id'], list(items.values()), '; '.join(warnings))
@@ -349,6 +369,44 @@ class GalleryService:
                 return kind, None  # Preserve ambiguity; never fall back to older data.
         return '', None
 
+    def _identity_reference_for(self, day, text, lead_text=''):
+        """Resolve one OCR card from cached normalized source identity fields."""
+        name = printed_lead(lead_text) or printed_lead(text)
+        address = printed_address(text)
+        _, phone = printed_phone(text)
+        if not name and not address and not phone:
+            return None
+
+        rows = self.repository.reference_identity_candidates(
+            day, name, address, include_phone=bool(phone)
+        )
+        if not rows:
+            return None
+
+        scored = {}
+        for row in rows:
+            score = 0
+            if phone:
+                _, row_phone = usable_phone(row.get('phone', ''))
+                if row_phone and row_phone == phone:
+                    score += 100
+            if address and address_key(row.get('address', '')) == address_key(address):
+                score += 50
+            if name and related_identity(name, '', row.get('lead_name', ''), ''):
+                score += 20
+            key = work_order_key(row.get('work_order_number', ''))
+            if score <= 0 or not key:
+                continue
+            current = scored.get(key)
+            if current is None or score > current[0]:
+                scored[key] = (score, row)
+
+        if not scored:
+            return None
+        best_score = max(value[0] for value in scored.values())
+        winners = [value[1] for value in scored.values() if value[0] == best_score]
+        return winners[0] if len(winners) == 1 else None
+
     @staticmethod
     def _resource_names(reference):
         names = {}
@@ -366,7 +424,8 @@ class GalleryService:
         assigned = cls._resource_names(reference) if include_resources else ''
         return authoritative_reference_text(
             text, reference.get('lead_name', ''), reference.get('address', ''),
-            assigned, appointment_date=day,
+            assigned, work_order_number=reference.get('work_order_number', ''),
+            appointment_date=day,
             clear_assigned_resource=include_resources and not assigned, **fields)
 
     def _remove_morning_cards(self):
