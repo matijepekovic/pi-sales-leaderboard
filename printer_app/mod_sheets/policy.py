@@ -1,4 +1,4 @@
-"""Permanent daily MOD-sheet settings and fixed weekday schedule."""
+"""Permanent daily MOD-sheet settings and fixed Monday-Saturday schedule."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from ..print_options import PrintOptions
 
 
-WEEKDAYS = frozenset({0, 1, 2, 3, 4})
+WEEKDAYS = frozenset({0, 1, 2, 3, 4, 5})
 DAILY_PRINT_TIME = time(7, 0)
 RETRY_DELAY_SECONDS = 120
 
@@ -83,7 +83,7 @@ class DailyModSheetSchedule:
             candidate = datetime.combine(day, DAILY_PRINT_TIME, self.zone)
             if candidate.timestamp() > stamp:
                 return candidate.timestamp()
-        raise RuntimeError('Could not resolve the next weekday MOD Sheet run.')
+        raise RuntimeError('Could not resolve the next scheduled MOD Sheet run.')
 
     def description(self) -> str:
-        return f'Monday through Friday at 7:00 AM ({self.timezone})'
+        return f'Monday through Saturday at 7:00 AM ({self.timezone})'
