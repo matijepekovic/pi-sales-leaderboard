@@ -274,17 +274,17 @@ def test_work_order_field_uses_three_independent_reads_without_changing_mask(ras
     ('02283370', '02283370'),
     ('32283370', '02283370'),
     ('22283370', '02283370'),
-    ('32283836', '02283836'),
-    ('12283836', '02283836'),
+    ('31283836', '02283836'),
     ('32284215', '02284215'),
-    ('2284215', '02284215'),
     ('32284444', '02284444'),
-    ('2284444', '02284444'),
     ('32283700', '02283700'),
+    ('0225558', ''),
+    ('2284215', ''),
+    ('2284444', ''),
     ('123456', ''),
     ('123456789', ''),
 ])
-def test_scanned_work_order_uses_known_leading_zero(raw, expected):
+def test_scanned_work_order_enforces_known_02_prefix_without_inventing_missing_digits(raw, expected):
     assert recognition._first_work_order_candidate(raw) == expected
 
 
