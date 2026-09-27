@@ -187,7 +187,7 @@ def test_refresh_request_arriving_during_running_pull_is_not_lost(tmp_path):
     assert repeated['rerun'] is True
 
 
-def test_daily_schedule_is_weekdays_at_seven_and_catches_up_same_day():
+def test_daily_schedule_is_monday_through_saturday_at_seven_and_catches_up_same_day():
     schedule = DailyModSheetSchedule('America/Los_Angeles')
 
     assert schedule.occurrence_due(_stamp(2026, 9, 21, 6, 59)) is None
@@ -197,7 +197,30 @@ def test_daily_schedule_is_weekdays_at_seven_and_catches_up_same_day():
 
     late = schedule.occurrence_due(_stamp(2026, 9, 21, 15, 30))
     assert late.day == '2026-09-21'
-    assert schedule.occurrence_due(_stamp(2026, 9, 19, 9, 0)) is None
+
+    saturday = schedule.occurrence_due(_stamp(2026, 9, 19, 9, 0))
+    assert saturday.day == '2026-09-19'
+    assert saturday.display_date == '9/19/2026'
+    assert schedule.occurrence_due(_stamp(2026, 9, 20, 9, 0)) is None
+    assert schedule.description() == 'Monday through Saturday at 7:00 AM (America/Los_Angeles)'
+
+
+def test_saturday_daily_run_generates_same_morning_reference_for_gallery(tmp_path):
+    clock = MutableClock(_stamp(2026, 9, 19, 7, 0))
+    records = (
+        ModSheetRecord(source_id='sat-source', work_order_number='00009999', lead_name='Saturday Customer'),
+    )
+    service, repository, queue = _service(tmp_path, FakeSource([records]), clock)
+
+    state = service.run_due()
+
+    assert state['status'] == 'queued'
+    assert state['day'] == '2026-09-19'
+    assert queue.enqueued[0][0] == 'pdf:daily-mod:2026-09-19'
+    pending = repository.pending_morning_references()
+    assert len(pending) == 1
+    assert pending[0]['day'] == '2026-09-19'
+    assert pending[0]['records'] == records
 
 
 def test_daily_run_uses_current_day_and_mod_owned_print_settings(tmp_path):
