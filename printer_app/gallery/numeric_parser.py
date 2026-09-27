@@ -12,6 +12,7 @@ whole-card fallback.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 
 OCR_GLYPH_TRANSLATION = str.maketrans({
@@ -39,17 +40,23 @@ def normalize_numeric_token(value, *, length=8, prefix='02'):
 
 
 def numeric_token_from_text(value, *, length=8, prefix='02'):
-    """Find one exact-length numeric-looking token in OCR text."""
-    allowed = r'0-9OoBb!'
-    matches = re.findall(
-        rf'(?<![{allowed}])[{allowed}]{{{length}}}(?![{allowed}])',
-        str(value or ''),
-    )
-    normalized = tuple(dict.fromkeys(
-        candidate for token in matches
-        if (candidate := normalize_numeric_token(token, length=length, prefix=prefix))
-    ))
-    return normalized[0] if len(normalized) == 1 else ''
+    """Find the first complete numeric-looking token with safe field boundaries."""
+    text = str(value or '')
+    for match in re.finditer(rf'[0-9OoBb!]{{{length}}}', text):
+        before = text[match.start() - 1:match.start()]
+        after = text[match.end():match.end() + 1]
+        edges = before + after
+        if not all(
+            char.isspace() or unicodedata.category(char)[0] in 'PS'
+            for char in edges
+        ):
+            continue
+        candidate = normalize_numeric_token(
+            match[0], length=length, prefix=prefix
+        )
+        if candidate:
+            return candidate
+    return ''
 
 
 def _clean_mask(image):
