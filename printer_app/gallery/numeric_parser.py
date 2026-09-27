@@ -1,8 +1,8 @@
 """Fixed-width numeric recognition for Gallery work-order fields.
 
 This module owns one job: turn an isolated printed numeric field into its digit
-positions. It does not know Gallery workflow, Salesforce, repositories, dates or
-customer data.
+positions. It does not know Gallery workflow, repositories, dates, customer data
+or any external source.
 
 The parser never inserts or removes positions. It first finds eight visible glyph
 slots, then asks the injected digit classifier to choose one of 0-9 for each slot.
@@ -39,10 +39,12 @@ def normalize_numeric_token(value, *, length=8, prefix='02'):
     return normalized
 
 
-def numeric_token_from_text(value, *, length=8, prefix='02'):
-    """Find the first complete numeric-looking token with safe field boundaries."""
+def numeric_token_from_text(
+        value, *, length=8, prefix='02', allow_overflow=False):
+    """Find the first numeric-looking token with safe field boundaries."""
     text = str(value or '')
-    for match in re.finditer(rf'[0-9OoBb!]{{{length}}}', text):
+    size = f'{{{length},}}' if allow_overflow else f'{{{length}}}'
+    for match in re.finditer(rf'[0-9OoBb!]{size}', text):
         before = text[match.start() - 1:match.start()]
         after = text[match.end():match.end() + 1]
         edges = before + after
@@ -51,8 +53,9 @@ def numeric_token_from_text(value, *, length=8, prefix='02'):
             for char in edges
         ):
             continue
+        token = match[0][:length] if allow_overflow else match[0]
         candidate = normalize_numeric_token(
-            match[0], length=length, prefix=prefix
+            token, length=length, prefix=prefix
         )
         if candidate:
             return candidate
