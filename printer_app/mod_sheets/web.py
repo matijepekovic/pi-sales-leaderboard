@@ -50,19 +50,26 @@ def _settings_from_form() -> ModSheetAutomationSettings:
     )
 
 
-def blueprint(settings_service, test_service):
+def blueprint(settings_service, test_service, manual_gallery_service):
     bp = Blueprint('mod_sheets', __name__)
 
     @bp.route('/mod-sheets/settings', methods=['GET', 'POST'])
     def settings_page():
         timezone = g.printer_config.timezone
         if request.method == 'POST':
+            action = request.form.get('action', 'save')
+            if action == 'pull-gallery':
+                try:
+                    manual_gallery_service.request()
+                except ValueError as exc:
+                    abort(400, str(exc))
+                return redirect(url_for('mod_sheets.settings_page'), code=303)
+
             try:
                 settings = _settings_from_form()
             except ValueError as exc:
                 abort(400, str(exc))
 
-            action = request.form.get('action', 'save')
             if action == 'save':
                 settings_service.save(settings)
             elif action == 'test':
