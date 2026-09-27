@@ -327,6 +327,10 @@ def process(source, output, budget):
         for item in manifest['items']:
             item['document_date'] = pdf_date
             item['date_status'] = 'printed'
+            if 'work_order_evidence' in item:
+                # All cards share the independently established printed PDF
+                # date, including cards read before that date was available.
+                item['work_order_evidence']['dates'] = (pdf_date,)
 
     save_checkpoint(output, pages, pages, manifest, pdf_date)
     report_progress(output, 'publish', pages, pages, len(manifest['items']))

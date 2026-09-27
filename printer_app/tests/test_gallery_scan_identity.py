@@ -1,4 +1,5 @@
 """New scan candidates become identity only after an exact normalized source match."""
+from dataclasses import replace
 import hashlib
 
 import pytest
@@ -8,7 +9,7 @@ from printer_app.mod_sheet_contract import WorkOrderReference
 from printer_app.tests.test_gallery_reference import DAY, _gallery
 
 
-def _publish(gallery, *, raw='022788501', candidates=(), strict=True):
+def _publish(gallery, *, raw='022788501', candidates=(), strict=True, evidence=None):
     job = {'id': 'a' * 64, 'filename': 'scan.pdf'}
     gallery.repository.enqueue(job['id'], job['filename'])
     directory = gallery.files.path('work', job['id'])
@@ -21,6 +22,8 @@ def _publish(gallery, *, raw='022788501', candidates=(), strict=True):
                  mod_notes_present=True)
     if strict:
         entry['work_order_candidates'] = candidates
+    if evidence is not None:
+        entry['work_order_evidence'] = evidence
     lookup = gallery.publish(job, {'items': [entry]}, directory)
     ident = hashlib.sha256(f"{job['id']}:1:1".encode()).hexdigest()
     return ident, lookup
@@ -131,6 +134,66 @@ def test_conflicting_candidate_cannot_make_another_candidate_appear_unique(tmp_p
     assert gallery.publish_work_order_records(lookup, records, 101)['enriched'] == 0
     assert gallery.repository.reference_item(ident)['state'] == 'REVIEW'
     assert gallery.repository.reference_item(ident)['work_order_number'] == ''
+
+
+@pytest.mark.parametrize('evidence,changes', [
+    ({'names': ['Same Customer']}, {'lead_name': 'Another Customer'}),
+    ({'phones': ['(360) 555-1212']}, {'phone': '3605559999'}),
+    ({}, {'appointment_date': '2025-01-01'}),
+    ({'times': ['17:30']}, {'local_scheduled_start_time': '06:30 PM'}),
+])
+def test_printed_card_details_select_one_of_two_existing_work_orders(tmp_path, evidence, changes):
+    gallery = _gallery(tmp_path)
+    # The wrong number comes first and appears in the raw OCR text. Neither
+    # its position nor its existence may override the independent printed field.
+    ident, lookup = _publish(gallery, raw='02000002',
+                             candidates=('02000002', '02000001'), evidence=evidence)
+    correct = replace(_record('02000001'), local_scheduled_start_time='05:30 PM')
+    other = replace(_record('02000002', 'other-source'),
+                    **{'local_scheduled_start_time': '05:30 PM', **changes})
+    before = gallery.files.path('crops', ident).read_bytes()
+    assert gallery.publish_work_order_records(lookup, [other, correct], 101)['enriched'] == 1
+    item = gallery.item(ident)
+    assert item['work_order_number'] == '02000001'
+    assert item['lead_source_id'] == correct.lead_source_id
+    assert item['sales_lead_status'] == correct.sales_lead_status
+    assert gallery.files.path('crops', ident).read_bytes() == before
+
+
+def test_corroboration_does_not_require_old_name_or_supply_contact_data_from_ocr(tmp_path):
+    gallery = _gallery(tmp_path)
+    ident, lookup = _publish(gallery, candidates=('02000001', '02000002'), evidence={
+        'names': ['Printed Former Name'], 'phones': ['3605551212'],
+    })
+    correct = replace(_record('02000001'), lead_name='Updated Source Name', phone='(360) 555-1212')
+    other = replace(_record('02000002', 'other-source'),
+                    lead_name='Other Source Name', phone='3605559999')
+    assert gallery.publish_work_order_records(lookup, [correct, other], 101)['enriched'] == 1
+    item = gallery.item(ident)
+    assert item['lead_name'] == 'Updated Source Name'
+    assert 'Phone: (360) 555-1212' in item['text']
+    assert 'Printed Former Name' not in item['text']
+
+
+def test_corroboration_must_not_bypass_incomplete_source_coverage(tmp_path):
+    gallery = _gallery(tmp_path)
+    ident, lookup = _publish(gallery, candidates=('02000001', '02000002'),
+                             evidence={'phones': ['3605551212']})
+    assert gallery.publish_work_order_records(['02000001'], [_record('02000001')], 101)['enriched'] == 0
+    assert gallery.repository.reference_item(ident)['state'] == 'REVIEW'
+    other = replace(_record('02000002', 'other-source'), phone='3605559999')
+    assert gallery.publish_work_order_records(lookup, [_record('02000001'), other], 102)['enriched'] == 1
+
+
+def test_conflicting_printed_fields_do_not_pick_one_customer(tmp_path):
+    gallery = _gallery(tmp_path)
+    ident, lookup = _publish(gallery, candidates=('02000001', '02000002'), evidence={
+        'names': ['Same Customer'], 'phones': ['3605559999'],
+    })
+    other = replace(_record('02000002', 'other-source'),
+                    lead_name='Another Customer', phone='3605559999')
+    assert gallery.publish_work_order_records(lookup, [_record('02000001'), other], 101)['enriched'] == 0
+    assert gallery.repository.reference_item(ident)['state'] == 'REVIEW'
 
 
 def test_old_manifest_without_candidate_contract_retains_generic_work_order_handling(tmp_path):

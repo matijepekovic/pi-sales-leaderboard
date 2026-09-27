@@ -16,15 +16,21 @@ import sys
 if __package__:
     from .form_template import TEMPLATE_FIELDS, field_boxes, field_crop, map_box, register_form
     from .numeric_parser import numeric_tokens_from_text, parse_numeric_image
-    from .policy import scanned_work_order_candidates, work_order_fields
+    from .policy import (REFERENCE_FIELD_LABELS, normalize_work_order_evidence,
+                         scanned_work_order_candidates, work_order_fields,
+                         work_order_schedule)
 else:
     from form_template import TEMPLATE_FIELDS, field_boxes, field_crop, map_box, register_form
     from numeric_parser import numeric_tokens_from_text, parse_numeric_image
-    from policy import scanned_work_order_candidates, work_order_fields
+    from policy import (REFERENCE_FIELD_LABELS, normalize_work_order_evidence,
+                        scanned_work_order_candidates, work_order_fields,
+                        work_order_schedule)
 
-# The scan supplies only the durable work-order identity. Customer, address,
-# appointment and rep data come from the existing normalized reference data.
+# The scan supplies the durable work-order identity. When readings disagree,
+# literal printed header observations can corroborate one exact source match.
+# Displayed customer, appointment and rep data still come from reference data.
 _OCR_FIELD_KEYS = frozenset({'work_order_number'})
+_EVIDENCE_FIELDS = ('lead_name', 'phone', 'local_scheduled_start_time', 'scheduled_start')
 
 
 def tsv_words(value):
@@ -278,6 +284,76 @@ def _candidate_result(candidates, known_date, reads=()):
     )
 
 
+def _printed_field_values(text, key, *, isolated=False):
+    """Keep labelled observations, including every wrapped line in a name cell."""
+    field = next(field for field in TEMPLATE_FIELDS if field.key == key)
+    label = re.escape(field.label).replace(r'\ ', r'\s*')
+    boundary = '|'.join(re.escape(value).replace(r'\ ', r'\s+')
+                        for value in sorted(REFERENCE_FIELD_LABELS, key=len, reverse=True))
+    original = str(text or '')
+    values = []
+    for match in re.finditer(r'\b' + label + r'\s*[:;]\s*', original, re.I):
+        value = re.split(r'\b(?:' + boundary + r')\b', original[match.end():],
+                         maxsplit=1, flags=re.I)[0]
+        values.append(' '.join(value.split()).strip(' |'))
+    if not values and isolated and key in ('lead_name', 'phone'):
+        # Geometry already proves which cell this is. OCR can misread its label
+        # (for example Leed Name), while the printed colon still marks the value.
+        match = re.match(r'^[^:\n]{1,32}:\s*(.+)$', original, re.S)
+        if match:
+            value = re.split(r'\b(?:' + boundary + r')\b', match[1],
+                             maxsplit=1, flags=re.I)[0]
+            values.append(' '.join(value.split()).strip(' |'))
+    return tuple(value for value in values if value)
+
+
+def _printed_evidence(text, *, key=None):
+    """Turn literal header reads into normalized, independent corroboration."""
+    observed = {name: [] for name in ('names', 'dates', 'times', 'phones')}
+    if key is None:
+        # Label-like handwriting in MOD Notes must never supply identity.
+        text = re.split(r'\b(?:Work\s+Type|Lead\s+Description|MOD\s+Notes)\s*:',
+                        str(text or ''), maxsplit=1, flags=re.I)[0]
+    for field in (key,) if key else _EVIDENCE_FIELDS:
+        for value in _printed_field_values(text, field, isolated=key is not None):
+            if field == 'lead_name':
+                observed['names'].append(value)
+            elif field == 'phone':
+                observed['phones'].append(value)
+            else:
+                observed['dates'].extend(_date_readings(value))
+                day, time = work_order_schedule(value)
+                if day:
+                    observed['dates'].append(day)
+                if time and re.search(r'(?<![A-Za-z])(?:AM|PM)\b', value, re.I):
+                    observed['times'].append(time)
+    return normalize_work_order_evidence(observed)
+
+
+def _recognize_evidence(source, registration, ocr_copy, known_date, previous=None):
+    """Read only the printed cells needed to distinguish competing WO numbers."""
+    import cv2
+
+    observed = {key: list(values) for key, values in
+                normalize_work_order_evidence(previous).items()}
+    if known_date:
+        observed['dates'].append(known_date)
+    if registration.matched:
+        for key in _EVIDENCE_FIELDS:
+            cell, _ = field_crop(source, registration, key)
+            if cell is None:
+                continue
+            enlarged = cv2.resize(cell, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+            for image in (cell, enlarged):
+                try:
+                    raw = search_text(_run_tesseract(image, ocr_copy, psm=6))
+                except subprocess.SubprocessError:
+                    continue
+                for name, values in _printed_evidence(raw, key=key).items():
+                    observed[name].extend(values)
+    return normalize_work_order_evidence(observed)
+
+
 def _recognize_template(source, registration, ocr_copy, known_date, debug_path=None):
     """Run independent recognition systems against the same work-order field."""
     import cv2
@@ -369,12 +445,18 @@ def _recognize_template(source, registration, ocr_copy, known_date, debug_path=N
     return _candidate_result(candidates, known_date, reads)
 
 
-def _recognize_legacy(source, ocr_copy, known_date):
+def _recognize_legacy(source, ocr_copy, known_date, registration=None):
     """Fallback OCR the whole isolated card so other identity fields can match it."""
     import cv2
     import numpy as np
 
     h, w = source.shape
+    registration = registration if registration is not None else register_form(source)
+    header_bottom = min(h * .27, w * .15)
+    if registration.matched:
+        _, bounds = field_crop(source, registration, 'scheduled_start')
+        if bounds[3] > bounds[1]:
+            header_bottom = bounds[3]
     ink = cv2.threshold(source, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
     rules = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((1, max(30, w//25)), np.uint8))
     rules |= cv2.morphologyEx(
@@ -386,6 +468,7 @@ def _recognize_legacy(source, ocr_copy, known_date):
     candidates = []
     reads = []
     best = None
+    evidence = {name: [] for name in ('names', 'dates', 'times', 'phones')}
     labels = ('Work Order', 'Lead Name', 'Address', 'Phone', 'Scheduled Start', 'MOD Notes')
     for psm in (6, 11):
         label = 'Fallback whole card'
@@ -395,6 +478,12 @@ def _recognize_legacy(source, ocr_copy, known_date):
             reads.append(dict(label=label, psm=psm, text='', candidate='', ok=False))
             continue
         raw = search_text(words)
+        header = [word for word in words
+                  if 0 <= word.get('top', -1)
+                  and word.get('height', 0) > 0
+                  and word['top'] + word['height'] <= header_bottom]
+        for name, values in _printed_evidence(search_text(header)).items():
+            evidence[name].extend(values)
         found = _work_order_candidates(raw, labeled=True)
         compact = ' '.join(raw.split())[:256]
         for number in found or ('',):
@@ -409,6 +498,7 @@ def _recognize_legacy(source, ocr_copy, known_date):
             best = candidate
 
     result = _candidate_result(candidates, known_date, reads)
+    result['work_order_evidence'] = normalize_work_order_evidence(evidence)
     if best is not None:
         _, _, raw, lead_text, day, date_status = best
         result['text'] = raw
@@ -444,7 +534,7 @@ def recognize(path, work, known_date=None, debug_path=None):
         # An incomplete numerical reading cannot make another reader's lone
         # answer definitive. Keep the independent whole-card readings available
         # before source validation, even when one field reader found a candidate.
-        legacy = _recognize_legacy(source, ocr_copy, known_date)
+        legacy = _recognize_legacy(source, ocr_copy, known_date, registration)
         result = _candidate_result(
             (*template_candidates, *legacy.get('work_order_candidates', ())),
             legacy.get('document_date') or known_date,
@@ -457,6 +547,11 @@ def recognize(path, work, known_date=None, debug_path=None):
         result['document_date'] = legacy.get('document_date')
         result['date_status'] = legacy.get('date_status', 'needs-date')
         result['mod_notes_present'] = notes_present
+        if len(result['work_order_candidates']) > 1:
+            result['work_order_evidence'] = _recognize_evidence(
+                source, registration, ocr_copy, known_date,
+                legacy.get('work_order_evidence'),
+            )
         return result
     finally:
         ocr_copy.unlink(missing_ok=True)

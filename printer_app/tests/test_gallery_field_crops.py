@@ -264,5 +264,6 @@ def test_partial_digit_read_does_not_suppress_whole_card_answer(
     monkeypatch.setattr(recognition, '_recognize_legacy', lambda *args: {
         'work_order_candidates': ('02012348',),
     })
+    monkeypatch.setattr(recognition, '_recognize_evidence', lambda *args: {})
     result = recognition.recognize(path, tmp_path)
     assert result['work_order_candidates'] == ('02012345', '02012348')

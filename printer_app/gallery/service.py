@@ -9,7 +9,8 @@ from zoneinfo import ZoneInfo
 from .policy import (
     address_key, authoritative_reference_text, checked_date, checked_date_filter, clear_work_order_identity,
     checked_lead_name, checked_work_order_number, lead_key, printed_address, printed_lead, printed_work_order_number,
-    printed_phone, related_identity, search_expression, usable_phone, work_order_key,
+    normalize_work_order_evidence, printed_phone, related_identity, search_expression,
+    select_work_order_candidate, usable_phone, work_order_key,
 )
 
 log = logging.getLogger(__name__)
@@ -319,6 +320,10 @@ class GalleryService:
                 origin=origin, image_revision=revision, replace_existing=bool(existing), require_identity=True)
             if strict_scan:
                 items[ident]['work_order_candidates'] = candidates_pending
+                evidence = normalize_work_order_evidence(entry.get('work_order_evidence'))
+                if day and entry.get('date_status') == 'printed':
+                    evidence['dates'] = (checked_date(day),)
+                items[ident]['work_order_evidence'] = evidence
         warnings = list(manifest.get('warnings', []))
         if discarded_blank_notes:
             warnings.append(
@@ -557,8 +562,9 @@ class GalleryService:
                     text, name, address, assigned, day, lead_source_id, sales_status,
                 )
 
-        # A scanned card accepts an OCR number only when exactly one of its
-        # independent candidates resolves through the normalized source.
+        # Every candidate must be looked up before accepting an OCR number.
+        # If more than one exists, independent printed card details can identify
+        # which record belongs to this scan; a shared or conflicting match cannot.
         validated = 0
         for item in self.repository.work_order_candidate_items():
             candidate_keys = {work_order_key(candidate) for candidate in item['candidates']}
@@ -570,9 +576,11 @@ class GalleryService:
                 if work_order_key(candidate) in normalized
                 and normalized[work_order_key(candidate)].get('work_order_number') == candidate
             ]
-            if len(matches) != 1:
+            selected = (matches[0] if len(matches) == 1 else
+                        select_work_order_candidate(matches, item.get('work_order_evidence')))
+            if selected is None:
                 continue
-            number, record = matches[0]
+            number, record = selected
             day, assigned, name, address, lead_source_id, sales_status = fields(record)
             text = self._reference_text(
                 item.get('text', ''), record, day, include_resources=assigned is not None
@@ -580,6 +588,8 @@ class GalleryService:
             applied = self.repository.apply_validated_work_order_reference(
                 item['id'], item['candidates'], number, str(record.get('source_id') or ''),
                 text, name, address, assigned, day, lead_source_id, sales_status,
+                expected_evidence=item.get('work_order_evidence'),
+                expected_image_revision=item.get('image_revision'),
             )
             changed += applied
             validated += applied
@@ -709,8 +719,15 @@ class GalleryService:
                 reads = result.get('work_order_reads') or (
                     dict(label='Original recognition', psm=None, text=text, candidate='', ok=True),
                 )
+                evidence_args = {}
+                if 'work_order_evidence' in result:
+                    evidence = normalize_work_order_evidence(result['work_order_evidence'])
+                    if item.get('document_date') and item.get('date_status') == 'printed':
+                        evidence['dates'] = (checked_date(item['document_date']),)
+                    evidence_args['evidence'] = evidence
                 if not self.repository.save_work_order_candidates(
-                        item['id'], candidates, expected_text=item['text'], reads=reads):
+                        item['id'], candidates, expected_text=item['text'], reads=reads,
+                        expected_image_revision=item.get('image_revision'), **evidence_args):
                     raise ValueError('Work-order candidate changed during recognition')
                 return True
             if item.get('state') == 'REVIEW' and not item.get('work_order_key'):
