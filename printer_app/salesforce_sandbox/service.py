@@ -181,10 +181,10 @@ class SalesforceSandboxService:
         except SalesforceAdapterError as exc:
             raise ModSheetSourceError(str(exc)) from exc
 
-    def map_jobs(self):
+    def map_jobs(self, query):
         """Return normalized map jobs without exposing Salesforce structures downstream."""
         try:
-            return tuple(self.adapter.map_jobs())
+            return tuple(self.adapter.map_jobs(query))
         except SalesforceAdapterError as exc:
             raise JobMapSourceError(str(exc)) from exc
 
