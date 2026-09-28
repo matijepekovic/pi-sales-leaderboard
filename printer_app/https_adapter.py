@@ -1,7 +1,7 @@
-"""Local HTTPS adapter for trusted full-access Gallery devices.
+"""Local HTTPS adapter for the printer app's explicitly approved secure surfaces.
 
 Deployment owns Caddy/certificates. Runtime consumers receive only normalized
-availability/certificate metadata; Gallery code never depends on Caddy paths.
+availability/certificate metadata; application modules never depend on Caddy paths.
 """
 from __future__ import annotations
 
@@ -86,14 +86,18 @@ def _caddyfile(port):
 
 https://:443 {{
     tls {SERVER_CERT} {SERVER_KEY}
-    handle /gallery* {{
-        reverse_proxy {backend} {{
-            header_up Host {{http.request.host}}
-            header_up X-Forwarded-Host {{http.request.host}}
-            header_up X-Forwarded-Proto https
-        }}
-    }}
-    handle /static/gallery* {{
+
+    @approved_secure_surface path \
+        /gallery* \
+        /static/gallery* \
+        /map* \
+        /static/job_map* \
+        /static/style.css \
+        /login \
+        /change-password \
+        /logout
+
+    handle @approved_secure_surface {{
         reverse_proxy {backend} {{
             header_up Host {{http.request.host}}
             header_up X-Forwarded-Host {{http.request.host}}
