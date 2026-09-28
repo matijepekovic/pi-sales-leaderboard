@@ -5,6 +5,15 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class MapQuery:
+    """Geographic scope for one nearby-job lookup."""
+
+    latitude: float
+    longitude: float
+    radius_miles: float
+
+
+@dataclass(frozen=True)
 class MapJob:
     """One mapped work order with a link back to its source record."""
 
@@ -15,6 +24,9 @@ class MapJob:
     latitude: float
     longitude: float
     source_record_url: str
+    market: str = ''
+    product_type: str = ''
+    assigned_reps: tuple[str, ...] = ()
 
 
 class JobMapSourceError(RuntimeError):
