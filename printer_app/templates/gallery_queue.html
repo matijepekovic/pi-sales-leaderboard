@@ -1,7 +1,7 @@
 {% extends 'base.html' %}{% block title %}Gallery Queue{% endblock %}{% block content %}
 <div class="heading"><div><p class="eyebrow">GALLERY PROCESSING</p><h1>Gallery Queue</h1></div><a class="button" href="{{ url_for('gallery.queue_page', state=state_filter, offset=offset) }}">Refresh</a></div>
 <p>PDF downloads and gallery imports are separate from the print queue. Click a filename for processing details and generated cards.</p>
-{% if request.args.get('reprocess') == '1' %}<p class="notice">Reprocess requested. Existing gallery cards were deleted and the original PDF was queued to be fetched from email again. Printing is unchanged.</p>{% endif %}
+{% if request.args.get('reprocess') == '1' %}<p class="notice">Reprocess requested. The original PDF was queued to be fetched from email again. Existing Gallery cards stay available until the fresh run finishes. Printing is unchanged.</p>{% endif %}
 <p>{{ queue.counts.get('WAITING', 0) }} waiting · {{ queue.counts.get('PROCESSING', 0) }} processing · {{ queue.counts.get('COMPLETE', 0) }} completed · {{ queue.counts.get('ERROR', 0) }} failed{% if queue.review_total %} · <strong>{{ queue.review_total }} need review</strong>{% endif %}</p>
 {% if queue.worker.error %}<p class="error">{{ queue.worker.error }}</p>{% endif %}
 <section><h2>Email downloads / handoffs</h2>
