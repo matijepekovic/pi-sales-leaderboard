@@ -9,6 +9,14 @@
   const repFilter = document.getElementById('jobMapRep');
   const locateButton = document.getElementById('jobMapLocate');
   const filters = [marketFilter, productFilter, repFilter];
+  const configuredRadiusMiles = Number(node.dataset.radiusMiles);
+
+  if (!Number.isFinite(configuredRadiusMiles) || configuredRadiusMiles <= 0) {
+    status.textContent = 'Map unavailable';
+    error.textContent = 'The map radius configuration is invalid.';
+    error.hidden = false;
+    return;
+  }
 
   if (!window.L) {
     status.textContent = 'Map unavailable';
@@ -21,7 +29,7 @@
   const markers = L.layerGroup().addTo(map);
   const locationLayer = L.layerGroup().addTo(map);
   let jobs = [];
-  let radiusMiles = 5;
+  let radiusMiles = configuredRadiusMiles;
 
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
@@ -159,7 +167,7 @@
     const response = await fetch(url.toString(), {headers: {'Accept': 'application/json'}});
     const payload = await response.json();
     if (!response.ok || !payload.ok) throw new Error(payload.error || 'Could not load nearby jobs.');
-    radiusMiles = Number.isFinite(payload.radius_miles) ? payload.radius_miles : 5;
+    radiusMiles = Number.isFinite(payload.radius_miles) ? payload.radius_miles : configuredRadiusMiles;
     jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
     populateFilters();
     showLocation(latitude, longitude);
@@ -189,9 +197,9 @@
         if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
           throw new Error('Your device returned an invalid location.');
         }
-        radiusMiles = 5;
+        radiusMiles = configuredRadiusMiles;
         showLocation(latitude, longitude);
-        status.textContent = 'Loading jobs within 5 miles…';
+        status.textContent = 'Loading jobs within ' + radiusMiles + ' miles…';
         fetchNearby(latitude, longitude)
           .catch(exc => {
             jobs = [];
