@@ -186,12 +186,15 @@ def test_job_map_python_stays_vendor_neutral_frontend_is_location_first_and_uses
     assert 'jobMapMarket' in template
     assert 'jobMapProduct' in template
     assert 'jobMapRep' in template
+    assert 'data-radius-miles="{{ max_radius_miles }}"' in template
 
     runtime = (root / 'static/job_map/map.js').read_text()
     assert 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' in runtime
     assert 'navigator.geolocation.getCurrentPosition' in runtime
     assert "url.searchParams.set('lat'" in runtime
     assert "url.searchParams.set('lon'" in runtime
+    assert 'configuredRadiusMiles' in runtime
+    assert 'radiusMiles = 5' not in runtime
     assert 'setView([39.5, -98.35], 4)' not in runtime
     assert "action('MOD Sheet'" in runtime
     assert "action('Open in Salesforce'" in runtime
