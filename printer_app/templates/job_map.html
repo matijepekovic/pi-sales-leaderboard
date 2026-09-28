@@ -27,5 +27,5 @@
   <button id="jobMapLocate" type="button">Refresh location</button>
 </div>
 <p id="jobMapError" class="notice error" hidden></p>
-<div id="jobMap" class="job-map" data-jobs-url="{{ url_for('job_map.jobs') }}" data-mod-sheet-url="{{ url_for('job_map.mod_sheet') }}" aria-label="Job map"></div>
+<div id="jobMap" class="job-map" data-jobs-url="{{ url_for('job_map.jobs') }}" data-mod-sheet-url="{{ url_for('job_map.mod_sheet') }}" data-radius-miles="{{ max_radius_miles }}" aria-label="Job map"></div>
 {% endblock %}
