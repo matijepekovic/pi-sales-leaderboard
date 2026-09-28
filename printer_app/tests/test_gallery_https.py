@@ -15,15 +15,22 @@ class DummySocket:
         return False
 
 
-def test_https_config_is_gallery_only_and_keeps_guest_http_port():
+def test_https_config_exposes_only_gallery_map_and_required_shared_routes():
     config = https_adapter._caddyfile(5055)
     assert 'https://:443' in config
     assert 'http://:80' not in config
     assert 'reverse_proxy 127.0.0.1:5055' in config
     assert 'header_up X-Forwarded-Host {http.request.host}' in config
     assert 'header_up X-Forwarded-Proto https' in config
-    assert 'handle /gallery*' in config
-    assert 'handle /static/gallery*' in config
+    assert '@approved_secure_surface path ' in config
+    for path in (
+        '/gallery*', '/static/gallery*',
+        '/map*', '/static/job_map*', '/static/style.css',
+        '/login', '/change-password', '/logout',
+    ):
+        assert path in config
+    for path in ('/settings*', '/system/print-control*', '/salesforce*', '/mod-settings*'):
+        assert path not in config
     assert 'respond "Not found" 404' in config
 
 
@@ -186,7 +193,7 @@ def test_local_https_proxy_scheme_is_accepted_but_spoofed_forwarding_is_not(tmp_
 
 
 
-def test_waitress_trusts_only_loopback_gallery_proxy_headers(tmp_path):
+def test_waitress_trusts_only_loopback_https_proxy_headers(tmp_path):
     cfg = Config(
         data_dir=tmp_path / 'data',
         secret_key='s' * 64,

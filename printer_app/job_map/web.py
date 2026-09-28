@@ -2,21 +2,46 @@
 from __future__ import annotations
 
 from io import BytesIO
+from urllib.parse import urlsplit
 
 import math
 
-from flask import Blueprint, abort, jsonify, render_template, request, send_file
+from flask import Blueprint, abort, jsonify, redirect, render_template, request, send_file
 
 from .contract import JobMapSourceError
 from .service import MAX_RADIUS_MILES
 
 
-def blueprint(service):
+def _secure_page_url(https_access):
+    """Return the approved HTTPS map URL when the local secure proxy is ready."""
+    if https_access is None or request.is_secure:
+        return ''
+    state = https_access.status()
+    if not state.get('configured'):
+        return ''
+    hostname = urlsplit('//' + request.host).hostname or ''
+    candidates = [
+        str(value).strip()
+        for value in (*state.get('addresses', ()), *state.get('dns', ()))
+        if str(value).strip()
+    ]
+    target = hostname if hostname in candidates else (candidates[0] if candidates else '')
+    if not target:
+        return ''
+    if ':' in target and not target.startswith('['):
+        target = '[' + target + ']'
+    return 'https://' + target + request.path
+
+
+def blueprint(service, *, https_access=None):
     bp = Blueprint('job_map', __name__, url_prefix='/map')
 
     @bp.get('')
     @bp.get('/')
     def page():
+        secure_url = _secure_page_url(https_access)
+        if secure_url:
+            return redirect(secure_url, code=302)
         return render_template('job_map.html', max_radius_miles=MAX_RADIUS_MILES)
 
     @bp.get('/api/jobs')

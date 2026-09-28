@@ -98,7 +98,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
 
     job_map = JobMapService(salesforce_sandbox, render_mod_pdf)
     app.extensions['job_map'] = job_map
-    app.register_blueprint(job_map_blueprint(job_map))
+    app.register_blueprint(job_map_blueprint(job_map, https_access=gallery_https))
 
     mod_sheet_repository = ModSheetAutomationRepository(db)
 
