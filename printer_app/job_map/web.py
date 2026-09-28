@@ -17,7 +17,7 @@ def blueprint(service):
     @bp.get('')
     @bp.get('/')
     def page():
-        return render_template('job_map.html')
+        return render_template('job_map.html', max_radius_miles=MAX_RADIUS_MILES)
 
     @bp.get('/api/jobs')
     def jobs():
