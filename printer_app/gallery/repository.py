@@ -1,5 +1,6 @@
 """The gallery's SQLite schema, search index, import receipts, and notes."""
 import json
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
