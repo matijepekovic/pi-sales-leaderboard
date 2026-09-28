@@ -473,22 +473,8 @@ class SalesforceCliAdapter:
             ))
         return tuple(normalized)
 
-    def map_jobs(self, query: MapQuery):
-        """Return nearby normalized mapped jobs without loading the full appointment set."""
-        try:
-            latitude = float(query.latitude)
-            longitude = float(query.longitude)
-            radius_miles = float(query.radius_miles)
-        except (AttributeError, TypeError, ValueError) as exc:
-            raise SalesforceAdapterError('Map scope is invalid.') from exc
-        if (not math.isfinite(latitude) or not math.isfinite(longitude)
-                or not math.isfinite(radius_miles)
-                or not -90 <= latitude <= 90 or not -180 <= longitude <= 180
-                or radius_miles <= 0):
-            raise SalesforceAdapterError('Map scope is invalid.')
-
-        latitude_path = 'FSSK__FSK_Work_Order__r.Lead__r.Latitude'
-        longitude_path = 'FSSK__FSK_Work_Order__r.Lead__r.Longitude'
+    def _map_leads(self, latitude, longitude, radius_miles):
+        """Resolve only Leads in the requested bounding box before touching appointments."""
         earth_radius_miles = 3958.7613
         latitude_delta = math.degrees(radius_miles / earth_radius_miles)
         south = max(-90.0, latitude - latitude_delta)
@@ -502,26 +488,99 @@ class SalesforceCliAdapter:
         east = longitude + longitude_delta
 
         conditions = [
-            "WorkType.Name LIKE '%Sales%'",
-            f'{latitude_path} >= {south:.8f}',
-            f'{latitude_path} <= {north:.8f}',
+            f'Latitude >= {south:.8f}',
+            f'Latitude <= {north:.8f}',
         ]
         if longitude_delta < 180.0:
             if west < -180.0:
                 conditions.append(
-                    f'({longitude_path} >= {west + 360.0:.8f} OR '
-                    f'{longitude_path} <= {east:.8f})'
+                    f'(Longitude >= {west + 360.0:.8f} OR Longitude <= {east:.8f})'
                 )
             elif east > 180.0:
                 conditions.append(
-                    f'({longitude_path} >= {west:.8f} OR '
-                    f'{longitude_path} <= {east - 360.0:.8f})'
+                    f'(Longitude >= {west:.8f} OR Longitude <= {east - 360.0:.8f})'
                 )
             else:
                 conditions.extend((
-                    f'{longitude_path} >= {west:.8f}',
-                    f'{longitude_path} <= {east:.8f}',
+                    f'Longitude >= {west:.8f}',
+                    f'Longitude <= {east:.8f}',
                 ))
+
+        cursor = ''
+        seen = set()
+        leads = {}
+        fields = ('Id', 'Name', 'Status', 'Market__c', 'Latitude', 'Longitude')
+        while True:
+            page_conditions = conditions + ([f'Id > {_soql_literal(cursor)}'] if cursor else [])
+            query = (
+                'SELECT ' + ', '.join(fields)
+                + ' FROM Lead WHERE ' + ' AND '.join(page_conditions)
+                + ' ORDER BY Id ASC LIMIT 1000'
+            )
+            result = self._run(
+                ['data', 'query', '--query', query, *self._target_args()],
+                timeout=45,
+            )
+            rows = result.get('records') if isinstance(result, dict) else None
+            if not isinstance(rows, list) or len(rows) > 1000:
+                raise SalesforceAdapterError('Salesforce nearby-lead query returned an invalid records page.')
+            if not rows:
+                if result.get('done') is False or result.get('totalSize', 0):
+                    raise SalesforceAdapterError('Salesforce nearby-lead query returned an incomplete records page.')
+                break
+
+            page_ids = []
+            for row in rows:
+                try:
+                    lead_id = explorer.record_id(row.get('Id') if isinstance(row, dict) else None)
+                except ValueError as exc:
+                    raise SalesforceAdapterError(
+                        'Salesforce nearby-lead query returned an invalid record ID.'
+                    ) from exc
+                page_ids.append(lead_id)
+                try:
+                    item_latitude = float(row.get('Latitude'))
+                    item_longitude = float(row.get('Longitude'))
+                except (TypeError, ValueError):
+                    continue
+                if not (-90 <= item_latitude <= 90 and -180 <= item_longitude <= 180):
+                    continue
+                leads[lead_id] = {
+                    'lead_name': str(row.get('Name') or '').strip(),
+                    'lead_status': str(row.get('Status') or '').strip(),
+                    'market': str(row.get('Market__c') or '').strip(),
+                    'latitude': item_latitude,
+                    'longitude': item_longitude,
+                }
+
+            if (len(set(page_ids)) != len(page_ids)
+                    or seen.intersection(page_ids)
+                    or (cursor and cursor in page_ids)):
+                raise SalesforceAdapterError(
+                    'Salesforce nearby-lead pagination did not advance safely.'
+                )
+            seen.update(page_ids)
+            cursor = page_ids[-1]
+
+        return leads
+
+    def map_jobs(self, query: MapQuery):
+        """Return nearby normalized mapped jobs without scanning all appointments."""
+        try:
+            latitude = float(query.latitude)
+            longitude = float(query.longitude)
+            radius_miles = float(query.radius_miles)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise SalesforceAdapterError('Map scope is invalid.') from exc
+        if (not math.isfinite(latitude) or not math.isfinite(longitude)
+                or not math.isfinite(radius_miles)
+                or not -90 <= latitude <= 90 or not -180 <= longitude <= 180
+                or radius_miles <= 0):
+            raise SalesforceAdapterError('Map scope is invalid.')
+
+        leads = self._map_leads(latitude, longitude, radius_miles)
+        if not leads:
+            return ()
 
         fields = (
             'Id', 'StatusCategory', 'SchedStartTime', 'CreatedDate',
@@ -529,65 +588,67 @@ class SalesforceCliAdapter:
             'FSSK__FSK_Work_Order__r.WorkOrderNumber',
             'FSSK__FSK_Work_Order__r.Product_Interest__c',
             'FSSK__FSK_Work_Order__r.Lead__r.Id',
-            'FSSK__FSK_Work_Order__r.Lead__r.Name',
-            'FSSK__FSK_Work_Order__r.Lead__r.Status',
-            'FSSK__FSK_Work_Order__r.Lead__r.Market__c',
-            latitude_path,
-            longitude_path,
             'FSSK__FSK_Assigned_Service_Resource__r.Name',
         )
         grouped = {}
-        for item in self._appointment_rows(fields, conditions):
-            work_order_id = str(item.get('FSSK__FSK_Work_Order__c') or '').strip()
-            work_order_number = _nested(item, 'FSSK__FSK_Work_Order__r.WorkOrderNumber').strip()
-            lead_id = _nested(item, 'FSSK__FSK_Work_Order__r.Lead__r.Id').strip()
-            scheduled = _sf_datetime(item.get('SchedStartTime'))
-            if not work_order_id or not work_order_number or not lead_id or scheduled is None:
-                continue
-            try:
-                lead_id = explorer.record_id(lead_id)
-                item_latitude = float(_nested(item, latitude_path))
-                item_longitude = float(_nested(item, longitude_path))
-            except (ValueError, TypeError):
-                continue
-            if not (-90 <= item_latitude <= 90 and -180 <= item_longitude <= 180):
-                continue
-            canceled = str(item.get('StatusCategory') or '').strip().casefold() == 'canceled'
-            created = _sf_datetime(item.get('CreatedDate')) or datetime.min.replace(tzinfo=timezone.utc)
-            rep = _nested(item, 'FSSK__FSK_Assigned_Service_Resource__r.Name').strip()
-            current = grouped.get(work_order_id)
-            candidate = dict(
-                item=item, work_order_number=work_order_number, lead_id=lead_id,
-                latitude=item_latitude, longitude=item_longitude, scheduled=scheduled,
-                created=created, canceled=canceled, assigned_reps=[rep] if rep else [],
-            )
-            if current is None:
-                grouped[work_order_id] = candidate
-                continue
-            if current['canceled'] and not canceled:
-                grouped[work_order_id] = candidate
-                continue
-            if canceled and not current['canceled']:
-                continue
-            if (scheduled, created) > (current['scheduled'], current['created']):
-                grouped[work_order_id] = candidate
-                continue
-            if (scheduled, created) == (current['scheduled'], current['created']):
-                if rep and rep not in current['assigned_reps']:
-                    current['assigned_reps'].append(rep)
+        lead_ids = tuple(leads)
+        for offset in range(0, len(lead_ids), 100):
+            batch = lead_ids[offset:offset + 100]
+            conditions = [
+                "WorkType.Name LIKE '%Sales%'",
+                'FSSK__FSK_Work_Order__r.Lead__r.Id IN ('
+                + ', '.join(_soql_literal(value) for value in batch) + ')',
+            ]
+            for item in self._appointment_rows(fields, conditions):
+                work_order_id = str(item.get('FSSK__FSK_Work_Order__c') or '').strip()
+                work_order_number = _nested(item, 'FSSK__FSK_Work_Order__r.WorkOrderNumber').strip()
+                lead_id = _nested(item, 'FSSK__FSK_Work_Order__r.Lead__r.Id').strip()
+                scheduled = _sf_datetime(item.get('SchedStartTime'))
+                if not work_order_id or not work_order_number or not lead_id or scheduled is None:
+                    continue
+                try:
+                    lead_id = explorer.record_id(lead_id)
+                except ValueError:
+                    continue
+                lead = leads.get(lead_id)
+                if lead is None:
+                    continue
+                canceled = str(item.get('StatusCategory') or '').strip().casefold() == 'canceled'
+                created = _sf_datetime(item.get('CreatedDate')) or datetime.min.replace(tzinfo=timezone.utc)
+                rep = _nested(item, 'FSSK__FSK_Assigned_Service_Resource__r.Name').strip()
+                current = grouped.get(work_order_id)
+                candidate = dict(
+                    item=item, work_order_number=work_order_number, lead_id=lead_id,
+                    lead=lead, scheduled=scheduled, created=created, canceled=canceled,
+                    assigned_reps=[rep] if rep else [],
+                )
+                if current is None:
+                    grouped[work_order_id] = candidate
+                    continue
+                if current['canceled'] and not canceled:
+                    grouped[work_order_id] = candidate
+                    continue
+                if canceled and not current['canceled']:
+                    continue
+                if (scheduled, created) > (current['scheduled'], current['created']):
+                    grouped[work_order_id] = candidate
+                    continue
+                if (scheduled, created) == (current['scheduled'], current['created']):
+                    if rep and rep not in current['assigned_reps']:
+                        current['assigned_reps'].append(rep)
 
         if grouped and not self._instance_url:
             self.status()
         return tuple(MapJob(
             source_id=work_order_id,
             work_order_number=value['work_order_number'],
-            lead_name=_nested(value['item'], 'FSSK__FSK_Work_Order__r.Lead__r.Name').strip(),
-            lead_status=_nested(value['item'], 'FSSK__FSK_Work_Order__r.Lead__r.Status').strip(),
-            latitude=value['latitude'],
-            longitude=value['longitude'],
+            lead_name=value['lead']['lead_name'],
+            lead_status=value['lead']['lead_status'],
+            latitude=value['lead']['latitude'],
+            longitude=value['lead']['longitude'],
             source_record_url=(self._instance_url + '/lightning/r/Lead/' + value['lead_id'] + '/view')
                 if self._instance_url else '',
-            market=_nested(value['item'], 'FSSK__FSK_Work_Order__r.Lead__r.Market__c').strip(),
+            market=value['lead']['market'],
             product_type=_nested(value['item'], 'FSSK__FSK_Work_Order__r.Product_Interest__c').strip(),
             assigned_reps=tuple(value['assigned_reps']),
         ) for work_order_id, value in grouped.items())
