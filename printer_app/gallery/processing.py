@@ -30,9 +30,9 @@ from processing_contract import RETRYABLE_EXIT
 CHECKPOINT_VERSION = 3
 CHECKPOINT = 'checkpoint.json'
 MANIFEST = 'manifest.json'
-CROP_FILE = re.compile(r'^\\d{4}-\\d{3}\\.png$')
-OCR_FILE = re.compile(r'^\\d{4}-\\d{3}\\.ocr\\.png$')
-REVIEW_FILE = re.compile(r'^page-\\d{4}\\.review\\.png$')
+CROP_FILE = re.compile(r'^\d{4}-\d{3}\.png$')
+OCR_FILE = re.compile(r'^\d{4}-\d{3}\.ocr\.png$')
+REVIEW_FILE = re.compile(r'^page-\d{4}\.review\.png$')
 
 def write_json_atomic(path, value):
     temporary = path.with_name('.' + path.name + '.tmp')
