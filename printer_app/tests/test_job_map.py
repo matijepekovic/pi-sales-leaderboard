@@ -134,6 +134,44 @@ def test_map_service_opens_one_current_mod_sheet():
     assert seen == [(record,)]
 
 
+def test_map_http_page_redirects_to_existing_secure_proxy_without_touching_map_service():
+    flask = pytest.importorskip('flask')
+    from printer_app.job_map.web import blueprint
+
+    class Service:
+        def jobs(self, *args):
+            raise AssertionError('redirect must happen before loading jobs')
+
+    class HttpsAccess:
+        def status(self):
+            return {
+                'configured': True,
+                'addresses': ['100.87.89.92', '192.168.1.20'],
+                'dns': ['stats-pi.local'],
+            }
+
+    app = flask.Flask(__name__)
+    app.secret_key = 'test'
+    app.register_blueprint(blueprint(Service(), https_access=HttpsAccess()))
+    response = app.test_client().get('/map', base_url='http://100.87.89.92:5055')
+
+    assert response.status_code == 302
+    assert response.headers['Location'] == 'https://100.87.89.92/map'
+
+
+def test_map_secure_page_does_not_redirect_again():
+    flask = pytest.importorskip('flask')
+    from printer_app.job_map.web import _secure_page_url
+
+    class HttpsAccess:
+        def status(self):
+            raise AssertionError('secure requests must not re-check or redirect')
+
+    app = flask.Flask(__name__)
+    with app.test_request_context('/map', base_url='https://100.87.89.92'):
+        assert _secure_page_url(HttpsAccess()) == ''
+
+
 def test_map_web_requires_location_returns_filter_data_and_mod_pdf():
     flask = pytest.importorskip('flask')
     from printer_app.job_map.web import blueprint
@@ -202,3 +240,4 @@ def test_job_map_python_stays_vendor_neutral_frontend_is_location_first_and_uses
     app = (root / 'app.py').read_text()
     assert 'https://tile.openstreetmap.org' in app
     assert 'https://unpkg.com' in app
+    assert 'job_map_blueprint(job_map, https_access=gallery_https)' in app
