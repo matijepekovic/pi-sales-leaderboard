@@ -12,75 +12,122 @@ from printer_app.job_map.service import JobMapService
 from printer_app.salesforce_sandbox.adapter import SalesforceCliAdapter
 
 
+WORK_ORDER_OBJECT = 'Field_Work_Order__c'
+LEAD_FIELD = 'Linked_Lead__c'
+WORK_ONE = 'a01000000000000001'
+LEAD_ONE = '00Q000000000001AAA'
+
+
 def _result(payload):
     return SimpleNamespace(stdout=json.dumps(payload), stderr='', returncode=0)
 
 
-def _row(ident, *, work='0WO000000000001AAA', number='02257311', lead='00Q000000000001AAA',
-         name='Customer One', status='Working', lat='47.25', lon='-122.45',
-         scheduled='2026-09-24T17:00:00.000+0000', created='2026-09-24T16:00:00.000+0000',
-         appointment_status='Scheduled'):
-    return {
-        'Id': ident,
-        'StatusCategory': appointment_status,
-        'SchedStartTime': scheduled,
-        'CreatedDate': created,
-        'FSSK__FSK_Work_Order__c': work,
-        'FSSK__FSK_Work_Order__r': {
-            'WorkOrderNumber': number,
-            'Lead__r': {
-                'Id': lead,
-                'Name': name,
-                'Status': status,
-                'Latitude': lat,
-                'Longitude': lon,
-            },
-        },
-    }
+def _field(name, kind='string', **extra):
+    return {'name': name, 'type': kind, 'filterable': True, 'sortable': True, **extra}
 
 
-def test_map_source_reads_lead_coordinates_and_keeps_one_active_job_per_work_order():
+def _metadata(name):
+    fields = [_field('Id', 'id')]
+    if name == 'ServiceAppointment':
+        fields.append(_field(
+            'FSSK__FSK_Work_Order__c', 'reference', referenceTo=[WORK_ORDER_OBJECT]
+        ))
+    elif name == WORK_ORDER_OBJECT:
+        fields.extend([
+            _field('WorkOrderNumber'),
+            _field(
+                LEAD_FIELD, 'reference', referenceTo=['Lead'], relationshipName='Lead__r'
+            ),
+        ])
+    else:
+        raise AssertionError(name)
+    return {'name': name, 'queryable': True, 'fields': fields}
+
+
+def _work_order(*, ident=WORK_ONE, number='02257311', lead=LEAD_ONE):
+    return {'Id': ident, 'WorkOrderNumber': number, LEAD_FIELD: lead}
+
+
+def test_map_source_queries_work_orders_and_leads_directly_not_appointment_history():
     calls = []
-    rows = [
-        _row('08p000000000001AAA', scheduled='2026-09-23T17:00:00.000+0000'),
-        _row('08p000000000002AAA', name='Canceled duplicate', scheduled='2026-09-25T17:00:00.000+0000',
-             appointment_status='Canceled'),
-        _row('08p000000000003AAA', work='0WO000000000002AAA', number='02257312',
-             lead='00Q000000000002AAA', name='No Coordinates', lat='', lon=''),
+    work_rows = [
+        _work_order(),
+        _work_order(
+            ident='a01000000000000002', number='02257312',
+            lead='00Q000000000002AAA',
+        ),
+    ]
+    lead_rows = [
+        {
+            'Id': LEAD_ONE,
+            'Name': 'Customer One',
+            'Status': 'Working',
+            'Latitude': 47.25,
+            'Longitude': -122.45,
+        },
+        {
+            'Id': '00Q000000000002AAA',
+            'Name': 'No Coordinates',
+            'Status': 'Working',
+            'Latitude': None,
+            'Longitude': None,
+        },
     ]
 
     def runner(command, **kwargs):
         calls.append(command)
         if command[1:3] == ['org', 'display']:
             return _result({'status': 0, 'result': {
-                'username': 'rep@example.test', 'alias': 'work',
+                'username': 'rep@example.test',
+                'alias': 'work',
                 'instanceUrl': 'https://example.my.salesforce.com',
-                'id': '00D000000000123', 'connectedStatus': 'Connected',
+                'id': '00D000000000123',
+                'connectedStatus': 'Connected',
             }})
+        if command[1:3] == ['sobject', 'describe']:
+            name = command[command.index('--sobject') + 1]
+            return _result({'status': 0, 'result': _metadata(name)})
         query = command[command.index('--query') + 1]
-        assert 'FROM ServiceAppointment' in query
-        page = [] if ' AND Id > ' in query else rows
-        return _result({'status': 0, 'result': {'records': page}})
+        assert 'FROM ServiceAppointment' not in query
+        rows = work_rows if f' FROM {WORK_ORDER_OBJECT} ' in query else lead_rows
+        return _result({'status': 0, 'result': {
+            'records': rows,
+            'done': True,
+            'totalSize': len(rows),
+        }})
 
-    adapter = SalesforceCliAdapter(runner=runner, executable='/fake/sf')
-    jobs = adapter.map_jobs()
+    jobs = SalesforceCliAdapter(runner=runner, executable='/fake/sf').map_jobs()
 
-    assert len(jobs) == 1
-    assert jobs[0] == MapJob(
-        source_id='0WO000000000001AAA', work_order_number='02257311',
-        lead_name='Customer One', lead_status='Working', latitude=47.25, longitude=-122.45,
-        source_record_url='https://example.my.salesforce.com/lightning/r/Lead/00Q000000000001AAA/view',
+    assert jobs == (
+        MapJob(
+            source_id=WORK_ONE,
+            work_order_number='02257311',
+            lead_name='Customer One',
+            lead_status='Working',
+            latitude=47.25,
+            longitude=-122.45,
+            source_record_url='https://example.my.salesforce.com/lightning/r/Lead/'
+                              + LEAD_ONE + '/view',
+        ),
     )
-    query = next(call[call.index('--query') + 1] for call in calls if call[1:3] == ['data', 'query'])
-    assert 'Lead__r.Latitude' in query and 'Lead__r.Longitude' in query
-    assert "WorkType.Name LIKE '%Sales%'" in query
-    assert 'Do Not Call' not in query and 'Scheduled Confirmed' not in query
+    data_queries = [
+        call[call.index('--query') + 1]
+        for call in calls if call[1:3] == ['data', 'query']
+    ]
+    assert data_queries == [
+        f'SELECT Id, WorkOrderNumber, {LEAD_FIELD} FROM {WORK_ORDER_OBJECT} '
+        'WHERE WorkOrderNumber != null ORDER BY Id ASC LIMIT 1000',
+        "SELECT Id, Name, Status, Latitude, Longitude FROM Lead WHERE Id IN "
+        "('00Q000000000001AAA', '00Q000000000002AAA') ORDER BY Id ASC LIMIT 1000",
+    ]
 
 
 def test_map_service_excludes_only_requested_lead_statuses():
     jobs = tuple(
         MapJob(str(i), f'WO{i}', f'Lead {i}', status, 47 + i / 100, -122, f'https://example/{i}')
-        for i, status in enumerate(('New', 'Scheduled', 'Do Not Call', 'Scheduled Confirmed', 'Working'))
+        for i, status in enumerate(
+            ('New', 'Scheduled', 'Do Not Call', 'Scheduled Confirmed', 'Working')
+        )
     )
 
     class Source:
@@ -114,8 +161,11 @@ def test_map_web_returns_jobs_and_mod_pdf():
 
     class Service:
         def jobs(self):
-            return (MapJob('wo', '02257311', 'Customer', 'Working', 47.25, -122.45,
-                           'https://example.my.salesforce.com/lightning/r/Lead/00Q/view'),)
+            return (MapJob(
+                'wo', '02257311', 'Customer', 'Working', 47.25, -122.45,
+                'https://example.my.salesforce.com/lightning/r/Lead/00Q/view',
+            ),)
+
         def mod_sheet(self, number):
             assert number == '02257311'
             return b'%PDF-map'
@@ -133,16 +183,25 @@ def test_map_web_returns_jobs_and_mod_pdf():
     assert pdf.data == b'%PDF-map'
 
 
-def test_job_map_python_stays_vendor_neutral_and_frontend_uses_free_osm_tiles():
+def test_job_map_stays_vendor_neutral_and_uses_openfreemap():
     root = Path(__file__).resolve().parents[1]
     for path in (root / 'job_map').glob('*.py'):
         assert 'salesforce' not in path.read_text().casefold()
+
     template = (root / 'templates/job_map.html').read_text()
-    assert 'leaflet@1.9.4' in template
+    assert 'maplibre-gl@5.22.0' in template
+    assert 'jobMapMarket' not in template
+    assert 'jobMapRep' not in template
+
     runtime = (root / 'static/job_map/map.js').read_text()
-    assert 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' in runtime
+    assert "style: 'https://tiles.openfreemap.org/styles/liberty'" in runtime
+    assert 'tile.openstreetmap.org' not in runtime
     assert "action('MOD Sheet'" in runtime
     assert "action('Open in Salesforce'" in runtime
+
     app = (root / 'app.py').read_text()
-    assert 'https://tile.openstreetmap.org' in app
-    assert 'https://unpkg.com' in app
+    web = (root / 'job_map/web.py').read_text()
+    assert 'https://tiles.openfreemap.org' not in app
+    assert 'https://tile.openstreetmap.org' not in app
+    assert 'https://tiles.openfreemap.org' in web
+    assert "worker-src 'self' blob:" in web
