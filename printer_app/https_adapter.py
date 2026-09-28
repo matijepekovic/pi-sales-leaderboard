@@ -87,15 +87,7 @@ def _caddyfile(port):
 https://:443 {{
     tls {SERVER_CERT} {SERVER_KEY}
 
-    @approved_secure_surface path \
-        /gallery* \
-        /static/gallery* \
-        /map* \
-        /static/job_map* \
-        /static/style.css \
-        /login \
-        /change-password \
-        /logout
+    @approved_secure_surface path /gallery* /static/gallery* /map* /static/job_map* /static/style.css /login /change-password /logout
 
     handle @approved_secure_surface {{
         reverse_proxy {backend} {{
