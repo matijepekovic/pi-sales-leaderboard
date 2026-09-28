@@ -9,8 +9,23 @@
 {% block content %}
 <div class="heading job-map-heading">
   <div><p class="eyebrow">JOBS</p><h1>Map</h1></div>
-  <p id="jobMapStatus" class="muted" role="status" aria-live="polite">Loading jobs…</p>
+  <p id="jobMapStatus" class="muted" role="status" aria-live="polite">Finding your location…</p>
+</div>
+<div class="job-map-controls" aria-label="Map filters">
+  <label>
+    <span>Market</span>
+    <select id="jobMapMarket" disabled><option value="">All markets</option></select>
+  </label>
+  <label>
+    <span>Product</span>
+    <select id="jobMapProduct" disabled><option value="">All products</option></select>
+  </label>
+  <label>
+    <span>Rep</span>
+    <select id="jobMapRep" disabled><option value="">All reps</option></select>
+  </label>
+  <button id="jobMapLocate" type="button">Refresh location</button>
 </div>
 <p id="jobMapError" class="notice error" hidden></p>
-<div id="jobMap" class="job-map" data-jobs-url="{{ url_for('job_map.jobs') }}" data-mod-sheet-url="{{ url_for('job_map.mod_sheet') }}" aria-label="Job map"></div>
+<div id="jobMap" class="job-map" data-jobs-url="{{ url_for('job_map.jobs') }}" data-mod-sheet-url="{{ url_for('job_map.mod_sheet') }}" data-radius-miles="{{ max_radius_miles }}" aria-label="Job map"></div>
 {% endblock %}

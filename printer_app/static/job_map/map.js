@@ -1,15 +1,36 @@
 (() => {
   const node = document.getElementById('jobMap');
   if (!node) return;
+
   const status = document.getElementById('jobMapStatus');
   const error = document.getElementById('jobMapError');
+  const marketFilter = document.getElementById('jobMapMarket');
+  const productFilter = document.getElementById('jobMapProduct');
+  const repFilter = document.getElementById('jobMapRep');
+  const locateButton = document.getElementById('jobMapLocate');
+  const filters = [marketFilter, productFilter, repFilter];
+  const configuredRadiusMiles = Number(node.dataset.radiusMiles);
+
+  if (!Number.isFinite(configuredRadiusMiles) || configuredRadiusMiles <= 0) {
+    status.textContent = 'Map unavailable';
+    error.textContent = 'The map radius configuration is invalid.';
+    error.hidden = false;
+    return;
+  }
+
   if (!window.L) {
     status.textContent = 'Map unavailable';
     error.textContent = 'The map library could not load.';
     error.hidden = false;
     return;
   }
-  const map = L.map(node, {preferCanvas: true}).setView([39.5, -98.35], 4);
+
+  const map = L.map(node, {preferCanvas: true});
+  const markers = L.layerGroup().addTo(map);
+  const locationLayer = L.layerGroup().addTo(map);
+  let jobs = [];
+  let radiusMiles = configuredRadiusMiles;
+
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap contributors',
@@ -36,6 +57,15 @@
     wrapper.className = 'job-map-popup';
     wrapper.append(text('strong', job.lead_name || ('Work order ' + job.work_order_number)));
     wrapper.append(text('small', 'Work order ' + job.work_order_number));
+
+    const details = [];
+    if (job.market) details.push('Market: ' + job.market);
+    if (job.product_type) details.push('Product: ' + job.product_type);
+    if (Array.isArray(job.assigned_reps) && job.assigned_reps.length) {
+      details.push('Rep: ' + job.assigned_reps.join(', '));
+    }
+    for (const detail of details) wrapper.append(text('small', detail));
+
     const actions = document.createElement('div');
     actions.className = 'job-map-popup-actions';
     const mod = new URL(node.dataset.modSheetUrl, window.location.href);
@@ -46,30 +76,155 @@
     return wrapper;
   }
 
-  fetch(node.dataset.jobsUrl, {headers: {'Accept': 'application/json'}})
-    .then(async response => {
-      const payload = await response.json();
-      if (!response.ok || !payload.ok) throw new Error(payload.error || 'Could not load jobs.');
-      return payload.jobs || [];
-    })
-    .then(jobs => {
-      const bounds = [];
-      for (const job of jobs) {
-        if (!Number.isFinite(job.latitude) || !Number.isFinite(job.longitude)) continue;
-        L.marker([job.latitude, job.longitude]).addTo(map).bindPopup(popup(job));
-        bounds.push([job.latitude, job.longitude]);
-      }
-      status.textContent = bounds.length + (bounds.length === 1 ? ' job mapped' : ' jobs mapped');
-      if (bounds.length === 1) map.setView(bounds[0], 15);
-      else if (bounds.length > 1) map.fitBounds(bounds, {padding: [24, 24], maxZoom: 15});
-      else {
-        error.textContent = 'No mapped jobs matched the current status rules.';
-        error.hidden = false;
-      }
-    })
-    .catch(exc => {
-      status.textContent = 'Map unavailable';
-      error.textContent = String(exc.message || exc);
+  function normalized(value) {
+    return String(value || '').trim().toLocaleLowerCase();
+  }
+
+  function optionsFor(values) {
+    const unique = new Map();
+    for (const value of values) {
+      const clean = String(value || '').trim();
+      if (clean) unique.set(normalized(clean), clean);
+    }
+    return Array.from(unique.values()).sort((a, b) => a.localeCompare(b));
+  }
+
+  function fillSelect(select, values, allLabel) {
+    const current = select.value;
+    select.replaceChildren();
+    const all = document.createElement('option');
+    all.value = '';
+    all.textContent = allLabel;
+    select.append(all);
+    for (const value of optionsFor(values)) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = value;
+      select.append(option);
+    }
+    select.value = Array.from(select.options).some(option => option.value === current) ? current : '';
+  }
+
+  function populateFilters() {
+    fillSelect(marketFilter, jobs.map(job => job.market), 'All markets');
+    fillSelect(productFilter, jobs.map(job => job.product_type), 'All products');
+    fillSelect(repFilter, jobs.flatMap(job => Array.isArray(job.assigned_reps) ? job.assigned_reps : []), 'All reps');
+    for (const select of filters) select.disabled = false;
+  }
+
+  function matches(job) {
+    if (marketFilter.value && normalized(job.market) !== normalized(marketFilter.value)) return false;
+    if (productFilter.value && normalized(job.product_type) !== normalized(productFilter.value)) return false;
+    if (repFilter.value) {
+      const reps = Array.isArray(job.assigned_reps) ? job.assigned_reps : [];
+      if (!reps.some(rep => normalized(rep) === normalized(repFilter.value))) return false;
+    }
+    return true;
+  }
+
+  function renderJobs() {
+    markers.clearLayers();
+    let shown = 0;
+    for (const job of jobs) {
+      if (!matches(job)) continue;
+      if (!Number.isFinite(job.latitude) || !Number.isFinite(job.longitude)) continue;
+      L.marker([job.latitude, job.longitude]).addTo(markers).bindPopup(popup(job));
+      shown += 1;
+    }
+    const noun = jobs.length === 1 ? 'job' : 'jobs';
+    status.textContent = shown === jobs.length
+      ? shown + ' ' + noun + ' within ' + radiusMiles + ' miles'
+      : shown + ' of ' + jobs.length + ' jobs shown within ' + radiusMiles + ' miles';
+    if (jobs.length && !shown) {
+      error.textContent = 'No nearby jobs match the selected filters.';
       error.hidden = false;
-    });
+    } else {
+      error.hidden = true;
+    }
+  }
+
+  function showLocation(latitude, longitude) {
+    locationLayer.clearLayers();
+    const radiusMeters = radiusMiles * 1609.344;
+    const circle = L.circle([latitude, longitude], {
+      radius: radiusMeters,
+      weight: 2,
+      opacity: 0.7,
+      fillOpacity: 0.04,
+    }).addTo(locationLayer);
+    L.circleMarker([latitude, longitude], {
+      radius: 7,
+      weight: 3,
+      fillOpacity: 1,
+    }).addTo(locationLayer).bindTooltip('Your location');
+    map.fitBounds(circle.getBounds(), {padding: [18, 18]});
+  }
+
+  async function fetchNearby(latitude, longitude) {
+    const url = new URL(node.dataset.jobsUrl, window.location.href);
+    url.searchParams.set('lat', String(latitude));
+    url.searchParams.set('lon', String(longitude));
+    const response = await fetch(url.toString(), {headers: {'Accept': 'application/json'}});
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error || 'Could not load nearby jobs.');
+    radiusMiles = Number.isFinite(payload.radius_miles) ? payload.radius_miles : configuredRadiusMiles;
+    jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+    populateFilters();
+    showLocation(latitude, longitude);
+    renderJobs();
+    if (!jobs.length) {
+      error.textContent = 'No mapped jobs were found within ' + radiusMiles + ' miles.';
+      error.hidden = false;
+    }
+  }
+
+  function loadNearby() {
+    if (!navigator.geolocation) {
+      status.textContent = 'Location required';
+      error.textContent = 'This browser does not provide location access.';
+      error.hidden = false;
+      return;
+    }
+    locateButton.disabled = true;
+    for (const select of filters) select.disabled = true;
+    status.textContent = 'Finding your location…';
+    error.hidden = true;
+
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        const latitude = Number(position.coords.latitude);
+        const longitude = Number(position.coords.longitude);
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+          throw new Error('Your device returned an invalid location.');
+        }
+        radiusMiles = configuredRadiusMiles;
+        showLocation(latitude, longitude);
+        status.textContent = 'Loading jobs within ' + radiusMiles + ' miles…';
+        fetchNearby(latitude, longitude)
+          .catch(exc => {
+            jobs = [];
+            markers.clearLayers();
+            status.textContent = 'Map unavailable';
+            error.textContent = String(exc.message || exc);
+            error.hidden = false;
+          })
+          .finally(() => {
+            locateButton.disabled = false;
+          });
+      },
+      geolocationError => {
+        status.textContent = 'Location required';
+        error.textContent = geolocationError && geolocationError.code === 1
+          ? 'Allow location access to load jobs near you.'
+          : 'Your location could not be determined. Try again.';
+        error.hidden = false;
+        locateButton.disabled = false;
+      },
+      {enableHighAccuracy: false, timeout: 10000, maximumAge: 60000},
+    );
+  }
+
+  for (const select of filters) select.addEventListener('change', renderJobs);
+  locateButton.addEventListener('click', loadNearby);
+  loadNearby();
 })();
