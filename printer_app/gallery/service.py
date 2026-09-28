@@ -213,7 +213,14 @@ class GalleryService:
             self.files.remove('crops', ident)
             self.files.remove('ocr', ident)
             self.repository.forget(ident)
-        self.repository.housekeeping(time.time() - days * 86400)
+        review_cutoff = time.time() - days * 86400
+        for page in self.repository.expiring_review_pages(review_cutoff):
+            try:
+                self.files.remove('pages', page['file_id'])
+            except OSError:
+                continue
+            self.repository.forget_review_page(page['import_id'], page['page'], page['file_id'])
+        self.repository.housekeeping(review_cutoff)
 
     def clear_temporary(self):
         self.initialize()
@@ -334,6 +341,21 @@ class GalleryService:
                 if day and entry.get('date_status') == 'printed':
                     evidence['dates'] = (checked_date(day),)
                 items[ident]['work_order_evidence'] = evidence
+        review_pages = []
+        for entry in manifest.get('review_pages', ()):
+            page = int(entry.get('page', 0))
+            source = directory / str(entry.get('file', ''))
+            if page < 1 or not source.is_file():
+                raise ValueError('Gallery review page artifact is missing')
+            file_id = hashlib.sha256(f"{job['id']}:review-page:{page}".encode()).hexdigest()
+            self.files.publish(source, file_id, category='pages')
+            review_pages.append(dict(
+                page=page,
+                file_id=file_id,
+                bytes=int(entry.get('bytes', self.files.path('pages', file_id).stat().st_size)),
+                reason=str(entry.get('reason') or 'no-recognized-forms'),
+            ))
+
         warnings = list(manifest.get('warnings', []))
         if discarded_blank_notes:
             warnings.append(
@@ -344,7 +366,22 @@ class GalleryService:
         publication = dict(prepared=len(manifest['items']), saved=len(items),
                            skipped_existing=skipped_existing, skipped_blank_notes=discarded_blank_notes,
                            needs_notes_review=needs_notes_review)
-        self.repository.finish(job['id'], list(items.values()), '; '.join(warnings), publication=publication)
+        completed = self.repository.finish(
+            job['id'],
+            list(items.values()),
+            '; '.join(warnings),
+            publication=publication,
+            review_pages=review_pages,
+            # A run with recognized form boxes is authoritative. If every page
+            # is still unrecognized, keep the last usable cards while exposing
+            # the full pages for review.
+            supersede_previous=bool(manifest.get('items')),
+        )
+        for retired in completed.get('retired_item_ids', ()):
+            self.files.remove('crops', retired)
+            self.files.remove('ocr', retired)
+        for retired in completed.get('retired_review_file_ids', ()):
+            self.files.remove('pages', retired)
         self._remove_morning_cards()
         # Reference enrichment is optional. With no matching reference snapshot,
         # these calls are no-ops and Gallery behaves exactly as before.
@@ -654,7 +691,17 @@ class GalleryService:
             result['source_available'] = self.files.path('spool',ident).is_file()
             for item in result.get('items', ()):
                 item['ocr_field_available'] = self.files.path('ocr', item['id']).is_file()
+            for page in result.get('review_pages', ()):
+                page['available'] = self.files.path('pages', page['file_id']).is_file()
         return result
+
+    def import_review_page(self, ident, page):
+        self.initialize()
+        review = self.repository.import_review_page(ident, int(page))
+        if not review:
+            return None
+        path = self.files.path('pages', review['file_id'])
+        return dict(review, path=path) if path.is_file() else None
 
     def import_item(self, import_id, item_id):
         """Administrative view of one retained card, including review-only cards."""
@@ -687,13 +734,12 @@ class GalleryService:
         return claimed
 
     def reprocess(self, ident):
-        """Discard generated gallery data so the same original PDF can be offered again."""
+        """Queue the same PDF again without destroying the last usable Gallery result."""
         self.initialize()
         reset = self.repository.reset_for_reprocess(ident)
         with self.files.lock():
-            for item_id in reset['item_ids']:
-                self.files.remove('crops', item_id)
-                self.files.remove('ocr', item_id)
+            # Only incomplete source/work state is discarded. Published cards,
+            # notes and review-page artifacts stay until a successful replacement.
             self.files.remove('spool', ident)
             self.files.remove('work', ident)
         return reset
