@@ -164,17 +164,32 @@
     const url = new URL(node.dataset.jobsUrl, window.location.href);
     url.searchParams.set('lat', String(latitude));
     url.searchParams.set('lon', String(longitude));
-    const response = await fetch(url.toString(), {headers: {'Accept': 'application/json'}});
-    const payload = await response.json();
-    if (!response.ok || !payload.ok) throw new Error(payload.error || 'Could not load nearby jobs.');
-    radiusMiles = Number.isFinite(payload.radius_miles) ? payload.radius_miles : configuredRadiusMiles;
-    jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
-    populateFilters();
-    showLocation(latitude, longitude);
-    renderJobs();
-    if (!jobs.length) {
-      error.textContent = 'No mapped jobs were found within ' + radiusMiles + ' miles.';
-      error.hidden = false;
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 30000);
+    try {
+      const response = await fetch(url.toString(), {
+        headers: {'Accept': 'application/json'},
+        signal: controller.signal,
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || 'Could not load nearby jobs.');
+      radiusMiles = Number.isFinite(payload.radius_miles) ? payload.radius_miles : configuredRadiusMiles;
+      jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+      populateFilters();
+      showLocation(latitude, longitude);
+      renderJobs();
+      if (!jobs.length) {
+        error.textContent = 'No mapped jobs were found within ' + radiusMiles + ' miles.';
+        error.hidden = false;
+      }
+    } catch (exc) {
+      if (exc && exc.name === 'AbortError') {
+        throw new Error('Nearby jobs took too long to load. Tap Refresh location to try again.');
+      }
+      throw exc;
+    } finally {
+      window.clearTimeout(timeout);
     }
   }
 
