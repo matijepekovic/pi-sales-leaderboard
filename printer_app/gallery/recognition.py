@@ -222,6 +222,25 @@ def _work_order_candidates(text, *, labeled=False):
     ))
 
 
+def _without_form_rules(source):
+    """Suppress long printed rules in a disposable whole-image OCR copy."""
+    import cv2
+    import numpy as np
+
+    height, width = source.shape
+    ink = cv2.threshold(source, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+    rules = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN, np.ones((1, max(30, width // 25)), np.uint8),
+    )
+    rules |= cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN,
+        np.ones((max(30, min(height // 12, width // 25)), 1), np.uint8),
+    )
+    disposable = source.copy()
+    disposable[cv2.dilate(rules, np.ones((3, 3), np.uint8)) > 0] = 255
+    return disposable
+
+
 def _notes_labels(words, offset):
     """Return literal printed MOD Notes label bounds, without fuzzy text guesses."""
     normalize = lambda value: re.sub(r'[^a-z0-9]', '', value.lower())
@@ -274,19 +293,31 @@ def mod_notes_present(source, registration, ocr_copy):
             probes.append((source[top:stop, left:], (left, top), psm))
 
     crop = None
-    for image, (x, y), psm in probes:
-        if not image.size:
-            continue
-        padded = cv2.copyMakeBorder(image, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=255)
-        try:
-            words = _run_tesseract(padded, ocr_copy, psm=psm)
-        except subprocess.SubprocessError:
-            continue
-        labels = _notes_labels(words, (x - 12, y - 12))
-        if len(labels) != 1:
-            continue
-        label = labels[0]
-        crop, bounds = labelled_notes_crop(source, label)
+    for suppress_rules in (False, True):
+        # Some OCR versions join the bordering rule to MOD and read IMOD.
+        # Retry the same literal-label probes without long rules only after
+        # every original view fails. Whole-image rule lengths protect glyphs.
+        disposable = _without_form_rules(source) if suppress_rules else None
+        for original, (x, y), psm in probes:
+            if not original.size:
+                continue
+            image = original
+            if disposable is not None:
+                h, w = original.shape
+                image = disposable[y:y+h, x:x+w].copy()
+                image[original == 255] = 255  # Preserve the existing cell mask.
+            padded = cv2.copyMakeBorder(image, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=255)
+            try:
+                words = _run_tesseract(padded, ocr_copy, psm=psm)
+            except subprocess.SubprocessError:
+                continue
+            labels = _notes_labels(words, (x - 12, y - 12))
+            if len(labels) != 1:
+                continue
+            label = labels[0]
+            crop, bounds = labelled_notes_crop(source, label)
+            if crop is not None:
+                break
         if crop is not None:
             break
     if crop is None:
@@ -499,9 +530,6 @@ def _recognize_template(source, registration, ocr_copy, known_date, debug_path=N
 
 def _recognize_legacy(source, ocr_copy, known_date, registration=None):
     """Fallback OCR the whole isolated card so other identity fields can match it."""
-    import cv2
-    import numpy as np
-
     h, w = source.shape
     registration = registration if registration is not None else register_form(source)
     header_bottom = min(h * .27, w * .15)
@@ -509,13 +537,7 @@ def _recognize_legacy(source, ocr_copy, known_date, registration=None):
         _, bounds = field_crop(source, registration, 'scheduled_start')
         if bounds[3] > bounds[1]:
             header_bottom = bounds[3]
-    ink = cv2.threshold(source, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
-    rules = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((1, max(30, w//25)), np.uint8))
-    rules |= cv2.morphologyEx(
-        ink, cv2.MORPH_OPEN, np.ones((max(30, min(h//12, w//25)), 1), np.uint8)
-    )
-    disposable = source.copy()
-    disposable[cv2.dilate(rules, np.ones((3, 3), np.uint8)) > 0] = 255
+    disposable = _without_form_rules(source)
 
     candidates = []
     reads = []

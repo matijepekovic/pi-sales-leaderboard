@@ -16,7 +16,7 @@ def raster():
     return pytest.importorskip('cv2'), pytest.importorskip('numpy')
 
 
-@pytest.mark.parametrize('text', ['MODNotes1', 'MODNotes12', 'MOD1Notes'])
+@pytest.mark.parametrize('text', ['MODNotes1', 'MODNotes12', 'MOD1Notes', 'IMODNotes'])
 def test_notes_label_never_absorbs_appended_numbers(text):
     word = dict(text=text, left=10, top=10, width=140, height=20)
     assert recognition._notes_labels([word], (0, 0)) == []
@@ -24,6 +24,23 @@ def test_notes_label_never_absorbs_appended_numbers(text):
         dict(word, text='MOD', width=45),
         dict(word, text='Notes12', left=60, width=90),
     ], (0, 0)) == []
+
+
+def test_ocr_rule_suppression_preserves_original_and_numerical_note(raster):
+    from printer_app.tests.gallery_form_fixture import form_image
+
+    cv2, np = raster
+    source, registration = form_image(raster)
+    field = next(item for item in TEMPLATE_FIELDS if item.key == 'mod_notes')
+    label = map_box(registration, field.label_box)
+    cv2.putText(source, '123', (label[2] + 6, label[3] + 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, 80, 2)
+    before = source.copy()
+    cleaned = recognition._without_form_rules(source)
+    assert np.array_equal(source, before)
+    assert (source == 80).any()
+    assert np.all(cleaned[source == 80] == 80)
+    assert (source != cleaned).any()
 
 
 @pytest.mark.parametrize('merged', [False, True])
@@ -211,6 +228,47 @@ def test_blank_screenshot_clipped_right_still_excludes_footer(rendered_blank, tm
     assert recognition.mod_notes_present(
         source, register_form(source), tmp_path / 'notes.png',
     ) is False
+
+
+@pytest.mark.parametrize('has_note', [False, True])
+def test_joined_border_label_uses_cleaned_ocr_without_changing_note_ink(
+        rendered_blank, tmp_path, raster, monkeypatch, has_note):
+    cv2, np = raster
+    source = rendered_blank.copy()
+    registration = register_form(source)
+    if has_note:
+        _, (left, top, _, _) = recognition.field_crop(source, registration, 'mod_notes')
+        cv2.putText(source, '123', (left + 260, top + 45),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.3, 80, 3)
+    before = source.copy()
+    read = recognition._run_tesseract
+    suppress = recognition._without_form_rules
+    cleaned = []
+    joined_labels = []
+
+    def suppress_rules(image):
+        cleaned.append(True)
+        return suppress(image)
+
+    def joined_border_read(image, *args, **kwargs):
+        words = read(image, *args, **kwargs)
+        if not cleaned:
+            for word in words:
+                letters = ''.join(value for value in word['text'].lower() if value.isalpha())
+                if letters in ('mod', 'modnotes', 'imod', 'imodnotes'):
+                    joined_labels.append(True)
+                    word['text'] = 'IMODNotes' if letters.endswith('notes') else 'IMOD'
+        return words
+
+    monkeypatch.setattr(recognition, '_without_form_rules', suppress_rules)
+    monkeypatch.setattr(recognition, '_run_tesseract', joined_border_read)
+    # Force the independent label search, as a screenshot with bad registration
+    # would. The simulated OCR error is rejected, not accepted as a fuzzy label.
+    unknown = FormRegistration(0, 0, source.shape[1], 0, source.shape[0])
+    result = recognition.mod_notes_present(source, unknown, tmp_path / 'notes.png')
+    assert joined_labels and cleaned == [True]
+    assert result is has_note
+    assert np.array_equal(source, before)
 
 
 @pytest.mark.parametrize('failure', ['unreadable', 'ocr-error'])
