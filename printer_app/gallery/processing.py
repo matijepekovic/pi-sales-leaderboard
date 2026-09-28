@@ -25,7 +25,9 @@ from recognition import recognize
 from processing_contract import RETRYABLE_EXIT
 
 
-CHECKPOINT_VERSION = 1
+# Old OCR decisions could count the printed MOD Notes label as content and let
+# a blank placeholder establish the scan's date. Re-read those cached pages.
+CHECKPOINT_VERSION = 2
 CHECKPOINT = 'checkpoint.json'
 MANIFEST = 'manifest.json'
 CROP_FILE = re.compile(r'^\d{4}-\d{3}\.png$')
@@ -212,7 +214,7 @@ def native_render_sizes(source, pages):
     return sizes
 
 
-def process(source, output, budget):
+def process(source, output, budget, *, origin='scan'):
     output.mkdir(parents=True, exist_ok=True)
     report_progress(output, 'inspect')
     info = subprocess.run(
@@ -286,7 +288,9 @@ def process(source, output, budget):
                     reading = recognize(
                         path, work, known_date=pdf_date, debug_path=ocr_path,
                     )
-                    if (pdf_date is None and reading.get('date_status') == 'printed'
+                    usable_date = (origin == 'morning' or
+                                   reading.get('mod_notes_present', True) is True)
+                    if (usable_date and pdf_date is None and reading.get('date_status') == 'printed'
                             and reading.get('document_date')):
                         pdf_date = reading['document_date']
                 except (OSError, ValueError, subprocess.SubprocessError):
@@ -298,6 +302,7 @@ def process(source, output, budget):
                         date_status='needs-date',
                         work_order_candidates=(),
                         work_order_reads=(),
+                        mod_notes_present=None,
                     )
                     manifest['warnings'].append(
                         f'Page {page} crop {part}: search text unavailable'
@@ -341,7 +346,8 @@ if __name__ == '__main__':
     os.environ['OMP_THREAD_LIMIT'] = '1'
     cv2.setNumThreads(1)
     try:
-        process(Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]))
+        process(Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]),
+                origin=sys.argv[4] if len(sys.argv) > 4 else 'scan')
     except (subprocess.TimeoutExpired, OSError, MemoryError):
         # Runtime/tool/storage interruptions are not source-data failures.
         # The worker keeps the PDF plus every page-complete checkpoint and retries.

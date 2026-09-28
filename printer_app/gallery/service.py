@@ -153,6 +153,7 @@ class GalleryService:
         number = self._checked_work_order(value)
         self.repository.correct_work_order(ident, number)
         self._enrich_reference_item(ident)
+        self._remove_morning_cards()
         return dict(work_order_number=number)
 
     def import_item_work_order(self, import_id, item_id, value):
@@ -161,6 +162,7 @@ class GalleryService:
         number = self._checked_work_order(value)
         result = self.repository.correct_import_item_work_order(import_id, item_id, number)
         self._enrich_reference_item(item_id)
+        self._remove_morning_cards()
         return dict(result, work_order_number=number)
 
     def item(self, ident):
@@ -188,6 +190,7 @@ class GalleryService:
         self.initialize()
         self.repository.correct_date(ident, checked_date(value))
         self._enrich_reference_item(ident)
+        self._remove_morning_cards()
 
     def summary(self, options):
         self.initialize()
@@ -226,10 +229,16 @@ class GalleryService:
         identities = {}
         origin = job.get('origin', 'scan')
         discarded_blank_notes = 0
+        skipped_existing = 0
+        needs_notes_review = 0
         for entry in manifest['items']:
             if origin == 'scan' and entry.get('mod_notes_present') is False:
                 discarded_blank_notes += 1
                 continue
+            notes_status = ('present' if entry.get('mod_notes_present') is True else 'unknown') \
+                if origin == 'scan' and 'mod_notes_present' in entry else 'legacy'
+            notes_unknown = notes_status == 'unknown'
+            needs_notes_review += notes_unknown
             revision = hashlib.sha256(f"{job['id']}:{entry['page']}:{entry['part']}".encode()).hexdigest()
             day = job.get('reference_day') if origin == 'morning' else entry['document_date']
             strict_scan = origin == 'scan' and 'work_order_candidates' in entry
@@ -253,7 +262,7 @@ class GalleryService:
                 # A cache miss does not establish that another independently
                 # observed candidate is absent from the source. Multiple reads
                 # must wait for a completed lookup covering every candidate.
-                if len(candidates) == 1 and len(resolved) == 1:
+                if not notes_unknown and len(candidates) == 1 and len(resolved) == 1:
                     number, _, reference = resolved[0]
                     candidates_pending = ()
                 else:
@@ -274,11 +283,11 @@ class GalleryService:
                     candidates_pending = ()
             if reference and not day:
                 day = reference.get('day') or day
-            if origin == 'morning' and day and self.repository.scans_received(day):
-                continue
             key = (day, work_order_key(number))
-            existing = self.repository.card_for_work_order(day, number)
+            dated_scan = origin != 'scan' or entry.get('date_status') in ('printed', 'confirmed')
+            existing = self.repository.card_for_work_order(day, number) if dated_scan and not notes_unknown else None
             if origin == 'morning' and existing:
+                skipped_existing += 1
                 continue
             ident = existing['id'] if existing else identities.get(key, revision) if all(key) else revision
             if all(key):
@@ -317,7 +326,8 @@ class GalleryService:
                 work_order_reads=reads,
                 recognition_revision=1 if (strict_scan or
                     ('lead_text' in entry and entry['text'].strip())) else 0,
-                origin=origin, image_revision=revision, replace_existing=bool(existing), require_identity=True)
+                origin=origin, image_revision=revision, replace_existing=bool(existing), require_identity=True,
+                mod_notes_status=notes_status)
             if strict_scan:
                 items[ident]['work_order_candidates'] = candidates_pending
                 evidence = normalize_work_order_evidence(entry.get('work_order_evidence'))
@@ -331,7 +341,10 @@ class GalleryService:
             )
         if manifest.get('skipped'):
             warnings.append('No recognized form boxes on pages: ' + ', '.join(map(str, manifest['skipped'])))
-        self.repository.finish(job['id'], list(items.values()), '; '.join(warnings))
+        publication = dict(prepared=len(manifest['items']), saved=len(items),
+                           skipped_existing=skipped_existing, skipped_blank_notes=discarded_blank_notes,
+                           needs_notes_review=needs_notes_review)
+        self.repository.finish(job['id'], list(items.values()), '; '.join(warnings), publication=publication)
         self._remove_morning_cards()
         # Reference enrichment is optional. With no matching reference snapshot,
         # these calls are no-ops and Gallery behaves exactly as before.
@@ -446,12 +459,14 @@ class GalleryService:
             clear_assigned_resource=include_resources and not assigned, **fields)
 
     def _remove_morning_cards(self):
-        for ident in self.repository.retired_morning_cards():
+        discarded = (*self.repository.retired_morning_cards(),
+                     *self.repository.discarded_scan_candidates())
+        for ident in discarded:
             try:
                 self.files.remove('crops', ident)
                 self.files.remove('ocr', ident)
             except OSError:
-                log.warning('Temporary card file cleanup will retry; the scanned cards are available.')
+                log.warning('Temporary card file cleanup will retry.')
                 continue
             self.repository.forget(ident)
 
@@ -555,7 +570,7 @@ class GalleryService:
             number = record.get('work_order_number', '')
             day, assigned, name, address, lead_source_id, sales_status = fields(record)
             for item in self.repository.work_order_items(number):
-                text = self._reference_text(item.get('text', ''), record, day,
+                text = self._reference_text(item.get('text', ''), record, item.get('document_date') or day,
                                             include_resources=assigned is not None)
                 changed += self.repository.apply_work_order_reference(
                     item['id'], item['work_order_key'], str(record.get('source_id') or ''),
@@ -583,7 +598,8 @@ class GalleryService:
             number, record = selected
             day, assigned, name, address, lead_source_id, sales_status = fields(record)
             text = self._reference_text(
-                item.get('text', ''), record, day, include_resources=assigned is not None
+                item.get('text', ''), record, item.get('document_date') or day,
+                include_resources=assigned is not None
             )
             applied = self.repository.apply_validated_work_order_reference(
                 item['id'], item['candidates'], number, str(record.get('source_id') or ''),
@@ -593,6 +609,7 @@ class GalleryService:
             )
             changed += applied
             validated += applied
+        self._remove_morning_cards()
         return dict(count=len(normalized), enriched=changed)
 
     def reference_dates(self):
@@ -650,7 +667,9 @@ class GalleryService:
     def approve_import_item(self, import_id, item_id):
         """Publish one review-only generated card to the normal Gallery."""
         self.initialize()
-        return self.repository.approve_import_item(import_id, item_id)
+        changed = self.repository.approve_import_item(import_id, item_id)
+        self._remove_morning_cards()
+        return changed
 
     def delete_import_item(self, import_id, item_id):
         """Delete exactly one generated card from this gallery job."""
@@ -708,6 +727,17 @@ class GalleryService:
             result = reader(self.files.path('crops', item['id']))
             if not isinstance(result, dict) or not isinstance(result.get('text'), str):
                 raise ValueError('Invalid recognition result')
+            if item.get('mod_notes_status') == 'unknown':
+                notes_present = result.get('mod_notes_present')
+                if notes_present is False:
+                    self.repository.discard_candidate(item['id'], item.get('image_revision'))
+                    self._remove_morning_cards()
+                    return True
+                status = 'present' if notes_present is True else 'unknown'
+                if not self.repository.update_notes_status(item['id'], item.get('image_revision'), status):
+                    return True
+                if status == 'unknown' or item.get('work_order_key') or item.get('work_order_candidates'):
+                    return True
             text = result['text'][:100000]
             candidates = tuple(result.get('work_order_candidates') or ())
             if 'work_order_candidates' in result:

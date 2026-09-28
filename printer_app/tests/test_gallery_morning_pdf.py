@@ -65,7 +65,7 @@ def test_rendered_morning_pdf_becomes_searchable_cards_then_yields_to_scan(tmp_p
     script = Path(__file__).resolve().parents[1] / 'gallery' / 'processing.py'
     environment = dict(os.environ, OMP_THREAD_LIMIT='1', OPENBLAS_NUM_THREADS='1')
     result = subprocess.run(
-        [sys.executable, str(script), str(source), str(directory), str(64 * 1048576)],
+        [sys.executable, str(script), str(source), str(directory), str(64 * 1048576), 'morning'],
         capture_output=True, text=True, timeout=300, env=environment,
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -105,10 +105,21 @@ def test_rendered_morning_pdf_becomes_searchable_cards_then_yields_to_scan(tmp_p
     assert not directory.exists()
 
     first = by_number['02012345']
-    removed_id = by_number['02023456']['id']
+    remaining_id = by_number['02023456']['id']
     gallery.note(first['id'], 'a' * 32, 'Synthetic Reviewer', 'Keep this appointment note')
-    # The arriving scan is a one-card PDF of the produced raster. Its already-read
-    # manifest tests publication/replacement without running the same OCR twice.
+    # A returned scan must contain actual MOD notes. Draw a synthetic note inside
+    # the observed notes cell and let the real recognition boundary verify it.
+    import cv2
+    import numpy as np
+    from printer_app.gallery.form_template import field_boxes, register_form
+    from printer_app.gallery.recognition import recognize
+    raster = cv2.imdecode(np.frombuffer(scan_image, np.uint8), cv2.IMREAD_GRAYSCALE)
+    registration = register_form(raster)
+    notes = next(box for field, box in field_boxes(raster, registration) if field.key == 'mod_notes')
+    left, top, right, bottom = notes
+    cv2.putText(raster, 'Called homeowner', (left + 15, top + (bottom - top) // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.9, 0, 3)
+    scan_image = cv2.imencode('.png', raster)[1].tobytes()
     scan_pdf = BytesIO()
     with image_module.open(BytesIO(scan_image)) as image:
         image.convert('RGB').save(scan_pdf, format='PDF')
@@ -118,21 +129,23 @@ def test_rendered_morning_pdf_becomes_searchable_cards_then_yields_to_scan(tmp_p
     scan_directory = gallery.files.path('work', scan_id)
     scan_directory.mkdir()
     (scan_directory / scan_entry['file']).write_bytes(scan_image)
+    scan_entry.update(recognize(scan_directory / scan_entry['file'], scan_directory, known_date=day))
+    assert scan_entry['mod_notes_present'] is True
     # The scan reader supplies only the exact work order; the source reference
     # supplies its date and customer fields even when OCR has no document date.
     assert tuple(scan_entry['work_order_candidates']) == ('02012345',)
     gallery.publish(scan_job, {'items': [scan_entry], 'warnings': [], 'skipped': []}, scan_directory)
 
     retained = gallery.search('', 0)['items']
-    assert len(retained) == 1
-    assert retained[0]['id'] == first['id']
-    assert retained[0]['origin'] == 'scan'
-    assert retained[0]['document_date'] == day
-    assert retained[0]['image_revision'] != first['image_revision']
+    assert len(retained) == 2
+    scanned = next(item for item in retained if item['id'] == first['id'])
+    assert scanned['origin'] == 'scan'
+    assert scanned['document_date'] == day
+    assert scanned['image_revision'] != first['image_revision']
     assert gallery.item(first['id'])['notes'][0]['body'] == 'Keep this appointment note'
     assert gallery.files.path('crops', first['id']).read_bytes() == scan_image
-    assert gallery.item(removed_id) is None
-    assert not gallery.files.path('crops', removed_id).exists()
+    assert gallery.item(remaining_id)['origin'] == 'morning'
+    assert gallery.files.path('crops', remaining_id).exists()
     assert gallery.search('Energy', 0)['total'] == 1
-    assert gallery.search('Entryway', 0)['total'] == 0
+    assert gallery.search('Entryway', 0)['total'] == 1
     assert not (tmp_path / 'printer.db').exists()

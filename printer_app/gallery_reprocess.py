@@ -13,6 +13,11 @@ class GalleryReprocessService:
             raise LookupError('This gallery job is unavailable.')
         if job['state'] not in ('COMPLETE', 'ERROR'):
             raise ValueError('Only completed or failed gallery jobs can be reprocessed.')
+        if job.get('origin') == 'morning':
+            raise ValueError(
+                'This sheet was generated from Salesforce, not received by email. '
+                'Open MOD Settings and use Pull Today to Gallery for fresh Salesforce placeholders.'
+            )
         source = self.routing.gallery_source(ident, job['filename'])
         reset = self.gallery.reprocess(ident)
         self.routing.requeue_gallery(source['message_id'], source['part'])

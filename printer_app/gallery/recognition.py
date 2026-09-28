@@ -14,13 +14,15 @@ import subprocess
 import sys
 
 if __package__:
-    from .form_template import TEMPLATE_FIELDS, field_boxes, field_crop, map_box, register_form
+    from .form_template import (TEMPLATE_FIELDS, field_boxes, field_crop,
+                                labelled_notes_crop, map_box, register_form)
     from .numeric_parser import numeric_tokens_from_text, parse_numeric_image
     from .policy import (REFERENCE_FIELD_LABELS, normalize_work_order_evidence,
                          scanned_work_order_candidates, work_order_fields,
                          work_order_schedule)
 else:
-    from form_template import TEMPLATE_FIELDS, field_boxes, field_crop, map_box, register_form
+    from form_template import (TEMPLATE_FIELDS, field_boxes, field_crop,
+                               labelled_notes_crop, map_box, register_form)
     from numeric_parser import numeric_tokens_from_text, parse_numeric_image
     from policy import (REFERENCE_FIELD_LABELS, normalize_work_order_evidence,
                         scanned_work_order_candidates, work_order_fields,
@@ -220,31 +222,112 @@ def _work_order_candidates(text, *, labeled=False):
     ))
 
 
-def mod_notes_present(source, registration):
-    """Return whether the known MOD Notes cell contains meaningful variable ink.
-
-    None means the card could not be registered confidently enough to judge it;
-    callers must retain those cards rather than guessing.
-    """
+def _without_form_rules(source):
+    """Suppress long printed rules in a disposable whole-image OCR copy."""
     import cv2
     import numpy as np
 
-    if source is None or not registration.matched:
-        return None
-    field = next(field for field in TEMPLATE_FIELDS if field.key == 'mod_notes')
-    boxes = dict((item.key, bounds) for item, bounds in field_boxes(source, registration))
-    left, top, right, bottom = boxes.get(field.key, (0, 0, 0, 0))
-    if right <= left or bottom <= top:
-        return None
-    crop = source[top:bottom, left:right].copy()
+    height, width = source.shape
+    ink = cv2.threshold(source, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+    rules = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN, np.ones((1, max(30, width // 25)), np.uint8),
+    )
+    rules |= cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN,
+        np.ones((max(30, min(height // 12, width // 25)), 1), np.uint8),
+    )
+    disposable = source.copy()
+    disposable[cv2.dilate(rules, np.ones((3, 3), np.uint8)) > 0] = 255
+    return disposable
 
-    # Remove only the printed MOD Notes label. The rest of the cell, including
-    # handwriting beneath the label, remains available for the emptiness check.
-    label_left, label_top, label_right, label_bottom = map_box(registration, field.label_box)
-    x0 = max(0, label_left - left - 3)
-    y0 = max(0, label_top - top - 3)
-    x1 = min(crop.shape[1], label_right - left + 5)
-    y1 = min(crop.shape[0], label_bottom - top + 5)
+
+def _notes_labels(words, offset):
+    """Return literal printed MOD Notes label bounds, without fuzzy text guesses."""
+    normalize = lambda value: re.sub(r'[^a-z0-9]', '', value.lower())
+    labels = []
+    for index, word in enumerate(words):
+        group = []
+        if normalize(word['text']) == 'modnotes':
+            group = [word]
+        elif normalize(word['text']) == 'mod' and index + 1 < len(words):
+            following = words[index + 1]
+            size = max(word['height'], following['height'])
+            if (normalize(following['text']) == 'notes'
+                    and abs(word['top'] - following['top']) <= size
+                    and 0 <= following['left'] - word['left'] - word['width'] <= size * 2):
+                group = [word, following]
+        if group:
+            labels.append((
+                min(item['left'] for item in group) + offset[0],
+                min(item['top'] for item in group) + offset[1],
+                max(item['left'] + item['width'] for item in group) + offset[0],
+                max(item['top'] + item['height'] for item in group) + offset[1],
+            ))
+    return labels
+
+
+def mod_notes_present(source, registration, ocr_copy):
+    """Check only an observed, bordered MOD Notes cell; uncertainty stays None."""
+    import cv2
+    import numpy as np
+
+    if source is None or not source.size:
+        return None
+    # A template crop is a cheap label-search proposal, never proof of the cell.
+    # Screenshots can register while placing its edge inside neighboring fields.
+    proposed, bounds = field_crop(source, registration, 'mod_notes')
+    probes = []
+    if proposed is not None and proposed.size:
+        height, width = proposed.shape
+        for fraction_y, fraction_x, psm in ((.10, .25, 6), (.20, .30, 6), (.20, .30, 11)):
+            probes.append((proposed[:round(height * fraction_y), :round(width * fraction_x)],
+                           bounds[:2], psm))
+    height, width = source.shape
+    top = round(min(height * .15, width * .08))
+    stop = round(min(height * .75, width * .60))
+    # A clipped screenshot can leave the label in the right half while nearby
+    # printed cells confuse whole-region line grouping. Keep both bounded views.
+    for fraction in (.50, .30):
+        left = round(width * fraction)
+        for psm in (11, 6):
+            probes.append((source[top:stop, left:], (left, top), psm))
+
+    crop = None
+    for suppress_rules in (False, True):
+        # Some OCR versions join the bordering rule to MOD and read IMOD.
+        # Retry the same literal-label probes without long rules only after
+        # every original view fails. Whole-image rule lengths protect glyphs.
+        disposable = _without_form_rules(source) if suppress_rules else None
+        for original, (x, y), psm in probes:
+            if not original.size:
+                continue
+            image = original
+            if disposable is not None:
+                h, w = original.shape
+                image = disposable[y:y+h, x:x+w].copy()
+                image[original == 255] = 255  # Preserve the existing cell mask.
+            padded = cv2.copyMakeBorder(image, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=255)
+            try:
+                words = _run_tesseract(padded, ocr_copy, psm=psm)
+            except subprocess.SubprocessError:
+                continue
+            labels = _notes_labels(words, (x - 12, y - 12))
+            if len(labels) != 1:
+                continue
+            label = labels[0]
+            crop, bounds = labelled_notes_crop(source, label)
+            if crop is not None:
+                break
+        if crop is not None:
+            break
+    if crop is None:
+        return None
+    # Mask the observed printed glyphs, not a template-sized rectangle whose
+    # location can drift into the blank area or nearby handwriting.
+    left, top = bounds[:2]
+    x0, y0 = max(0, label[0] - left - 1), max(0, label[1] - top - 1)
+    x1 = min(crop.shape[1], label[2] - left + 1)
+    y1 = min(crop.shape[0], label[3] - top + 1)
     if x1 > x0 and y1 > y0:
         crop[y0:y1, x0:x1] = 255
 
@@ -447,9 +530,6 @@ def _recognize_template(source, registration, ocr_copy, known_date, debug_path=N
 
 def _recognize_legacy(source, ocr_copy, known_date, registration=None):
     """Fallback OCR the whole isolated card so other identity fields can match it."""
-    import cv2
-    import numpy as np
-
     h, w = source.shape
     registration = registration if registration is not None else register_form(source)
     header_bottom = min(h * .27, w * .15)
@@ -457,13 +537,7 @@ def _recognize_legacy(source, ocr_copy, known_date, registration=None):
         _, bounds = field_crop(source, registration, 'scheduled_start')
         if bounds[3] > bounds[1]:
             header_bottom = bounds[3]
-    ink = cv2.threshold(source, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
-    rules = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((1, max(30, w//25)), np.uint8))
-    rules |= cv2.morphologyEx(
-        ink, cv2.MORPH_OPEN, np.ones((max(30, min(h//12, w//25)), 1), np.uint8)
-    )
-    disposable = source.copy()
-    disposable[cv2.dilate(rules, np.ones((3, 3), np.uint8)) > 0] = 255
+    disposable = _without_form_rules(source)
 
     candidates = []
     reads = []
@@ -517,7 +591,7 @@ def recognize(path, work, known_date=None, debug_path=None):
     ocr_copy = Path(work) / 'ocr.png'
     try:
         registration = register_form(source)
-        notes_present = mod_notes_present(source, registration)
+        notes_present = mod_notes_present(source, registration, ocr_copy)
         template = _recognize_template(
             source, registration, ocr_copy, known_date, debug_path=debug_path,
         )

@@ -130,7 +130,8 @@ def main():
                     env = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'OMP_THREAD_LIMIT': '1',
                            'OPENBLAS_NUM_THREADS': '1', 'PYTHONDONTWRITEBYTECODE': '1'}
                     with subprocess.Popen(['/usr/bin/python3', str(script), str(gallery.files.path('spool', job['id'])),
-                            str(directory), str(budget)], env=env, stdout=subprocess.DEVNULL,
+                            str(directory), str(budget), job.get('origin', 'scan')],
+                            env=env, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL) as child:
                         deadline = time.monotonic() + 1800
                         timed_out = False

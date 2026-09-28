@@ -349,6 +349,114 @@ def _rule_trace(mask, band, span_start, span_stop, inward, fallback):
     return np.rint(np.interp(np.arange(across), positions, edge)).astype(int)
 
 
+def labelled_notes_crop(image, label_box):
+    """Locate the notes cell from its observed label and visible boundaries.
+
+    This does not trust a global template match: a screenshot can resemble the
+    form while its rows have different heights. Broken rules must still meet
+    the same coverage check as other field borders; missing evidence returns
+    no crop. A right side clipped by the image needs explicit edge evidence.
+    The label itself is left for recognition to remove.
+    """
+    import cv2
+    import numpy as np
+
+    if image is None or not image.size:
+        return None, (0, 0, 0, 0)
+    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    height, width = gray.shape
+    label_left, label_top, label_right, label_bottom = label_box
+    label_height = max(8, label_bottom - label_top)
+    ink = cv2.threshold(gray, 225, 255, cv2.THRESH_BINARY_INV)[1]
+    # Short surviving segments recover faded printed rules. Coverage over the
+    # entire cell still has to pass _rule_band; text cannot supply a border.
+    horizontal = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN, np.ones((1, max(16, round(width * .02))), np.uint8),
+    )
+    vertical = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN, np.ones((max(12, round(width * .018)), 1), np.uint8),
+    ).T
+    span_top = label_top + label_height * 2
+    span_bottom = min(height, label_top + width * .16)
+    left = _rule_band(vertical, label_left - label_height * .5,
+                      span_top, span_bottom, label_height * 2)
+    right = _rule_band(vertical, width * .93, span_top, span_bottom, width * .10)
+    if left is None:
+        return None, (0, 0, 0, 0)
+    start, stop = left[1], right[0] if right is not None else width
+    top = _rule_band(horizontal, label_top, start + 8, stop - 8, label_height * 2)
+    bottom = _rule_band(horizontal, label_top + width * .20,
+                        start + 8, stop - 8, width * .08)
+    if right is None:
+        # Clipping invalidates the usual width/height relationship. Follow the
+        # visible left side to its bottom instead. An internal underline cannot
+        # end the cell while that side continues beneath it.
+        minimum_bottom = min(height, label_bottom + label_height * 2)
+        below_label = horizontal.copy()
+        below_label[:minimum_bottom] = 0
+        bottom = None
+        while True:
+            candidate = _rule_band(below_label, minimum_bottom, start + 8, stop - 8, height)
+            if candidate is None:
+                break
+            a, b = candidate
+            local = _rule_band(vertical, (left[0] + left[1]) / 2,
+                               max(label_bottom, a - label_height * 3), b,
+                               label_height * 2)
+            if local is not None:
+                lo, hi = max(0, local[0] - 2), min(width, local[1] + 2)
+                joins = ((horizontal[a:b, lo:hi] > 0).any()
+                         and (vertical[lo:hi, a:b] > 0).any())
+                # A faded gap does not prove that this side ended. Check the
+                # remaining image for its continuation, allowing local slope.
+                # Broad screenshot separators are horizontal rules, not sides.
+                later_lo = max(0, local[0] - label_height)
+                later_hi = min(width, local[1] + label_height)
+                later_y = min(height, b + 3)
+                after = ((vertical[later_lo:later_hi, later_y:] > 0)
+                         & (horizontal.T[later_lo:later_hi, later_y:] == 0))
+                continuation = after.any(axis=0)
+                continues = any(stop - start >= max(12, label_height)
+                                for start, stop in _runs(continuation, np))
+                if joins and not continues:
+                    bottom = candidate
+                    break
+            below_label[a:b] = 0
+    if (top is None or bottom is None or stop - start < width * .30
+            or bottom[0] - top[1] < width * .10):
+        return None, (0, 0, 0, 0)
+    # Recheck both sides over the actual observed cell height, not the probe.
+    left = _rule_band(vertical, start, top[1] + 8, bottom[0] - 8, label_height)
+    clipped_right = right is None
+    if clipped_right:
+        # A screenshot may end inside the cell. Accept that visible boundary
+        # only when BOTH printed horizontal rules actually reach the last
+        # image columns. A missing interior side with white margin is unknown.
+        edge = max(2, round(width * .0015))
+        if not all((horizontal[a:b, -edge:] > 0).any(axis=0).all()
+                   for a, b in (top, bottom)):
+            return None, (0, 0, 0, 0)
+    else:
+        right = _rule_band(vertical, stop, top[1] + 8, bottom[0] - 8, label_height)
+    if left is None or (right is None and not clipped_right):
+        return None, (0, 0, 0, 0)
+    x0, x1, y0, y1 = left[0], width if clipped_right else right[1], top[0], bottom[1]
+    if not (x0 <= label_left < label_right <= x1
+            and y0 <= label_bottom <= y1
+            and label_left - x0 < label_height * 2):
+        return None, (0, 0, 0, 0)
+    upper = _rule_trace(horizontal, top, x0, x1, 1, top[1])[x0:x1]
+    lower = _rule_trace(horizontal, bottom, x0, x1, -1, bottom[0])[x0:x1]
+    before = _rule_trace(vertical, left, y0, y1, 1, left[1])[y0:y1]
+    after = (np.full(y1 - y0, width) if clipped_right else
+             _rule_trace(vertical, right, y0, y1, -1, right[0])[y0:y1])
+    cell = gray[y0:y1, x0:x1].copy()
+    rows, columns = np.ogrid[y0:y1, x0:x1]
+    cell[(rows < upper) | (rows >= lower)
+         | (columns < before[:, None]) | (columns >= after[:, None])] = 255
+    return cell, (x0, y0, x1, y1)
+
+
 def field_crop(image, registration, key):
     """Extract one observed cell, masking its curved borders without clipping ink.
 
