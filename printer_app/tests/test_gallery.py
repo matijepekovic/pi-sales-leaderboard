@@ -180,6 +180,9 @@ def test_gallery_architecture_keeps_ocr_and_sql_out_of_printing():
     gallery_template = (root / 'templates/gallery.html').read_text()
     contract = (root / 'gallery/processing_contract.py').read_text()
     assert "CHECKPOINT = 'checkpoint.json'" in processing
+    assert "'review_pages': []" in processing
+    assert 'retain_review_page(output, pagefile, page, manifest, used, budget)' in processing
+    assert "category not in ('crops', 'ocr', 'pages')" in (root / 'gallery/files.py').read_text()
     assert 'save_checkpoint(output, pages, page, manifest, pdf_date)' in processing
     assert 'except (subprocess.TimeoutExpired, OSError, MemoryError)' in processing
     assert 'raise SystemExit(RETRYABLE_EXIT)' in processing
