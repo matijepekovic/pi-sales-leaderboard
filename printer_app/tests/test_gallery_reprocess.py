@@ -1,4 +1,4 @@
-"""Gallery Queue reprocess discards gallery output and redelivers from email only."""
+"""Gallery Queue reprocess safely redelivers email scans without losing review data."""
 import hashlib
 import time
 
@@ -44,7 +44,7 @@ def seed_gallery(gallery, filename, payload, *, origin='scan'):
     return ident, item_id
 
 
-def test_gallery_queue_reprocess_deletes_cards_and_queues_original_email_again(tmp_path):
+def test_gallery_queue_reprocess_keeps_cards_until_original_email_runs_again(tmp_path):
     env = tmp_path / 'env'; env.write_text('EMAIL_ENABLED=0\n')
     cfg = Config(data_dir=tmp_path, env_file=env, secret_key='s' * 64, email_enabled=False)
     app = create_app(cfg)
@@ -66,10 +66,10 @@ def test_gallery_queue_reprocess_deletes_cards_and_queues_original_email_again(t
     assert response.status_code == 303 and 'reprocess=1' in response.headers['Location']
 
     job = gallery.import_job(ident)
-    assert job['state'] == 'ERROR' and job['count'] == 0 and job['retained'] == 0
-    assert 'waiting to fetch the original email PDF again' in job['error']
-    assert not gallery.files.path('crops', item_id).exists()
-    assert gallery.item(item_id) is None
+    assert job['state'] == 'ERROR' and job['count'] == 1 and job['retained'] == 1
+    assert 'Existing Gallery cards are being kept' in job['error']
+    assert gallery.files.path('crops', item_id).read_bytes() == b'poorly-processed-card'
+    assert gallery.item(item_id)['lead_name'] == 'OLD RESULT'
     route = db.one('SELECT * FROM email_attachment_routes')
     assert route['gallery_delivered'] == 0 and route['print_document'] == 1
     assert db.one('SELECT state FROM processed_messages')['state'] == 'FETCHING'
@@ -78,13 +78,14 @@ def test_gallery_queue_reprocess_deletes_cards_and_queues_original_email_again(t
     assert db.rows('SELECT * FROM print_attempts ORDER BY id') == attempts_before
 
     # The next Gmail handoff uses the same PDF hash and turns this receipt back
-    # into a normal gallery WAITING job; no second print job is created here.
+    # into a normal Gallery WAITING job while the previous card stays visible.
     assert gallery.offer(filename, payload, cfg.gallery) == ident
     assert gallery.import_job(ident)['state'] == 'WAITING'
+    assert gallery.item(item_id)['lead_name'] == 'OLD RESULT'
     assert db.rows('SELECT * FROM jobs ORDER BY id') == jobs_before
 
 
-def test_reprocess_refuses_ambiguous_legacy_filename_without_deleting_gallery(tmp_path):
+def test_reprocess_uses_one_duplicate_email_instead_of_blocking(tmp_path):
     env = tmp_path / 'env'; env.write_text('EMAIL_ENABLED=0\n')
     cfg = Config(data_dir=tmp_path, env_file=env, secret_key='s' * 64, email_enabled=False)
     app = create_app(cfg)
@@ -97,16 +98,76 @@ def test_reprocess_refuses_ambiguous_legacy_filename_without_deleting_gallery(tm
 
     client = app.test_client()
     login_admin(client)
-    client.get('/gallery/queue')
     with client.session_transaction() as session:
         csrf = session['csrf']
     response = client.post(f'/gallery/jobs/{ident}/reprocess', data={'csrf': csrf})
-    assert response.status_code == 400
-    assert b'blocked rather than guessing' in response.data
-    assert gallery.import_job(ident)['state'] == 'COMPLETE'
+
+    assert response.status_code == 303
+    assert gallery.import_job(ident)['state'] == 'ERROR'
     assert gallery.files.path('crops', item_id).exists()
-    assert len(db.rows('SELECT * FROM email_attachment_routes WHERE gallery_delivered=1')) == 2
-    assert not db.rows('SELECT * FROM commands')
+    routes = db.rows('SELECT * FROM email_attachment_routes ORDER BY message_id')
+    assert sum(not row['gallery_delivered'] for row in routes) == 1
+    assert sum(bool(row['gallery_delivered']) for row in routes) == 1
+    assert [row['name'] for row in db.rows('SELECT name FROM commands')] == ['run-now']
+
+
+def test_unrecognized_pages_are_retained_in_the_same_job_review(gallery_admin):
+    _, gallery, client, _ = gallery_admin
+    ident = hashlib.sha256(b'pages-to-review').hexdigest()
+    gallery.repository.enqueue(ident, 'scan-with-missed-pages.pdf')
+    job = gallery.repository.claim()
+    directory = gallery.files.path('work', ident)
+    directory.mkdir()
+    artifact = b'\x89PNG\r\n\x1a\nsynthetic-page'
+    (directory / 'page-0005.review.png').write_bytes(artifact)
+
+    gallery.publish(job, {
+        'items': [],
+        'warnings': [],
+        'skipped': [5],
+        'review_pages': [{
+            'page': 5,
+            'file': 'page-0005.review.png',
+            'bytes': len(artifact),
+            'reason': 'no-recognized-forms',
+        }],
+    }, directory)
+
+    stored = gallery.import_job(ident)
+    assert stored['review_pages'][0]['page'] == 5
+    assert stored['review_pages'][0]['available']
+    page = client.get(f'/gallery/jobs/{ident}').get_data(as_text=True)
+    assert 'Page 5 · No forms detected' in page
+    assert 'Needs page review.' in page
+    response = client.get(f'/gallery/jobs/{ident}/review-pages/5/image')
+    assert response.status_code == 200
+    assert response.data == artifact
+
+
+def test_successful_reprocess_supersedes_stale_cards_only_after_finish(tmp_path):
+    env = tmp_path / 'env'; env.write_text('EMAIL_ENABLED=0\n')
+    cfg = Config(data_dir=tmp_path, env_file=env, secret_key='s' * 64, email_enabled=False)
+    app = create_app(cfg)
+    gallery = app.extensions['printer_gallery']
+    filename, payload = 'rerun.pdf', b'rerun-source'
+    ident, old_item = seed_gallery(gallery, filename, payload)
+    gallery.repository.reset_for_reprocess(ident)
+    gallery.repository.enqueue(ident, filename)
+    job = gallery.repository.claim()
+
+    replacement = hashlib.sha256((ident + ':2:1').encode()).hexdigest()
+    gallery.files.path('crops', replacement).write_bytes(b'new-card')
+    completed = gallery.repository.finish(
+        ident,
+        [dict(id=replacement, import_id=ident, page=2, part=1, filename=filename,
+              text='Lead Name: NEW RESULT', document_date='2026-09-17',
+              date_status='printed', bytes=8, created=time.time(), origin='scan')],
+        supersede_previous=True,
+    )
+
+    assert old_item in completed['retired_item_ids']
+    assert gallery.item(old_item) is None
+    assert gallery.item(replacement)['lead_name'] == 'NEW RESULT'
 
 
 def test_queue_page_shows_reprocess_only_for_finished_gallery_jobs(tmp_path):

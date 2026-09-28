@@ -42,6 +42,7 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         'gallery.queue_page',
         'gallery.import_job_page',
         'gallery.import_item_image',
+        'gallery.import_review_page_image',
         'gallery.import_item_ocr_field',
         'gallery.import_item_work_order_number',
         'gallery.approve_import_item',
@@ -292,6 +293,16 @@ def blueprint(service, access, intake_reader=None, reprocessor=None, admin_sessi
         if not path.is_file():
             abort(404)
         return send_file(path, mimetype='image/png', conditional=True)
+
+    @bp.get('/jobs/<ident>/review-pages/<int:page>/image')
+    def import_review_page_image(ident, page):
+        require_admin()
+        if not re.fullmatch(r'[a-f0-9]{64}', ident):
+            abort(404)
+        review = service.import_review_page(ident, page)
+        if not review:
+            abort(404)
+        return send_file(review['path'], mimetype='image/png', conditional=True)
 
     @bp.get('/jobs/<ident>/items/<item_id>/ocr-field')
     def import_item_ocr_field(ident, item_id):

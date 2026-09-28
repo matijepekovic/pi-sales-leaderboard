@@ -44,21 +44,26 @@ class AttachmentRoutingRepository:
         self.db.execute("DELETE FROM email_attachment_routes WHERE message_id=? AND part='mime-error'", (message_id,))
 
     def gallery_source(self, import_id: str, filename: str):
-        """Resolve one original email attachment without guessing across duplicates."""
+        """Resolve one usable original email attachment for gallery reprocessing.
+
+        Duplicate emails carrying the same attachment are interchangeable for this
+        workflow. Prefer an exact stored payload hash when available; legacy
+        gallery-only deliveries did not persist attachment bytes, so fall back to
+        the newest delivered route with the same filename.
+        """
         with self.db.connect() as c:
-            exact = list(c.execute("""SELECT r.message_id,r.part,r.filename FROM email_attachment_routes r
+            exact = c.execute("""SELECT r.message_id,r.part,r.filename FROM email_attachment_routes r
                 JOIN attachments a ON a.message_id=r.message_id AND a.part=r.part
-                WHERE r.import_document=1 AND r.gallery_delivered=1 AND a.sha256=?""", (import_id,)))
-            if len(exact) == 1:
-                return dict(exact[0])
-            matches = list(c.execute("""SELECT message_id,part,filename FROM email_attachment_routes
+                WHERE r.import_document=1 AND r.gallery_delivered=1 AND a.sha256=?
+                ORDER BY r.updated DESC,r.message_id DESC,r.part LIMIT 1""", (import_id,)).fetchone()
+            if exact:
+                return dict(exact)
+            match = c.execute("""SELECT message_id,part,filename FROM email_attachment_routes
                 WHERE import_document=1 AND gallery_delivered=1 AND filename=?
-                ORDER BY updated DESC LIMIT 3""", (filename,)))
-        if len(matches) == 1:
-            return dict(matches[0])
-        if not matches:
-            raise LookupError('The original email attachment is no longer available for gallery reprocessing.')
-        raise ValueError('More than one original email has this PDF filename. Reprocess is blocked rather than guessing.')
+                ORDER BY updated DESC,message_id DESC,part LIMIT 1""", (filename,)).fetchone()
+        if match:
+            return dict(match)
+        raise LookupError('The original email attachment is no longer available for gallery reprocessing.')
 
     def requeue_gallery(self, message_id: int, part: str):
         """Make one already-delivered gallery attachment eligible for Gmail fetch again."""

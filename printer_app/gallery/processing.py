@@ -27,11 +27,12 @@ from processing_contract import RETRYABLE_EXIT
 
 # Old OCR decisions could count the printed MOD Notes label as content and let
 # a blank placeholder establish the scan's date. Re-read those cached pages.
-CHECKPOINT_VERSION = 2
+CHECKPOINT_VERSION = 3
 CHECKPOINT = 'checkpoint.json'
 MANIFEST = 'manifest.json'
 CROP_FILE = re.compile(r'^\d{4}-\d{3}\.png$')
 OCR_FILE = re.compile(r'^\d{4}-\d{3}\.ocr\.png$')
+REVIEW_FILE = re.compile(r'^page-\d{4}\.review\.png$')
 
 
 def write_json_atomic(path, value):
@@ -59,7 +60,23 @@ def report_progress(output, stage, page=0, pages=0, crops=0):
 
 
 def fresh_manifest():
-    return {'items': [], 'skipped': [], 'warnings': []}
+    return {'items': [], 'skipped': [], 'warnings': [], 'review_pages': []}
+
+
+def retain_review_page(output, pagefile, page, manifest, used, budget):
+    """Keep one rendered page that produced no card so admins can inspect it."""
+    filename = f'page-{page:04d}.review.png'
+    target = output / filename
+    shutil.copyfile(pagefile, target)
+    size = target.stat().st_size
+    used += size
+    if used > budget:
+        target.unlink(missing_ok=True)
+        raise OSError('Rendered review pages exceed gallery storage budget')
+    manifest['review_pages'].append(
+        dict(page=page, file=filename, bytes=size, reason='no-recognized-forms')
+    )
+    return used
 
 
 def clear_resume_state(output):
@@ -69,19 +86,20 @@ def clear_resume_state(output):
         if path.is_dir():
             shutil.rmtree(path)
         elif path.name in (CHECKPOINT, MANIFEST, '.' + CHECKPOINT + '.tmp',
-                           '.' + MANIFEST + '.tmp') or CROP_FILE.fullmatch(path.name) or OCR_FILE.fullmatch(path.name):
+                           '.' + MANIFEST + '.tmp') or CROP_FILE.fullmatch(path.name) or OCR_FILE.fullmatch(path.name) or REVIEW_FILE.fullmatch(path.name):
             path.unlink(missing_ok=True)
 
 
 def cleanup_uncommitted(output, manifest):
     committed = {str(item.get('file', '')) for item in manifest['items']}
     committed.update(str(item.get('ocr_file', '')) for item in manifest['items'] if item.get('ocr_file'))
+    committed.update(str(item.get('file', '')) for item in manifest.get('review_pages', ()))
     for path in output.iterdir():
         if path.is_symlink():
             continue
         if path.is_dir():
             shutil.rmtree(path)
-        elif ((CROP_FILE.fullmatch(path.name) or OCR_FILE.fullmatch(path.name))
+        elif ((CROP_FILE.fullmatch(path.name) or OCR_FILE.fullmatch(path.name) or REVIEW_FILE.fullmatch(path.name))
               and path.name not in committed):
             path.unlink(missing_ok=True)
 
@@ -104,7 +122,8 @@ def load_checkpoint(output, pages):
         if (not isinstance(manifest, dict)
                 or not isinstance(manifest.get('items'), list)
                 or not isinstance(manifest.get('skipped'), list)
-                or not isinstance(manifest.get('warnings'), list)):
+                or not isinstance(manifest.get('warnings'), list)
+                or not isinstance(manifest.get('review_pages'), list)):
             raise ValueError('invalid checkpoint manifest')
         used = 0
         for item in manifest['items']:
@@ -133,6 +152,24 @@ def load_checkpoint(output, pages):
         if any(value < 1 or value > completed for value in skipped):
             raise ValueError('invalid skipped-page checkpoint')
         manifest['skipped'] = skipped
+        review_pages = []
+        for entry in manifest['review_pages']:
+            if not isinstance(entry, dict):
+                raise ValueError('invalid review-page checkpoint')
+            filename = str(entry.get('file', ''))
+            page = int(entry.get('page', 0))
+            if not REVIEW_FILE.fullmatch(filename) or page not in skipped:
+                raise ValueError('invalid review-page artifact')
+            artifact = output / filename
+            if artifact.is_symlink() or not artifact.is_file():
+                raise ValueError('review-page artifact is missing')
+            size = artifact.stat().st_size
+            if int(entry.get('bytes', -1)) != size:
+                raise ValueError('review-page artifact size changed')
+            used += size
+            review_pages.append(dict(page=page, file=filename, bytes=size,
+                                     reason='no-recognized-forms'))
+        manifest['review_pages'] = review_pages
         pdf_date = state.get('pdf_date') or None
         if pdf_date is not None and (not isinstance(pdf_date, str) or len(pdf_date) > 32):
             raise ValueError('invalid checkpoint date')
@@ -263,6 +300,7 @@ def process(source, output, budget, *, origin='scan'):
 
             if is_dense_grid_page(raster):
                 manifest['skipped'].append(page)
+                used = retain_review_page(output, pagefile, page, manifest, used, budget)
                 pagefile.unlink(missing_ok=True)
                 del raster
                 report_progress(output, 'page-complete', page, pages, len(manifest['items']))
@@ -318,13 +356,14 @@ def process(source, output, budget, *, origin='scan'):
 
             if not count:
                 manifest['skipped'].append(page)
+                used = retain_review_page(output, pagefile, page, manifest, used, budget)
             pagefile.unlink(missing_ok=True)
             del raster
             report_progress(output, 'page-complete', page, pages, len(manifest['items']))
             save_checkpoint(output, pages, page, manifest, pdf_date)
 
-    if not manifest['items']:
-        raise ValueError('No recognizable work-order boxes found; source discarded')
+    if not manifest['items'] and not manifest['review_pages']:
+        raise ValueError('No reviewable pages were rendered from this PDF')
 
     if pdf_date:
         # Earlier crops may have been unreadable before a later crop established the

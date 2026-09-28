@@ -1,5 +1,6 @@
 """The gallery's SQLite schema, search index, import receipts, and notes."""
 import json
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -43,6 +44,11 @@ CREATE TABLE IF NOT EXISTS import_steps (
  id INTEGER PRIMARY KEY, import_id TEXT NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
  at REAL NOT NULL, message TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS gallery_import_steps ON import_steps(import_id,id);
+CREATE TABLE IF NOT EXISTS import_review_pages (
+ import_id TEXT NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+ page INTEGER NOT NULL, file_id TEXT NOT NULL, bytes INTEGER NOT NULL,
+ reason TEXT NOT NULL DEFAULT 'no-recognized-forms',
+ PRIMARY KEY(import_id,page));
 CREATE TABLE IF NOT EXISTS items (
  id TEXT PRIMARY KEY, import_id TEXT NOT NULL REFERENCES imports(id), page INTEGER NOT NULL,
  part INTEGER NOT NULL, filename TEXT NOT NULL, text TEXT NOT NULL DEFAULT '',
@@ -157,7 +163,8 @@ class GalleryRepository:
             c.execute('BEGIN IMMEDIATE')
             import_columns = {row['name'] for row in c.execute('PRAGMA table_info(imports)')}
             for name, definition in (('progress', "TEXT NOT NULL DEFAULT '{}'"), ('started', 'REAL'), ('completed', 'REAL'),
-                                     ('origin', "TEXT NOT NULL DEFAULT 'scan'"), ('reference_day', 'TEXT')):
+                                     ('origin', "TEXT NOT NULL DEFAULT 'scan'"), ('reference_day', 'TEXT'),
+                                     ('reprocess_pending', 'INTEGER NOT NULL DEFAULT 0')):
                 if name not in import_columns:
                     c.execute(f'ALTER TABLE imports ADD COLUMN {name} {definition}')
             columns = {row['name'] for row in c.execute('PRAGMA table_info(items)')}
@@ -295,9 +302,23 @@ class GalleryRepository:
                 self._step(c, row['id'], now, 'Gallery worker started processing the PDF.')
                 return dict(row)
 
-    def finish(self, ident, items, warning='', *, publication=None):
+    def finish(self, ident, items, warning='', *, publication=None, review_pages=(),
+               supersede_previous=False):
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
+            import_row = c.execute(
+                'SELECT reprocess_pending FROM imports WHERE id=?', (ident,)
+            ).fetchone()
+            reprocessing = bool(import_row and import_row['reprocess_pending'])
+            prior_item_ids = {
+                row['id'] for row in c.execute('SELECT id FROM items WHERE import_id=?', (ident,))
+            } if reprocessing else set()
+            prior_review_files = {
+                row['file_id'] for row in c.execute(
+                    'SELECT file_id FROM import_review_pages WHERE import_id=?', (ident,)
+                )
+            }
+            current_item_ids = set()
             saved = skipped_existing = 0
             for item in items:
                 origin = item.get('origin', 'scan')
@@ -349,6 +370,34 @@ class GalleryRepository:
                               recognition_revision=item.get('recognition_revision', 0), origin=origin,
                               mod_notes_status=notes_status,
                               image_revision=item.get('image_revision', item['id']))
+                same_import_existing = bool(reprocessing and c.execute(
+                    'SELECT 1 FROM items WHERE id=? AND import_id=?',
+                    (item['id'], ident),
+                ).fetchone())
+                if same_import_existing:
+                    # A reprocess does not destroy the previous result before the
+                    # replacement is ready. Reuse the deterministic card ID so
+                    # notes/history survive when the same page/card is recognized.
+                    changed = c.execute('''UPDATE items SET page=:page,part=:part,
+                        filename=:filename,text=:text,document_date=:document_date,date_status=:date_status,
+                        bytes=:bytes,state=:state,lead_name=:lead_name,lead_key=:lead_key,
+                        lead_status=:lead_status,address=:address,address_key=:address_key,
+                        work_order_number=:work_order_number,work_order_key=:work_order_key,
+                        work_order_candidates=:work_order_candidates,work_order_reads=:work_order_reads,
+                        work_order_evidence=:work_order_evidence,
+                        recognition_revision=:recognition_revision,origin=:origin,
+                        mod_notes_status=:mod_notes_status,
+                        image_revision=:image_revision,search_revision=search_revision+1
+                        WHERE id=:id AND import_id=:import_id AND state IN ('ACTIVE','REVIEW')''',
+                        values).rowcount
+                    saved += changed
+                    current_item_ids.add(item['id'])
+                    self._refresh_sales_lead_statuses(c, ' AND id=?', (item['id'],))
+                    if changed and origin == 'scan' and state == 'ACTIVE':
+                        self._reconcile_morning_cards(
+                            c, item['id'], item.get('document_date'), work_order_key(work_order)
+                        )
+                    continue
                 if item.get('replace_existing'):
                     # The scan takes over the existing card; notes retain their item ID.
                     changed = c.execute('''UPDATE items SET import_id=:import_id,page=:page,part=:part,
@@ -365,6 +414,8 @@ class GalleryRepository:
                         AND document_date=:document_date AND work_order_key=:work_order_key''', values).rowcount
                     saved += changed
                     skipped_existing += not changed
+                    if changed:
+                        current_item_ids.add(item['id'])
                     self._refresh_sales_lead_statuses(c, ' AND id=?', (item['id'],))
                     if changed and origin == 'scan' and state == 'ACTIVE':
                         self._reconcile_morning_cards(c, item['id'], item.get('document_date'), work_order_key(work_order))
@@ -381,11 +432,36 @@ class GalleryRepository:
                     :mod_notes_status,:image_revision)''', values).rowcount
                 saved += changed
                 skipped_existing += not changed
+                if changed:
+                    current_item_ids.add(item['id'])
                 self._refresh_sales_lead_statuses(c, ' AND id=?', (item['id'],))
                 if changed and origin == 'scan' and state == 'ACTIVE':
                     self._reconcile_morning_cards(c, item['id'], item.get('document_date'), work_order_key(work_order))
+            retired_item_ids = []
+            if reprocessing and supersede_previous:
+                retired_item_ids = sorted(prior_item_ids - current_item_ids)
+                for old_id in retired_item_ids:
+                    c.execute('DELETE FROM items WHERE id=? AND import_id=?', (old_id, ident))
+
+            clean_review_pages = []
+            for entry in review_pages:
+                page = int(entry.get('page', 0))
+                file_id = str(entry.get('file_id', ''))
+                size = int(entry.get('bytes', -1))
+                reason = str(entry.get('reason') or 'no-recognized-forms')[:80]
+                if page < 1 or not re.fullmatch(r'[a-f0-9]{64}', file_id) or size < 0:
+                    raise ValueError('Invalid Gallery review page')
+                clean_review_pages.append((page, file_id, size, reason))
+            c.execute('DELETE FROM import_review_pages WHERE import_id=?', (ident,))
+            for page, file_id, size, reason in clean_review_pages:
+                c.execute('''INSERT INTO import_review_pages(import_id,page,file_id,bytes,reason)
+                    VALUES (?,?,?,?,?)''', (ident, page, file_id, size, reason))
+            current_review_files = {entry[1] for entry in clean_review_pages}
+            retired_review_file_ids = sorted(prior_review_files - current_review_files)
+
             now = time.time()
-            c.execute("UPDATE imports SET state='COMPLETE',count=?,error=?,updated=?,completed=? WHERE id=?",
+            c.execute("""UPDATE imports SET state='COMPLETE',count=?,error=?,updated=?,completed=?,
+                      reprocess_pending=0 WHERE id=?""",
                       (len(items), warning[:1000], now, now, ident))
             published = c.execute(
                 "SELECT count(*) FROM items WHERE import_id=? AND state='ACTIVE'", (ident,)
@@ -414,6 +490,10 @@ class GalleryRepository:
             self._step(c, ident, now, message + '.')
             if warning:
                 self._step(c, ident, now, warning[:1000])
+            return dict(
+                retired_item_ids=retired_item_ids,
+                retired_review_file_ids=retired_review_file_ids,
+            )
 
     def card_for_work_order(self, day, number):
         if not day or not work_order_key(number):
@@ -492,7 +572,7 @@ class GalleryRepository:
                 self._step(c, ident, now, message[:1000])
 
     def reset_for_reprocess(self, ident):
-        """Delete generated card data but keep the import receipt reusable for the same PDF hash."""
+        """Queue a fresh run while keeping the last usable Gallery result in place."""
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             row = c.execute('SELECT id,filename,state FROM imports WHERE id=?', (ident,)).fetchone()
@@ -500,14 +580,14 @@ class GalleryRepository:
                 raise LookupError('This gallery job is unavailable.')
             if row['state'] not in ('COMPLETE', 'ERROR'):
                 raise ValueError('Only completed or failed gallery jobs can be reprocessed.')
-            item_ids = [r['id'] for r in c.execute('SELECT id FROM items WHERE import_id=?', (ident,))]
-            c.execute('DELETE FROM items WHERE import_id=?', (ident,))
             now = time.time()
-            message = 'Reprocess requested. Generated gallery cards were deleted; waiting to fetch the original email PDF again.'
-            c.execute("""UPDATE imports SET state='ERROR',count=0,error=?,progress='{}',started=NULL,
-                completed=NULL,updated=? WHERE id=?""", (message, now, ident))
+            message = ('Reprocess requested. Existing Gallery cards are being kept until '
+                       'a fresh copy of the original email PDF finishes processing.')
+            c.execute("""UPDATE imports SET state='ERROR',error=?,progress='{}',started=NULL,
+                completed=NULL,updated=?,reprocess_pending=1 WHERE id=?""",
+                      (message, now, ident))
             self._step(c, ident, now, message)
-            return dict(id=ident, filename=row['filename'], item_ids=item_ids)
+            return dict(id=ident, filename=row['filename'])
 
     def import_item(self, import_id, item_id):
         with self.connect() as c:
@@ -798,8 +878,12 @@ class GalleryRepository:
             # Hash-only import receipts survive retention, not PDF bytes or history.
             c.execute('''DELETE FROM import_steps WHERE import_id IN (SELECT id FROM imports
                 WHERE updated<? AND state IN ('COMPLETE','ERROR')
-                AND NOT EXISTS(SELECT 1 FROM items WHERE import_id=imports.id))''', (cutoff,))
-            c.execute("UPDATE imports SET filename='',error='',progress='{}' WHERE updated<? AND state IN ('COMPLETE','ERROR') AND NOT EXISTS(SELECT 1 FROM items WHERE import_id=imports.id)", (cutoff,))
+                AND NOT EXISTS(SELECT 1 FROM items WHERE import_id=imports.id)
+                AND NOT EXISTS(SELECT 1 FROM import_review_pages WHERE import_id=imports.id))''', (cutoff,))
+            c.execute("""UPDATE imports SET filename='',error='',progress='{}'
+                WHERE updated<? AND state IN ('COMPLETE','ERROR')
+                AND NOT EXISTS(SELECT 1 FROM items WHERE import_id=imports.id)
+                AND NOT EXISTS(SELECT 1 FROM import_review_pages WHERE import_id=imports.id)""", (cutoff,))
             c.execute("""DELETE FROM work_order_leads
                 WHERE NOT EXISTS(SELECT 1 FROM items WHERE items.work_order_key=work_order_leads.work_order_key)
                 AND NOT EXISTS(SELECT 1 FROM appointment_references
@@ -881,8 +965,41 @@ class GalleryRepository:
                 FROM items WHERE import_id=? AND state IN ('ACTIVE','REVIEW')
                 ORDER BY CASE state WHEN 'REVIEW' THEN 0 ELSE 1 END,page,part,id LIMIT 24 OFFSET ?""",
                 (ident,offset))]
+            result['review_pages'] = [dict(page) for page in c.execute(
+                """SELECT page,file_id,bytes,reason FROM import_review_pages
+                    WHERE import_id=? ORDER BY page""", (ident,)
+            )]
             return result
 
+    def import_review_page(self, ident, page):
+        with self.connect() as c:
+            row = c.execute(
+                """SELECT page,file_id,bytes,reason FROM import_review_pages
+                    WHERE import_id=? AND page=?""", (ident, int(page))
+            ).fetchone()
+            return dict(row) if row else None
+
+    def review_page_files(self, ident):
+        with self.connect() as c:
+            return [row['file_id'] for row in c.execute(
+                'SELECT file_id FROM import_review_pages WHERE import_id=?', (ident,)
+            )]
+
+    def expiring_review_pages(self, cutoff):
+        with self.connect() as c:
+            return [dict(row) for row in c.execute(
+                """SELECT p.import_id,p.page,p.file_id FROM import_review_pages p
+                    JOIN imports i ON i.id=p.import_id
+                    WHERE i.updated<? AND i.state IN ('COMPLETE','ERROR')
+                    ORDER BY i.updated,p.page""", (float(cutoff),)
+            )]
+
+    def forget_review_page(self, import_id, page, file_id):
+        with self.connect() as c:
+            c.execute(
+                'DELETE FROM import_review_pages WHERE import_id=? AND page=? AND file_id=?',
+                (import_id, int(page), file_id),
+            )
 
     def recognition_candidate(self, now):
         with self.connect() as c:

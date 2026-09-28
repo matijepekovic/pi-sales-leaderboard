@@ -12,6 +12,7 @@
 <dt>In Gallery</dt><dd>{{ job.published }}</dd>
 <dt>Needs review</dt><dd>{{ job.pending_review }}</dd>
 <dt>Images retained</dt><dd>{{ job.retained }}</dd>
+<dt>Full pages to review</dt><dd>{{ job.review_pages|length }}</dd>
 </dl>
 {% if job.status_message %}<p>{{ job.status_message }}</p>{% endif %}{% if job.error %}<p class="error">{{ job.error }}</p>{% endif %}
 {% if job.origin == 'morning' %}<p>These Salesforce cards are placeholders until returned scans arrive. Fresh placeholders can be pulled for today in MOD Settings.</p>{% if morning_settings_url %}<p><a class="button" href="{{ morning_settings_url }}">Pull today from Salesforce</a></p>{% endif %}{% endif %}
@@ -24,8 +25,8 @@
 </div>
 </details>
 </section>
-<section><div class="heading"><h2>Generated work orders</h2><span class="muted">Swipe left/right between cards</span></div>
-<div class="gallery-job-diagnostics" aria-label="Generated work order diagnostics">
+<section><div class="heading"><h2>Generated work orders and pages to review</h2><span class="muted">Swipe left/right between cards and pages</span></div>
+<div class="gallery-job-diagnostics" aria-label="Gallery job diagnostics">
 {% for item in job['items'] %}
 <article class="gallery-job-diagnostic" id="item-{{ item.id }}">
 <h3>{{ item.lead_name or ('Work order ' ~ item.work_order_number if item.work_order_number else 'Work order needs correction') }} · Page {{ item.page }} · Card {{ item.part }}</h3>
@@ -92,7 +93,19 @@
 <form method="post" action="{{ url_for('gallery.delete_import_item', ident=job.id, item_id=item.id) }}"><input type="hidden" name="csrf" value="{{ session.csrf }}"><input type="hidden" name="offset" value="{{ offset }}"><button class="danger" type="submit">Delete</button></form>
 </div>
 </article>
-{% else %}<p>No retained images for this import yet.</p>{% endfor %}
+{% endfor %}
+{% for page in job.review_pages %}
+<article class="gallery-job-diagnostic" id="review-page-{{ page.page }}">
+<h3>Page {{ page.page }} · No forms detected</h3>
+<p class="notice error"><strong>Needs page review.</strong> Stats could not recognize any work-order boxes on this page, so the complete rendered page was kept instead of being discarded.</p>
+{% if page.available %}
+<img class="gallery-job-image" loading="lazy" src="{{ url_for('gallery.import_review_page_image', ident=job.id, page=page.page) }}" alt="Unrecognized full page {{ page.page }} retained for Gallery review">
+{% else %}
+<p class="error">The retained page image is unavailable.</p>
+{% endif %}
+</article>
+{% endfor %}
+{% if not job['items'] and not job.review_pages %}<p>No retained images for this import yet.</p>{% endif %}
 </div>
 <p>{% if offset %}<a class="button" href="{{ url_for('gallery.import_job_page', ident=job.id, offset=[0,offset-24]|max) }}">Previous images</a>{% endif %} {% if offset + job['items']|length < job.retained %}<a class="button" href="{{ url_for('gallery.import_job_page', ident=job.id, offset=offset+24) }}">More images</a>{% endif %}</p></section>
 {% endblock %}
