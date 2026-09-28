@@ -234,7 +234,7 @@ def test_pre_notes_check_checkpoint_is_reread_before_choosing_batch_date(tmp_pat
     assert [item['text'] for item in manifest['items']] == ['Read page 1', 'Read page 2']
     assert [item['document_date'] for item in manifest['items']] == ['2026-09-21'] * 2
     checkpoint = json.loads((directory / 'checkpoint.json').read_text(encoding='utf-8'))
-    assert checkpoint['version'] == processor.CHECKPOINT_VERSION == 2
+    assert checkpoint['version'] == processor.CHECKPOINT_VERSION == 3
     assert checkpoint['pdf_date'] == '2026-09-21'
 
 
