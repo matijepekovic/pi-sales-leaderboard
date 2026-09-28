@@ -880,8 +880,10 @@ class GalleryRepository:
                 WHERE updated<? AND state IN ('COMPLETE','ERROR')
                 AND NOT EXISTS(SELECT 1 FROM items WHERE import_id=imports.id)
                 AND NOT EXISTS(SELECT 1 FROM import_review_pages WHERE import_id=imports.id))''', (cutoff,))
-            c.execute("UPDATE imports SET filename='',error='',progress='{}' WHERE updated<? AND state IN ('COMPLETE','ERROR') AND NOT EXISTS(SELECT 1 FROM items WHERE import_id=imports.id)
-                AND NOT EXISTS(SELECT 1 FROM import_review_pages WHERE import_id=imports.id)", (cutoff,))
+            c.execute("""UPDATE imports SET filename='',error='',progress='{}'
+                WHERE updated<? AND state IN ('COMPLETE','ERROR')
+                AND NOT EXISTS(SELECT 1 FROM items WHERE import_id=imports.id)
+                AND NOT EXISTS(SELECT 1 FROM import_review_pages WHERE import_id=imports.id)""", (cutoff,))
             c.execute("""DELETE FROM work_order_leads
                 WHERE NOT EXISTS(SELECT 1 FROM items WHERE items.work_order_key=work_order_leads.work_order_key)
                 AND NOT EXISTS(SELECT 1 FROM appointment_references
