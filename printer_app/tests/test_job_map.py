@@ -43,15 +43,21 @@ def _row(ident, *, work='0WO000000000001AAA', number='02257311', lead='00Q000000
     }
 
 
-def test_map_source_scopes_query_and_normalizes_filter_fields():
+def test_map_source_resolves_nearby_leads_before_querying_appointments():
     calls = []
-    rows = [
+    appointment_rows = [
         _row('08p000000000001AAA', scheduled='2026-09-23T17:00:00.000+0000'),
         _row('08p000000000002AAA', name='Canceled duplicate', scheduled='2026-09-25T17:00:00.000+0000',
              appointment_status='Canceled'),
-        _row('08p000000000003AAA', work='0WO000000000002AAA', number='02257312',
-             lead='00Q000000000002AAA', name='No Coordinates', lat='', lon=''),
     ]
+    nearby_lead = {
+        'Id': '00Q000000000001AAA',
+        'Name': 'Customer One',
+        'Status': 'Working',
+        'Market__c': 'Seattle',
+        'Latitude': '47.25',
+        'Longitude': '-122.45',
+    }
 
     def runner(command, **kwargs):
         calls.append(command)
@@ -62,31 +68,55 @@ def test_map_source_scopes_query_and_normalizes_filter_fields():
                 'id': '00D000000000123', 'connectedStatus': 'Connected',
             }})
         query = command[command.index('--query') + 1]
-        assert 'FROM ServiceAppointment' in query
-        page = [] if ' AND Id > ' in query else rows
+        if ' FROM Lead WHERE ' in query:
+            page = [] if ' AND Id > ' in query else [nearby_lead]
+        else:
+            assert ' FROM ServiceAppointment WHERE ' in query
+            page = [] if ' AND Id > ' in query else appointment_rows
         return _result({'status': 0, 'result': {'records': page}})
 
     adapter = SalesforceCliAdapter(runner=runner, executable='/fake/sf')
     jobs = adapter.map_jobs(MapQuery(47.25, -122.45, 5.0))
 
-    assert len(jobs) == 1
-    assert jobs[0] == MapJob(
+    assert jobs == (MapJob(
         source_id='0WO000000000001AAA', work_order_number='02257311',
         lead_name='Customer One', lead_status='Working', latitude=47.25, longitude=-122.45,
         source_record_url='https://example.my.salesforce.com/lightning/r/Lead/00Q000000000001AAA/view',
         market='Seattle', product_type='Bath', assigned_reps=('Rep One',),
+    ),)
+
+    queries = [
+        call[call.index('--query') + 1]
+        for call in calls if call[1:3] == ['data', 'query']
+    ]
+    lead_query = next(query for query in queries if ' FROM Lead WHERE ' in query and ' AND Id > ' not in query)
+    appointment_query = next(
+        query for query in queries
+        if ' FROM ServiceAppointment WHERE ' in query and ' AND Id > ' not in query
     )
-    query = next(
-        call[call.index('--query') + 1] for call in calls
-        if call[1:3] == ['data', 'query'] and ' AND Id > ' not in call[call.index('--query') + 1]
-    )
-    assert 'Lead__r.Latitude >=' in query and 'Lead__r.Latitude <=' in query
-    assert 'Lead__r.Longitude >=' in query and 'Lead__r.Longitude <=' in query
-    assert 'Lead__r.Market__c' in query
-    assert 'Product_Interest__c' in query
-    assert 'Assigned_Service_Resource__r.Name' in query
-    assert "WorkType.Name LIKE '%Sales%'" in query
-    assert 'Do Not Call' not in query and 'Scheduled Confirmed' not in query
+    assert 'Latitude >=' in lead_query and 'Latitude <=' in lead_query
+    assert 'Longitude >=' in lead_query and 'Longitude <=' in lead_query
+    assert 'Market__c' in lead_query
+    assert "FSSK__FSK_Work_Order__r.Lead__r.Id IN ('00Q000000000001AAA')" in appointment_query
+    assert 'Lead__r.Latitude' not in appointment_query
+    assert 'Lead__r.Longitude' not in appointment_query
+    assert 'Product_Interest__c' in appointment_query
+    assert 'Assigned_Service_Resource__r.Name' in appointment_query
+    assert "WorkType.Name LIKE '%Sales%'" in appointment_query
+
+
+def test_map_source_does_not_query_appointments_when_no_nearby_leads_exist():
+    queries = []
+
+    def runner(command, **kwargs):
+        query = command[command.index('--query') + 1]
+        queries.append(query)
+        assert ' FROM Lead WHERE ' in query
+        return _result({'status': 0, 'result': {'records': []}})
+
+    adapter = SalesforceCliAdapter(runner=runner, executable='/fake/sf')
+    assert adapter.map_jobs(MapQuery(47.25, -122.45, 5.0)) == ()
+    assert len(queries) == 1
 
 
 def test_map_service_enforces_five_mile_circle_and_lead_status_rules():
@@ -233,6 +263,9 @@ def test_job_map_python_stays_vendor_neutral_frontend_is_location_first_and_uses
     assert "url.searchParams.set('lon'" in runtime
     assert 'configuredRadiusMiles' in runtime
     assert 'radiusMiles = 5' not in runtime
+    assert 'new AbortController()' in runtime
+    assert 'controller.abort(), 30000' in runtime
+    assert 'Nearby jobs took too long to load.' in runtime
     assert 'setView([39.5, -98.35], 4)' not in runtime
     assert "action('MOD Sheet'" in runtime
     assert "action('Open in Salesforce'" in runtime
