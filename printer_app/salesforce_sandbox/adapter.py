@@ -18,7 +18,7 @@ from threading import Lock
 from time import monotonic
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from ..job_map.contract import MapJob, MapQuery
+from ..job_map.contract import MapJob, MapQuery, MapSourceDiagnostics, MapSourceSnapshot
 from ..mod_sheet_contract import ModSheetRecord, SourceStatus, WorkOrderLeadStatus, WorkOrderReference
 from . import explorer
 
@@ -516,7 +516,9 @@ class SalesforceCliAdapter:
             )
 
         grouped = {}
+        appointment_rows = 0
         for item in self._appointment_rows(fields, conditions):
+            appointment_rows += 1
             work_order_id = str(item.get('FSSK__FSK_Work_Order__c') or '').strip()
             work_order_number = _nested(item, 'FSSK__FSK_Work_Order__r.WorkOrderNumber').strip()
             lead_id = _nested(item, 'FSSK__FSK_Work_Order__r.Lead__r.Id').strip()
@@ -573,8 +575,10 @@ class SalesforceCliAdapter:
             self.status()
 
         result = []
+        missing_location = 0
         for work_order_id, value in grouped.items():
             if value['latitude'] is None or value['longitude'] is None:
+                missing_location += 1
                 continue
             item = value['item']
             result.append(MapJob(
@@ -602,7 +606,15 @@ class SalesforceCliAdapter:
                 ).strip(),
                 assigned_reps=tuple(value['assigned_reps']),
             ))
-        return tuple(result)
+        return MapSourceSnapshot(
+            jobs=tuple(result),
+            diagnostics=MapSourceDiagnostics(
+                appointment_rows=appointment_rows,
+                grouped_jobs=len(grouped),
+                jobs_with_location=len(result),
+                jobs_missing_location=missing_location,
+            ),
+        )
 
     def explorer_objects(self):
         """List only names; opening the explorer never describes or queries objects."""
