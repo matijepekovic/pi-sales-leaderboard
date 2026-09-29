@@ -98,6 +98,25 @@ def blueprint(service, *, https_access=None):
                 'product_type': item.product_type,
                 'assigned_reps': list(item.assigned_reps),
             } for item in view.jobs],
+            diagnostics={
+                'appointment_rows': view.diagnostics.appointment_rows,
+                'grouped_jobs': view.diagnostics.grouped_jobs,
+                'jobs_with_location': view.diagnostics.jobs_with_location,
+                'jobs_missing_location': view.diagnostics.jobs_missing_location,
+                'snapshot_jobs': view.diagnostics.snapshot_jobs,
+                'excluded_status': view.diagnostics.excluded_status,
+                'outside_radius': view.diagnostics.outside_radius,
+                'visible_jobs': view.diagnostics.visible_jobs,
+                'candidates': [{
+                    'work_order_number': item.work_order_number,
+                    'lead_name': item.lead_name,
+                    'lead_status': item.lead_status,
+                    'distance_miles': round(item.distance_miles, 3),
+                    'latitude': item.latitude,
+                    'longitude': item.longitude,
+                    'outcome': item.outcome,
+                } for item in view.diagnostics.candidates],
+            },
         )
 
     @bp.get('/mod-sheet')
