@@ -255,8 +255,8 @@ class JobMapService:
 
         error = ''
         coverage = self.repository.coverage()
-        sync = self.repository.sync_state()
         if query.market and not records and query.market.casefold() not in coverage:
+            sync = self.repository.sync_state()
             if (
                 sync.status in ('queued', 'running')
                 and sync.market.casefold() == query.market.casefold()
