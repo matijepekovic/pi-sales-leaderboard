@@ -479,10 +479,14 @@ def test_job_map_architecture_is_filters_first_and_worker_owns_external_refresh(
     assert "url.searchParams.set('product'" in runtime
     assert 'Applying filters, then checking ' in runtime
     assert 'controller.abort(), timeoutMs' in runtime
+    assert 'center.toBounds(radiusMeters * 2)' in runtime
+    assert 'circle.getBounds()' not in runtime
     load_block = runtime.split('async function loadNearby()', 1)[1].split(
         'for (const select of filters)', 1
     )[0]
     assert load_block.index('await acquireLocation(generation)') < load_block.index('readNearby(')
+    assert "status.textContent = 'Location unavailable'" in load_block
+    assert "status.textContent = 'Map unavailable'" in load_block
     assert 'setView([39.5, -98.35], 4)' not in runtime
     assert "action('MOD Sheet'" in runtime
     assert "action('Open in Salesforce'" in runtime
