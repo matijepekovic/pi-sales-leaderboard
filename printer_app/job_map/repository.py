@@ -1,37 +1,15 @@
-"""Persistence boundary for local normalized job-map snapshots."""
+"""Persistence boundary for normalized local job-map history and sync state."""
 from __future__ import annotations
 
-from dataclasses import asdict
 import json
 
-from .contract import MapFilters, MapJob, MapQuery, MapSourceDiagnostics
+from .contract import MapFilters, MapRecord, MapSyncRequest, MapSyncView
 
 
-SNAPSHOT_KEY = 'job_map_snapshot_v3'
-REFRESH_KEY = 'job_map_refresh_v3'
 FILTER_SNAPSHOT_KEY = 'job_map_filter_snapshot_v1'
 FILTER_REFRESH_KEY = 'job_map_filter_refresh_v1'
-
-
-def _query_dict(query):
-    return {
-        'market': str(query.market or ''),
-        'product_type': str(query.product_type or ''),
-        'rep': str(query.rep or ''),
-    }
-
-
-def _query_from(value):
-    if not isinstance(value, dict):
-        return None
-    try:
-        return MapQuery(
-            market=str(value.get('market') or ''),
-            product_type=str(value.get('product_type') or ''),
-            rep=str(value.get('rep') or ''),
-        )
-    except (TypeError, ValueError):
-        return None
+SYNC_KEY = 'job_map_history_sync_v1'
+COVERAGE_KEY = 'job_map_history_coverage_v1'
 
 
 def _filter_dict(filters):
@@ -54,127 +32,150 @@ def _filters_from(value):
     return MapFilters(**result)
 
 
-def _decode_state(raw, *, query=False):
+def _decode_state(raw):
     try:
         state = json.loads(raw) if raw else {}
     except (TypeError, ValueError):
         return {}
-    if not isinstance(state, dict):
-        return {}
-    result = dict(state)
-    if query:
-        parsed = _query_from(result.get('query'))
-        if parsed is not None:
-            result['query'] = parsed
-    return result
+    return dict(state) if isinstance(state, dict) else {}
+
+
+def _sync_view(value):
+    value = value if isinstance(value, dict) else {}
+    try:
+        return MapSyncView(
+            status=str(value.get('status') or ''),
+            since_date=str(value.get('since_date') or ''),
+            through_date=str(value.get('through_date') or ''),
+            market=str(value.get('market') or ''),
+            chunk_start=str(value.get('chunk_start') or ''),
+            chunk_end=str(value.get('chunk_end') or ''),
+            completed_chunks=max(0, int(value.get('completed_chunks', 0))),
+            total_chunks=max(0, int(value.get('total_chunks', 0))),
+            records_written=max(0, int(value.get('records_written', 0))),
+            updated=float(value.get('updated', 0) or 0),
+            error=str(value.get('error') or ''),
+        )
+    except (TypeError, ValueError):
+        return MapSyncView(error='Map sync state is invalid.')
 
 
 class JobMapRepository:
-    """Own durable map/filter refresh state and complete normalized snapshots."""
+    """Own local map records, metadata choices, history coverage, and sync requests."""
 
     def __init__(self, db):
         self.db = db
 
-    def snapshot(self):
-        value = self.db.get(SNAPSHOT_KEY, {})
-        if not isinstance(value, dict):
-            return None
-        query = _query_from(value.get('query'))
-        raw_jobs = value.get('jobs')
-        if query is None or not isinstance(raw_jobs, list):
-            return None
-        jobs = []
-        try:
-            for raw in raw_jobs:
-                if not isinstance(raw, dict):
-                    return None
-                jobs.append(MapJob(
-                    source_id=str(raw.get('source_id') or ''),
-                    work_order_number=str(raw.get('work_order_number') or ''),
-                    lead_name=str(raw.get('lead_name') or ''),
-                    lead_status=str(raw.get('lead_status') or ''),
-                    latitude=float(raw['latitude']),
-                    longitude=float(raw['longitude']),
-                    source_record_url=str(raw.get('source_record_url') or ''),
-                    market=str(raw.get('market') or ''),
-                    product_type=str(raw.get('product_type') or ''),
-                    assigned_reps=tuple(
-                        str(name) for name in raw.get('assigned_reps', ())
-                        if isinstance(name, str)
-                    ),
+    def records(self, *, market=''):
+        sql = '''SELECT source_record_id,work_order_id,work_order_number,scheduled_at,
+            scheduled_day,created_at,canceled,lead_name,lead_status,latitude,longitude,
+            source_record_url,market,product_type,assigned_rep
+            FROM job_map_records'''
+        args = ()
+        market = str(market or '').strip()
+        if market:
+            sql += ' WHERE lower(market)=lower(?)'
+            args = (market,)
+        sql += ' ORDER BY scheduled_at ASC,created_at ASC,source_record_id ASC'
+        rows = self.db.rows(sql, args)
+        result = []
+        for row in rows:
+            try:
+                result.append(MapRecord(
+                    source_record_id=str(row['source_record_id']),
+                    work_order_id=str(row['work_order_id']),
+                    work_order_number=str(row['work_order_number']),
+                    scheduled_at=float(row['scheduled_at']),
+                    scheduled_day=str(row['scheduled_day']),
+                    created_at=float(row['created_at']),
+                    canceled=bool(row['canceled']),
+                    lead_name=str(row['lead_name'] or ''),
+                    lead_status=str(row['lead_status'] or ''),
+                    latitude=(None if row['latitude'] is None else float(row['latitude'])),
+                    longitude=(None if row['longitude'] is None else float(row['longitude'])),
+                    source_record_url=str(row['source_record_url'] or ''),
+                    market=str(row['market'] or ''),
+                    product_type=str(row['product_type'] or ''),
+                    assigned_rep=str(row['assigned_rep'] or ''),
                 ))
-            captured = float(value.get('captured_at', 0))
-            raw_diagnostics = value.get('diagnostics', {})
-            if not isinstance(raw_diagnostics, dict):
-                raw_diagnostics = {}
-            diagnostics = MapSourceDiagnostics(
-                appointment_rows=max(0, int(raw_diagnostics.get('appointment_rows', 0))),
-                grouped_jobs=max(0, int(raw_diagnostics.get('grouped_jobs', 0))),
-                jobs_with_location=max(0, int(raw_diagnostics.get('jobs_with_location', 0))),
-                jobs_missing_location=max(0, int(raw_diagnostics.get('jobs_missing_location', 0))),
-            )
-        except (KeyError, TypeError, ValueError):
-            return None
-        return {
-            'query': query,
-            'jobs': tuple(jobs),
-            'captured_at': captured,
-            'diagnostics': diagnostics,
-        }
+            except (KeyError, TypeError, ValueError):
+                continue
+        return tuple(result)
 
-    def replace_snapshot(self, query, jobs, captured_at, diagnostics=None):
-        diagnostics = diagnostics if isinstance(diagnostics, MapSourceDiagnostics) else MapSourceDiagnostics()
-        payload = {
-            'query': _query_dict(query),
-            'captured_at': float(captured_at),
-            'diagnostics': asdict(diagnostics),
-            'jobs': [
-                dict(asdict(job), assigned_reps=list(job.assigned_reps))
-                for job in jobs
-            ],
-        }
-        self.db.set(SNAPSHOT_KEY, payload)
-        return payload
-
-    def refresh_state(self):
-        value = self.db.get(REFRESH_KEY, {})
-        result = dict(value) if isinstance(value, dict) else {}
-        query = _query_from(result.get('query'))
-        if query is not None:
-            result['query'] = query
-        return result
-
-    def request_refresh(self, ident, query, now):
+    def replace_range(self, scope_market, start_day, end_day, records, synced_at):
+        """Atomically replace one bounded Salesforce market/date slice."""
+        scope_market = str(scope_market or '').strip()
+        if not scope_market:
+            raise ValueError('A market is required for map history sync.')
+        records = tuple(records)
         with self.db.connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
-            row = conn.execute('SELECT value FROM meta WHERE key=?', (REFRESH_KEY,)).fetchone()
-            state = _decode_state(row['value'] if row else '', query=True)
-            if state.get('status') in ('queued', 'running'):
-                return state
-            state = {
-                'id': str(ident),
-                'status': 'queued',
-                'query': _query_dict(query),
-                'updated': float(now),
-                'error': '',
-            }
             conn.execute(
-                'INSERT INTO meta(key,value) VALUES(?,?) '
-                'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-                (REFRESH_KEY, json.dumps(state)),
+                'DELETE FROM job_map_records WHERE lower(scope_market)=lower(?) '
+                'AND scheduled_day>=? AND scheduled_day<=?',
+                (scope_market, str(start_day), str(end_day)),
             )
-        return dict(state, query=query)
+            for record in records:
+                if not isinstance(record, MapRecord):
+                    raise ValueError('Map history source returned invalid records.')
+                conn.execute(
+                    '''INSERT INTO job_map_records(
+                        source_record_id,work_order_id,work_order_number,scheduled_at,
+                        scheduled_day,created_at,canceled,lead_name,lead_status,latitude,
+                        longitude,source_record_url,market,product_type,assigned_rep,
+                        scope_market,synced_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(source_record_id) DO UPDATE SET
+                        work_order_id=excluded.work_order_id,
+                        work_order_number=excluded.work_order_number,
+                        scheduled_at=excluded.scheduled_at,
+                        scheduled_day=excluded.scheduled_day,
+                        created_at=excluded.created_at,
+                        canceled=excluded.canceled,
+                        lead_name=excluded.lead_name,
+                        lead_status=excluded.lead_status,
+                        latitude=excluded.latitude,
+                        longitude=excluded.longitude,
+                        source_record_url=excluded.source_record_url,
+                        market=excluded.market,
+                        product_type=excluded.product_type,
+                        assigned_rep=excluded.assigned_rep,
+                        scope_market=excluded.scope_market,
+                        synced_at=excluded.synced_at''',
+                    (
+                        record.source_record_id, record.work_order_id,
+                        record.work_order_number, float(record.scheduled_at),
+                        record.scheduled_day, float(record.created_at),
+                        1 if record.canceled else 0, record.lead_name,
+                        record.lead_status, record.latitude, record.longitude,
+                        record.source_record_url, record.market,
+                        record.product_type, record.assigned_rep,
+                        scope_market, float(synced_at),
+                    ),
+                )
+        return len(records)
 
-    def save_refresh_state(self, state):
-        value = dict(state)
-        query = value.get('query')
-        if isinstance(query, MapQuery):
-            value['query'] = _query_dict(query)
-        self.db.set(REFRESH_KEY, value)
-        result = dict(state)
-        if isinstance(query, MapQuery):
-            result['query'] = query
-        return result
+    def local_filters(self):
+        rows = self.db.rows(
+            'SELECT market,product_type,assigned_rep FROM job_map_records'
+        )
+        markets, products, reps = {}, {}, {}
+        for row in rows:
+            market = str(row.get('market') or '').strip()
+            rep = str(row.get('assigned_rep') or '').strip()
+            if market:
+                markets.setdefault(market.casefold(), market)
+            if rep:
+                reps.setdefault(rep.casefold(), rep)
+            for product in str(row.get('product_type') or '').split(';'):
+                product = product.strip()
+                if product:
+                    products.setdefault(product.casefold(), product)
+        return MapFilters(
+            markets=tuple(sorted(markets.values(), key=str.casefold)),
+            product_types=tuple(sorted(products.values(), key=str.casefold)),
+            reps=tuple(sorted(reps.values(), key=str.casefold)),
+        )
 
     def filter_snapshot(self):
         value = self.db.get(FILTER_SNAPSHOT_KEY, {})
@@ -204,7 +205,9 @@ class JobMapRepository:
     def request_filter_refresh(self, ident, now):
         with self.db.connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
-            row = conn.execute('SELECT value FROM meta WHERE key=?', (FILTER_REFRESH_KEY,)).fetchone()
+            row = conn.execute(
+                'SELECT value FROM meta WHERE key=?', (FILTER_REFRESH_KEY,)
+            ).fetchone()
             state = _decode_state(row['value'] if row else '')
             if state.get('status') in ('queued', 'running'):
                 return state
@@ -225,3 +228,84 @@ class JobMapRepository:
         value = dict(state)
         self.db.set(FILTER_REFRESH_KEY, value)
         return value
+
+    def request_sync(self, ident, request, now):
+        if not isinstance(request, MapSyncRequest):
+            raise ValueError('Map sync request is invalid.')
+        with self.db.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT value FROM meta WHERE key=?', (SYNC_KEY,)).fetchone()
+            state = _decode_state(row['value'] if row else '')
+            if state.get('status') in ('queued', 'running'):
+                return _sync_view(state)
+            state = {
+                'id': str(ident),
+                'status': 'queued',
+                'since_date': request.since_date,
+                'through_date': request.through_date,
+                'market': request.market,
+                'chunk_start': '',
+                'chunk_end': '',
+                'completed_chunks': 0,
+                'total_chunks': 0,
+                'records_written': 0,
+                'updated': float(now),
+                'error': '',
+            }
+            conn.execute(
+                'INSERT INTO meta(key,value) VALUES(?,?) '
+                'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                (SYNC_KEY, json.dumps(state)),
+            )
+        return _sync_view(state)
+
+    def sync_state(self):
+        return _sync_view(self.db.get(SYNC_KEY, {}))
+
+    def save_sync_state(self, view):
+        if isinstance(view, MapSyncView):
+            value = {
+                'status': view.status,
+                'since_date': view.since_date,
+                'through_date': view.through_date,
+                'market': view.market,
+                'chunk_start': view.chunk_start,
+                'chunk_end': view.chunk_end,
+                'completed_chunks': view.completed_chunks,
+                'total_chunks': view.total_chunks,
+                'records_written': view.records_written,
+                'updated': view.updated,
+                'error': view.error,
+            }
+        elif isinstance(view, dict):
+            value = dict(view)
+        else:
+            raise ValueError('Map sync state is invalid.')
+        self.db.set(SYNC_KEY, value)
+        return _sync_view(value)
+
+    def coverage(self):
+        value = self.db.get(COVERAGE_KEY, {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def update_coverage(self, market, since_date, through_date, now):
+        market = str(market or '').strip()
+        if not market:
+            return self.coverage()
+        coverage = self.coverage()
+        key = market.casefold()
+        current = coverage.get(key, {})
+        since = str(current.get('since_date') or since_date)
+        through = str(current.get('through_date') or through_date)
+        if str(since_date) < since:
+            since = str(since_date)
+        if str(through_date) > through:
+            through = str(through_date)
+        coverage[key] = {
+            'market': market,
+            'since_date': since,
+            'through_date': through,
+            'updated': float(now),
+        }
+        self.db.set(COVERAGE_KEY, coverage)
+        return coverage
