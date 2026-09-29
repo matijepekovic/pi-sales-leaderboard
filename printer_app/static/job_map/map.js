@@ -541,7 +541,10 @@
     }
     if (coverage && currentMarket) {
       syncStatus.textContent = 'Local history for ' + coverage.market + ': '
-        + coverage.since_date + ' through ' + coverage.through_date;
+        + coverage.since_date + ' through ' + coverage.through_date
+        + (coverage.incremental_error
+          ? ' · automatic update error: ' + coverage.incremental_error
+          : '');
     } else if (currentMarket) {
       syncStatus.textContent = 'No local history loaded for ' + currentMarket + ' yet.';
     } else {
