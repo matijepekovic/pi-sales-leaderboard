@@ -61,7 +61,7 @@ class GeneratedSnapshot:
 class SalesforceSandboxService:
     def __init__(self, adapter, *, rep_repository=None):
         self.adapter = adapter
-        # The worker only consumes records; the web composition supplies rep storage.
+        # Saved rep names are optional normalized source metadata used by MOD and Map workflows.
         self.rep_repository = rep_repository
         self._rep_refresh_lock = Lock()
 
