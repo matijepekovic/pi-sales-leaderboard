@@ -8,7 +8,10 @@ from types import SimpleNamespace
 import pytest
 
 from printer_app.db import Database
-from printer_app.job_map.contract import MapFilterView, MapFilters, MapJob, MapQuery, MapView
+from printer_app.job_map.contract import (
+    MapCandidateDiagnostic, MapDiagnostics, MapFilterView, MapFilters, MapJob,
+    MapQuery, MapSourceDiagnostics, MapSourceSnapshot, MapView,
+)
 from printer_app.job_map.repository import JobMapRepository
 from printer_app.job_map.service import JobMapRefreshService, JobMapService, MAX_RADIUS_MILES
 from printer_app.salesforce_sandbox.adapter import PortalField, SalesforceCliAdapter
@@ -69,14 +72,20 @@ def test_map_source_fetches_filtered_jobs_once_with_service_appointment_location
 
     adapter = SalesforceCliAdapter(runner=runner, executable='/fake/sf')
     query = MapQuery(market='Seattle', product_type='Bath', rep='Rep One')
-    jobs = adapter.map_jobs(query)
+    snapshot = adapter.map_jobs(query)
 
-    assert jobs == (MapJob(
+    assert snapshot.jobs == (MapJob(
         source_id='0WO000000000001AAA', work_order_number='02257311',
         lead_name='Customer One', lead_status='Working', latitude=47.25, longitude=-122.45,
         source_record_url='https://example.my.salesforce.com/lightning/r/Lead/00Q000000000001AAA/view',
         market='Seattle', product_type='Bath', assigned_reps=('Rep One',),
     ),)
+    assert snapshot.diagnostics == MapSourceDiagnostics(
+        appointment_rows=2,
+        grouped_jobs=1,
+        jobs_with_location=1,
+        jobs_missing_location=0,
+    )
 
     queries = [
         call[call.index('--query') + 1]
@@ -110,9 +119,16 @@ def test_map_source_has_no_location_fallback_when_appointment_location_is_missin
         }})
 
     adapter = SalesforceCliAdapter(runner=runner, executable='/fake/sf')
-    assert adapter.map_jobs(MapQuery(
+    snapshot = adapter.map_jobs(MapQuery(
         market='Seattle', product_type='Bath', rep='Rep One',
-    )) == ()
+    ))
+    assert snapshot.jobs == ()
+    assert snapshot.diagnostics == MapSourceDiagnostics(
+        appointment_rows=1,
+        grouped_jobs=1,
+        jobs_with_location=0,
+        jobs_missing_location=1,
+    )
 
 
 def test_map_source_boundary_returns_normalized_filter_choices():
@@ -153,8 +169,19 @@ def test_map_repository_round_trips_filter_only_snapshot_and_invalidates_old_con
     repository.replace_filter_snapshot(filters, 90.0)
     assert repository.filter_snapshot() == {'filters': filters, 'captured_at': 90.0}
 
-    repository.replace_snapshot(query, (job,), 100.0)
-    assert repository.snapshot() == {'query': query, 'jobs': (job,), 'captured_at': 100.0}
+    source_diagnostics = MapSourceDiagnostics(
+        appointment_rows=3,
+        grouped_jobs=2,
+        jobs_with_location=1,
+        jobs_missing_location=1,
+    )
+    repository.replace_snapshot(query, (job,), 100.0, source_diagnostics)
+    assert repository.snapshot() == {
+        'query': query,
+        'jobs': (job,),
+        'captured_at': 100.0,
+        'diagnostics': source_diagnostics,
+    }
 
     state = repository.request_refresh('refresh-1', query, 101.0)
     assert state['status'] == 'queued'
@@ -201,7 +228,17 @@ def test_map_service_reuses_filtered_snapshot_at_any_phone_location_and_checks_d
 
     class Repository:
         def snapshot(self):
-            return {'query': query, 'jobs': jobs, 'captured_at': 100.0}
+            return {
+                'query': query,
+                'jobs': jobs,
+                'captured_at': 100.0,
+                'diagnostics': MapSourceDiagnostics(
+                    appointment_rows=6,
+                    grouped_jobs=4,
+                    jobs_with_location=4,
+                    jobs_missing_location=0,
+                ),
+            }
 
         def refresh_state(self):
             return {}
@@ -216,6 +253,15 @@ def test_map_service_reuses_filtered_snapshot_at_any_phone_location_and_checks_d
 
     assert [job.source_id for job in first.jobs] == ['confirmed', 'near']
     assert 'far' in [job.source_id for job in second.jobs]
+    assert first.diagnostics.appointment_rows == 6
+    assert first.diagnostics.grouped_jobs == 4
+    assert first.diagnostics.snapshot_jobs == 4
+    assert first.diagnostics.excluded_status == 1
+    assert first.diagnostics.outside_radius == 1
+    assert first.diagnostics.visible_jobs == 2
+    assert [item.outcome for item in first.diagnostics.candidates] == [
+        'excluded-status', 'visible', 'visible', 'outside-radius'
+    ]
     assert requested == []
 
 
@@ -258,7 +304,15 @@ def test_map_refresh_service_publishes_filters_then_filtered_job_snapshot(tmp_pa
 
         def map_jobs(self, requested):
             assert requested == query
-            return (job,)
+            return MapSourceSnapshot(
+                jobs=(job,),
+                diagnostics=MapSourceDiagnostics(
+                    appointment_rows=2,
+                    grouped_jobs=1,
+                    jobs_with_location=1,
+                    jobs_missing_location=0,
+                ),
+            )
 
     refresh = JobMapRefreshService(repository, Source(), clock=lambda: 150.0)
     assert refresh.requested_due() is True
@@ -268,7 +322,10 @@ def test_map_refresh_service_publishes_filters_then_filtered_job_snapshot(tmp_pa
     assert repository.filter_refresh_state()['status'] == 'complete'
     assert state['status'] == 'complete'
     assert state['count'] == 1
-    assert repository.snapshot()['jobs'] == (job,)
+    saved = repository.snapshot()
+    assert saved['jobs'] == (job,)
+    assert saved['diagnostics'].appointment_rows == 2
+    assert saved['diagnostics'].jobs_with_location == 1
 
 
 def test_map_refresh_failure_is_durable_and_web_can_return_without_waiting(tmp_path):
@@ -385,6 +442,25 @@ def test_map_web_returns_filters_first_then_filtered_local_snapshot_and_mod_pdf(
                     market='Seattle', product_type='Bath', assigned_reps=('Rep One',),
                 ),),
                 captured_at=123.0,
+                diagnostics=MapDiagnostics(
+                    appointment_rows=4,
+                    grouped_jobs=3,
+                    jobs_with_location=2,
+                    jobs_missing_location=1,
+                    snapshot_jobs=2,
+                    excluded_status=0,
+                    outside_radius=1,
+                    visible_jobs=1,
+                    candidates=(MapCandidateDiagnostic(
+                        work_order_number='02257311',
+                        lead_name='Customer',
+                        lead_status='Working',
+                        distance_miles=0.1254,
+                        latitude=47.25,
+                        longitude=-122.45,
+                        outcome='visible',
+                    ),),
+                ),
             )
 
         def mod_sheet(self, number):
@@ -411,6 +487,20 @@ def test_map_web_returns_filters_first_then_filtered_local_snapshot_and_mod_pdf(
     assert payload['ok'] is True
     assert payload['radius_miles'] == 5.0
     assert payload['jobs'][0]['work_order_number'] == '02257311'
+    assert payload['diagnostics']['appointment_rows'] == 4
+    assert payload['diagnostics']['grouped_jobs'] == 3
+    assert payload['diagnostics']['jobs_missing_location'] == 1
+    assert payload['diagnostics']['outside_radius'] == 1
+    assert payload['diagnostics']['visible_jobs'] == 1
+    assert payload['diagnostics']['candidates'][0] == {
+        'work_order_number': '02257311',
+        'lead_name': 'Customer',
+        'lead_status': 'Working',
+        'distance_miles': 0.125,
+        'latitude': 47.25,
+        'longitude': -122.45,
+        'outcome': 'visible',
+    }
 
     pdf = client.get('/map/mod-sheet?work_order=02257311')
     assert pdf.status_code == 200 and pdf.mimetype == 'application/pdf'
@@ -433,6 +523,8 @@ def test_job_map_architecture_has_one_authoritative_location_and_one_distance_ch
     assert '.map_jobs(' not in local_service
     assert 'SNAPSHOT_CENTER_TOLERANCE_MILES' not in service
     assert service.count('_distance_miles(') == 2
+    assert '_evaluate_jobs' in service
+    assert 'MapCandidateDiagnostic' in service
     assert 'self.repository.snapshot()' in local_service
 
     repository = (root / 'job_map/repository.py').read_text()
@@ -452,6 +544,8 @@ def test_job_map_architecture_has_one_authoritative_location_and_one_distance_ch
     assert "Product_Interest__c INCLUDES" in map_block
     assert "Assigned_Service_Resource__r.Name = " in map_block
     assert "'Latitude', 'Longitude'," in map_block
+    assert 'appointment_rows += 1' in map_block
+    assert 'jobs_missing_location=missing_location' in map_block
     assert 'Latitude >=' not in map_block
     assert 'Longitude >=' not in map_block
     assert '_map_locations' not in adapter
@@ -470,6 +564,11 @@ def test_job_map_architecture_has_one_authoritative_location_and_one_distance_ch
     assert "url.searchParams.set('market'" in runtime
     assert "url.searchParams.set('rep'" in runtime
     assert "url.searchParams.set('product'" in runtime
+    assert "url.searchParams.set('refresh', '1')" in runtime
+    assert "document.getElementById('jobMapDiagnose')" in runtime
+    assert 'Salesforce appointment rows:' in runtime
+    assert 'Jobs missing ServiceAppointment location:' in runtime
+    assert 'Nearest candidates (' in runtime
     assert "action('MOD Sheet'" in runtime
     assert "action('Open in Salesforce'" in runtime
 
