@@ -1,1 +1,81 @@
-.job-map{height:calc(100vh - 330px);min-height:460px;width:100%;border:1px solid #dbe3eb;border-radius:12px;overflow:hidden;background:#e8edf2}.job-map-heading{margin-bottom:14px}.job-map-heading h1{margin-bottom:0}.job-map-heading .muted{margin:0;text-align:right}.job-map-controls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;gap:10px;align-items:end;margin:0 0 14px}.job-map-controls label{display:grid;gap:5px;min-width:0}.job-map-controls label span{font-size:12px;font-weight:700;color:#60778d}.job-map-controls select,.job-map-controls button{min-height:42px;border:1px solid #bac8d5;border-radius:8px;background:#fff;color:#192b3e;font:inherit}.job-map-controls select{width:100%;padding:0 10px}.job-map-controls button{padding:0 14px;white-space:nowrap;cursor:pointer}.job-map-controls button:disabled{cursor:default;opacity:.55}.job-map-popup strong{display:block;font-size:15px;margin-bottom:4px}.job-map-popup small{display:block;color:#60778d;margin-bottom:4px}.job-map-popup-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.job-map-popup-actions a{display:inline-block;padding:8px 10px;border:1px solid #bac8d5;border-radius:6px;background:#fff;text-decoration:none;color:#192b3e}.job-map-popup-actions a:first-child{background:#185b89;border-color:#185b89;color:#fff}@media(max-width:750px){.job-map{height:calc(100vh - 420px);min-height:420px}.job-map-heading{align-items:center}.job-map-heading .muted{max-width:56%}.job-map-controls{grid-template-columns:1fr 1fr}.job-map-controls button{width:100%}}@media(max-width:430px){.job-map{height:480px;min-height:480px}.job-map-controls{grid-template-columns:1fr}.job-map-heading{display:block}.job-map-heading .muted{max-width:none;text-align:left;margin-top:6px}}
+.job-map{
+  height:calc(100vh - 380px);
+  min-height:460px;
+  width:100%;
+  border:1px solid #dbe3eb;
+  border-radius:12px;
+  overflow:hidden;
+  background:#e8edf2
+}
+.job-map-heading{margin-bottom:14px}
+.job-map-heading h1{margin-bottom:0}
+.job-map-heading .muted{margin:0;text-align:right}
+.job-map-controls{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr)) auto auto;
+  gap:10px;
+  align-items:end;
+  margin:0 0 14px
+}
+.job-map-controls label{display:grid;gap:5px;min-width:0}
+.job-map-controls label span{font-size:12px;font-weight:700;color:#60778d}
+.job-map-controls select,.job-map-controls button{
+  min-height:42px;
+  border:1px solid #bac8d5;
+  border-radius:8px;
+  background:#fff;
+  color:#192b3e;
+  font:inherit
+}
+.job-map-controls select{width:100%;padding:0 10px}
+.job-map-controls button{padding:0 14px;white-space:nowrap;cursor:pointer}
+.job-map-controls button:disabled{cursor:default;opacity:.55}
+.job-map-diagnostics{
+  margin:0 0 14px;
+  border:1px solid #bac8d5;
+  border-radius:8px;
+  background:#fff
+}
+.job-map-diagnostics summary{
+  cursor:pointer;
+  padding:10px 12px;
+  font-weight:700;
+  color:#192b3e
+}
+.job-map-diagnostics pre{
+  margin:0;
+  border-top:1px solid #dbe3eb;
+  padding:12px;
+  white-space:pre-wrap;
+  word-break:break-word;
+  font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+  color:#263b50;
+  max-height:340px;
+  overflow:auto
+}
+.job-map-popup strong{display:block;font-size:15px;margin-bottom:4px}
+.job-map-popup small{display:block;color:#60778d;margin-bottom:4px}
+.job-map-popup-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.job-map-popup-actions a{
+  display:inline-block;
+  padding:8px 10px;
+  border:1px solid #bac8d5;
+  border-radius:6px;
+  background:#fff;
+  text-decoration:none;
+  color:#192b3e
+}
+.job-map-popup-actions a:first-child{background:#185b89;border-color:#185b89;color:#fff}
+@media(max-width:750px){
+  .job-map{height:calc(100vh - 470px);min-height:420px}
+  .job-map-heading{align-items:center}
+  .job-map-heading .muted{max-width:56%}
+  .job-map-controls{grid-template-columns:1fr 1fr}
+  .job-map-controls button{width:100%}
+}
+@media(max-width:430px){
+  .job-map{height:480px;min-height:480px}
+  .job-map-controls{grid-template-columns:1fr}
+  .job-map-heading{display:block}
+  .job-map-heading .muted{max-width:none;text-align:left;margin-top:6px}
+}

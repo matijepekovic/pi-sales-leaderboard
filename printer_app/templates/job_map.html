@@ -25,8 +25,13 @@
     <select id="jobMapProduct" disabled><option value="">All products</option></select>
   </label>
   <button id="jobMapLocate" type="button" disabled>Load nearby</button>
+  <button id="jobMapDiagnose" type="button" disabled>Fresh diagnostic</button>
 </div>
 <p id="jobMapError" class="notice error" hidden></p>
+<details id="jobMapDiagnostics" class="job-map-diagnostics">
+  <summary>Diagnostics</summary>
+  <pre id="jobMapDiagnosticsText">No map request has been run yet.</pre>
+</details>
 <div id="jobMap" class="job-map"
      data-filters-url="{{ url_for('job_map.filters') }}"
      data-jobs-url="{{ url_for('job_map.jobs') }}"

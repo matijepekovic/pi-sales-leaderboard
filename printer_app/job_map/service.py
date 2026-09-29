@@ -6,19 +6,22 @@ import time
 from uuid import uuid4
 
 from ..mod_sheet_contract import ModSheetSourceError
-from .contract import JobMapSourceError, MapFilterView, MapFilters, MapQuery, MapView
+from .contract import (
+    JobMapSourceError, MapCandidateDiagnostic, MapDiagnostics, MapFilterView,
+    MapFilters, MapQuery, MapSourceDiagnostics, MapSourceSnapshot, MapView,
+)
 
 
 EXCLUDED_LEAD_STATUSES = frozenset({'new', 'scheduled', 'do not call'})
 MAX_RADIUS_MILES = 5.0
 SNAPSHOT_TTL_SECONDS = 300
 FILTER_TTL_SECONDS = 3600
-SNAPSHOT_CENTER_TOLERANCE_MILES = 0.25
 FAILED_RETRY_SECONDS = 60
 _EARTH_RADIUS_MILES = 3958.7613
 
 
 def _distance_miles(latitude_a, longitude_a, latitude_b, longitude_b):
+    """One exact phone-to-job distance calculation."""
     lat1 = radians(latitude_a)
     lat2 = radians(latitude_b)
     delta_lat = lat2 - lat1
@@ -37,7 +40,7 @@ def _clean_filter(value, label):
     return value
 
 
-def _validated_query(latitude, longitude, market='', product_type='', rep=''):
+def _validated_location(latitude, longitude):
     try:
         latitude = float(latitude)
         longitude = float(longitude)
@@ -46,10 +49,11 @@ def _validated_query(latitude, longitude, market='', product_type='', rep=''):
     if (not isfinite(latitude) or not isfinite(longitude)
             or not -90 <= latitude <= 90 or not -180 <= longitude <= 180):
         raise ValueError('A valid current location is required.')
+    return latitude, longitude
+
+
+def _source_query(market='', product_type='', rep=''):
     return MapQuery(
-        latitude=latitude,
-        longitude=longitude,
-        radius_miles=MAX_RADIUS_MILES,
         market=_clean_filter(market, 'Market'),
         product_type=_clean_filter(product_type, 'Product'),
         rep=_clean_filter(rep, 'Rep'),
@@ -64,21 +68,67 @@ def _same_filters(left, right):
     )
 
 
-def _eligible_jobs(query, jobs):
-    return tuple(sorted(
-        (
-            job for job in jobs
-            if str(job.lead_status or '').strip().casefold() not in EXCLUDED_LEAD_STATUSES
-            and _distance_miles(
-                query.latitude, query.longitude, job.latitude, job.longitude
-            ) <= MAX_RADIUS_MILES
-        ),
-        key=lambda job: (str(job.lead_name or '').casefold(), job.work_order_number),
-    ))
+def _evaluate_jobs(latitude, longitude, jobs, source_diagnostics=None):
+    """Calculate phone-to-job distance once per sourced job and record every outcome."""
+    source_diagnostics = (
+        source_diagnostics
+        if isinstance(source_diagnostics, MapSourceDiagnostics)
+        else MapSourceDiagnostics()
+    )
+    visible = []
+    candidates = []
+    excluded_status = 0
+    outside_radius = 0
+
+    for job in jobs:
+        distance = _distance_miles(
+            latitude, longitude, job.latitude, job.longitude
+        )
+        status_excluded = (
+            str(job.lead_status or '').strip().casefold() in EXCLUDED_LEAD_STATUSES
+        )
+        if status_excluded:
+            outcome = 'excluded-status'
+            excluded_status += 1
+        elif distance > MAX_RADIUS_MILES:
+            outcome = 'outside-radius'
+            outside_radius += 1
+        else:
+            outcome = 'visible'
+            visible.append(job)
+
+        candidates.append(MapCandidateDiagnostic(
+            work_order_number=job.work_order_number,
+            lead_name=job.lead_name,
+            lead_status=job.lead_status,
+            distance_miles=distance,
+            latitude=job.latitude,
+            longitude=job.longitude,
+            outcome=outcome,
+        ))
+
+    visible.sort(
+        key=lambda job: (str(job.lead_name or '').casefold(), job.work_order_number)
+    )
+    candidates.sort(
+        key=lambda item: (item.distance_miles, item.work_order_number)
+    )
+    diagnostics = MapDiagnostics(
+        appointment_rows=source_diagnostics.appointment_rows,
+        grouped_jobs=source_diagnostics.grouped_jobs,
+        jobs_with_location=source_diagnostics.jobs_with_location,
+        jobs_missing_location=source_diagnostics.jobs_missing_location,
+        snapshot_jobs=len(jobs),
+        excluded_status=excluded_status,
+        outside_radius=outside_radius,
+        visible_jobs=len(visible),
+        candidates=tuple(candidates[:25]),
+    )
+    return tuple(visible), diagnostics
 
 
 class JobMapService:
-    """Serve local filter/job snapshots; external calls belong to the worker."""
+    """Serve cached filtered jobs and apply the one exact phone-distance rule."""
 
     def __init__(self, repository, mod_sheet_source, render_pdf, clock=None):
         self.repository = repository
@@ -113,20 +163,15 @@ class JobMapService:
 
     @staticmethod
     def _compatible(query, snapshot):
-        if not snapshot:
-            return False
-        saved = snapshot.get('query')
-        return (
-            isinstance(saved, MapQuery)
-            and _same_filters(query, saved)
-            and abs(saved.radius_miles - query.radius_miles) < 1e-9
-            and _distance_miles(
-                query.latitude, query.longitude, saved.latitude, saved.longitude
-            ) <= SNAPSHOT_CENTER_TOLERANCE_MILES
+        return bool(
+            snapshot
+            and isinstance(snapshot.get('query'), MapQuery)
+            and _same_filters(query, snapshot['query'])
         )
 
     def view(self, latitude, longitude, *, market='', product_type='', rep='', force_refresh=False):
-        query = _validated_query(latitude, longitude, market, product_type, rep)
+        latitude, longitude = _validated_location(latitude, longitude)
+        query = _source_query(market, product_type, rep)
         now = self.clock()
         snapshot = self.repository.snapshot()
         compatible = self._compatible(query, snapshot)
@@ -137,13 +182,7 @@ class JobMapService:
         status = str(state.get('status') or '')
         running = status in ('queued', 'running')
         state_query = state.get('query')
-        same_request = (
-            isinstance(state_query, MapQuery)
-            and _same_filters(query, state_query)
-            and _distance_miles(
-                query.latitude, query.longitude, state_query.latitude, state_query.longitude
-            ) <= SNAPSHOT_CENTER_TOLERANCE_MILES
-        )
+        same_request = isinstance(state_query, MapQuery) and _same_filters(query, state_query)
         recent_failure = (
             status == 'failed'
             and same_request
@@ -154,7 +193,15 @@ class JobMapService:
             state = self.repository.request_refresh(str(uuid4()), query, now)
             running = str(state.get('status') or '') in ('queued', 'running')
 
-        jobs = _eligible_jobs(query, snapshot.get('jobs', ())) if compatible else ()
+        if compatible:
+            jobs, diagnostics = _evaluate_jobs(
+                latitude,
+                longitude,
+                snapshot.get('jobs', ()),
+                snapshot.get('diagnostics'),
+            )
+        else:
+            jobs, diagnostics = (), MapDiagnostics()
         error = ''
         if not running and str(state.get('status') or '') == 'failed' and same_request:
             error = str(state.get('error') or 'Nearby map refresh failed.')
@@ -165,6 +212,7 @@ class JobMapService:
             stale=bool(compatible and not fresh),
             captured_at=captured,
             error=error,
+            diagnostics=diagnostics,
         )
 
     def mod_sheet(self, work_order_number):
@@ -184,7 +232,7 @@ class JobMapService:
 
 
 class JobMapRefreshService:
-    """Worker-owned external refresh for filter choices and filtered map snapshots."""
+    """Worker-owned external refresh for filter choices and filtered job snapshots."""
 
     def __init__(self, repository, source, clock=None):
         self.repository = repository
@@ -239,9 +287,17 @@ class JobMapRefreshService:
         running = dict(state, status='running', updated=self.clock(), error='')
         self.repository.save_refresh_state(running)
         try:
-            jobs = tuple(self.source.map_jobs(query))
+            source_snapshot = self.source.map_jobs(query)
+            if not isinstance(source_snapshot, MapSourceSnapshot):
+                raise ValueError('Map source returned invalid snapshot data.')
+            jobs = tuple(source_snapshot.jobs)
             captured = self.clock()
-            self.repository.replace_snapshot(query, jobs, captured)
+            self.repository.replace_snapshot(
+                query,
+                jobs,
+                captured,
+                source_snapshot.diagnostics,
+            )
             return self.repository.save_refresh_state(dict(
                 running,
                 status='complete',

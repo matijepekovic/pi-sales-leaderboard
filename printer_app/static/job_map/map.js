@@ -8,6 +8,9 @@
   const repFilter = document.getElementById('jobMapRep');
   const productFilter = document.getElementById('jobMapProduct');
   const locateButton = document.getElementById('jobMapLocate');
+  const diagnoseButton = document.getElementById('jobMapDiagnose');
+  const diagnosticsDetails = document.getElementById('jobMapDiagnostics');
+  const diagnosticsText = document.getElementById('jobMapDiagnosticsText');
   const filters = [marketFilter, repFilter, productFilter];
   const configuredRadiusMiles = Number(node.dataset.radiusMiles);
 
@@ -115,6 +118,7 @@
     filtersReady = true;
     for (const select of filters) select.disabled = false;
     locateButton.disabled = false;
+    diagnoseButton.disabled = false;
   }
 
   function clearMapForFilterChange() {
@@ -127,6 +131,8 @@
     delete error.dataset.sourceError;
     error.hidden = true;
     locateButton.disabled = false;
+    diagnoseButton.disabled = false;
+    diagnosticsText.textContent = 'Filters changed — run Load nearby or Fresh diagnostic.';
     status.textContent = 'Filters selected — tap Load nearby.';
   }
 
@@ -239,7 +245,7 @@
     }
   }
 
-  async function localSnapshot(latitude, longitude) {
+  async function localSnapshot(latitude, longitude, forceRefresh = false) {
     const url = new URL(node.dataset.jobsUrl, window.location.href);
     const selected = selectedFilters();
     url.searchParams.set('lat', String(latitude));
@@ -247,12 +253,76 @@
     if (selected.market) url.searchParams.set('market', selected.market);
     if (selected.rep) url.searchParams.set('rep', selected.rep);
     if (selected.product) url.searchParams.set('product', selected.product);
+    if (forceRefresh) url.searchParams.set('refresh', '1');
     return fetchJson(url, 10000);
   }
 
-  async function readNearby(latitude, longitude, generation, deadline) {
+  function diagnosticLines(payload, latitude, longitude) {
+    const selected = selectedFilters();
+    const detail = payload && payload.diagnostics ? payload.diagnostics : {};
+    const lines = [
+      'Phone: ' + latitude.toFixed(6) + ', ' + longitude.toFixed(6),
+      'Filters: Market=' + (selected.market || 'All')
+        + ' | Rep=' + (selected.rep || 'All')
+        + ' | Product=' + (selected.product || 'All'),
+      'Radius: ' + radiusMiles + ' miles',
+      'Snapshot: ' + (payload && payload.captured_at
+        ? new Date(Number(payload.captured_at) * 1000).toLocaleString()
+        : 'none yet'),
+      'Refresh: ' + (payload && payload.refreshing ? 'running' : 'complete'),
+      '',
+      'Salesforce appointment rows: ' + Number(detail.appointment_rows || 0),
+      'Grouped work orders: ' + Number(detail.grouped_jobs || 0),
+      'Jobs with ServiceAppointment location: ' + Number(detail.jobs_with_location || 0),
+      'Jobs missing ServiceAppointment location: ' + Number(detail.jobs_missing_location || 0),
+      'Jobs in local snapshot: ' + Number(detail.snapshot_jobs || 0),
+      'Excluded by lead status: ' + Number(detail.excluded_status || 0),
+      'Outside ' + radiusMiles + ' miles: ' + Number(detail.outside_radius || 0),
+      'Visible jobs: ' + Number(detail.visible_jobs || 0),
+    ];
+
+    const candidates = Array.isArray(detail.candidates) ? detail.candidates : [];
+    lines.push('', 'Nearest candidates (' + candidates.length + ' shown):');
+    if (!candidates.length) {
+      lines.push('  none');
+    } else {
+      for (const item of candidates) {
+        const number = String(item.work_order_number || '—');
+        const name = String(item.lead_name || '—');
+        const leadStatus = String(item.lead_status || '—');
+        const distance = Number(item.distance_miles);
+        const lat = Number(item.latitude);
+        const lon = Number(item.longitude);
+        lines.push(
+          '  ' + number
+          + ' | ' + (Number.isFinite(distance) ? distance.toFixed(3) + ' mi' : 'distance ?')
+          + ' | ' + String(item.outcome || 'unknown')
+          + ' | status=' + leadStatus
+          + ' | ' + name
+          + ' | ' + (Number.isFinite(lat) ? lat.toFixed(6) : '?')
+          + ', ' + (Number.isFinite(lon) ? lon.toFixed(6) : '?')
+        );
+      }
+    }
+    if (payload && payload.error) lines.push('', 'Error: ' + String(payload.error));
+    return lines;
+  }
+
+  function showDiagnostics(payload, latitude, longitude, openPanel = false) {
+    diagnosticsText.textContent = diagnosticLines(payload, latitude, longitude).join('\n');
+    if (openPanel) diagnosticsDetails.open = true;
+  }
+
+  async function readNearby(
+    latitude,
+    longitude,
+    generation,
+    deadline,
+    forceRefresh = false,
+    openDiagnostics = false,
+  ) {
     try {
-      const payload = await localSnapshot(latitude, longitude);
+      const payload = await localSnapshot(latitude, longitude, forceRefresh);
       if (generation !== loadGeneration) return;
 
       radiusMiles = Number.isFinite(payload.radius_miles) ? payload.radius_miles : configuredRadiusMiles;
@@ -261,6 +331,7 @@
       delete error.dataset.sourceError;
       error.hidden = true;
       const shown = renderJobs();
+      showDiagnostics(payload, latitude, longitude, openDiagnostics);
 
       if (payload.error) {
         error.dataset.sourceError = '1';
@@ -273,9 +344,12 @@
           ? shown + ' filtered nearby jobs shown · refreshing…'
           : 'Applying filters, then checking ' + radiusMiles + ' miles…';
         locateButton.disabled = false;
+        diagnoseButton.disabled = false;
         if (Date.now() < deadline) {
           pollTimer = window.setTimeout(
-            () => readNearby(latitude, longitude, generation, deadline),
+            () => readNearby(
+              latitude, longitude, generation, deadline, false, openDiagnostics
+            ),
             1500,
           );
         } else {
@@ -288,6 +362,7 @@
       }
 
       locateButton.disabled = false;
+      diagnoseButton.disabled = false;
       if (jobs.length) {
         const noun = shown === 1 ? 'job' : 'jobs';
         status.textContent = shown + ' filtered ' + noun + ' within ' + radiusMiles + ' miles';
@@ -301,6 +376,7 @@
     } catch (exc) {
       if (generation !== loadGeneration) return;
       locateButton.disabled = false;
+      diagnoseButton.disabled = false;
       status.textContent = 'Map unavailable';
       error.dataset.sourceError = '1';
       error.textContent = String(exc.message || exc);
@@ -400,14 +476,15 @@
     });
   }
 
-  async function loadNearby() {
+  async function loadNearby(forceRefresh = false, openDiagnostics = false) {
     if (!filtersReady) return;
     cancelPoll();
     loadGeneration += 1;
     const generation = loadGeneration;
 
     locateButton.disabled = true;
-    status.textContent = 'Getting your location…';
+    diagnoseButton.disabled = true;
+    status.textContent = forceRefresh ? 'Starting fresh diagnostic…' : 'Getting your location…';
     error.hidden = true;
 
     let location;
@@ -416,6 +493,7 @@
     } catch (exc) {
       if (generation !== loadGeneration) return;
       locateButton.disabled = false;
+      diagnoseButton.disabled = false;
       status.textContent = 'Location unavailable';
       error.dataset.sourceError = '1';
       error.textContent = String(exc.message || exc);
@@ -433,9 +511,12 @@
         location.longitude,
         generation,
         Date.now() + 60000,
+        forceRefresh,
+        openDiagnostics,
       );
     } catch (exc) {
       locateButton.disabled = false;
+      diagnoseButton.disabled = false;
       status.textContent = 'Map unavailable';
       error.dataset.sourceError = '1';
       error.textContent = String(exc.message || exc);
@@ -444,7 +525,8 @@
   }
 
   for (const select of filters) select.addEventListener('change', clearMapForFilterChange);
-  locateButton.addEventListener('click', loadNearby);
+  locateButton.addEventListener('click', () => loadNearby(false, false));
+  diagnoseButton.addEventListener('click', () => loadNearby(true, true));
 
   readFilters(Date.now() + 60000);
 })();
