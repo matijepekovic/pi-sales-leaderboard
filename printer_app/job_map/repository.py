@@ -102,7 +102,11 @@ class JobMapRepository:
             except (TypeError, ValueError):
                 state = {}
             if isinstance(state, dict) and state.get('status') in ('queued', 'running'):
-                return self.refresh_state()
+                result = dict(state)
+                saved_query = _query_from(result.get('query'))
+                if saved_query is not None:
+                    result['query'] = saved_query
+                return result
             state = {
                 'id': str(ident),
                 'status': 'queued',
