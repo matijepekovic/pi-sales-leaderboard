@@ -1,4 +1,4 @@
-"""Job map source, filters-first snapshots, web, and architecture regressions."""
+"""Job map source, snapshots, exact distance, web, and architecture regressions."""
 from __future__ import annotations
 
 import json
@@ -21,7 +21,7 @@ def _result(payload):
 
 def _row(ident, *, work='0WO000000000001AAA', number='02257311', lead='00Q000000000001AAA',
          name='Customer One', status='Working', market='Seattle',
-         product='Bath', rep='Rep One',
+         product='Bath', rep='Rep One', lat='47.25', lon='-122.45',
          scheduled='2026-09-24T17:00:00.000+0000', created='2026-09-24T16:00:00.000+0000',
          appointment_status='Scheduled'):
     return {
@@ -29,6 +29,8 @@ def _row(ident, *, work='0WO000000000001AAA', number='02257311', lead='00Q000000
         'StatusCategory': appointment_status,
         'SchedStartTime': scheduled,
         'CreatedDate': created,
+        'Latitude': lat,
+        'Longitude': lon,
         'FSSK__FSK_Work_Order__c': work,
         'FSSK__FSK_Assigned_Service_Resource__r': {'Name': rep},
         'FSSK__FSK_Work_Order__r': {
@@ -44,22 +46,13 @@ def _row(ident, *, work='0WO000000000001AAA', number='02257311', lead='00Q000000
     }
 
 
-def test_map_source_applies_business_filters_before_field_service_radius_query():
+def test_map_source_fetches_filtered_jobs_once_with_service_appointment_location():
     calls = []
-    appointment_rows = [
+    rows = [
         _row('08p000000000001AAA', scheduled='2026-09-23T17:00:00.000+0000'),
         _row('08p000000000002AAA', scheduled='2026-09-25T17:00:00.000+0000',
-             appointment_status='Canceled'),
+             appointment_status='Canceled', lat='1.0', lon='2.0'),
     ]
-    nearby_appointment = {
-        'Id': '08p000000000001AAA',
-        'Latitude': '47.25',
-        'Longitude': '-122.45',
-        'FSSK__FSK_Work_Order__r': {
-            'Latitude': '10.0',
-            'Longitude': '20.0',
-        },
-    }
 
     def runner(command, **kwargs):
         calls.append(command)
@@ -71,17 +64,11 @@ def test_map_source_applies_business_filters_before_field_service_radius_query()
             }})
         query = command[command.index('--query') + 1]
         assert ' FROM ServiceAppointment WHERE ' in query
-        if 'Latitude >=' in query:
-            page = [nearby_appointment]
-        else:
-            page = [] if ' AND Id > ' in query else appointment_rows
+        page = [] if ' AND Id > ' in query else rows
         return _result({'status': 0, 'result': {'records': page}})
 
     adapter = SalesforceCliAdapter(runner=runner, executable='/fake/sf')
-    query = MapQuery(
-        47.25, -122.45, 5.0,
-        market='Seattle', product_type='Bath', rep='Rep One',
-    )
+    query = MapQuery(market='Seattle', product_type='Bath', rep='Rep One')
     jobs = adapter.map_jobs(query)
 
     assert jobs == (MapJob(
@@ -95,31 +82,20 @@ def test_map_source_applies_business_filters_before_field_service_radius_query()
         call[call.index('--query') + 1]
         for call in calls if call[1:3] == ['data', 'query']
     ]
-    business_query = next(
-        value for value in queries
-        if 'Latitude >=' not in value and ' AND Id > ' not in value
-    )
-    radius_query = next(value for value in queries if 'Latitude >=' in value)
-
-    assert queries.index(business_query) < queries.index(radius_query)
-    assert "FSSK__FSK_Work_Order__r.Lead__r.Market__c = 'Seattle'" in business_query
-    assert "FSSK__FSK_Work_Order__r.Product_Interest__c INCLUDES ('Bath')" in business_query
-    assert "FSSK__FSK_Assigned_Service_Resource__r.Name = 'Rep One'" in business_query
-    assert "WorkType.Name LIKE '%Sales%'" in business_query
-    assert 'Latitude >=' not in business_query
-    assert 'Longitude >=' not in business_query
-
-    assert "Id IN ('08p000000000001AAA')" in radius_query
-    assert 'FROM ServiceAppointment' in radius_query
-    assert 'Latitude >=' in radius_query and 'Latitude <=' in radius_query
-    assert 'Longitude >=' in radius_query and 'Longitude <=' in radius_query
-    assert 'FSSK__FSK_Work_Order__r.Latitude' in radius_query
-    assert 'FSSK__FSK_Work_Order__r.Longitude' in radius_query
+    first = queries[0]
+    assert "FSSK__FSK_Work_Order__r.Lead__r.Market__c = 'Seattle'" in first
+    assert "FSSK__FSK_Work_Order__r.Product_Interest__c INCLUDES ('Bath')" in first
+    assert "FSSK__FSK_Assigned_Service_Resource__r.Name = 'Rep One'" in first
+    assert "WorkType.Name LIKE '%Sales%'" in first
+    assert 'Latitude, Longitude' in first
+    assert 'Latitude >=' not in first
+    assert 'Longitude >=' not in first
+    assert 'FSSK__FSK_Work_Order__r.Latitude' not in first
     assert ' FROM Lead ' not in ' '.join(queries)
 
 
-def test_map_source_uses_work_order_geocode_when_appointment_coordinates_are_blank():
-    appointment = _row('08p000000000001AAA')
+def test_map_source_has_no_location_fallback_when_appointment_location_is_missing():
+    rows = [_row('08p000000000001AAA', lat=None, lon=None)]
 
     def runner(command, **kwargs):
         if command[1:3] == ['org', 'display']:
@@ -129,47 +105,14 @@ def test_map_source_uses_work_order_geocode_when_appointment_coordinates_are_bla
                 'id': '00D000000000123', 'connectedStatus': 'Connected',
             }})
         query = command[command.index('--query') + 1]
-        if 'Latitude >=' in query:
-            rows = [{
-                'Id': '08p000000000001AAA',
-                'Latitude': None,
-                'Longitude': None,
-                'FSSK__FSK_Work_Order__r': {
-                    'Latitude': '47.251',
-                    'Longitude': '-122.451',
-                },
-            }]
-        else:
-            rows = [] if ' AND Id > ' in query else [appointment]
-        return _result({'status': 0, 'result': {'records': rows}})
+        return _result({'status': 0, 'result': {
+            'records': [] if ' AND Id > ' in query else rows,
+        }})
 
     adapter = SalesforceCliAdapter(runner=runner, executable='/fake/sf')
-    jobs = adapter.map_jobs(MapQuery(
-        47.25, -122.45, 5.0,
+    assert adapter.map_jobs(MapQuery(
         market='Seattle', product_type='Bath', rep='Rep One',
-    ))
-
-    assert len(jobs) == 1
-    assert (jobs[0].latitude, jobs[0].longitude) == (47.251, -122.451)
-
-
-def test_map_source_skips_radius_query_when_business_filters_match_no_appointments():
-    queries = []
-
-    def runner(command, **kwargs):
-        query = command[command.index('--query') + 1]
-        queries.append(query)
-        assert ' FROM ServiceAppointment WHERE ' in query
-        return _result({'status': 0, 'result': {'records': []}})
-
-    adapter = SalesforceCliAdapter(runner=runner, executable='/fake/sf')
-    result = adapter.map_jobs(MapQuery(
-        47.25, -122.45, 5.0,
-        market='Seattle', product_type='Bath', rep='Rep One',
-    ))
-    assert result == ()
-    assert len(queries) == 1
-    assert 'Latitude >=' not in queries[0]
+    )) == ()
 
 
 def test_map_source_boundary_returns_normalized_filter_choices():
@@ -193,12 +136,9 @@ def test_map_source_boundary_returns_normalized_filter_choices():
     )
 
 
-def test_map_repository_round_trips_filtered_snapshot_and_filter_snapshot(tmp_path):
+def test_map_repository_round_trips_filter_only_snapshot_and_invalidates_old_contract(tmp_path):
     repository = JobMapRepository(Database(tmp_path / 'printer.db'))
-    query = MapQuery(
-        47.25, -122.45, 5.0,
-        market='Seattle', product_type='Bath', rep='Rep One',
-    )
+    query = MapQuery(market='Seattle', product_type='Bath', rep='Rep One')
     filters = MapFilters(
         markets=('Seattle', 'Tacoma'),
         product_types=('Bath', 'Windows'),
@@ -221,6 +161,10 @@ def test_map_repository_round_trips_filtered_snapshot_and_filter_snapshot(tmp_pa
     assert state['query'] == query
     repository.save_refresh_state(dict(state, status='running', updated=102.0))
     assert repository.refresh_state()['status'] == 'running'
+
+    source = (Path(__file__).resolve().parents[1] / 'job_map/repository.py').read_text()
+    assert "SNAPSHOT_KEY = 'job_map_snapshot_v3'" in source
+    assert "REFRESH_KEY = 'job_map_refresh_v3'" in source
 
 
 def test_map_service_loads_filter_choices_before_any_location_query():
@@ -245,17 +189,15 @@ def test_map_service_loads_filter_choices_before_any_location_query():
     assert len(requested) == 1
 
 
-def test_map_service_returns_matching_filtered_local_snapshot_without_external_call():
-    query = MapQuery(
-        47.0, -122.0, MAX_RADIUS_MILES,
-        market='Seattle', product_type='Bath', rep='Rep One',
-    )
+def test_map_service_reuses_filtered_snapshot_at_any_phone_location_and_checks_distance_once():
+    query = MapQuery(market='Seattle', product_type='Bath', rep='Rep One')
     jobs = (
-        MapJob('inside', 'WO1', 'Inside', 'Working', 47.02, -122.0, ''),
+        MapJob('near', 'WO1', 'Near', 'Working', 47.02, -122.0, ''),
         MapJob('far', 'WO2', 'Far', 'Working', 47.10, -122.0, ''),
         MapJob('new', 'WO3', 'New', 'New', 47.01, -122.0, ''),
         MapJob('confirmed', 'WO4', 'Confirmed', 'Scheduled Confirmed', 47.03, -122.0, ''),
     )
+    requested = []
 
     class Repository:
         def snapshot(self):
@@ -265,22 +207,21 @@ def test_map_service_returns_matching_filtered_local_snapshot_without_external_c
             return {}
 
         def request_refresh(self, *args):
-            raise AssertionError('fresh matching snapshot must not queue a source refresh')
+            requested.append(args)
+            raise AssertionError('fresh matching filter snapshot must not refresh for phone movement')
 
-    view = JobMapService(Repository(), object(), lambda records: b'pdf', clock=lambda: 120.0).view(
-        47.0, -122.0, market='Seattle', product_type='Bath', rep='Rep One'
-    )
-    assert [job.source_id for job in view.jobs] == ['confirmed', 'inside']
-    assert view.refreshing is False
-    assert view.stale is False
+    service = JobMapService(Repository(), object(), lambda records: b'pdf', clock=lambda: 120.0)
+    first = service.view(47.0, -122.0, market='Seattle', product_type='Bath', rep='Rep One')
+    second = service.view(47.09, -122.0, market='Seattle', product_type='Bath', rep='Rep One')
+
+    assert [job.source_id for job in first.jobs] == ['confirmed', 'near']
+    assert 'far' in [job.source_id for job in second.jobs]
+    assert requested == []
 
 
 def test_map_service_filter_change_queues_new_background_refresh():
     requested = []
-    old_query = MapQuery(
-        47.0, -122.0, MAX_RADIUS_MILES,
-        market='Seattle', product_type='Bath', rep='Rep One',
-    )
+    old_query = MapQuery(market='Seattle', product_type='Bath', rep='Rep One')
 
     class Repository:
         def snapshot(self):
@@ -299,17 +240,13 @@ def test_map_service_filter_change_queues_new_background_refresh():
     assert view.jobs == ()
     assert view.refreshing is True
     assert requested[0][1] == MapQuery(
-        47.0, -122.0, MAX_RADIUS_MILES,
         market='Seattle', product_type='Windows', rep='Rep One',
     )
 
 
 def test_map_refresh_service_publishes_filters_then_filtered_job_snapshot(tmp_path):
     repository = JobMapRepository(Database(tmp_path / 'printer.db'))
-    query = MapQuery(
-        47.0, -122.0, MAX_RADIUS_MILES,
-        market='Seattle', product_type='Bath', rep='Rep One',
-    )
+    query = MapQuery(market='Seattle', product_type='Bath', rep='Rep One')
     repository.request_filter_refresh('filters-1', 90.0)
     repository.request_refresh('jobs-1', query, 100.0)
     filters = MapFilters(markets=('Seattle',), product_types=('Bath',), reps=('Rep One',))
@@ -336,10 +273,7 @@ def test_map_refresh_service_publishes_filters_then_filtered_job_snapshot(tmp_pa
 
 def test_map_refresh_failure_is_durable_and_web_can_return_without_waiting(tmp_path):
     repository = JobMapRepository(Database(tmp_path / 'printer.db'))
-    query = MapQuery(
-        47.0, -122.0, MAX_RADIUS_MILES,
-        market='Seattle', product_type='Bath', rep='Rep One',
-    )
+    query = MapQuery(market='Seattle', product_type='Bath', rep='Rep One')
     repository.request_refresh('refresh-1', query, 100.0)
 
     class Source:
@@ -483,71 +417,61 @@ def test_map_web_returns_filters_first_then_filtered_local_snapshot_and_mod_pdf(
     assert pdf.data == b'%PDF-map'
 
 
-def test_job_map_architecture_is_filters_first_and_worker_owns_external_refresh():
+def test_job_map_architecture_has_one_authoritative_location_and_one_distance_check():
     root = Path(__file__).resolve().parents[1]
     for path in (root / 'job_map').glob('*.py'):
         assert 'salesforce' not in path.read_text().casefold()
 
+    contract = (root / 'job_map/contract.py').read_text()
+    query_block = contract.split('class MapQuery:', 1)[1].split('class MapJob:', 1)[0]
+    assert 'latitude' not in query_block
+    assert 'longitude' not in query_block
+    assert 'radius_miles' not in query_block
+
     service = (root / 'job_map/service.py').read_text()
     local_service = service.split('class JobMapRefreshService', 1)[0]
     assert '.map_jobs(' not in local_service
-    assert 'self.repository.filter_snapshot()' in local_service
+    assert 'SNAPSHOT_CENTER_TOLERANCE_MILES' not in service
+    assert service.count('_distance_miles(') == 2
     assert 'self.repository.snapshot()' in local_service
+
+    repository = (root / 'job_map/repository.py').read_text()
+    assert "SNAPSHOT_KEY = 'job_map_snapshot_v3'" in repository
+    assert "REFRESH_KEY = 'job_map_refresh_v3'" in repository
+    assert "'latitude':" not in repository.split('def _query_dict', 1)[1].split('def _query_from', 1)[0]
 
     worker = (root / 'worker.py').read_text()
     assert 'JobMapRefreshService' in worker
-    assert 'ModSheetRepRepository(db)' in worker
-    assert 'map_refresh.requested_due()' in worker
     assert 'background.submit(map_refresh.run_requested)' in worker
-
-    template = (root / 'templates/job_map.html').read_text()
-    market_at = template.index('id="jobMapMarket"')
-    rep_at = template.index('id="jobMapRep"')
-    product_at = template.index('id="jobMapProduct"')
-    button_at = template.index('id="jobMapLocate"')
-    assert market_at < rep_at < product_at < button_at
-    assert 'data-filters-url="{{ url_for(\'job_map.filters\') }}"' in template
-    assert '>Load nearby</button>' in template
-
-    runtime = (root / 'static/job_map/map.js').read_text()
-    assert 'readFilters(Date.now() + 60000);' in runtime
-    assert 'loadNearby(false)' not in runtime
-    assert 'navigator.geolocation.getCurrentPosition' in runtime
-    assert 'navigator.geolocation.watchPosition' in runtime
-    assert 'navigator.geolocation.clearWatch' in runtime
-    assert 'window.isSecureContext' in runtime
-    assert 'enableHighAccuracy: true' in runtime
-    assert 'maximumAge: 300000' in runtime
-    assert '}, 15000);' in runtime
-    assert "url.searchParams.set('market'" in runtime
-    assert "url.searchParams.set('rep'" in runtime
-    assert "url.searchParams.set('product'" in runtime
-    assert 'Applying filters, then checking ' in runtime
-    assert 'controller.abort(), timeoutMs' in runtime
-    assert 'center.toBounds(radiusMeters * 2)' in runtime
-    assert 'circle.getBounds()' not in runtime
-    load_block = runtime.split('async function loadNearby()', 1)[1].split(
-        'for (const select of filters)', 1
-    )[0]
-    assert load_block.index('await acquireLocation(generation)') < load_block.index('readNearby(')
-    assert "status.textContent = 'Location unavailable'" in load_block
-    assert "status.textContent = 'Map unavailable'" in load_block
-    assert 'setView([39.5, -98.35], 4)' not in runtime
-    assert "action('MOD Sheet'" in runtime
-    assert "action('Open in Salesforce'" in runtime
 
     adapter = (root / 'salesforce_sandbox/adapter.py').read_text()
     map_block = adapter.split('    def map_jobs(self, query: MapQuery):', 1)[1].split(
         '    def explorer_objects', 1
     )[0]
-    assert map_block.index('self._appointment_rows') < map_block.index('self._map_locations')
     assert "Market__c = " in map_block
     assert "Product_Interest__c INCLUDES" in map_block
     assert "Assigned_Service_Resource__r.Name = " in map_block
-    assert '_map_leads' not in adapter
-    assert "FROM Lead WHERE" not in map_block
-    assert "'Latitude'," in adapter
-    assert "'FSSK__FSK_Work_Order__r.Latitude'," in adapter
+    assert "'Latitude', 'Longitude'," in map_block
+    assert 'Latitude >=' not in map_block
+    assert 'Longitude >=' not in map_block
+    assert '_map_locations' not in adapter
+    assert 'FSSK__FSK_Work_Order__r.Latitude' not in map_block
+    assert 'FSSK__FSK_Work_Order__r.Longitude' not in map_block
+
+    template = (root / 'templates/job_map.html').read_text()
+    assert template.index('id="jobMapMarket"') < template.index('id="jobMapRep"')
+    assert template.index('id="jobMapRep"') < template.index('id="jobMapProduct"')
+    assert template.index('id="jobMapProduct"') < template.index('id="jobMapLocate"')
+
+    runtime = (root / 'static/job_map/map.js').read_text()
+    assert 'readFilters(Date.now() + 60000);' in runtime
+    assert 'loadNearby(false)' not in runtime
+    assert 'navigator.geolocation.getCurrentPosition' in runtime
+    assert "url.searchParams.set('market'" in runtime
+    assert "url.searchParams.set('rep'" in runtime
+    assert "url.searchParams.set('product'" in runtime
+    assert "action('MOD Sheet'" in runtime
+    assert "action('Open in Salesforce'" in runtime
 
     app = (root / 'app.py').read_text()
     assert 'JobMapRepository(db)' in app
