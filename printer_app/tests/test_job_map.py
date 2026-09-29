@@ -457,7 +457,10 @@ def test_job_map_architecture_keeps_source_sync_out_of_browser_map_path():
     assert 'SchedStartTime >=' not in map_block
     # Date bounds come from the shared appointment scope, never phone geography.
     assert '_appointment_scope(' in map_block
-    assert 'timeout=120' in map_block
+    helper_block = adapter.split(
+        '    def _normalized_map_records(self, conditions, user_zone):', 1
+    )[1].split('    def map_records(self, *, start_date, end_date, market):', 1)[0]
+    assert 'timeout=120' in helper_block
     assert 'Latitude >=' not in map_block
     assert 'Longitude >=' not in map_block
     assert 'def map_jobs(' not in adapter
