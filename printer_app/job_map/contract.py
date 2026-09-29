@@ -29,5 +29,16 @@ class MapJob:
     assigned_reps: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class MapView:
+    """One local map response plus background-refresh state."""
+
+    jobs: tuple[MapJob, ...]
+    refreshing: bool = False
+    stale: bool = False
+    captured_at: float = 0.0
+    error: str = ''
+
+
 class JobMapSourceError(RuntimeError):
     """Normalized source failure for the job map."""
