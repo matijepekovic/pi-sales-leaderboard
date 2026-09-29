@@ -119,6 +119,22 @@ def _paged_salesforce_runner(calls, pages):
     return runner
 
 
+def test_cli_timeout_reports_timeout_without_dumping_full_command():
+    import subprocess
+
+    def runner(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, kwargs.get('timeout', 0))
+
+    adapter = SalesforceCliAdapter(runner=runner, executable='/usr/bin/sf')
+    with pytest.raises(SalesforceAdapterError) as exc:
+        adapter.status()
+
+    message = str(exc.value)
+    assert 'timed out after 20 seconds' in message
+    assert "Command '['" not in message
+    assert '--query' not in message
+
+
 def test_cli_error_surfaces_useful_node_cause():
     def runner(command, **kwargs):
         return SimpleNamespace(
