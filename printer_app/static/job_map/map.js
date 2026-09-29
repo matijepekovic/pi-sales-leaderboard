@@ -144,18 +144,19 @@
   function showLocation(latitude, longitude) {
     locationLayer.clearLayers();
     const radiusMeters = radiusMiles * 1609.344;
-    const circle = L.circle([latitude, longitude], {
+    const center = L.latLng(latitude, longitude);
+    map.fitBounds(center.toBounds(radiusMeters * 2), {padding: [18, 18]});
+    L.circle(center, {
       radius: radiusMeters,
       weight: 2,
       opacity: 0.7,
       fillOpacity: 0.04,
     }).addTo(locationLayer);
-    L.circleMarker([latitude, longitude], {
+    L.circleMarker(center, {
       radius: 7,
       weight: 3,
       fillOpacity: 1,
     }).addTo(locationLayer).bindTooltip('Your location');
-    map.fitBounds(circle.getBounds(), {padding: [18, 18]});
   }
 
   function cancelPoll() {
@@ -409,9 +410,21 @@
     status.textContent = 'Getting your location…';
     error.hidden = true;
 
+    let location;
     try {
-      const location = await acquireLocation(generation);
+      location = await acquireLocation(generation);
+    } catch (exc) {
       if (generation !== loadGeneration) return;
+      locateButton.disabled = false;
+      status.textContent = 'Location unavailable';
+      error.dataset.sourceError = '1';
+      error.textContent = String(exc.message || exc);
+      error.hidden = false;
+      return;
+    }
+
+    if (generation !== loadGeneration) return;
+    try {
       radiusMiles = configuredRadiusMiles;
       showLocation(location.latitude, location.longitude);
       status.textContent = 'Applying filters, then checking ' + radiusMiles + ' miles…';
@@ -422,9 +435,8 @@
         Date.now() + 60000,
       );
     } catch (exc) {
-      if (generation !== loadGeneration) return;
       locateButton.disabled = false;
-      status.textContent = 'Location unavailable';
+      status.textContent = 'Map unavailable';
       error.dataset.sourceError = '1';
       error.textContent = String(exc.message || exc);
       error.hidden = false;
