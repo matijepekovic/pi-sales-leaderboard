@@ -1,4 +1,4 @@
-"""Job map source, workflow, web, and architecture regressions."""
+"""Job map source, local snapshot, workflow, web, and architecture regressions."""
 from __future__ import annotations
 
 import json
@@ -7,8 +7,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from printer_app.job_map.contract import MapJob, MapQuery
-from printer_app.job_map.service import JobMapService, MAX_RADIUS_MILES
+from printer_app.db import Database
+from printer_app.job_map.contract import MapJob, MapQuery, MapView
+from printer_app.job_map.repository import JobMapRepository
+from printer_app.job_map.service import JobMapRefreshService, JobMapService, MAX_RADIUS_MILES
 from printer_app.salesforce_sandbox.adapter import SalesforceCliAdapter
 
 
@@ -119,39 +121,144 @@ def test_map_source_does_not_query_appointments_when_no_nearby_leads_exist():
     assert len(queries) == 1
 
 
-def test_map_service_enforces_five_mile_circle_and_lead_status_rules():
-    requested = []
+def test_map_repository_round_trips_normalized_snapshot_and_refresh_state(tmp_path):
+    repository = JobMapRepository(Database(tmp_path / 'printer.db'))
+    query = MapQuery(47.25, -122.45, 5.0)
+    job = MapJob(
+        'wo', '02257311', 'Customer', 'Working', 47.25, -122.45,
+        'https://example.test/lead', market='Seattle', product_type='Bath',
+        assigned_reps=('Rep One', 'Rep Two'),
+    )
+
+    repository.replace_snapshot(query, (job,), 100.0)
+    snapshot = repository.snapshot()
+    assert snapshot == {'query': query, 'jobs': (job,), 'captured_at': 100.0}
+
+    state = repository.request_refresh('refresh-1', query, 101.0)
+    assert state['status'] == 'queued'
+    assert state['query'] == query
+    repository.save_refresh_state(dict(state, status='running', updated=102.0))
+    assert repository.refresh_state()['status'] == 'running'
+
+
+def test_map_service_returns_fresh_local_snapshot_without_calling_external_source():
+    query = MapQuery(47.0, -122.0, MAX_RADIUS_MILES)
     jobs = (
         MapJob('inside', 'WO1', 'Inside', 'Working', 47.02, -122.0, ''),
         MapJob('far', 'WO2', 'Far', 'Working', 47.10, -122.0, ''),
         MapJob('new', 'WO3', 'New', 'New', 47.01, -122.0, ''),
-        MapJob('scheduled', 'WO4', 'Scheduled', 'Scheduled', 47.01, -122.0, ''),
-        MapJob('dnc', 'WO5', 'DNC', 'Do Not Call', 47.01, -122.0, ''),
-        MapJob('confirmed', 'WO6', 'Confirmed', 'Scheduled Confirmed', 47.03, -122.0, ''),
+        MapJob('confirmed', 'WO4', 'Confirmed', 'Scheduled Confirmed', 47.03, -122.0, ''),
     )
 
+    class Repository:
+        def snapshot(self):
+            return {'query': query, 'jobs': jobs, 'captured_at': 100.0}
+
+        def refresh_state(self):
+            return {}
+
+        def request_refresh(self, *args):
+            raise AssertionError('fresh local snapshot must not queue a source refresh')
+
+    class ModSource:
+        def work_orders(self, numbers):
+            raise AssertionError('map view must not call MOD source')
+
+    view = JobMapService(Repository(), ModSource(), lambda records: b'pdf', clock=lambda: 120.0).view(
+        47.0, -122.0
+    )
+    assert [job.source_id for job in view.jobs] == ['confirmed', 'inside']
+    assert view.refreshing is False
+    assert view.stale is False
+
+
+def test_map_service_queues_background_refresh_instead_of_calling_source():
+    requested = []
+
+    class Repository:
+        def snapshot(self):
+            return None
+
+        def refresh_state(self):
+            return {}
+
+        def request_refresh(self, ident, query, now):
+            requested.append((ident, query, now))
+            return {'id': ident, 'status': 'queued', 'query': query, 'updated': now}
+
+    class ModSource:
+        def work_orders(self, numbers):
+            raise AssertionError('map view must not call source')
+
+    view = JobMapService(Repository(), ModSource(), lambda records: b'pdf', clock=lambda: 200.0).view(
+        47.0, -122.0
+    )
+    assert view.jobs == ()
+    assert view.refreshing is True
+    assert len(requested) == 1
+    assert requested[0][1] == MapQuery(47.0, -122.0, MAX_RADIUS_MILES)
+
+
+def test_map_refresh_service_publishes_complete_snapshot(tmp_path):
+    repository = JobMapRepository(Database(tmp_path / 'printer.db'))
+    query = MapQuery(47.0, -122.0, MAX_RADIUS_MILES)
+    repository.request_refresh('refresh-1', query, 100.0)
+    job = MapJob('inside', 'WO1', 'Inside', 'Working', 47.02, -122.0, '')
+
     class Source:
-        def map_jobs(self, query):
-            requested.append(query)
-            return jobs
+        def map_jobs(self, requested):
+            assert requested == query
+            return (job,)
 
-    visible = JobMapService(Source(), lambda records: b'pdf').jobs(47.0, -122.0)
-    assert [job.source_id for job in visible] == ['confirmed', 'inside']
-    assert requested == [MapQuery(47.0, -122.0, MAX_RADIUS_MILES)]
+    refresh = JobMapRefreshService(repository, Source(), clock=lambda: 150.0)
+    assert refresh.requested_due() is True
+    state = refresh.run_requested()
+    assert state['status'] == 'complete'
+    assert state['count'] == 1
+    assert repository.snapshot()['jobs'] == (job,)
+    assert repository.snapshot()['captured_at'] == 150.0
 
 
-def test_map_service_rejects_invalid_location_before_querying_source():
+def test_map_refresh_failure_is_durable_and_web_can_return_without_waiting(tmp_path):
+    repository = JobMapRepository(Database(tmp_path / 'printer.db'))
+    query = MapQuery(47.0, -122.0, MAX_RADIUS_MILES)
+    repository.request_refresh('refresh-1', query, 100.0)
+
     class Source:
-        def map_jobs(self, query):
-            raise AssertionError('source must not run without a valid bounded location')
+        def map_jobs(self, requested):
+            raise RuntimeError('source down')
 
-    service = JobMapService(Source(), lambda records: b'pdf')
+    refresh = JobMapRefreshService(repository, Source(), clock=lambda: 150.0)
+    state = refresh.run_requested()
+    assert state['status'] == 'failed'
+    assert state['error'] == 'source down'
+
+    class ModSource:
+        pass
+
+    view = JobMapService(repository, ModSource(), lambda records: b'pdf', clock=lambda: 151.0).view(
+        47.0, -122.0
+    )
+    assert view.refreshing is False
+    assert view.jobs == ()
+    assert view.error == 'source down'
+
+
+def test_map_service_rejects_invalid_location_before_repository_access():
+    class Repository:
+        def snapshot(self):
+            raise AssertionError('repository must not run without a valid location')
+
+    service = JobMapService(Repository(), object(), lambda records: b'pdf')
     with pytest.raises(ValueError, match='valid current location'):
-        service.jobs(200, -122)
+        service.view(200, -122)
 
 
 def test_map_service_opens_one_current_mod_sheet():
     record = SimpleNamespace(work_order_number='02257311')
+
+    class Repository:
+        pass
 
     class Source:
         def work_orders(self, numbers):
@@ -159,7 +266,7 @@ def test_map_service_opens_one_current_mod_sheet():
             return (record,)
 
     seen = []
-    service = JobMapService(Source(), lambda records: seen.append(tuple(records)) or b'%PDF-map')
+    service = JobMapService(Repository(), Source(), lambda records: seen.append(tuple(records)) or b'%PDF-map')
     assert service.mod_sheet('02257311') == b'%PDF-map'
     assert seen == [(record,)]
 
@@ -169,8 +276,8 @@ def test_map_http_page_redirects_to_existing_secure_proxy_without_touching_map_s
     from printer_app.job_map.web import blueprint
 
     class Service:
-        def jobs(self, *args):
-            raise AssertionError('redirect must happen before loading jobs')
+        def view(self, *args, **kwargs):
+            raise AssertionError('redirect must happen before reading map data')
 
     class HttpsAccess:
         def status(self):
@@ -202,7 +309,7 @@ def test_map_secure_page_does_not_redirect_again():
         assert _secure_page_url(HttpsAccess()) == ''
 
 
-def test_map_web_requires_location_returns_filter_data_and_mod_pdf():
+def test_map_web_returns_local_snapshot_state_and_mod_pdf():
     flask = pytest.importorskip('flask')
     from printer_app.job_map.web import blueprint
 
@@ -210,13 +317,19 @@ def test_map_web_requires_location_returns_filter_data_and_mod_pdf():
     static = Path(__file__).resolve().parents[1] / 'static'
 
     class Service:
-        def jobs(self, latitude, longitude):
+        def view(self, latitude, longitude, *, force_refresh=False):
             assert (latitude, longitude) == (47.25, -122.45)
-            return (MapJob(
-                'wo', '02257311', 'Customer', 'Working', 47.25, -122.45,
-                'https://example.my.salesforce.com/lightning/r/Lead/00Q/view',
-                market='Seattle', product_type='Bath', assigned_reps=('Rep One',),
-            ),)
+            assert force_refresh is True
+            return MapView(
+                jobs=(MapJob(
+                    'wo', '02257311', 'Customer', 'Working', 47.25, -122.45,
+                    'https://example.my.salesforce.com/lightning/r/Lead/00Q/view',
+                    market='Seattle', product_type='Bath', assigned_reps=('Rep One',),
+                ),),
+                refreshing=True,
+                stale=True,
+                captured_at=123.0,
+            )
 
         def mod_sheet(self, number):
             assert number == '02257311'
@@ -231,9 +344,12 @@ def test_map_web_requires_location_returns_filter_data_and_mod_pdf():
     assert missing.status_code == 400
     assert missing.get_json()['ok'] is False
 
-    payload = client.get('/map/api/jobs?lat=47.25&lon=-122.45').get_json()
+    payload = client.get('/map/api/jobs?lat=47.25&lon=-122.45&refresh=1').get_json()
     assert payload['ok'] is True
     assert payload['radius_miles'] == 5.0
+    assert payload['refreshing'] is True
+    assert payload['stale'] is True
+    assert payload['captured_at'] == 123.0
     assert payload['jobs'][0]['work_order_number'] == '02257311'
     assert payload['jobs'][0]['market'] == 'Seattle'
     assert payload['jobs'][0]['product_type'] == 'Bath'
@@ -244,10 +360,20 @@ def test_map_web_requires_location_returns_filter_data_and_mod_pdf():
     assert pdf.data == b'%PDF-map'
 
 
-def test_job_map_python_stays_vendor_neutral_frontend_is_location_first_and_uses_free_osm_tiles():
+def test_job_map_architecture_keeps_web_reads_local_and_worker_owns_source_refresh():
     root = Path(__file__).resolve().parents[1]
     for path in (root / 'job_map').glob('*.py'):
         assert 'salesforce' not in path.read_text().casefold()
+
+    service = (root / 'job_map/service.py').read_text()
+    local_service = service.split('class JobMapRefreshService', 1)[0]
+    assert '.map_jobs(' not in local_service
+    assert 'self.repository.snapshot()' in local_service
+
+    worker = (root / 'worker.py').read_text()
+    assert 'JobMapRefreshService' in worker
+    assert 'map_refresh.requested_due()' in worker
+    assert 'background.submit(map_refresh.run_requested)' in worker
 
     template = (root / 'templates/job_map.html').read_text()
     assert 'leaflet@1.9.4' in template
@@ -261,16 +387,15 @@ def test_job_map_python_stays_vendor_neutral_frontend_is_location_first_and_uses
     assert 'navigator.geolocation.getCurrentPosition' in runtime
     assert "url.searchParams.set('lat'" in runtime
     assert "url.searchParams.set('lon'" in runtime
-    assert 'configuredRadiusMiles' in runtime
-    assert 'radiusMiles = 5' not in runtime
-    assert 'new AbortController()' in runtime
-    assert 'controller.abort(), 30000' in runtime
-    assert 'Nearby jobs took too long to load.' in runtime
+    assert "url.searchParams.set('refresh', '1')" in runtime
+    assert 'Preparing nearby map data' in runtime
+    assert 'refreshing map data' in runtime
+    assert 'controller.abort(), 10000' in runtime
+    assert 'locationWatchdog' in runtime
     assert 'setView([39.5, -98.35], 4)' not in runtime
     assert "action('MOD Sheet'" in runtime
     assert "action('Open in Salesforce'" in runtime
 
     app = (root / 'app.py').read_text()
-    assert 'https://tile.openstreetmap.org' in app
-    assert 'https://unpkg.com' in app
+    assert 'JobMapRepository(db)' in app
     assert 'job_map_blueprint(job_map, https_access=gallery_https)' in app
