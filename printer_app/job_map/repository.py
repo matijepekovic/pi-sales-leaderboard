@@ -10,6 +10,7 @@ FILTER_SNAPSHOT_KEY = 'job_map_filter_snapshot_v1'
 FILTER_REFRESH_KEY = 'job_map_filter_refresh_v1'
 SYNC_KEY = 'job_map_history_sync_v1'
 COVERAGE_KEY = 'job_map_history_coverage_v1'
+MAP_LOCATION_CONTRACT = 'customer-geocode'
 
 
 def _filter_dict(filters):
@@ -342,9 +343,24 @@ class JobMapRepository:
                 current.get('last_incremental_attempt', 0) or 0
             ),
             'incremental_error': str(current.get('incremental_error') or ''),
+            'location_contract': MAP_LOCATION_CONTRACT,
         }
         self.db.set(COVERAGE_KEY, coverage)
         return coverage
+
+    def next_location_rebuild(self):
+        """Return loaded coverage whose normalized location contract changed."""
+        candidates = []
+        for key, value in self.coverage().items():
+            if not isinstance(value, dict):
+                continue
+            market = str(value.get('market') or '').strip()
+            since = str(value.get('since_date') or '')
+            through = str(value.get('through_date') or '')
+            contract = str(value.get('location_contract') or '')
+            if market and since and through and contract != MAP_LOCATION_CONTRACT:
+                candidates.append((since, key, dict(value)))
+        return min(candidates, default=(None, None, None))[2]
 
     def next_incremental(self, now, *, interval_seconds=3600):
         candidates = []

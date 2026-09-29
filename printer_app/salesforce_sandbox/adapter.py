@@ -486,7 +486,6 @@ class SalesforceCliAdapter:
     def _map_record_fields():
         return (
             'Id', 'StatusCategory', 'SchedStartTime', 'CreatedDate',
-            'Latitude', 'Longitude',
             'FSSK__FSK_Work_Order__c',
             'FSSK__FSK_Work_Order__r.WorkOrderNumber',
             'FSSK__FSK_Work_Order__r.Product_Interest__c',
@@ -494,6 +493,8 @@ class SalesforceCliAdapter:
             'FSSK__FSK_Work_Order__r.Lead__r.Name',
             'FSSK__FSK_Work_Order__r.Lead__r.Status',
             'FSSK__FSK_Work_Order__r.Lead__r.Market__c',
+            'FSSK__FSK_Work_Order__r.Lead__r.Latitude',
+            'FSSK__FSK_Work_Order__r.Lead__r.Longitude',
             'FSSK__FSK_Assigned_Service_Resource__r.Name',
         )
 
@@ -527,8 +528,12 @@ class SalesforceCliAdapter:
 
             created = _sf_datetime(item.get('CreatedDate')) or scheduled
             try:
-                latitude = float(item.get('Latitude'))
-                longitude = float(item.get('Longitude'))
+                latitude = float(_nested(
+                    item, 'FSSK__FSK_Work_Order__r.Lead__r.Latitude'
+                ))
+                longitude = float(_nested(
+                    item, 'FSSK__FSK_Work_Order__r.Lead__r.Longitude'
+                ))
             except (TypeError, ValueError):
                 latitude = longitude = None
             if (
