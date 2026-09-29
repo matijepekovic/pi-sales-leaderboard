@@ -255,11 +255,18 @@ class JobMapService:
 
         error = ''
         coverage = self.repository.coverage()
+        sync = self.repository.sync_state()
         if query.market and not records and query.market.casefold() not in coverage:
-            error = (
-                f'No local map history is loaded for {query.market}. '
-                'Load a history range first.'
-            )
+            if (
+                sync.status in ('queued', 'running')
+                and sync.market.casefold() == query.market.casefold()
+            ):
+                error = f'Local map history for {query.market} is still loading.'
+            else:
+                error = (
+                    f'No local map history is loaded for {query.market}. '
+                    'Load a history range first.'
+                )
 
         return MapView(
             jobs=jobs,
