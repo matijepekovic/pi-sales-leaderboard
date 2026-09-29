@@ -155,6 +155,20 @@ class JobMapRepository:
                 )
         return len(records)
 
+    def latest_sync_time(self, market=''):
+        market = str(market or '').strip()
+        if market:
+            row = self.db.one(
+                'SELECT MAX(synced_at) AS value FROM job_map_records WHERE lower(market)=lower(?)',
+                (market,),
+            )
+        else:
+            row = self.db.one('SELECT MAX(synced_at) AS value FROM job_map_records')
+        try:
+            return float(row['value']) if row and row['value'] is not None else 0.0
+        except (KeyError, TypeError, ValueError):
+            return 0.0
+
     def local_filters(self):
         rows = self.db.rows(
             'SELECT market,product_type,assigned_rep FROM job_map_records'
