@@ -18,6 +18,7 @@ MAX_RADIUS_MILES = 5.0
 FILTER_TTL_SECONDS = 3600
 FAILED_RETRY_SECONDS = 60
 SYNC_CHUNK_DAYS = 31
+INCREMENTAL_INTERVAL_SECONDS = 3600
 _EARTH_RADIUS_MILES = 3958.7613
 
 
@@ -313,6 +314,9 @@ class JobMapSyncService:
         return (
             self.repository.filter_refresh_state().get('status') in ('queued', 'running')
             or self.repository.sync_state().status in ('queued', 'running')
+            or self.repository.next_incremental(
+                self.clock(), interval_seconds=INCREMENTAL_INTERVAL_SECONDS
+            ) is not None
         )
 
     def run_requested(self):
@@ -320,6 +324,9 @@ class JobMapSyncService:
             self._run_filter_refresh()
         if self.repository.sync_state().status in ('queued', 'running'):
             return self._run_history_sync()
+        if self.repository.next_incremental(
+                self.clock(), interval_seconds=INCREMENTAL_INTERVAL_SECONDS) is not None:
+            self._run_incremental()
         return self.repository.sync_state()
 
     def _run_filter_refresh(self):
@@ -371,6 +378,7 @@ class JobMapSyncService:
             return self.repository.save_sync_state(failed)
 
         chunks = tuple(self._chunks(since, through))
+        cursor_floor = self.clock()
         running = MapSyncView(
             status='running',
             since_date=initial.since_date,
@@ -422,7 +430,11 @@ class JobMapSyncService:
 
             completed_at = self.clock()
             self.repository.update_coverage(
-                market, since.isoformat(), through.isoformat(), completed_at
+                market,
+                since.isoformat(),
+                through.isoformat(),
+                completed_at,
+                cursor_at=cursor_floor,
             )
             return self.repository.save_sync_state(MapSyncView(
                 status='complete',
@@ -450,3 +462,47 @@ class JobMapSyncService:
                 updated=self.clock(),
                 error=detail,
             ))
+
+    def _run_incremental(self):
+        now = self.clock()
+        coverage = self.repository.next_incremental(
+            now, interval_seconds=INCREMENTAL_INTERVAL_SECONDS
+        )
+        if not coverage:
+            return 0
+
+        market = str(coverage.get('market') or '').strip()
+        since_date = str(coverage.get('since_date') or '')
+        try:
+            cursor = float(coverage.get('cursor_at', 0) or 0)
+        except (TypeError, ValueError):
+            cursor = 0.0
+        through_date = date.today().isoformat()
+        cursor_floor = now
+        if not market or not since_date or cursor <= 0:
+            self.repository.mark_incremental(
+                market, through_date, cursor or now, now,
+                error='Map history incremental state is invalid.',
+            )
+            return 0
+
+        try:
+            records = tuple(self.source.map_records_changed(
+                modified_since=cursor,
+                start_date=since_date,
+                end_date=through_date,
+                market=market,
+            ))
+            if any(not isinstance(record, MapRecord) for record in records):
+                raise ValueError('Map history source returned invalid data.')
+            written = self.repository.upsert_records(market, records, self.clock())
+            self.repository.mark_incremental(
+                market, through_date, cursor_floor, self.clock(), error=''
+            )
+            return written
+        except Exception as exc:
+            detail = str(exc).strip()[:700] or type(exc).__name__
+            self.repository.mark_incremental(
+                market, through_date, cursor, self.clock(), error=detail
+            )
+            return 0
