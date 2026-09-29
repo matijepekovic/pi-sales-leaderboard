@@ -44,6 +44,21 @@ def blueprint(service, *, https_access=None):
             return redirect(secure_url, code=302)
         return render_template('job_map.html', max_radius_miles=MAX_RADIUS_MILES)
 
+    @bp.get('/api/filters')
+    def filters():
+        view = service.filters(force_refresh=request.args.get('refresh') == '1')
+        return jsonify(
+            ok=True,
+            refreshing=view.refreshing,
+            captured_at=view.captured_at,
+            error=view.error,
+            filters={
+                'markets': list(view.filters.markets),
+                'product_types': list(view.filters.product_types),
+                'reps': list(view.filters.reps),
+            },
+        )
+
     @bp.get('/api/jobs')
     def jobs():
         try:
@@ -54,23 +69,36 @@ def blueprint(service, *, https_access=None):
         except (TypeError, ValueError):
             return jsonify(ok=False, error='Current location is required.'), 400
         try:
-            records = service.jobs(latitude, longitude)
+            view = service.view(
+                latitude,
+                longitude,
+                market=request.args.get('market', ''),
+                product_type=request.args.get('product', ''),
+                rep=request.args.get('rep', ''),
+                force_refresh=request.args.get('refresh') == '1',
+            )
         except ValueError as exc:
             return jsonify(ok=False, error=str(exc)), 400
-        except JobMapSourceError as exc:
-            return jsonify(ok=False, error=str(exc)), 503
-        return jsonify(ok=True, radius_miles=MAX_RADIUS_MILES, jobs=[{
-            'source_id': item.source_id,
-            'work_order_number': item.work_order_number,
-            'lead_name': item.lead_name,
-            'lead_status': item.lead_status,
-            'latitude': item.latitude,
-            'longitude': item.longitude,
-            'source_record_url': item.source_record_url,
-            'market': item.market,
-            'product_type': item.product_type,
-            'assigned_reps': list(item.assigned_reps),
-        } for item in records])
+        return jsonify(
+            ok=True,
+            radius_miles=MAX_RADIUS_MILES,
+            refreshing=view.refreshing,
+            stale=view.stale,
+            captured_at=view.captured_at,
+            error=view.error,
+            jobs=[{
+                'source_id': item.source_id,
+                'work_order_number': item.work_order_number,
+                'lead_name': item.lead_name,
+                'lead_status': item.lead_status,
+                'latitude': item.latitude,
+                'longitude': item.longitude,
+                'source_record_url': item.source_record_url,
+                'market': item.market,
+                'product_type': item.product_type,
+                'assigned_reps': list(item.assigned_reps),
+            } for item in view.jobs],
+        )
 
     @bp.get('/mod-sheet')
     def mod_sheet():

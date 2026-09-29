@@ -6,7 +6,7 @@ from dataclasses import dataclass, field as dataclass_field
 from datetime import date
 from threading import Lock
 
-from ..job_map.contract import JobMapSourceError
+from ..job_map.contract import JobMapSourceError, MapFilters
 from ..mod_sheet_contract import ModSheetSourceError, NO_MOD_SHEET_RECORDS, SourceStatus
 from .adapter import PortalField, SalesforceAdapterError
 
@@ -61,7 +61,7 @@ class GeneratedSnapshot:
 class SalesforceSandboxService:
     def __init__(self, adapter, *, rep_repository=None):
         self.adapter = adapter
-        # The worker only consumes records; the web composition supplies rep storage.
+        # Saved rep names are optional normalized source metadata used by MOD and Map workflows.
         self.rep_repository = rep_repository
         self._rep_refresh_lock = Lock()
 
@@ -180,6 +180,20 @@ class SalesforceSandboxService:
             return tuple(self.adapter.lead_statuses(work_order_numbers))
         except SalesforceAdapterError as exc:
             raise ModSheetSourceError(str(exc)) from exc
+
+    def map_filters(self):
+        """Return normalized map filter choices without exposing vendor field paths."""
+        try:
+            markets = tuple(self.adapter.portal_field('market_segment').values)
+            products = tuple(self.adapter.portal_field('product_category').values)
+            reps, _ = self.rep_repository.snapshot() if self.rep_repository is not None else (None, {})
+            return MapFilters(
+                markets=markets,
+                product_types=products,
+                reps=tuple(reps or ()),
+            )
+        except SalesforceAdapterError as exc:
+            raise JobMapSourceError(str(exc)) from exc
 
     def map_jobs(self, query):
         """Return normalized map jobs without exposing Salesforce structures downstream."""

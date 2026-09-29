@@ -23,6 +23,8 @@ from .db import Database
 from .error_pages import error_page
 from .gmail_client import GmailClient
 from .gallery.bootstrap import GalleryInbox, GalleryReferenceInbox
+from .job_map.repository import JobMapRepository
+from .job_map.service import JobMapRefreshService
 from .printer import MissingJob, Printer, PrinterError, SubmissionRejected
 from .retention import RetentionService
 from .retention_repository import RetentionRepository
@@ -30,6 +32,7 @@ from .retention_files import RetentionFiles
 from .gmail_cleanup import GmailCleanup
 from .mod_sheets.pdf_renderer import render_mod_pdf
 from .mod_sheets.repository import ModSheetAutomationRepository
+from .mod_sheets.rep_repository import ModSheetRepRepository
 from .mod_sheets.service import (
     DailyModSheetService, ModSheetManualGalleryPullService, ModSheetReferenceDeliveryService,
 )
@@ -296,7 +299,8 @@ def main():
 
         def make_mod_workflows(captured):
             source = SalesforceSandboxService(
-                SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')
+                SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work'),
+                rep_repository=ModSheetRepRepository(db),
             )
             repository = ModSheetAutomationRepository(db)
             queue = PrintQueueRepository(db)
@@ -323,9 +327,10 @@ def main():
                 gallery_sink,
                 captured.timezone,
             )
-            return daily, references, manual_gallery
+            map_refresh = JobMapRefreshService(JobMapRepository(db), source)
+            return daily, references, manual_gallery, map_refresh
 
-        daily_mod_sheets, mod_references, manual_mod_gallery = make_mod_workflows(cfg)
+        daily_mod_sheets, mod_references, manual_mod_gallery, map_refresh = make_mod_workflows(cfg)
 
         def heartbeat():
             while not stop.is_set():
@@ -342,6 +347,7 @@ def main():
         background = ThreadPoolExecutor(max_workers=4, thread_name_prefix='printer-work')
         polling, preparing, cleaning, daily_mod_task = None, None, None, None
         mod_reference_task = background.submit(mod_references.backfill_existing)
+        map_refresh_task = None
         next_poll, next_status = 0, 0
         active_revision = None
         log.info('Independent printer worker started, queue=%s', cfg.queue)
@@ -360,7 +366,7 @@ def main():
                                 engine = Engine(cfg, db, stop=stop)
                                 gmail = GmailClient(cfg, db, stop=stop, gallery=GalleryInbox(cfg.data_dir, cfg.gallery))
                                 retention = make_retention(cfg)
-                                daily_mod_sheets, mod_references, manual_mod_gallery = make_mod_workflows(cfg)
+                                daily_mod_sheets, mod_references, manual_mod_gallery, map_refresh = make_mod_workflows(cfg)
                                 next_poll, next_status = 0, 0
                             active_revision = revision
                             db.set('settings_revision', revision)
@@ -407,6 +413,9 @@ def main():
                     if mod_reference_task is not None and mod_reference_task.done():
                         finished, mod_reference_task = mod_reference_task, None
                         finished.result()
+                    if map_refresh_task is not None and map_refresh_task.done():
+                        finished, map_refresh_task = map_refresh_task, None
+                        finished.result()
                     # Morning reference delivery is local/fast and retries safely
                     # until the corresponding MOD print reaches PRINTED.
                     mod_references.deliver_printed_mornings()
@@ -418,6 +427,8 @@ def main():
                         mod_reference_task = background.submit(mod_references.run_requested)
                     elif mod_reference_task is None and mod_references.hourly_due(now):
                         mod_reference_task = background.submit(mod_references.run_hourly)
+                    if map_refresh_task is None and map_refresh.requested_due():
+                        map_refresh_task = background.submit(map_refresh.run_requested)
                     if daily_mod_task is None and daily_mod_sheets.due(now):
                         daily_mod_task = background.submit(daily_mod_sheets.run_due)
                     if cleaning is None and polling is None and retention.due(now):
