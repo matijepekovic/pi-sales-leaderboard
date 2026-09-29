@@ -76,6 +76,30 @@ CREATE TABLE IF NOT EXISTS login_limits (
  address TEXT PRIMARY KEY, attempts INTEGER NOT NULL, reset_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS jobs_due ON jobs(status,next_attempt);
 CREATE INDEX IF NOT EXISTS attempts_job ON print_attempts(job_id,id);
+CREATE TABLE IF NOT EXISTS job_map_records (
+ source_record_id TEXT PRIMARY KEY,
+ work_order_id TEXT NOT NULL,
+ work_order_number TEXT NOT NULL,
+ scheduled_at REAL NOT NULL,
+ scheduled_day TEXT NOT NULL,
+ created_at REAL NOT NULL,
+ canceled INTEGER NOT NULL,
+ lead_name TEXT NOT NULL DEFAULT '',
+ lead_status TEXT NOT NULL DEFAULT '',
+ latitude REAL,
+ longitude REAL,
+ source_record_url TEXT NOT NULL DEFAULT '',
+ market TEXT NOT NULL DEFAULT '',
+ product_type TEXT NOT NULL DEFAULT '',
+ assigned_rep TEXT NOT NULL DEFAULT '',
+ scope_market TEXT NOT NULL DEFAULT '',
+ synced_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS job_map_records_scope_day
+ ON job_map_records(scope_market,scheduled_day);
+CREATE INDEX IF NOT EXISTS job_map_records_market
+ ON job_map_records(market,scheduled_day);
+CREATE INDEX IF NOT EXISTS job_map_records_work_order
+ ON job_map_records(work_order_id,scheduled_at,created_at);
 '''
 
 
