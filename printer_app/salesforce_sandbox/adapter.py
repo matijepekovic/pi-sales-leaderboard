@@ -482,22 +482,9 @@ class SalesforceCliAdapter:
             ))
         return tuple(normalized)
 
-    def map_records(self, *, start_date, end_date, market):
-        """Read one bounded market/date slice as normalized local-map records."""
-        market = str(market or '').strip()
-        if not market or len(market) > 128 or any(not char.isprintable() for char in market):
-            raise SalesforceAdapterError('Map history sync requires a valid market.')
-
-        conditions, start_local, _ = self._appointment_scope(
-            start_date=start_date,
-            end_date=end_date,
-            market_segment=market,
-            product_category='',
-            source_type='',
-            remove_canceled=False,
-            remove_unconfirmed=False,
-        )
-        fields = (
+    @staticmethod
+    def _map_record_fields():
+        return (
             'Id', 'StatusCategory', 'SchedStartTime', 'CreatedDate',
             'Latitude', 'Longitude',
             'FSSK__FSK_Work_Order__c',
@@ -509,8 +496,10 @@ class SalesforceCliAdapter:
             'FSSK__FSK_Work_Order__r.Lead__r.Market__c',
             'FSSK__FSK_Assigned_Service_Resource__r.Name',
         )
+
+    def _normalized_map_records(self, conditions, user_zone):
         rows = tuple(self._appointment_rows(
-            fields, conditions, timeout=120
+            self._map_record_fields(), conditions, timeout=120
         ))
         if rows and not self._instance_url:
             self.status()
@@ -553,7 +542,7 @@ class SalesforceCliAdapter:
                 work_order_id=work_order_id,
                 work_order_number=work_order_number,
                 scheduled_at=scheduled.timestamp(),
-                scheduled_day=scheduled.astimezone(start_local.tzinfo).date().isoformat(),
+                scheduled_day=scheduled.astimezone(user_zone).date().isoformat(),
                 created_at=created.timestamp(),
                 canceled=(
                     str(item.get('StatusCategory') or '').strip().casefold()
@@ -584,6 +573,57 @@ class SalesforceCliAdapter:
                 ).strip(),
             ))
         return tuple(result)
+
+    def map_records(self, *, start_date, end_date, market):
+        """Read one bounded market/date slice as normalized local-map records."""
+        market = str(market or '').strip()
+        if not market or len(market) > 128 or any(not char.isprintable() for char in market):
+            raise SalesforceAdapterError('Map history sync requires a valid market.')
+        conditions, start_local, _ = self._appointment_scope(
+            start_date=start_date,
+            end_date=end_date,
+            market_segment=market,
+            product_category='',
+            source_type='',
+            remove_canceled=False,
+            remove_unconfirmed=False,
+        )
+        return self._normalized_map_records(conditions, start_local.tzinfo)
+
+    def map_records_changed(
+            self, *, modified_since, start_date, end_date, market):
+        """Read bounded appointments changed since the prior local sync cursor."""
+        try:
+            modified_since = float(modified_since)
+        except (TypeError, ValueError) as exc:
+            raise SalesforceAdapterError('Map history change cursor is invalid.') from exc
+        if modified_since <= 0:
+            raise SalesforceAdapterError('Map history change cursor is invalid.')
+
+        market = str(market or '').strip()
+        if not market or len(market) > 128 or any(not char.isprintable() for char in market):
+            raise SalesforceAdapterError('Map history sync requires a valid market.')
+
+        conditions, start_local, _ = self._appointment_scope(
+            start_date=start_date,
+            end_date=end_date,
+            market_segment=market,
+            product_category='',
+            source_type='',
+            remove_canceled=False,
+            remove_unconfirmed=False,
+        )
+        changed_at = datetime.fromtimestamp(
+            modified_since, tz=timezone.utc
+        ).strftime('%Y-%m-%dT%H:%M:%SZ')
+        conditions.append(
+            '('
+            f'LastModifiedDate >= {changed_at} OR '
+            f'FSSK__FSK_Work_Order__r.LastModifiedDate >= {changed_at} OR '
+            f'FSSK__FSK_Work_Order__r.Lead__r.LastModifiedDate >= {changed_at}'
+            ')'
+        )
+        return self._normalized_map_records(conditions, start_local.tzinfo)
 
     def explorer_objects(self):
         """List only names; opening the explorer never describes or queries objects."""
