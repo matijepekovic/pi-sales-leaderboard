@@ -32,6 +32,7 @@ from .retention_files import RetentionFiles
 from .gmail_cleanup import GmailCleanup
 from .mod_sheets.pdf_renderer import render_mod_pdf
 from .mod_sheets.repository import ModSheetAutomationRepository
+from .mod_sheets.rep_repository import ModSheetRepRepository
 from .mod_sheets.service import (
     DailyModSheetService, ModSheetManualGalleryPullService, ModSheetReferenceDeliveryService,
 )
@@ -298,7 +299,8 @@ def main():
 
         def make_mod_workflows(captured):
             source = SalesforceSandboxService(
-                SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')
+                SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work'),
+                rep_repository=ModSheetRepRepository(db),
             )
             repository = ModSheetAutomationRepository(db)
             queue = PrintQueueRepository(db)
