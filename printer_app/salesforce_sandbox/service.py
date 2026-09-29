@@ -6,7 +6,7 @@ from dataclasses import dataclass, field as dataclass_field
 from datetime import date
 from threading import Lock
 
-from ..job_map.contract import JobMapSourceError, MapFilters
+from ..job_map.contract import JobMapSourceError, MapFilters, MapSourceSnapshot
 from ..mod_sheet_contract import ModSheetSourceError, NO_MOD_SHEET_RECORDS, SourceStatus
 from .adapter import PortalField, SalesforceAdapterError
 
@@ -196,9 +196,12 @@ class SalesforceSandboxService:
             raise JobMapSourceError(str(exc)) from exc
 
     def map_jobs(self, query):
-        """Return normalized map jobs without exposing Salesforce structures downstream."""
+        """Return one normalized map snapshot without exposing vendor structures."""
         try:
-            return tuple(self.adapter.map_jobs(query))
+            snapshot = self.adapter.map_jobs(query)
+            if not isinstance(snapshot, MapSourceSnapshot):
+                raise SalesforceAdapterError('Salesforce map source returned invalid snapshot data.')
+            return snapshot
         except SalesforceAdapterError as exc:
             raise JobMapSourceError(str(exc)) from exc
 
