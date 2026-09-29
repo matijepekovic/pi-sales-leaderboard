@@ -307,65 +307,128 @@
     }
   }
 
-  function loadNearby() {
+  function geolocationMessage(value) {
+    if (!value) return 'Your iPhone did not return a location.';
+    if (value.code === 1) return 'Location permission was denied for this site.';
+    if (value.code === 2) return 'Your iPhone could not determine its location.';
+    if (value.code === 3) return 'Your iPhone location request timed out.';
+    return String(value.message || 'Your iPhone did not return a location.');
+  }
+
+  function acquireLocation(generation) {
+    return new Promise((resolve, reject) => {
+      if (!window.isSecureContext) {
+        reject(new Error('Location requires the HTTPS map address.'));
+        return;
+      }
+      if (!navigator.geolocation) {
+        reject(new Error('This browser does not provide location access.'));
+        return;
+      }
+
+      let finished = false;
+      let watchId = null;
+      let singleFinished = false;
+      let watchFinished = false;
+      let singleError = null;
+      let watchError = null;
+
+      function cleanup() {
+        if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+        window.clearTimeout(deadline);
+      }
+
+      function succeed(position) {
+        if (finished || generation !== loadGeneration) return;
+        const latitude = Number(position && position.coords && position.coords.latitude);
+        const longitude = Number(position && position.coords && position.coords.longitude);
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+        finished = true;
+        cleanup();
+        resolve({latitude, longitude});
+      }
+
+      function maybeFail() {
+        if (finished || generation !== loadGeneration) return;
+        if (!singleFinished || !watchFinished) return;
+        finished = true;
+        cleanup();
+        reject(new Error(geolocationMessage(watchError || singleError)));
+      }
+
+      const deadline = window.setTimeout(() => {
+        if (finished || generation !== loadGeneration) return;
+        finished = true;
+        cleanup();
+        reject(new Error(
+          'Location permission is allowed, but the iPhone did not return coordinates. Tap Load nearby to retry.'
+        ));
+      }, 15000);
+
+      try {
+        navigator.geolocation.getCurrentPosition(
+          succeed,
+          value => {
+            singleFinished = true;
+            singleError = value;
+            maybeFail();
+          },
+          {enableHighAccuracy: false, timeout: 10000, maximumAge: 300000},
+        );
+      } catch (exc) {
+        singleFinished = true;
+        singleError = exc;
+      }
+
+      try {
+        watchId = navigator.geolocation.watchPosition(
+          succeed,
+          value => {
+            watchFinished = true;
+            watchError = value;
+            maybeFail();
+          },
+          {enableHighAccuracy: true, timeout: 12000, maximumAge: 300000},
+        );
+      } catch (exc) {
+        watchFinished = true;
+        watchError = exc;
+      }
+
+      maybeFail();
+    });
+  }
+
+  async function loadNearby() {
     if (!filtersReady) return;
     cancelPoll();
     loadGeneration += 1;
     const generation = loadGeneration;
 
-    if (!navigator.geolocation) {
-      status.textContent = 'Location required';
-      error.textContent = 'This browser does not provide location access.';
-      error.hidden = false;
-      return;
-    }
-
     locateButton.disabled = true;
     status.textContent = 'Getting your location…';
     error.hidden = true;
 
-    let settled = false;
-    const locationWatchdog = window.setTimeout(() => {
-      if (settled || generation !== loadGeneration) return;
-      settled = true;
+    try {
+      const location = await acquireLocation(generation);
+      if (generation !== loadGeneration) return;
+      radiusMiles = configuredRadiusMiles;
+      showLocation(location.latitude, location.longitude);
+      status.textContent = 'Applying filters, then checking ' + radiusMiles + ' miles…';
+      readNearby(
+        location.latitude,
+        location.longitude,
+        generation,
+        Date.now() + 60000,
+      );
+    } catch (exc) {
+      if (generation !== loadGeneration) return;
       locateButton.disabled = false;
       status.textContent = 'Location unavailable';
-      error.textContent = 'Your location took too long to resolve. Tap Load nearby to try again.';
+      error.dataset.sourceError = '1';
+      error.textContent = String(exc.message || exc);
       error.hidden = false;
-    }, 12000);
-
-    navigator.geolocation.getCurrentPosition(
-      position => {
-        if (settled || generation !== loadGeneration) return;
-        settled = true;
-        window.clearTimeout(locationWatchdog);
-        const latitude = Number(position.coords.latitude);
-        const longitude = Number(position.coords.longitude);
-        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-          locateButton.disabled = false;
-          status.textContent = 'Location unavailable';
-          error.textContent = 'Your device returned an invalid location.';
-          error.hidden = false;
-          return;
-        }
-        radiusMiles = configuredRadiusMiles;
-        showLocation(latitude, longitude);
-        status.textContent = 'Applying filters, then checking ' + radiusMiles + ' miles…';
-        readNearby(latitude, longitude, generation, Date.now() + 60000);
-      },
-      geolocationError => {
-        if (settled || generation !== loadGeneration) return;
-        settled = true;
-        window.clearTimeout(locationWatchdog);
-        status.textContent = 'Location required';
-        error.textContent = geolocationError && geolocationError.code === 1
-          ? 'Allow location access to load jobs near you.'
-          : 'Your location could not be determined. Try again.';
-        error.hidden = false;
-        locateButton.disabled = false;
-      },
-      {enableHighAccuracy: false, timeout: 10000, maximumAge: 60000},
-    );
+    }
   }
 
   for (const select of filters) select.addEventListener('change', clearMapForFilterChange);
