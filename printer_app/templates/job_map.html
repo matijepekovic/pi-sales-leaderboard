@@ -11,6 +11,7 @@
   <div><p class="eyebrow">JOBS</p><h1>Map</h1></div>
   <p id="jobMapStatus" class="muted" role="status" aria-live="polite">Loading filters…</p>
 </div>
+
 <div class="job-map-controls" aria-label="Map filters">
   <label>
     <span>Market</span>
@@ -25,8 +26,20 @@
     <select id="jobMapProduct" disabled><option value="">All products</option></select>
   </label>
   <button id="jobMapLocate" type="button" disabled>Load nearby</button>
-  <button id="jobMapDiagnose" type="button" disabled>Fresh diagnostic</button>
+  <button id="jobMapDiagnose" type="button" disabled>Refresh diagnostics</button>
 </div>
+
+<div class="job-map-sync-controls" aria-label="Map history">
+  <label>
+    <span>History since</span>
+    <input id="jobMapSince" type="date">
+  </label>
+  <button id="jobMapLastMonth" type="button" disabled>Load last month</button>
+  <button id="jobMapLastYear" type="button" disabled>Load last year</button>
+  <button id="jobMapLoadSince" type="button" disabled>Load since date</button>
+  <p id="jobMapSyncStatus" class="muted" role="status" aria-live="polite">History is loaded in the background.</p>
+</div>
+
 <p id="jobMapError" class="notice error" hidden></p>
 <details id="jobMapDiagnostics" class="job-map-diagnostics">
   <summary>Diagnostics</summary>
@@ -35,7 +48,9 @@
 <div id="jobMap" class="job-map"
      data-filters-url="{{ url_for('job_map.filters') }}"
      data-jobs-url="{{ url_for('job_map.jobs') }}"
+     data-sync-url="{{ url_for('job_map.sync') }}"
      data-mod-sheet-url="{{ url_for('job_map.mod_sheet') }}"
+     data-csrf="{{ session.csrf }}"
      data-radius-miles="{{ max_radius_miles }}"
      aria-label="Job map"></div>
 {% endblock %}

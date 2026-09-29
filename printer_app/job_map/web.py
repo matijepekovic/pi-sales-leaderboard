@@ -75,15 +75,14 @@ def blueprint(service, *, https_access=None):
                 market=request.args.get('market', ''),
                 product_type=request.args.get('product', ''),
                 rep=request.args.get('rep', ''),
-                force_refresh=request.args.get('refresh') == '1',
             )
         except ValueError as exc:
             return jsonify(ok=False, error=str(exc)), 400
         return jsonify(
             ok=True,
             radius_miles=MAX_RADIUS_MILES,
-            refreshing=view.refreshing,
-            stale=view.stale,
+            refreshing=False,
+            stale=False,
             captured_at=view.captured_at,
             error=view.error,
             jobs=[{
@@ -99,11 +98,11 @@ def blueprint(service, *, https_access=None):
                 'assigned_reps': list(item.assigned_reps),
             } for item in view.jobs],
             diagnostics={
-                'appointment_rows': view.diagnostics.appointment_rows,
+                'local_records': view.diagnostics.local_records,
                 'grouped_jobs': view.diagnostics.grouped_jobs,
+                'rep_matched_jobs': view.diagnostics.rep_matched_jobs,
                 'jobs_with_location': view.diagnostics.jobs_with_location,
                 'jobs_missing_location': view.diagnostics.jobs_missing_location,
-                'snapshot_jobs': view.diagnostics.snapshot_jobs,
                 'excluded_status': view.diagnostics.excluded_status,
                 'outside_radius': view.diagnostics.outside_radius,
                 'visible_jobs': view.diagnostics.visible_jobs,
@@ -118,6 +117,46 @@ def blueprint(service, *, https_access=None):
                 } for item in view.diagnostics.candidates],
             },
         )
+
+    @bp.route('/api/sync', methods=['GET', 'POST'])
+    def sync():
+        if request.method == 'POST':
+            try:
+                state = service.request_sync(
+                    since_date=request.form.get('since', ''),
+                    through_date=request.form.get('through', ''),
+                    market=request.form.get('market', ''),
+                )
+            except ValueError as exc:
+                return jsonify(ok=False, error=str(exc)), 400
+            return jsonify(ok=True, sync={
+                'status': state.status,
+                'since_date': state.since_date,
+                'through_date': state.through_date,
+                'market': state.market,
+                'chunk_start': state.chunk_start,
+                'chunk_end': state.chunk_end,
+                'completed_chunks': state.completed_chunks,
+                'total_chunks': state.total_chunks,
+                'records_written': state.records_written,
+                'updated': state.updated,
+                'error': state.error,
+            })
+
+        state, coverage = service.sync_status()
+        return jsonify(ok=True, sync={
+            'status': state.status,
+            'since_date': state.since_date,
+            'through_date': state.through_date,
+            'market': state.market,
+            'chunk_start': state.chunk_start,
+            'chunk_end': state.chunk_end,
+            'completed_chunks': state.completed_chunks,
+            'total_chunks': state.total_chunks,
+            'records_written': state.records_written,
+            'updated': state.updated,
+            'error': state.error,
+        }, coverage=coverage)
 
     @bp.get('/mod-sheet')
     def mod_sheet():

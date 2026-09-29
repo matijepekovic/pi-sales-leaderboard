@@ -18,7 +18,7 @@ from threading import Lock
 from time import monotonic
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from ..job_map.contract import MapJob, MapQuery, MapSourceDiagnostics, MapSourceSnapshot
+from ..job_map.contract import MapRecord
 from ..mod_sheet_contract import ModSheetRecord, SourceStatus, WorkOrderLeadStatus, WorkOrderReference
 from . import explorer
 
@@ -179,7 +179,17 @@ class SalesforceCliAdapter:
                 text=True,
                 timeout=timeout,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except subprocess.TimeoutExpired as exc:
+            user = getpass.getuser() or 'unknown'
+            message = (
+                f'Salesforce CLI timed out after {timeout} seconds '
+                f'for Linux user {user}.'
+            )
+            if trace_entry is not None:
+                trace_entry['result'] = message
+                trace_entry['ok'] = False
+            raise SalesforceAdapterError(message) from exc
+        except OSError as exc:
             user = getpass.getuser() or 'unknown'
             message = f'Could not run {executable} as Linux user {user}: {exc}'
             if trace_entry is not None:
@@ -472,21 +482,9 @@ class SalesforceCliAdapter:
             ))
         return tuple(normalized)
 
-    def map_jobs(self, query: MapQuery):
-        """Return filtered jobs with ServiceAppointment as the one map location."""
-        try:
-            market = str(query.market or '').strip()
-            product_type = str(query.product_type or '').strip()
-            selected_rep = str(query.rep or '').strip()
-        except AttributeError as exc:
-            raise SalesforceAdapterError('Map filters are invalid.') from exc
-        if any(
-            len(value) > 128 or any(not char.isprintable() for char in value)
-            for value in (market, product_type, selected_rep)
-        ):
-            raise SalesforceAdapterError('Map filters are invalid.')
-
-        fields = (
+    @staticmethod
+    def _map_record_fields():
+        return (
             'Id', 'StatusCategory', 'SchedStartTime', 'CreatedDate',
             'Latitude', 'Longitude',
             'FSSK__FSK_Work_Order__c',
@@ -498,123 +496,134 @@ class SalesforceCliAdapter:
             'FSSK__FSK_Work_Order__r.Lead__r.Market__c',
             'FSSK__FSK_Assigned_Service_Resource__r.Name',
         )
-        conditions = ["WorkType.Name LIKE '%Sales%'"]
-        if market:
-            conditions.append(
-                'FSSK__FSK_Work_Order__r.Lead__r.Market__c = '
-                + _soql_literal(market)
-            )
-        if product_type and product_type.casefold() != 'all':
-            conditions.append(
-                'FSSK__FSK_Work_Order__r.Product_Interest__c INCLUDES '
-                f'({_soql_literal(product_type)})'
-            )
-        if selected_rep:
-            conditions.append(
-                'FSSK__FSK_Assigned_Service_Resource__r.Name = '
-                + _soql_literal(selected_rep)
-            )
 
-        grouped = {}
-        appointment_rows = 0
-        for item in self._appointment_rows(fields, conditions):
-            appointment_rows += 1
+    def _normalized_map_records(self, conditions, user_zone):
+        rows = tuple(self._appointment_rows(
+            self._map_record_fields(), conditions, timeout=120
+        ))
+        if rows and not self._instance_url:
+            self.status()
+
+        result = []
+        for item in rows:
+            try:
+                source_record_id = explorer.record_id(
+                    item.get('Id') if isinstance(item, dict) else None
+                )
+            except ValueError:
+                continue
             work_order_id = str(item.get('FSSK__FSK_Work_Order__c') or '').strip()
-            work_order_number = _nested(item, 'FSSK__FSK_Work_Order__r.WorkOrderNumber').strip()
+            work_order_number = _nested(
+                item, 'FSSK__FSK_Work_Order__r.WorkOrderNumber'
+            ).strip()
             lead_id = _nested(item, 'FSSK__FSK_Work_Order__r.Lead__r.Id').strip()
             scheduled = _sf_datetime(item.get('SchedStartTime'))
-            if not work_order_id or not work_order_number or not lead_id or scheduled is None:
+            if not work_order_id or not work_order_number or scheduled is None:
                 continue
             try:
                 lead_id = explorer.record_id(lead_id)
             except ValueError:
-                continue
+                lead_id = ''
 
+            created = _sf_datetime(item.get('CreatedDate')) or scheduled
             try:
-                item_latitude = float(item.get('Latitude'))
-                item_longitude = float(item.get('Longitude'))
+                latitude = float(item.get('Latitude'))
+                longitude = float(item.get('Longitude'))
             except (TypeError, ValueError):
-                item_latitude = item_longitude = None
+                latitude = longitude = None
             if (
-                item_latitude is not None
-                and not (-90 <= item_latitude <= 90 and -180 <= item_longitude <= 180)
+                latitude is not None
+                and not (-90 <= latitude <= 90 and -180 <= longitude <= 180)
             ):
-                item_latitude = item_longitude = None
+                latitude = longitude = None
 
-            canceled = str(item.get('StatusCategory') or '').strip().casefold() == 'canceled'
-            created = _sf_datetime(item.get('CreatedDate')) or datetime.min.replace(tzinfo=timezone.utc)
-            rep = _nested(item, 'FSSK__FSK_Assigned_Service_Resource__r.Name').strip()
-            current = grouped.get(work_order_id)
-            candidate = dict(
-                item=item,
+            result.append(MapRecord(
+                source_record_id=source_record_id,
+                work_order_id=work_order_id,
                 work_order_number=work_order_number,
-                lead_id=lead_id,
-                latitude=item_latitude,
-                longitude=item_longitude,
-                scheduled=scheduled,
-                created=created,
-                canceled=canceled,
-                assigned_reps=[rep] if rep else [],
-            )
-            if current is None:
-                grouped[work_order_id] = candidate
-                continue
-            if current['canceled'] and not canceled:
-                grouped[work_order_id] = candidate
-                continue
-            if canceled and not current['canceled']:
-                continue
-            if (scheduled, created) > (current['scheduled'], current['created']):
-                grouped[work_order_id] = candidate
-                continue
-            if (scheduled, created) == (current['scheduled'], current['created']):
-                if rep and rep not in current['assigned_reps']:
-                    current['assigned_reps'].append(rep)
-
-        if grouped and not self._instance_url:
-            self.status()
-
-        result = []
-        missing_location = 0
-        for work_order_id, value in grouped.items():
-            if value['latitude'] is None or value['longitude'] is None:
-                missing_location += 1
-                continue
-            item = value['item']
-            result.append(MapJob(
-                source_id=work_order_id,
-                work_order_number=value['work_order_number'],
+                scheduled_at=scheduled.timestamp(),
+                scheduled_day=scheduled.astimezone(user_zone).date().isoformat(),
+                created_at=created.timestamp(),
+                canceled=(
+                    str(item.get('StatusCategory') or '').strip().casefold()
+                    == 'canceled'
+                ),
                 lead_name=_nested(
                     item, 'FSSK__FSK_Work_Order__r.Lead__r.Name'
                 ).strip(),
                 lead_status=_nested(
                     item, 'FSSK__FSK_Work_Order__r.Lead__r.Status'
                 ).strip(),
-                latitude=value['latitude'],
-                longitude=value['longitude'],
+                latitude=latitude,
+                longitude=longitude,
                 source_record_url=(
                     self._instance_url
                     + '/lightning/r/Lead/'
-                    + value['lead_id']
+                    + lead_id
                     + '/view'
-                ) if self._instance_url else '',
+                ) if self._instance_url and lead_id else '',
                 market=_nested(
                     item, 'FSSK__FSK_Work_Order__r.Lead__r.Market__c'
                 ).strip(),
                 product_type=_nested(
                     item, 'FSSK__FSK_Work_Order__r.Product_Interest__c'
                 ).strip(),
-                assigned_reps=tuple(value['assigned_reps']),
+                assigned_rep=_nested(
+                    item, 'FSSK__FSK_Assigned_Service_Resource__r.Name'
+                ).strip(),
             ))
-        return MapSourceSnapshot(
-            jobs=tuple(result),
-            diagnostics=MapSourceDiagnostics(
-                appointment_rows=appointment_rows,
-                grouped_jobs=len(grouped),
-                jobs_with_location=len(result),
-                jobs_missing_location=missing_location,
-            ),
+        return tuple(result)
+
+    def map_records(self, *, start_date, end_date, market):
+        """Read one bounded market/date slice as normalized local-map records."""
+        market = str(market or '').strip()
+        if not market or len(market) > 128 or any(not char.isprintable() for char in market):
+            raise SalesforceAdapterError('Map history sync requires a valid market.')
+        conditions, start_local, _ = self._appointment_scope(
+            start_date=start_date,
+            end_date=end_date,
+            market_segment=market,
+            product_category='',
+            source_type='',
+            remove_canceled=False,
+            remove_unconfirmed=False,
         )
+        return self._normalized_map_records(conditions, start_local.tzinfo)
+
+    def map_records_changed(
+            self, *, modified_since, start_date, end_date, market):
+        """Read bounded appointments changed since the prior local sync cursor."""
+        try:
+            modified_since = float(modified_since)
+        except (TypeError, ValueError) as exc:
+            raise SalesforceAdapterError('Map history change cursor is invalid.') from exc
+        if modified_since <= 0:
+            raise SalesforceAdapterError('Map history change cursor is invalid.')
+
+        market = str(market or '').strip()
+        if not market or len(market) > 128 or any(not char.isprintable() for char in market):
+            raise SalesforceAdapterError('Map history sync requires a valid market.')
+
+        conditions, start_local, _ = self._appointment_scope(
+            start_date=start_date,
+            end_date=end_date,
+            market_segment=market,
+            product_category='',
+            source_type='',
+            remove_canceled=False,
+            remove_unconfirmed=False,
+        )
+        changed_at = datetime.fromtimestamp(
+            modified_since, tz=timezone.utc
+        ).strftime('%Y-%m-%dT%H:%M:%SZ')
+        conditions.append(
+            '('
+            f'LastModifiedDate >= {changed_at} OR '
+            f'FSSK__FSK_Work_Order__r.LastModifiedDate >= {changed_at} OR '
+            f'FSSK__FSK_Work_Order__r.Lead__r.LastModifiedDate >= {changed_at}'
+            ')'
+        )
+        return self._normalized_map_records(conditions, start_local.tzinfo)
 
     def explorer_objects(self):
         """List only names; opening the explorer never describes or queries objects."""
@@ -930,7 +939,8 @@ class SalesforceCliAdapter:
 
         return conditions, start_local, end_local
 
-    def _appointment_rows(self, select_fields, conditions, *, limit=None, trace=None):
+    def _appointment_rows(
+            self, select_fields, conditions, *, limit=None, trace=None, timeout=60):
         """Read the requested projection with the existing complete-page policy."""
         cursor = ''
         seen_ids = set()
@@ -946,7 +956,7 @@ class SalesforceCliAdapter:
             )
             result = self._run(
                 ['data', 'query', '--query', query, *self._target_args()],
-                timeout=60, trace=trace,
+                timeout=timeout, trace=trace,
             )
             page = result.get('records') if isinstance(result, dict) else None
             if not isinstance(page, list) or (limit is None and len(page) > 1000):

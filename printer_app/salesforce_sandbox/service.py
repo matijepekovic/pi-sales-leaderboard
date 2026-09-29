@@ -6,7 +6,7 @@ from dataclasses import dataclass, field as dataclass_field
 from datetime import date
 from threading import Lock
 
-from ..job_map.contract import JobMapSourceError, MapFilters, MapSourceSnapshot
+from ..job_map.contract import JobMapSourceError, MapFilters, MapRecord
 from ..mod_sheet_contract import ModSheetSourceError, NO_MOD_SHEET_RECORDS, SourceStatus
 from .adapter import PortalField, SalesforceAdapterError
 
@@ -195,13 +195,33 @@ class SalesforceSandboxService:
         except SalesforceAdapterError as exc:
             raise JobMapSourceError(str(exc)) from exc
 
-    def map_jobs(self, query):
-        """Return one normalized map snapshot without exposing vendor structures."""
+    def map_records(self, *, start_date, end_date, market):
+        """Return one bounded normalized map-history slice."""
         try:
-            snapshot = self.adapter.map_jobs(query)
-            if not isinstance(snapshot, MapSourceSnapshot):
-                raise SalesforceAdapterError('Salesforce map source returned invalid snapshot data.')
-            return snapshot
+            records = tuple(self.adapter.map_records(
+                start_date=start_date,
+                end_date=end_date,
+                market=market,
+            ))
+            if any(not isinstance(record, MapRecord) for record in records):
+                raise SalesforceAdapterError('Salesforce map history returned invalid data.')
+            return records
+        except SalesforceAdapterError as exc:
+            raise JobMapSourceError(str(exc)) from exc
+
+    def map_records_changed(
+            self, *, modified_since, start_date, end_date, market):
+        """Return bounded map-history records changed since a normalized cursor."""
+        try:
+            records = tuple(self.adapter.map_records_changed(
+                modified_since=modified_since,
+                start_date=start_date,
+                end_date=end_date,
+                market=market,
+            ))
+            if any(not isinstance(record, MapRecord) for record in records):
+                raise SalesforceAdapterError('Salesforce map history returned invalid data.')
+            return records
         except SalesforceAdapterError as exc:
             raise JobMapSourceError(str(exc)) from exc
 

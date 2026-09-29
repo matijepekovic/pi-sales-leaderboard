@@ -9,6 +9,11 @@
   const productFilter = document.getElementById('jobMapProduct');
   const locateButton = document.getElementById('jobMapLocate');
   const diagnoseButton = document.getElementById('jobMapDiagnose');
+  const sinceInput = document.getElementById('jobMapSince');
+  const lastMonthButton = document.getElementById('jobMapLastMonth');
+  const lastYearButton = document.getElementById('jobMapLastYear');
+  const loadSinceButton = document.getElementById('jobMapLoadSince');
+  const syncStatus = document.getElementById('jobMapSyncStatus');
   const diagnosticsDetails = document.getElementById('jobMapDiagnostics');
   const diagnosticsText = document.getElementById('jobMapDiagnosticsText');
   const filters = [marketFilter, repFilter, productFilter];
@@ -32,9 +37,11 @@
   const locationLayer = L.layerGroup().addTo(map);
   let jobs = [];
   let radiusMiles = configuredRadiusMiles;
-  let pollTimer = null;
-  let loadGeneration = 0;
   let filtersReady = false;
+  let loadGeneration = 0;
+  let filterPollTimer = null;
+  let syncPollTimer = null;
+  let syncWasRunning = false;
 
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
@@ -72,7 +79,9 @@
     const mod = new URL(node.dataset.modSheetUrl, window.location.href);
     mod.searchParams.set('work_order', job.work_order_number);
     actions.append(action('MOD Sheet', mod.toString()));
-    if (job.source_record_url) actions.append(action('Open in Salesforce', job.source_record_url));
+    if (job.source_record_url) {
+      actions.append(action('Open in Salesforce', job.source_record_url));
+    }
     wrapper.append(actions);
     return wrapper;
   }
@@ -103,7 +112,9 @@
       option.textContent = value;
       select.append(option);
     }
-    select.value = Array.from(select.options).some(option => option.value === current) ? current : '';
+    select.value = Array.from(select.options).some(option => option.value === current)
+      ? current
+      : '';
   }
 
   function selectedFilters() {
@@ -114,26 +125,32 @@
     };
   }
 
+  function updateHistoryButtons() {
+    const enabled = filtersReady && Boolean(marketFilter.value);
+    lastMonthButton.disabled = !enabled;
+    lastYearButton.disabled = !enabled;
+    loadSinceButton.disabled = !enabled || !sinceInput.value;
+  }
+
   function enableFilters() {
     filtersReady = true;
     for (const select of filters) select.disabled = false;
     locateButton.disabled = false;
     diagnoseButton.disabled = false;
+    updateHistoryButtons();
   }
 
   function clearMapForFilterChange() {
     if (!filtersReady) return;
-    cancelPoll();
     loadGeneration += 1;
     jobs = [];
     markers.clearLayers();
     locationLayer.clearLayers();
-    delete error.dataset.sourceError;
     error.hidden = true;
-    locateButton.disabled = false;
-    diagnoseButton.disabled = false;
-    diagnosticsText.textContent = 'Filters changed — run Load nearby or Fresh diagnostic.';
+    diagnosticsText.textContent = 'Filters changed — run Load nearby or Refresh diagnostics.';
     status.textContent = 'Filters selected — tap Load nearby.';
+    updateHistoryButtons();
+    readSyncStatus();
   }
 
   function renderJobs() {
@@ -165,20 +182,14 @@
     }).addTo(locationLayer).bindTooltip('Your location');
   }
 
-  function cancelPoll() {
-    if (pollTimer !== null) {
-      window.clearTimeout(pollTimer);
-      pollTimer = null;
-    }
-  }
-
-  async function fetchJson(url, timeoutMs) {
+  async function fetchJson(url, timeoutMs, options = {}) {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(url.toString(), {
-        headers: {'Accept': 'application/json'},
+        headers: {'Accept': 'application/json', ...(options.headers || {})},
         signal: controller.signal,
+        ...options,
       });
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
@@ -200,52 +211,49 @@
       const url = new URL(node.dataset.filtersUrl, window.location.href);
       const payload = await fetchJson(url, 10000);
       const data = payload.filters || {};
-      const hasSnapshot = Number(payload.captured_at) > 0;
+      const hasChoices = (
+        (Array.isArray(data.markets) && data.markets.length)
+        || (Array.isArray(data.reps) && data.reps.length)
+        || (Array.isArray(data.product_types) && data.product_types.length)
+      );
 
-      if (hasSnapshot) {
+      if (hasChoices) {
         fillSelect(marketFilter, data.markets, 'All markets');
         fillSelect(repFilter, data.reps, 'All reps');
         fillSelect(productFilter, data.product_types, 'All products');
         enableFilters();
       }
 
-      if (payload.error && !hasSnapshot) {
+      if (payload.error && !hasChoices) {
         status.textContent = 'Map filters unavailable';
-        error.dataset.sourceError = '1';
         error.textContent = payload.error;
         error.hidden = false;
         return;
       }
 
-      if (payload.refreshing && !hasSnapshot) {
+      if (payload.refreshing && !hasChoices) {
         status.textContent = 'Preparing map filters…';
         if (Date.now() < deadline) {
-          pollTimer = window.setTimeout(() => readFilters(deadline), 1500);
+          if (filterPollTimer !== null) window.clearTimeout(filterPollTimer);
+          filterPollTimer = window.setTimeout(() => readFilters(deadline), 1500);
         } else {
           status.textContent = 'Map filters still refreshing';
-          error.dataset.sourceError = '1';
-          error.textContent = 'Filter refresh is still running in the background. Reload the page to check again.';
+          error.textContent = 'Filter choices are still refreshing in the background.';
           error.hidden = false;
         }
         return;
       }
 
-      if (payload.refreshing && hasSnapshot) {
-        status.textContent = 'Choose filters, then Load nearby · refreshing filter choices…';
-      } else {
-        status.textContent = 'Choose filters, then tap Load nearby.';
-      }
-      delete error.dataset.sourceError;
+      status.textContent = 'Choose filters, then tap Load nearby.';
       error.hidden = true;
     } catch (exc) {
       status.textContent = 'Map filters unavailable';
-      error.dataset.sourceError = '1';
       error.textContent = String(exc.message || exc);
       error.hidden = false;
     }
   }
 
-  async function localSnapshot(latitude, longitude, forceRefresh = false) {
+  async function localSnapshot(latitude, longitude) {
     const url = new URL(node.dataset.jobsUrl, window.location.href);
     const selected = selectedFilters();
     url.searchParams.set('lat', String(latitude));
@@ -253,7 +261,6 @@
     if (selected.market) url.searchParams.set('market', selected.market);
     if (selected.rep) url.searchParams.set('rep', selected.rep);
     if (selected.product) url.searchParams.set('product', selected.product);
-    if (forceRefresh) url.searchParams.set('refresh', '1');
     return fetchJson(url, 10000);
   }
 
@@ -266,16 +273,15 @@
         + ' | Rep=' + (selected.rep || 'All')
         + ' | Product=' + (selected.product || 'All'),
       'Radius: ' + radiusMiles + ' miles',
-      'Snapshot: ' + (payload && payload.captured_at
+      'Local history updated: ' + (payload && payload.captured_at
         ? new Date(Number(payload.captured_at) * 1000).toLocaleString()
-        : 'none yet'),
-      'Refresh: ' + (payload && payload.refreshing ? 'running' : 'complete'),
+        : 'not loaded'),
       '',
-      'Salesforce appointment rows: ' + Number(detail.appointment_rows || 0),
+      'Local records after market/product: ' + Number(detail.local_records || 0),
       'Grouped work orders: ' + Number(detail.grouped_jobs || 0),
+      'Jobs matching rep: ' + Number(detail.rep_matched_jobs || 0),
       'Jobs with ServiceAppointment location: ' + Number(detail.jobs_with_location || 0),
       'Jobs missing ServiceAppointment location: ' + Number(detail.jobs_missing_location || 0),
-      'Jobs in local snapshot: ' + Number(detail.snapshot_jobs || 0),
       'Excluded by lead status: ' + Number(detail.excluded_status || 0),
       'Outside ' + radiusMiles + ' miles: ' + Number(detail.outside_radius || 0),
       'Visible jobs: ' + Number(detail.visible_jobs || 0),
@@ -287,90 +293,56 @@
       lines.push('  none');
     } else {
       for (const item of candidates) {
-        const number = String(item.work_order_number || '—');
-        const name = String(item.lead_name || '—');
-        const leadStatus = String(item.lead_status || '—');
         const distance = Number(item.distance_miles);
         const lat = Number(item.latitude);
         const lon = Number(item.longitude);
         lines.push(
-          '  ' + number
+          '  ' + String(item.work_order_number || '—')
           + ' | ' + (Number.isFinite(distance) ? distance.toFixed(3) + ' mi' : 'distance ?')
           + ' | ' + String(item.outcome || 'unknown')
-          + ' | status=' + leadStatus
-          + ' | ' + name
+          + ' | status=' + String(item.lead_status || '—')
+          + ' | ' + String(item.lead_name || '—')
           + ' | ' + (Number.isFinite(lat) ? lat.toFixed(6) : '?')
           + ', ' + (Number.isFinite(lon) ? lon.toFixed(6) : '?')
         );
       }
     }
-    if (payload && payload.error) lines.push('', 'Error: ' + String(payload.error));
+    if (payload && payload.error) lines.push('', 'Map note: ' + String(payload.error));
     return lines;
   }
 
-  function showDiagnostics(payload, latitude, longitude, openPanel = false) {
-    diagnosticsText.textContent = diagnosticLines(payload, latitude, longitude).join('\n');
-    if (openPanel) diagnosticsDetails.open = true;
-  }
-
-  async function readNearby(
-    latitude,
-    longitude,
-    generation,
-    deadline,
-    forceRefresh = false,
-    openDiagnostics = false,
-  ) {
+  async function readNearby(latitude, longitude, generation, openDiagnostics = false) {
     try {
-      const payload = await localSnapshot(latitude, longitude, forceRefresh);
+      const payload = await localSnapshot(latitude, longitude);
       if (generation !== loadGeneration) return;
 
-      radiusMiles = Number.isFinite(payload.radius_miles) ? payload.radius_miles : configuredRadiusMiles;
+      radiusMiles = Number.isFinite(payload.radius_miles)
+        ? payload.radius_miles
+        : configuredRadiusMiles;
       jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
       showLocation(latitude, longitude);
-      delete error.dataset.sourceError;
-      error.hidden = true;
       const shown = renderJobs();
-      showDiagnostics(payload, latitude, longitude, openDiagnostics);
-
-      if (payload.error) {
-        error.dataset.sourceError = '1';
-        error.textContent = payload.error;
-        error.hidden = false;
-      }
-
-      if (payload.refreshing) {
-        status.textContent = jobs.length
-          ? shown + ' filtered nearby jobs shown · refreshing…'
-          : 'Applying filters, then checking ' + radiusMiles + ' miles…';
-        locateButton.disabled = false;
-        diagnoseButton.disabled = false;
-        if (Date.now() < deadline) {
-          pollTimer = window.setTimeout(
-            () => readNearby(
-              latitude, longitude, generation, deadline, false, openDiagnostics
-            ),
-            1500,
-          );
-        } else {
-          error.dataset.sourceError = '1';
-          error.textContent = 'Filtered map refresh is still running in the background. Tap Load nearby to check again.';
-          error.hidden = false;
-          status.textContent = jobs.length ? shown + ' filtered nearby jobs shown' : 'Map data still refreshing';
-        }
-        return;
-      }
+      diagnosticsText.textContent = diagnosticLines(payload, latitude, longitude).join('\n');
+      if (openDiagnostics) diagnosticsDetails.open = true;
 
       locateButton.disabled = false;
       diagnoseButton.disabled = false;
+      if (payload.error) {
+        error.textContent = payload.error;
+        error.hidden = false;
+      } else {
+        error.hidden = true;
+      }
+
       if (jobs.length) {
-        const noun = shown === 1 ? 'job' : 'jobs';
-        status.textContent = shown + ' filtered ' + noun + ' within ' + radiusMiles + ' miles';
+        status.textContent = shown + ' filtered ' + (shown === 1 ? 'job' : 'jobs')
+          + ' within ' + radiusMiles + ' miles';
       } else if (payload.error) {
-        status.textContent = 'Map data unavailable';
+        status.textContent = 'No local map result';
       } else {
         status.textContent = '0 filtered jobs within ' + radiusMiles + ' miles';
-        error.textContent = 'No jobs matched the selected filters within ' + radiusMiles + ' miles.';
+        error.textContent = 'No locally loaded jobs matched the selected filters within '
+          + radiusMiles + ' miles.';
         error.hidden = false;
       }
     } catch (exc) {
@@ -378,7 +350,6 @@
       locateButton.disabled = false;
       diagnoseButton.disabled = false;
       status.textContent = 'Map unavailable';
-      error.dataset.sourceError = '1';
       error.textContent = String(exc.message || exc);
       error.hidden = false;
     }
@@ -476,15 +447,13 @@
     });
   }
 
-  async function loadNearby(forceRefresh = false, openDiagnostics = false) {
+  async function loadNearby(openDiagnostics = false) {
     if (!filtersReady) return;
-    cancelPoll();
     loadGeneration += 1;
     const generation = loadGeneration;
-
     locateButton.disabled = true;
     diagnoseButton.disabled = true;
-    status.textContent = forceRefresh ? 'Starting fresh diagnostic…' : 'Getting your location…';
+    status.textContent = 'Getting your location…';
     error.hidden = true;
 
     let location;
@@ -495,38 +464,173 @@
       locateButton.disabled = false;
       diagnoseButton.disabled = false;
       status.textContent = 'Location unavailable';
-      error.dataset.sourceError = '1';
       error.textContent = String(exc.message || exc);
       error.hidden = false;
       return;
     }
 
     if (generation !== loadGeneration) return;
+    radiusMiles = configuredRadiusMiles;
+    status.textContent = 'Checking locally loaded jobs…';
+    await readNearby(
+      location.latitude,
+      location.longitude,
+      generation,
+      openDiagnostics,
+    );
+  }
+
+  function ymd(value) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return year + '-' + month + '-' + day;
+  }
+
+  function shiftedMonth(months) {
+    const now = new Date();
+    const originalDay = now.getDate();
+    const target = new Date(now.getFullYear(), now.getMonth(), 1);
+    target.setMonth(target.getMonth() + months);
+    const lastDay = new Date(
+      target.getFullYear(), target.getMonth() + 1, 0
+    ).getDate();
+    target.setDate(Math.min(originalDay, lastDay));
+    return target;
+  }
+
+  function shiftedYear(years) {
+    const now = new Date();
+    const target = new Date(now.getFullYear() + years, now.getMonth(), 1);
+    const lastDay = new Date(
+      target.getFullYear(), target.getMonth() + 1, 0
+    ).getDate();
+    target.setDate(Math.min(now.getDate(), lastDay));
+    return target;
+  }
+
+  function selectedCoverage(payload) {
+    const selected = normalized(marketFilter.value);
+    const coverage = payload && payload.coverage ? payload.coverage : {};
+    for (const value of Object.values(coverage)) {
+      if (normalized(value && value.market) === selected) return value;
+    }
+    return null;
+  }
+
+  function renderSyncState(payload) {
+    const state = payload && payload.sync ? payload.sync : {};
+    const coverage = selectedCoverage(payload);
+    const currentMarket = marketFilter.value;
+    if (state.status === 'queued' || state.status === 'running') {
+      const progress = Number(state.total_chunks) > 0
+        ? ' · ' + Number(state.completed_chunks || 0) + '/' + Number(state.total_chunks) + ' chunks'
+        : '';
+      const chunk = state.chunk_start
+        ? ' · ' + state.chunk_start + ' to ' + state.chunk_end
+        : '';
+      syncStatus.textContent = 'Loading ' + state.market + ' history' + progress + chunk
+        + ' · ' + Number(state.records_written || 0) + ' records written';
+      return true;
+    }
+    if (state.status === 'failed') {
+      syncStatus.textContent = 'History load failed'
+        + (state.chunk_start ? ' at ' + state.chunk_start + ' to ' + state.chunk_end : '')
+        + ': ' + String(state.error || 'unknown error');
+      return false;
+    }
+    if (coverage && currentMarket) {
+      syncStatus.textContent = 'Local history for ' + coverage.market + ': '
+        + coverage.since_date + ' through ' + coverage.through_date
+        + (coverage.incremental_error
+          ? ' · automatic update error: ' + coverage.incremental_error
+          : '');
+    } else if (currentMarket) {
+      syncStatus.textContent = 'No local history loaded for ' + currentMarket + ' yet.';
+    } else {
+      syncStatus.textContent = 'Choose a market, then load a history range.';
+    }
+    return false;
+  }
+
+  async function readSyncStatus() {
     try {
-      radiusMiles = configuredRadiusMiles;
-      showLocation(location.latitude, location.longitude);
-      status.textContent = 'Applying filters, then checking ' + radiusMiles + ' miles…';
-      readNearby(
-        location.latitude,
-        location.longitude,
-        generation,
-        Date.now() + 60000,
-        forceRefresh,
-        openDiagnostics,
-      );
+      const url = new URL(node.dataset.syncUrl, window.location.href);
+      const payload = await fetchJson(url, 10000);
+      const running = renderSyncState(payload);
+      if (running) {
+        syncWasRunning = true;
+        if (syncPollTimer !== null) window.clearTimeout(syncPollTimer);
+        syncPollTimer = window.setTimeout(readSyncStatus, 1800);
+      } else {
+        updateHistoryButtons();
+        if (syncWasRunning) {
+          syncWasRunning = false;
+          readFilters(Date.now() + 60000);
+        }
+      }
     } catch (exc) {
-      locateButton.disabled = false;
-      diagnoseButton.disabled = false;
-      status.textContent = 'Map unavailable';
-      error.dataset.sourceError = '1';
-      error.textContent = String(exc.message || exc);
-      error.hidden = false;
+      syncStatus.textContent = 'Could not read history sync status: ' + String(exc.message || exc);
     }
   }
 
-  for (const select of filters) select.addEventListener('change', clearMapForFilterChange);
-  locateButton.addEventListener('click', () => loadNearby(false, false));
-  diagnoseButton.addEventListener('click', () => loadNearby(true, true));
+  async function requestHistory(sinceDate) {
+    if (!filtersReady || !marketFilter.value) {
+      syncStatus.textContent = 'Choose a market before loading history.';
+      return;
+    }
+    const throughDate = ymd(new Date());
+    const body = new URLSearchParams();
+    body.set('csrf', node.dataset.csrf || '');
+    body.set('since', sinceDate);
+    body.set('through', throughDate);
+    body.set('market', marketFilter.value);
+
+    lastMonthButton.disabled = true;
+    lastYearButton.disabled = true;
+    loadSinceButton.disabled = true;
+    syncStatus.textContent = 'Queueing history load…';
+    try {
+      const payload = await fetchJson(
+        new URL(node.dataset.syncUrl, window.location.href),
+        10000,
+        {
+          method: 'POST',
+          headers: {'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'},
+          body: body.toString(),
+        },
+      );
+      renderSyncState({sync: payload.sync, coverage: {}});
+      if (syncPollTimer !== null) window.clearTimeout(syncPollTimer);
+      syncPollTimer = window.setTimeout(async () => {
+        await readSyncStatus();
+        readFilters(Date.now() + 60000);
+      }, 1200);
+    } catch (exc) {
+      syncStatus.textContent = 'Could not start history load: ' + String(exc.message || exc);
+      updateHistoryButtons();
+    }
+  }
+
+  sinceInput.value = ymd(shiftedMonth(-1));
+  sinceInput.addEventListener('change', updateHistoryButtons);
+  for (const select of filters) {
+    select.addEventListener('change', clearMapForFilterChange);
+  }
+  locateButton.addEventListener('click', () => loadNearby(false));
+  diagnoseButton.addEventListener('click', () => loadNearby(true));
+  lastMonthButton.addEventListener('click', () => {
+    const since = ymd(shiftedMonth(-1));
+    sinceInput.value = since;
+    requestHistory(since);
+  });
+  lastYearButton.addEventListener('click', () => {
+    const since = ymd(shiftedYear(-1));
+    sinceInput.value = since;
+    requestHistory(since);
+  });
+  loadSinceButton.addEventListener('click', () => requestHistory(sinceInput.value));
 
   readFilters(Date.now() + 60000);
+  readSyncStatus();
 })();
