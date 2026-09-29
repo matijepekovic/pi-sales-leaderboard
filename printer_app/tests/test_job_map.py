@@ -228,6 +228,9 @@ def test_map_view_never_requests_external_history_when_local_store_is_empty():
         def coverage(self):
             return {}
 
+        def sync_state(self):
+            return MapSyncView()
+
         def latest_sync_time(self, market=''):
             return 0.0
 
