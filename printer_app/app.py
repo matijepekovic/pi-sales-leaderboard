@@ -27,6 +27,7 @@ from .attachment_routing_repository import AttachmentRoutingRepository
 from .gallery.bootstrap import build as build_gallery, build_access as build_gallery_access, GalleryReferenceInbox
 from .gallery.web import blueprint as gallery_blueprint
 from .gallery_reprocess import GalleryReprocessService
+from .job_map.repository import JobMapRepository
 from .job_map.service import JobMapService
 from .job_map.web import blueprint as job_map_blueprint
 from .https_adapter import GalleryHttpsAdapter
@@ -96,7 +97,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.extensions['salesforce_sandbox'] = salesforce_sandbox
     app.register_blueprint(salesforce_sandbox_blueprint(salesforce_sandbox))
 
-    job_map = JobMapService(salesforce_sandbox, render_mod_pdf)
+    job_map = JobMapService(JobMapRepository(db), salesforce_sandbox, render_mod_pdf)
     app.extensions['job_map'] = job_map
     app.register_blueprint(job_map_blueprint(job_map, https_access=gallery_https))
 
