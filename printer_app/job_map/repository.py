@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import json
 
-from .contract import MapFilters, MapJob, MapQuery
+from .contract import MapFilters, MapJob, MapQuery, MapSourceDiagnostics
 
 
 SNAPSHOT_KEY = 'job_map_snapshot_v3'
@@ -104,14 +104,30 @@ class JobMapRepository:
                     ),
                 ))
             captured = float(value.get('captured_at', 0))
+            raw_diagnostics = value.get('diagnostics', {})
+            if not isinstance(raw_diagnostics, dict):
+                raw_diagnostics = {}
+            diagnostics = MapSourceDiagnostics(
+                appointment_rows=max(0, int(raw_diagnostics.get('appointment_rows', 0))),
+                grouped_jobs=max(0, int(raw_diagnostics.get('grouped_jobs', 0))),
+                jobs_with_location=max(0, int(raw_diagnostics.get('jobs_with_location', 0))),
+                jobs_missing_location=max(0, int(raw_diagnostics.get('jobs_missing_location', 0))),
+            )
         except (KeyError, TypeError, ValueError):
             return None
-        return {'query': query, 'jobs': tuple(jobs), 'captured_at': captured}
+        return {
+            'query': query,
+            'jobs': tuple(jobs),
+            'captured_at': captured,
+            'diagnostics': diagnostics,
+        }
 
-    def replace_snapshot(self, query, jobs, captured_at):
+    def replace_snapshot(self, query, jobs, captured_at, diagnostics=None):
+        diagnostics = diagnostics if isinstance(diagnostics, MapSourceDiagnostics) else MapSourceDiagnostics()
         payload = {
             'query': _query_dict(query),
             'captured_at': float(captured_at),
+            'diagnostics': asdict(diagnostics),
             'jobs': [
                 dict(asdict(job), assigned_reps=list(job.assigned_reps))
                 for job in jobs
