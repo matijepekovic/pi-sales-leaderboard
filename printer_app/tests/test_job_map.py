@@ -1,4 +1,4 @@
-"""Job map source, snapshots, exact distance, web, and architecture regressions."""
+"""Job map local-history, bounded sync, web, and architecture regressions."""
 from __future__ import annotations
 
 import json
@@ -9,24 +9,34 @@ import pytest
 
 from printer_app.db import Database
 from printer_app.job_map.contract import (
-    MapCandidateDiagnostic, MapDiagnostics, MapFilterView, MapFilters, MapJob,
-    MapQuery, MapSourceDiagnostics, MapSourceSnapshot, MapView,
+    MapDiagnostics, MapFilterView, MapFilters, MapJob, MapQuery, MapRecord,
+    MapSyncRequest, MapSyncView, MapView,
 )
 from printer_app.job_map.repository import JobMapRepository
-from printer_app.job_map.service import JobMapRefreshService, JobMapService, MAX_RADIUS_MILES
-from printer_app.salesforce_sandbox.adapter import PortalField, SalesforceCliAdapter
-from printer_app.salesforce_sandbox.service import SalesforceSandboxService
+from printer_app.job_map.service import JobMapService, JobMapSyncService
+from printer_app.salesforce_sandbox.adapter import SalesforceCliAdapter
 
 
 def _result(payload):
     return SimpleNamespace(stdout=json.dumps(payload), stderr='', returncode=0)
 
 
-def _row(ident, *, work='0WO000000000001AAA', number='02257311', lead='00Q000000000001AAA',
-         name='Customer One', status='Working', market='Seattle',
-         product='Bath', rep='Rep One', lat='47.25', lon='-122.45',
-         scheduled='2026-09-24T17:00:00.000+0000', created='2026-09-24T16:00:00.000+0000',
-         appointment_status='Scheduled'):
+def _source_row(
+        ident='08p000000000001AAA',
+        *,
+        work='0WO000000000001AAA',
+        number='02257311',
+        lead='00Q000000000001AAA',
+        name='Customer One',
+        status='Working',
+        market='Olympia',
+        product='Bath',
+        rep='Rep One',
+        lat='47.25',
+        lon='-122.45',
+        scheduled='2026-09-24T17:00:00.000+0000',
+        created='2026-09-24T16:00:00.000+0000',
+        appointment_status='Scheduled'):
     return {
         'Id': ident,
         'StatusCategory': appointment_status,
@@ -49,529 +59,386 @@ def _row(ident, *, work='0WO000000000001AAA', number='02257311', lead='00Q000000
     }
 
 
-def test_map_source_fetches_filtered_jobs_once_with_service_appointment_location():
+def _record(
+        ident,
+        work,
+        number,
+        *,
+        scheduled_at=100.0,
+        created_at=90.0,
+        day='2026-09-24',
+        canceled=False,
+        status='Working',
+        lat=47.02,
+        lon=-122.0,
+        market='Olympia',
+        product='Bath',
+        rep='Rep One'):
+    return MapRecord(
+        source_record_id=ident,
+        work_order_id=work,
+        work_order_number=number,
+        scheduled_at=scheduled_at,
+        scheduled_day=day,
+        created_at=created_at,
+        canceled=canceled,
+        lead_name='Customer ' + number,
+        lead_status=status,
+        latitude=lat,
+        longitude=lon,
+        source_record_url='https://example.test/lead/' + number,
+        market=market,
+        product_type=product,
+        assigned_rep=rep,
+    )
+
+
+def test_salesforce_map_history_is_bounded_by_market_and_dates_only():
     calls = []
-    rows = [
-        _row('08p000000000001AAA', scheduled='2026-09-23T17:00:00.000+0000'),
-        _row('08p000000000002AAA', scheduled='2026-09-25T17:00:00.000+0000',
-             appointment_status='Canceled', lat='1.0', lon='2.0'),
-    ]
+    rows = [_source_row()]
 
     def runner(command, **kwargs):
-        calls.append(command)
+        calls.append((command, kwargs))
         if command[1:3] == ['org', 'display']:
             return _result({'status': 0, 'result': {
-                'username': 'rep@example.test', 'alias': 'work',
+                'username': 'rep@example.test',
+                'alias': 'work',
                 'instanceUrl': 'https://example.my.salesforce.com',
-                'id': '00D000000000123', 'connectedStatus': 'Connected',
+                'id': '00D000000000123',
+                'connectedStatus': 'Connected',
             }})
         query = command[command.index('--query') + 1]
+        if ' FROM User ' in query:
+            return _result({'status': 0, 'result': {
+                'records': [{'TimeZoneSidKey': 'America/Los_Angeles'}],
+            }})
         assert ' FROM ServiceAppointment WHERE ' in query
         page = [] if ' AND Id > ' in query else rows
         return _result({'status': 0, 'result': {'records': page}})
 
     adapter = SalesforceCliAdapter(runner=runner, executable='/fake/sf')
-    query = MapQuery(market='Seattle', product_type='Bath', rep='Rep One')
-    snapshot = adapter.map_jobs(query)
-
-    assert snapshot.jobs == (MapJob(
-        source_id='0WO000000000001AAA', work_order_number='02257311',
-        lead_name='Customer One', lead_status='Working', latitude=47.25, longitude=-122.45,
-        source_record_url='https://example.my.salesforce.com/lightning/r/Lead/00Q000000000001AAA/view',
-        market='Seattle', product_type='Bath', assigned_reps=('Rep One',),
-    ),)
-    assert snapshot.diagnostics == MapSourceDiagnostics(
-        appointment_rows=2,
-        grouped_jobs=1,
-        jobs_with_location=1,
-        jobs_missing_location=0,
+    records = adapter.map_records(
+        start_date='2026-09-01',
+        end_date='2026-09-29',
+        market='Olympia',
     )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.source_record_id == '08p000000000001AAA'
+    assert record.work_order_number == '02257311'
+    assert record.assigned_rep == 'Rep One'
+    assert (record.latitude, record.longitude) == (47.25, -122.45)
+    assert record.scheduled_day == '2026-09-24'
 
     queries = [
-        call[call.index('--query') + 1]
-        for call in calls if call[1:3] == ['data', 'query']
+        command[command.index('--query') + 1]
+        for command, _ in calls if command[1:3] == ['data', 'query']
     ]
-    first = queries[0]
-    assert "FSSK__FSK_Work_Order__r.Lead__r.Market__c = 'Seattle'" in first
-    assert "FSSK__FSK_Work_Order__r.Product_Interest__c INCLUDES ('Bath')" in first
-    assert "FSSK__FSK_Assigned_Service_Resource__r.Name = 'Rep One'" in first
-    assert "WorkType.Name LIKE '%Sales%'" in first
-    assert 'Latitude, Longitude' in first
-    assert 'Latitude >=' not in first
-    assert 'Longitude >=' not in first
-    assert 'FSSK__FSK_Work_Order__r.Latitude' not in first
-    assert ' FROM Lead ' not in ' '.join(queries)
-
-
-def test_map_source_has_no_location_fallback_when_appointment_location_is_missing():
-    rows = [_row('08p000000000001AAA', lat=None, lon=None)]
-
-    def runner(command, **kwargs):
-        if command[1:3] == ['org', 'display']:
-            return _result({'status': 0, 'result': {
-                'username': 'rep@example.test', 'alias': 'work',
-                'instanceUrl': 'https://example.my.salesforce.com',
-                'id': '00D000000000123', 'connectedStatus': 'Connected',
-            }})
-        query = command[command.index('--query') + 1]
-        return _result({'status': 0, 'result': {
-            'records': [] if ' AND Id > ' in query else rows,
-        }})
-
-    adapter = SalesforceCliAdapter(runner=runner, executable='/fake/sf')
-    snapshot = adapter.map_jobs(MapQuery(
-        market='Seattle', product_type='Bath', rep='Rep One',
-    ))
-    assert snapshot.jobs == ()
-    assert snapshot.diagnostics == MapSourceDiagnostics(
-        appointment_rows=1,
-        grouped_jobs=1,
-        jobs_with_location=0,
-        jobs_missing_location=1,
+    appointment = next(q for q in queries if ' FROM ServiceAppointment WHERE ' in q)
+    assert "Lead__r.Market__c = 'Olympia'" in appointment
+    assert 'SchedStartTime >=' in appointment
+    assert 'SchedStartTime <' in appointment
+    assert 'Product_Interest__c INCLUDES' not in appointment
+    assert 'Assigned_Service_Resource__r.Name =' not in appointment
+    assert 'Latitude >=' not in appointment
+    assert 'Longitude >=' not in appointment
+    first_appointment_call = next(
+        kwargs for command, kwargs in calls
+        if command[1:3] == ['data', 'query']
+        and ' FROM ServiceAppointment WHERE ' in command[command.index('--query') + 1]
     )
+    assert first_appointment_call['timeout'] == 120
 
 
-def test_map_source_boundary_returns_normalized_filter_choices():
-    class Adapter:
-        def portal_field(self, key):
-            values = {
-                'market_segment': ('Seattle', 'Tacoma'),
-                'product_category': ('Bath', 'Windows'),
-            }[key]
-            return PortalField(key, key, values)
-
-    class RepRepository:
-        def snapshot(self):
-            return ('Rep One', 'Rep Two'), {}
-
-    service = SalesforceSandboxService(Adapter(), rep_repository=RepRepository())
-    assert service.map_filters() == MapFilters(
-        markets=('Seattle', 'Tacoma'),
-        product_types=('Bath', 'Windows'),
-        reps=('Rep One', 'Rep Two'),
-    )
-
-
-def test_map_repository_round_trips_filter_only_snapshot_and_invalidates_old_contract(tmp_path):
+def test_repository_replaces_only_requested_market_date_slice(tmp_path):
     repository = JobMapRepository(Database(tmp_path / 'printer.db'))
-    query = MapQuery(market='Seattle', product_type='Bath', rep='Rep One')
-    filters = MapFilters(
-        markets=('Seattle', 'Tacoma'),
-        product_types=('Bath', 'Windows'),
-        reps=('Rep One', 'Rep Two'),
-    )
-    job = MapJob(
-        'wo', '02257311', 'Customer', 'Working', 47.25, -122.45,
-        'https://example.test/lead', market='Seattle', product_type='Bath',
-        assigned_reps=('Rep One',),
+    olympia_old = _record('08p000000000001AAA', 'wo1', 'WO1', day='2026-09-01')
+    olympia_new = _record('08p000000000002AAA', 'wo2', 'WO2', day='2026-09-02')
+    seattle = _record(
+        '08p000000000003AAA', 'wo3', 'WO3',
+        day='2026-09-01', market='Seattle',
     )
 
-    repository.replace_filter_snapshot(filters, 90.0)
-    assert repository.filter_snapshot() == {'filters': filters, 'captured_at': 90.0}
+    repository.replace_range('Olympia', '2026-09-01', '2026-09-30',
+                             (olympia_old,), 10.0)
+    repository.replace_range('Seattle', '2026-09-01', '2026-09-30',
+                             (seattle,), 11.0)
+    repository.replace_range('Olympia', '2026-09-01', '2026-09-30',
+                             (olympia_new,), 12.0)
 
-    source_diagnostics = MapSourceDiagnostics(
-        appointment_rows=3,
-        grouped_jobs=2,
-        jobs_with_location=1,
-        jobs_missing_location=1,
+    assert [r.work_order_number for r in repository.records(market='Olympia')] == ['WO2']
+    assert [r.work_order_number for r in repository.records(market='Seattle')] == ['WO3']
+    assert repository.latest_sync_time('Olympia') == 12.0
+    filters = repository.local_filters()
+    assert filters.markets == ('Olympia', 'Seattle')
+    assert filters.product_types == ('Bath',)
+    assert filters.reps == ('Rep One',)
+
+
+def test_local_map_groups_before_rep_filter_and_calculates_distance_once():
+    records = (
+        _record('a1', 'wo1', 'WO1', rep='Rep One', lat=47.02),
+        _record('a2', 'wo1', 'WO1', rep='Rep Two', lat=47.02),
+        _record('a3', 'wo2', 'WO2', rep='Rep One', lat=47.10),
+        _record('a4', 'wo3', 'WO3', rep='Rep One', status='New', lat=47.01),
+        _record('a5', 'wo4', 'WO4', rep='Rep One', lat=None, lon=None),
+        _record('a6', 'wo5', 'WO5', rep='Rep One', product='Windows', lat=47.01),
     )
-    repository.replace_snapshot(query, (job,), 100.0, source_diagnostics)
-    assert repository.snapshot() == {
-        'query': query,
-        'jobs': (job,),
-        'captured_at': 100.0,
-        'diagnostics': source_diagnostics,
+
+    class Repository:
+        def records(self, *, market=''):
+            assert market == 'Olympia'
+            return records
+
+        def coverage(self):
+            return {'olympia': {'market': 'Olympia'}}
+
+        def latest_sync_time(self, market=''):
+            return 123.0
+
+    service = JobMapService(Repository(), object(), lambda records: b'pdf')
+    view = service.view(
+        47.0, -122.0,
+        market='Olympia', product_type='Bath', rep='Rep One',
+    )
+
+    assert [job.work_order_number for job in view.jobs] == ['WO1']
+    assert view.jobs[0].assigned_reps == ('Rep One', 'Rep Two')
+    assert view.diagnostics.local_records == 5
+    assert view.diagnostics.grouped_jobs == 4
+    assert view.diagnostics.rep_matched_jobs == 4
+    assert view.diagnostics.jobs_with_location == 3
+    assert view.diagnostics.jobs_missing_location == 1
+    assert view.diagnostics.excluded_status == 1
+    assert view.diagnostics.outside_radius == 1
+    assert view.diagnostics.visible_jobs == 1
+    assert {item.outcome for item in view.diagnostics.candidates} == {
+        'visible', 'excluded-status', 'outside-radius'
     }
-
-    state = repository.request_refresh('refresh-1', query, 101.0)
-    assert state['status'] == 'queued'
-    assert state['query'] == query
-    repository.save_refresh_state(dict(state, status='running', updated=102.0))
-    assert repository.refresh_state()['status'] == 'running'
-
-    source = (Path(__file__).resolve().parents[1] / 'job_map/repository.py').read_text()
-    assert "SNAPSHOT_KEY = 'job_map_snapshot_v3'" in source
-    assert "REFRESH_KEY = 'job_map_refresh_v3'" in source
+    assert view.captured_at == 123.0
 
 
-def test_map_service_loads_filter_choices_before_any_location_query():
-    requested = []
-
+def test_map_view_never_requests_external_history_when_local_store_is_empty():
     class Repository:
-        def filter_snapshot(self):
-            return None
+        def records(self, *, market=''):
+            return ()
 
-        def filter_refresh_state(self):
+        def coverage(self):
             return {}
 
-        def request_filter_refresh(self, ident, now):
-            requested.append((ident, now))
-            return {'id': ident, 'status': 'queued', 'updated': now}
+        def latest_sync_time(self, market=''):
+            return 0.0
 
-    service = JobMapService(Repository(), object(), lambda records: b'pdf', clock=lambda: 50.0)
-    view = service.filters()
+    class Source:
+        def map_records(self, **kwargs):
+            raise AssertionError('browser map view must never call the external source')
 
-    assert view.filters == MapFilters()
-    assert view.refreshing is True
-    assert len(requested) == 1
+    service = JobMapService(Repository(), Source(), lambda records: b'pdf')
+    view = service.view(47.0, -122.0, market='Olympia', rep='Rep One')
 
-
-def test_map_service_reuses_filtered_snapshot_at_any_phone_location_and_checks_distance_once():
-    query = MapQuery(market='Seattle', product_type='Bath', rep='Rep One')
-    jobs = (
-        MapJob('near', 'WO1', 'Near', 'Working', 47.02, -122.0, ''),
-        MapJob('far', 'WO2', 'Far', 'Working', 47.10, -122.0, ''),
-        MapJob('new', 'WO3', 'New', 'New', 47.01, -122.0, ''),
-        MapJob('confirmed', 'WO4', 'Confirmed', 'Scheduled Confirmed', 47.03, -122.0, ''),
-    )
-    requested = []
-
-    class Repository:
-        def snapshot(self):
-            return {
-                'query': query,
-                'jobs': jobs,
-                'captured_at': 100.0,
-                'diagnostics': MapSourceDiagnostics(
-                    appointment_rows=6,
-                    grouped_jobs=4,
-                    jobs_with_location=4,
-                    jobs_missing_location=0,
-                ),
-            }
-
-        def refresh_state(self):
-            return {}
-
-        def request_refresh(self, *args):
-            requested.append(args)
-            raise AssertionError('fresh matching filter snapshot must not refresh for phone movement')
-
-    service = JobMapService(Repository(), object(), lambda records: b'pdf', clock=lambda: 120.0)
-    first = service.view(47.0, -122.0, market='Seattle', product_type='Bath', rep='Rep One')
-    second = service.view(47.09, -122.0, market='Seattle', product_type='Bath', rep='Rep One')
-
-    assert [job.source_id for job in first.jobs] == ['confirmed', 'near']
-    assert 'far' in [job.source_id for job in second.jobs]
-    assert first.diagnostics.appointment_rows == 6
-    assert first.diagnostics.grouped_jobs == 4
-    assert first.diagnostics.snapshot_jobs == 4
-    assert first.diagnostics.excluded_status == 1
-    assert first.diagnostics.outside_radius == 1
-    assert first.diagnostics.visible_jobs == 2
-    assert [item.outcome for item in first.diagnostics.candidates] == [
-        'excluded-status', 'visible', 'visible', 'outside-radius'
-    ]
-    assert requested == []
-
-
-def test_map_service_filter_change_queues_new_background_refresh():
-    requested = []
-    old_query = MapQuery(market='Seattle', product_type='Bath', rep='Rep One')
-
-    class Repository:
-        def snapshot(self):
-            return {'query': old_query, 'jobs': (), 'captured_at': 199.0}
-
-        def refresh_state(self):
-            return {}
-
-        def request_refresh(self, ident, query, now):
-            requested.append((ident, query, now))
-            return {'id': ident, 'status': 'queued', 'query': query, 'updated': now}
-
-    view = JobMapService(Repository(), object(), lambda records: b'pdf', clock=lambda: 200.0).view(
-        47.0, -122.0, market='Seattle', product_type='Windows', rep='Rep One'
-    )
     assert view.jobs == ()
-    assert view.refreshing is True
-    assert requested[0][1] == MapQuery(
-        market='Seattle', product_type='Windows', rep='Rep One',
-    )
+    assert 'Load a history range first' in view.error
 
 
-def test_map_refresh_service_publishes_filters_then_filtered_job_snapshot(tmp_path):
+def test_worker_history_sync_splits_year_range_into_bounded_chunks(tmp_path):
     repository = JobMapRepository(Database(tmp_path / 'printer.db'))
-    query = MapQuery(market='Seattle', product_type='Bath', rep='Rep One')
-    repository.request_filter_refresh('filters-1', 90.0)
-    repository.request_refresh('jobs-1', query, 100.0)
-    filters = MapFilters(markets=('Seattle',), product_types=('Bath',), reps=('Rep One',))
-    job = MapJob('inside', 'WO1', 'Inside', 'Working', 47.02, -122.0, '')
+    repository.request_sync(
+        'sync-1',
+        MapSyncRequest('2026-07-01', '2026-09-29', 'Olympia'),
+        1.0,
+    )
+    calls = []
 
     class Source:
         def map_filters(self):
-            return filters
+            return MapFilters()
 
-        def map_jobs(self, requested):
-            assert requested == query
-            return MapSourceSnapshot(
-                jobs=(job,),
-                diagnostics=MapSourceDiagnostics(
-                    appointment_rows=2,
-                    grouped_jobs=1,
-                    jobs_with_location=1,
-                    jobs_missing_location=0,
-                ),
-            )
+        def map_records(self, *, start_date, end_date, market):
+            calls.append((start_date, end_date, market))
+            return (_record(
+                'id-' + start_date, 'wo-' + start_date, start_date,
+                day=start_date, scheduled_at=float(len(calls)),
+            ),)
 
-    refresh = JobMapRefreshService(repository, Source(), clock=lambda: 150.0)
-    assert refresh.requested_due() is True
-    state = refresh.run_requested()
+    service = JobMapSyncService(repository, Source(), clock=lambda: 200.0)
+    state = service.run_requested()
 
-    assert repository.filter_snapshot()['filters'] == filters
-    assert repository.filter_refresh_state()['status'] == 'complete'
-    assert state['status'] == 'complete'
-    assert state['count'] == 1
-    saved = repository.snapshot()
-    assert saved['jobs'] == (job,)
-    assert saved['diagnostics'].appointment_rows == 2
-    assert saved['diagnostics'].jobs_with_location == 1
+    assert state.status == 'complete'
+    assert state.total_chunks == state.completed_chunks == 3
+    assert calls == [
+        ('2026-07-01', '2026-07-31', 'Olympia'),
+        ('2026-08-01', '2026-08-31', 'Olympia'),
+        ('2026-09-01', '2026-09-29', 'Olympia'),
+    ]
+    assert len(repository.records(market='Olympia')) == 3
+    coverage = repository.coverage()['olympia']
+    assert coverage['since_date'] == '2026-07-01'
+    assert coverage['through_date'] == '2026-09-29'
 
 
-def test_map_refresh_failure_is_durable_and_web_can_return_without_waiting(tmp_path):
+def test_sync_request_rejects_missing_market_and_accepts_since_date(tmp_path):
     repository = JobMapRepository(Database(tmp_path / 'printer.db'))
-    query = MapQuery(market='Seattle', product_type='Bath', rep='Rep One')
-    repository.request_refresh('refresh-1', query, 100.0)
-
-    class Source:
-        def map_jobs(self, requested):
-            raise RuntimeError('source down')
-
-    refresh = JobMapRefreshService(repository, Source(), clock=lambda: 150.0)
-    state = refresh.run_requested()
-    assert state['status'] == 'failed'
-    assert state['error'] == 'source down'
-
-    view = JobMapService(repository, object(), lambda records: b'pdf', clock=lambda: 151.0).view(
-        47.0, -122.0, market='Seattle', product_type='Bath', rep='Rep One'
+    service = JobMapService(
+        repository, object(), lambda records: b'pdf', clock=lambda: 50.0
     )
-    assert view.refreshing is False
-    assert view.jobs == ()
-    assert view.error == 'source down'
+
+    with pytest.raises(ValueError, match='Choose a market'):
+        service.request_sync(
+            since_date='2026-08-29',
+            through_date='2026-09-29',
+            market='',
+        )
+
+    state = service.request_sync(
+        since_date='2025-09-29',
+        through_date='2026-09-29',
+        market='Olympia',
+    )
+    assert state.status == 'queued'
+    assert state.since_date == '2025-09-29'
+    assert state.through_date == '2026-09-29'
 
 
-def test_map_service_rejects_invalid_location_before_repository_access():
-    class Repository:
-        def snapshot(self):
-            raise AssertionError('repository must not run without a valid location')
-
-    service = JobMapService(Repository(), object(), lambda records: b'pdf')
-    with pytest.raises(ValueError, match='valid current location'):
-        service.view(200, -122)
-
-
-def test_map_service_opens_one_current_mod_sheet():
-    record = SimpleNamespace(work_order_number='02257311')
-
-    class Source:
-        def work_orders(self, numbers):
-            assert numbers == ('02257311',)
-            return (record,)
-
-    seen = []
-    service = JobMapService(object(), Source(), lambda records: seen.append(tuple(records)) or b'%PDF-map')
-    assert service.mod_sheet('02257311') == b'%PDF-map'
-    assert seen == [(record,)]
-
-
-def test_map_http_page_redirects_to_existing_secure_proxy_without_touching_map_service():
+def test_map_web_returns_local_jobs_and_queues_history_sync():
     flask = pytest.importorskip('flask')
     from printer_app.job_map.web import blueprint
-
-    class Service:
-        def view(self, *args, **kwargs):
-            raise AssertionError('redirect must happen before reading map data')
-
-    class HttpsAccess:
-        def status(self):
-            return {
-                'configured': True,
-                'addresses': ['100.87.89.92', '192.168.1.20'],
-                'dns': ['stats-pi.local'],
-            }
-
-    app = flask.Flask(__name__)
-    app.secret_key = 'test'
-    app.register_blueprint(blueprint(Service(), https_access=HttpsAccess()))
-    response = app.test_client().get('/map', base_url='http://100.87.89.92:5055')
-
-    assert response.status_code == 302
-    assert response.headers['Location'] == 'https://100.87.89.92/map'
-
-
-def test_map_secure_page_does_not_redirect_again():
-    flask = pytest.importorskip('flask')
-    from printer_app.job_map.web import _secure_page_url
-
-    class HttpsAccess:
-        def status(self):
-            raise AssertionError('secure requests must not re-check or redirect')
-
-    app = flask.Flask(__name__)
-    with app.test_request_context('/map', base_url='https://100.87.89.92'):
-        assert _secure_page_url(HttpsAccess()) == ''
-
-
-def test_map_web_returns_filters_first_then_filtered_local_snapshot_and_mod_pdf():
-    flask = pytest.importorskip('flask')
-    from printer_app.job_map.web import blueprint
-
-    templates = Path(__file__).resolve().parents[1] / 'templates'
-    static = Path(__file__).resolve().parents[1] / 'static'
 
     class Service:
         def filters(self, *, force_refresh=False):
-            assert force_refresh is False
             return MapFilterView(
-                filters=MapFilters(
-                    markets=('Seattle', 'Tacoma'),
-                    product_types=('Bath', 'Windows'),
-                    reps=('Rep One', 'Rep Two'),
+                MapFilters(
+                    markets=('Olympia',),
+                    product_types=('Bath',),
+                    reps=('Rep One',),
                 ),
-                captured_at=50.0,
+                captured_at=10.0,
             )
 
-        def view(self, latitude, longitude, *, market='', product_type='', rep='', force_refresh=False):
+        def view(self, latitude, longitude, *, market='', product_type='', rep=''):
             assert (latitude, longitude) == (47.25, -122.45)
-            assert (market, rep, product_type) == ('Seattle', 'Rep One', 'Bath')
-            assert force_refresh is False
+            assert (market, rep, product_type) == ('Olympia', 'Rep One', 'Bath')
             return MapView(
                 jobs=(MapJob(
                     'wo', '02257311', 'Customer', 'Working', 47.25, -122.45,
-                    'https://example.my.salesforce.com/lightning/r/Lead/00Q/view',
-                    market='Seattle', product_type='Bath', assigned_reps=('Rep One',),
+                    'https://example.test/lead',
+                    market='Olympia', product_type='Bath',
+                    assigned_reps=('Rep One',),
                 ),),
                 captured_at=123.0,
                 diagnostics=MapDiagnostics(
-                    appointment_rows=4,
+                    local_records=4,
                     grouped_jobs=3,
+                    rep_matched_jobs=2,
                     jobs_with_location=2,
-                    jobs_missing_location=1,
-                    snapshot_jobs=2,
-                    excluded_status=0,
-                    outside_radius=1,
                     visible_jobs=1,
-                    candidates=(MapCandidateDiagnostic(
-                        work_order_number='02257311',
-                        lead_name='Customer',
-                        lead_status='Working',
-                        distance_miles=0.1254,
-                        latitude=47.25,
-                        longitude=-122.45,
-                        outcome='visible',
-                    ),),
                 ),
             )
 
+        def request_sync(self, *, since_date, through_date, market):
+            assert (since_date, through_date, market) == (
+                '2025-09-29', '2026-09-29', 'Olympia'
+            )
+            return MapSyncView(
+                status='queued',
+                since_date=since_date,
+                through_date=through_date,
+                market=market,
+                updated=50.0,
+            )
+
+        def sync_status(self):
+            return MapSyncView(status='complete'), {
+                'olympia': {
+                    'market': 'Olympia',
+                    'since_date': '2025-09-29',
+                    'through_date': '2026-09-29',
+                    'updated': 50.0,
+                }
+            }
+
         def mod_sheet(self, number):
-            assert number == '02257311'
             return b'%PDF-map'
 
-    app = flask.Flask(__name__, template_folder=str(templates), static_folder=str(static))
+    app = flask.Flask(__name__)
     app.secret_key = 'test'
     app.register_blueprint(blueprint(Service()))
     client = app.test_client()
 
-    filter_payload = client.get('/map/api/filters').get_json()
-    assert filter_payload['ok'] is True
-    assert filter_payload['filters']['markets'] == ['Seattle', 'Tacoma']
-    assert filter_payload['filters']['reps'] == ['Rep One', 'Rep Two']
-    assert filter_payload['filters']['product_types'] == ['Bath', 'Windows']
-
-    missing = client.get('/map/api/jobs')
-    assert missing.status_code == 400
-
     payload = client.get(
-        '/map/api/jobs?lat=47.25&lon=-122.45&market=Seattle&rep=Rep%20One&product=Bath'
+        '/map/api/jobs?lat=47.25&lon=-122.45&market=Olympia&rep=Rep%20One&product=Bath'
     ).get_json()
     assert payload['ok'] is True
-    assert payload['radius_miles'] == 5.0
     assert payload['jobs'][0]['work_order_number'] == '02257311'
-    assert payload['diagnostics']['appointment_rows'] == 4
-    assert payload['diagnostics']['grouped_jobs'] == 3
-    assert payload['diagnostics']['jobs_missing_location'] == 1
-    assert payload['diagnostics']['outside_radius'] == 1
-    assert payload['diagnostics']['visible_jobs'] == 1
-    assert payload['diagnostics']['candidates'][0] == {
-        'work_order_number': '02257311',
-        'lead_name': 'Customer',
-        'lead_status': 'Working',
-        'distance_miles': 0.125,
-        'latitude': 47.25,
-        'longitude': -122.45,
-        'outcome': 'visible',
-    }
+    assert payload['diagnostics']['local_records'] == 4
+    assert payload['diagnostics']['rep_matched_jobs'] == 2
 
-    pdf = client.get('/map/mod-sheet?work_order=02257311')
-    assert pdf.status_code == 200 and pdf.mimetype == 'application/pdf'
-    assert pdf.data == b'%PDF-map'
+    queued = client.post('/map/api/sync', data={
+        'since': '2025-09-29',
+        'through': '2026-09-29',
+        'market': 'Olympia',
+    }).get_json()
+    assert queued['sync']['status'] == 'queued'
+
+    sync = client.get('/map/api/sync').get_json()
+    assert sync['coverage']['olympia']['since_date'] == '2025-09-29'
 
 
-def test_job_map_architecture_has_one_authoritative_location_and_one_distance_check():
+def test_job_map_architecture_keeps_source_sync_out_of_browser_map_path():
     root = Path(__file__).resolve().parents[1]
+
     for path in (root / 'job_map').glob('*.py'):
         assert 'salesforce' not in path.read_text().casefold()
 
-    contract = (root / 'job_map/contract.py').read_text()
-    query_block = contract.split('class MapQuery:', 1)[1].split('class MapJob:', 1)[0]
-    assert 'latitude' not in query_block
-    assert 'longitude' not in query_block
-    assert 'radius_miles' not in query_block
-
     service = (root / 'job_map/service.py').read_text()
-    local_service = service.split('class JobMapRefreshService', 1)[0]
-    assert '.map_jobs(' not in local_service
-    assert 'SNAPSHOT_CENTER_TOLERANCE_MILES' not in service
+    local_service = service.split('class JobMapSyncService', 1)[0]
+    assert '.map_records(' not in local_service
+    assert 'self.repository.records(' in local_service
     assert service.count('_distance_miles(') == 2
-    assert '_evaluate_jobs' in service
-    assert 'MapCandidateDiagnostic' in service
-    assert 'self.repository.snapshot()' in local_service
+    assert 'SYNC_CHUNK_DAYS = 31' in service
 
     repository = (root / 'job_map/repository.py').read_text()
-    assert "SNAPSHOT_KEY = 'job_map_snapshot_v3'" in repository
-    assert "REFRESH_KEY = 'job_map_refresh_v3'" in repository
-    assert "'latitude':" not in repository.split('def _query_dict', 1)[1].split('def _query_from', 1)[0]
+    assert 'job_map_records' in repository
+    assert 'replace_range' in repository
+    assert 'request_sync' in repository
 
     worker = (root / 'worker.py').read_text()
-    assert 'JobMapRefreshService' in worker
-    assert 'background.submit(map_refresh.run_requested)' in worker
+    assert 'JobMapSyncService' in worker
+    assert 'background.submit(map_sync.run_requested)' in worker
 
     adapter = (root / 'salesforce_sandbox/adapter.py').read_text()
-    map_block = adapter.split('    def map_jobs(self, query: MapQuery):', 1)[1].split(
-        '    def explorer_objects', 1
-    )[0]
-    assert "Market__c = " in map_block
-    assert "Product_Interest__c INCLUDES" in map_block
-    assert "Assigned_Service_Resource__r.Name = " in map_block
-    assert "'Latitude', 'Longitude'," in map_block
-    assert 'appointment_rows += 1' in map_block
-    assert 'jobs_missing_location=missing_location' in map_block
+    assert 'def map_records(self, *, start_date, end_date, market):' in adapter
+    map_block = adapter.split(
+        '    def map_records(self, *, start_date, end_date, market):', 1
+    )[1].split('    def explorer_objects', 1)[0]
+    assert 'SchedStartTime >=' not in map_block
+    # Date bounds come from the shared appointment scope, never phone geography.
+    assert '_appointment_scope(' in map_block
+    assert 'timeout=120' in map_block
     assert 'Latitude >=' not in map_block
     assert 'Longitude >=' not in map_block
-    assert '_map_locations' not in adapter
-    assert 'FSSK__FSK_Work_Order__r.Latitude' not in map_block
-    assert 'FSSK__FSK_Work_Order__r.Longitude' not in map_block
+    assert 'def map_jobs(' not in adapter
+
+    web = (root / 'job_map/web.py').read_text()
+    jobs_block = web.split("    @bp.get('/api/jobs')", 1)[1].split(
+        "    @bp.route('/api/sync'", 1
+    )[0]
+    assert 'request_sync' not in jobs_block
+    assert "request.args.get('refresh')" not in jobs_block
 
     template = (root / 'templates/job_map.html').read_text()
-    assert template.index('id="jobMapMarket"') < template.index('id="jobMapRep"')
-    assert template.index('id="jobMapRep"') < template.index('id="jobMapProduct"')
-    assert template.index('id="jobMapProduct"') < template.index('id="jobMapLocate"')
+    assert 'id="jobMapLastMonth"' in template
+    assert 'id="jobMapLastYear"' in template
+    assert 'id="jobMapSince"' in template
+    assert 'data-sync-url=' in template
 
     runtime = (root / 'static/job_map/map.js').read_text()
-    assert 'readFilters(Date.now() + 60000);' in runtime
-    assert 'loadNearby(false)' not in runtime
-    assert 'navigator.geolocation.getCurrentPosition' in runtime
-    assert "url.searchParams.set('market'" in runtime
-    assert "url.searchParams.set('rep'" in runtime
-    assert "url.searchParams.set('product'" in runtime
-    assert "url.searchParams.set('refresh', '1')" in runtime
-    assert "document.getElementById('jobMapDiagnose')" in runtime
-    assert 'Salesforce appointment rows:' in runtime
-    assert 'Jobs missing ServiceAppointment location:' in runtime
-    assert 'Nearest candidates (' in runtime
-    assert "action('MOD Sheet'" in runtime
-    assert "action('Open in Salesforce'" in runtime
+    assert "body.set('since'" in runtime
+    assert "body.set('through'" in runtime
+    assert "body.set('market'" in runtime
+    assert "url.searchParams.set('refresh'" not in runtime
+    assert 'Checking locally loaded jobs…' in runtime
+    assert 'Local records after market/product:' in runtime
 
-    app = (root / 'app.py').read_text()
-    assert 'JobMapRepository(db)' in app
-    assert 'job_map_blueprint(job_map, https_access=gallery_https)' in app
+    schema = (root / 'db.py').read_text()
+    assert 'CREATE TABLE IF NOT EXISTS job_map_records' in schema
