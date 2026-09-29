@@ -143,7 +143,7 @@ class JobMapRepository:
         )
 
     def replace_range(self, scope_market, start_day, end_day, records, synced_at):
-        """Atomically replace one bounded Salesforce market/date slice."""
+        """Atomically replace one bounded external-source market/date slice."""
         scope_market = str(scope_market or '').strip()
         if not scope_market:
             raise ValueError('A market is required for map history sync.')
