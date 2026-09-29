@@ -7,17 +7,14 @@ import json
 from .contract import MapFilters, MapJob, MapQuery
 
 
-SNAPSHOT_KEY = 'job_map_snapshot_v2'
-REFRESH_KEY = 'job_map_refresh_v2'
+SNAPSHOT_KEY = 'job_map_snapshot_v3'
+REFRESH_KEY = 'job_map_refresh_v3'
 FILTER_SNAPSHOT_KEY = 'job_map_filter_snapshot_v1'
 FILTER_REFRESH_KEY = 'job_map_filter_refresh_v1'
 
 
 def _query_dict(query):
     return {
-        'latitude': float(query.latitude),
-        'longitude': float(query.longitude),
-        'radius_miles': float(query.radius_miles),
         'market': str(query.market or ''),
         'product_type': str(query.product_type or ''),
         'rep': str(query.rep or ''),
@@ -29,14 +26,11 @@ def _query_from(value):
         return None
     try:
         return MapQuery(
-            latitude=float(value['latitude']),
-            longitude=float(value['longitude']),
-            radius_miles=float(value['radius_miles']),
             market=str(value.get('market') or ''),
             product_type=str(value.get('product_type') or ''),
             rep=str(value.get('rep') or ''),
         )
-    except (KeyError, TypeError, ValueError):
+    except (TypeError, ValueError):
         return None
 
 
