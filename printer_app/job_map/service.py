@@ -317,10 +317,24 @@ class JobMapSyncService:
         self.source = source
         self.clock = clock or time.time
 
+    def _location_rebuild_due(self):
+        coverage = self.repository.next_location_rebuild()
+        if not coverage:
+            return None
+        state = self.repository.sync_state()
+        if (
+            state.status == 'failed'
+            and state.market.casefold() == str(coverage.get('market') or '').casefold()
+            and self.clock() - state.updated < FAILED_RETRY_SECONDS
+        ):
+            return None
+        return coverage
+
     def requested_due(self):
         return (
             self.repository.filter_refresh_state().get('status') in ('queued', 'running')
             or self.repository.sync_state().status in ('queued', 'running')
+            or self._location_rebuild_due() is not None
             or self.repository.next_incremental(
                 self.clock(), interval_seconds=INCREMENTAL_INTERVAL_SECONDS
             ) is not None
@@ -331,6 +345,20 @@ class JobMapSyncService:
             self._run_filter_refresh()
         if self.repository.sync_state().status in ('queued', 'running'):
             return self._run_history_sync()
+
+        rebuild = self._location_rebuild_due()
+        if rebuild:
+            self.repository.request_sync(
+                str(uuid4()),
+                MapSyncRequest(
+                    since_date=str(rebuild.get('since_date') or ''),
+                    through_date=str(rebuild.get('through_date') or ''),
+                    market=str(rebuild.get('market') or ''),
+                ),
+                self.clock(),
+            )
+            return self._run_history_sync()
+
         if self.repository.next_incremental(
                 self.clock(), interval_seconds=INCREMENTAL_INTERVAL_SECONDS) is not None:
             self._run_incremental()
