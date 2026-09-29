@@ -102,6 +102,46 @@ class JobMapRepository:
                 continue
         return tuple(result)
 
+    @staticmethod
+    def _upsert_record(conn, scope_market, record, synced_at):
+        if not isinstance(record, MapRecord):
+            raise ValueError('Map history source returned invalid records.')
+        conn.execute(
+            '''INSERT INTO job_map_records(
+                source_record_id,work_order_id,work_order_number,scheduled_at,
+                scheduled_day,created_at,canceled,lead_name,lead_status,latitude,
+                longitude,source_record_url,market,product_type,assigned_rep,
+                scope_market,synced_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(source_record_id) DO UPDATE SET
+                work_order_id=excluded.work_order_id,
+                work_order_number=excluded.work_order_number,
+                scheduled_at=excluded.scheduled_at,
+                scheduled_day=excluded.scheduled_day,
+                created_at=excluded.created_at,
+                canceled=excluded.canceled,
+                lead_name=excluded.lead_name,
+                lead_status=excluded.lead_status,
+                latitude=excluded.latitude,
+                longitude=excluded.longitude,
+                source_record_url=excluded.source_record_url,
+                market=excluded.market,
+                product_type=excluded.product_type,
+                assigned_rep=excluded.assigned_rep,
+                scope_market=excluded.scope_market,
+                synced_at=excluded.synced_at''',
+            (
+                record.source_record_id, record.work_order_id,
+                record.work_order_number, float(record.scheduled_at),
+                record.scheduled_day, float(record.created_at),
+                1 if record.canceled else 0, record.lead_name,
+                record.lead_status, record.latitude, record.longitude,
+                record.source_record_url, record.market,
+                record.product_type, record.assigned_rep,
+                scope_market, float(synced_at),
+            ),
+        )
+
     def replace_range(self, scope_market, start_day, end_day, records, synced_at):
         """Atomically replace one bounded Salesforce market/date slice."""
         scope_market = str(scope_market or '').strip()
@@ -116,43 +156,19 @@ class JobMapRepository:
                 (scope_market, str(start_day), str(end_day)),
             )
             for record in records:
-                if not isinstance(record, MapRecord):
-                    raise ValueError('Map history source returned invalid records.')
-                conn.execute(
-                    '''INSERT INTO job_map_records(
-                        source_record_id,work_order_id,work_order_number,scheduled_at,
-                        scheduled_day,created_at,canceled,lead_name,lead_status,latitude,
-                        longitude,source_record_url,market,product_type,assigned_rep,
-                        scope_market,synced_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                       ON CONFLICT(source_record_id) DO UPDATE SET
-                        work_order_id=excluded.work_order_id,
-                        work_order_number=excluded.work_order_number,
-                        scheduled_at=excluded.scheduled_at,
-                        scheduled_day=excluded.scheduled_day,
-                        created_at=excluded.created_at,
-                        canceled=excluded.canceled,
-                        lead_name=excluded.lead_name,
-                        lead_status=excluded.lead_status,
-                        latitude=excluded.latitude,
-                        longitude=excluded.longitude,
-                        source_record_url=excluded.source_record_url,
-                        market=excluded.market,
-                        product_type=excluded.product_type,
-                        assigned_rep=excluded.assigned_rep,
-                        scope_market=excluded.scope_market,
-                        synced_at=excluded.synced_at''',
-                    (
-                        record.source_record_id, record.work_order_id,
-                        record.work_order_number, float(record.scheduled_at),
-                        record.scheduled_day, float(record.created_at),
-                        1 if record.canceled else 0, record.lead_name,
-                        record.lead_status, record.latitude, record.longitude,
-                        record.source_record_url, record.market,
-                        record.product_type, record.assigned_rep,
-                        scope_market, float(synced_at),
-                    ),
-                )
+                self._upsert_record(conn, scope_market, record, synced_at)
+        return len(records)
+
+    def upsert_records(self, scope_market, records, synced_at):
+        """Apply bounded incremental changes without replacing unaffected history."""
+        scope_market = str(scope_market or '').strip()
+        if not scope_market:
+            raise ValueError('A market is required for map history sync.')
+        records = tuple(records)
+        with self.db.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            for record in records:
+                self._upsert_record(conn, scope_market, record, synced_at)
         return len(records)
 
     def latest_sync_time(self, market=''):
@@ -302,7 +318,7 @@ class JobMapRepository:
         value = self.db.get(COVERAGE_KEY, {})
         return dict(value) if isinstance(value, dict) else {}
 
-    def update_coverage(self, market, since_date, through_date, now):
+    def update_coverage(self, market, since_date, through_date, now, *, cursor_at=0.0):
         market = str(market or '').strip()
         if not market:
             return self.coverage()
@@ -315,11 +331,51 @@ class JobMapRepository:
             since = str(since_date)
         if str(through_date) > through:
             through = str(through_date)
+        existing_cursor = float(current.get('cursor_at', 0) or 0)
         coverage[key] = {
             'market': market,
             'since_date': since,
             'through_date': through,
             'updated': float(now),
+            'cursor_at': existing_cursor or float(cursor_at or now),
+            'last_incremental_attempt': float(
+                current.get('last_incremental_attempt', 0) or 0
+            ),
+            'incremental_error': str(current.get('incremental_error') or ''),
         }
+        self.db.set(COVERAGE_KEY, coverage)
+        return coverage
+
+    def next_incremental(self, now, *, interval_seconds=3600):
+        candidates = []
+        for key, value in self.coverage().items():
+            if not isinstance(value, dict):
+                continue
+            try:
+                cursor = float(value.get('cursor_at', 0) or 0)
+                attempted = float(value.get('last_incremental_attempt', 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            market = str(value.get('market') or '').strip()
+            since = str(value.get('since_date') or '')
+            if market and since and cursor > 0 and float(now) - attempted >= interval_seconds:
+                candidates.append((attempted, key, dict(value)))
+        return min(candidates, default=(None, None, None))[2]
+
+    def mark_incremental(self, market, through_date, cursor_at, now, *, error=''):
+        coverage = self.coverage()
+        key = str(market or '').strip().casefold()
+        current = dict(coverage.get(key, {}))
+        if not current:
+            return coverage
+        if not error:
+            current['through_date'] = max(
+                str(current.get('through_date') or ''), str(through_date)
+            )
+            current['cursor_at'] = float(cursor_at)
+            current['updated'] = float(now)
+        current['last_incremental_attempt'] = float(now)
+        current['incremental_error'] = str(error or '')
+        coverage[key] = current
         self.db.set(COVERAGE_KEY, coverage)
         return coverage
