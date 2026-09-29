@@ -43,8 +43,9 @@ def _source_row(
         'StatusCategory': appointment_status,
         'SchedStartTime': scheduled,
         'CreatedDate': created,
-        'Latitude': lat,
-        'Longitude': lon,
+        # Deliberately conflicting appointment coordinates prove the map ignores them.
+        'Latitude': '1.0',
+        'Longitude': '2.0',
         'FSSK__FSK_Work_Order__c': work,
         'FSSK__FSK_Assigned_Service_Resource__r': {'Name': rep},
         'FSSK__FSK_Work_Order__r': {
@@ -55,6 +56,8 @@ def _source_row(
                 'Name': name,
                 'Status': status,
                 'Market__c': market,
+                'Latitude': lat,
+                'Longitude': lon,
             },
         },
     }
@@ -142,6 +145,9 @@ def test_salesforce_map_history_is_bounded_by_market_and_dates_only():
     assert 'SchedStartTime <' in appointment
     assert 'Product_Interest__c INCLUDES' not in appointment
     assert 'Assigned_Service_Resource__r.Name =' not in appointment
+    assert 'FSSK__FSK_Work_Order__r.Lead__r.Latitude' in appointment
+    assert 'FSSK__FSK_Work_Order__r.Lead__r.Longitude' in appointment
+    assert 'SELECT Id, StatusCategory, SchedStartTime, CreatedDate, Latitude, Longitude,' not in appointment
     assert 'Latitude >=' not in appointment
     assert 'Longitude >=' not in appointment
     first_appointment_call = next(
@@ -279,6 +285,43 @@ def test_worker_history_sync_splits_year_range_into_bounded_chunks(tmp_path):
     coverage = repository.coverage()['olympia']
     assert coverage['since_date'] == '2026-07-01'
     assert coverage['through_date'] == '2026-09-29'
+    assert coverage['location_contract'] == 'customer-geocode'
+
+
+def test_worker_rebuilds_existing_history_when_location_contract_changes(tmp_path):
+    db = Database(tmp_path / 'printer.db')
+    repository = JobMapRepository(db)
+    repository.replace_range(
+        'Olympia', '2026-09-01', '2026-09-29',
+        (_record('a1', 'wo1', 'WO1', lat=None, lon=None),),
+        100.0,
+    )
+    repository.update_coverage(
+        'Olympia', '2026-09-01', '2026-09-29', 100.0, cursor_at=100.0
+    )
+    coverage = repository.coverage()
+    coverage['olympia'].pop('location_contract', None)
+    db.set('job_map_history_coverage_v1', coverage)
+
+    calls = []
+
+    class Source:
+        def map_records(self, *, start_date, end_date, market):
+            calls.append((start_date, end_date, market))
+            return (_record(
+                'a1', 'wo1', 'WO1', lat=47.25, lon=-122.45,
+                day='2026-09-24',
+            ),)
+
+    service = JobMapSyncService(repository, Source(), clock=lambda: 5000.0)
+    assert service.requested_due() is True
+    state = service.run_requested()
+
+    assert state.status == 'complete'
+    assert calls == [('2026-09-01', '2026-09-29', 'Olympia')]
+    rebuilt = repository.records(market='Olympia')
+    assert [(item.latitude, item.longitude) for item in rebuilt] == [(47.25, -122.45)]
+    assert repository.coverage()['olympia']['location_contract'] == 'customer-geocode'
 
 
 def test_worker_incremental_sync_uses_cursor_and_updates_local_record(tmp_path):
@@ -442,6 +485,8 @@ def test_job_map_architecture_keeps_source_sync_out_of_browser_map_path():
     assert 'job_map_records' in repository
     assert 'replace_range' in repository
     assert 'request_sync' in repository
+    assert "MAP_LOCATION_CONTRACT = 'customer-geocode'" in repository
+    assert 'next_location_rebuild' in repository
 
     worker = (root / 'worker.py').read_text()
     assert 'JobMapSyncService' in worker
@@ -451,6 +496,12 @@ def test_job_map_architecture_keeps_source_sync_out_of_browser_map_path():
     assert 'def map_records(self, *, start_date, end_date, market):' in adapter
     assert 'def map_records_changed(' in adapter
     assert 'LastModifiedDate >=' in adapter
+    fields_block = adapter.split(
+        '    def _map_record_fields():', 1
+    )[1].split('    def _normalized_map_records', 1)[0]
+    assert "'FSSK__FSK_Work_Order__r.Lead__r.Latitude'" in fields_block
+    assert "'FSSK__FSK_Work_Order__r.Lead__r.Longitude'" in fields_block
+    assert "'Latitude', 'Longitude'," not in fields_block
     map_block = adapter.split(
         '    def map_records(self, *, start_date, end_date, market):', 1
     )[1].split('    def explorer_objects', 1)[0]
@@ -485,6 +536,8 @@ def test_job_map_architecture_keeps_source_sync_out_of_browser_map_path():
     assert "url.searchParams.set('refresh'" not in runtime
     assert 'Checking locally loaded jobs…' in runtime
     assert 'Local records after market/product:' in runtime
+    assert 'Jobs with map location:' in runtime
+    assert 'ServiceAppointment location' not in runtime
 
     schema = (root / 'db.py').read_text()
     assert 'CREATE TABLE IF NOT EXISTS job_map_records' in schema
