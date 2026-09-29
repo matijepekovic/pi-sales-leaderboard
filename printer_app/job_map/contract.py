@@ -6,11 +6,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class MapQuery:
-    """Business filters plus final geographic scope for one nearby-job lookup."""
+    """Business filters for one normalized source snapshot."""
 
-    latitude: float
-    longitude: float
-    radius_miles: float
     market: str = ''
     product_type: str = ''
     rep: str = ''
