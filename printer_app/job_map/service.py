@@ -303,7 +303,7 @@ class JobMapService:
 
 
 class JobMapSyncService:
-    """Worker-owned Salesforce metadata refresh and bounded history backfill."""
+    """Worker-owned external metadata refresh and bounded history backfill."""
 
     def __init__(self, repository, source, clock=None):
         self.repository = repository
