@@ -473,9 +473,25 @@ class SalesforceCliAdapter:
             ))
         return tuple(normalized)
 
-    def _map_leads(self, lead_ids, latitude, longitude, radius_miles):
-        """Apply the final geographic scope only to Leads surviving business filters."""
-        if not lead_ids:
+    @staticmethod
+    def _map_longitude_condition(path, west, east, longitude_delta):
+        if longitude_delta >= 180.0:
+            return ''
+        if west < -180.0:
+            return (
+                f'({path} >= {west + 360.0:.8f} OR '
+                f'{path} <= {east:.8f})'
+            )
+        if east > 180.0:
+            return (
+                f'({path} >= {west:.8f} OR '
+                f'{path} <= {east - 360.0:.8f})'
+            )
+        return f'({path} >= {west:.8f} AND {path} <= {east:.8f})'
+
+    def _map_locations(self, appointment_ids, latitude, longitude, radius_miles):
+        """Apply final geography to Field Service locations, never Lead addresses."""
+        if not appointment_ids:
             return {}
 
         earth_radius_miles = 3958.7613
@@ -490,33 +506,39 @@ class SalesforceCliAdapter:
         west = longitude - longitude_delta
         east = longitude + longitude_delta
 
-        leads = {}
-        fields = ('Id', 'Name', 'Status', 'Market__c', 'Latitude', 'Longitude')
-        for offset in range(0, len(lead_ids), 100):
-            batch = tuple(lead_ids[offset:offset + 100])
-            conditions = [
-                'Id IN (' + ', '.join(_soql_literal(value) for value in batch) + ')',
-                f'Latitude >= {south:.8f}',
-                f'Latitude <= {north:.8f}',
-            ]
-            if longitude_delta < 180.0:
-                if west < -180.0:
-                    conditions.append(
-                        f'(Longitude >= {west + 360.0:.8f} OR Longitude <= {east:.8f})'
-                    )
-                elif east > 180.0:
-                    conditions.append(
-                        f'(Longitude >= {west:.8f} OR Longitude <= {east - 360.0:.8f})'
-                    )
-                else:
-                    conditions.extend((
-                        f'Longitude >= {west:.8f}',
-                        f'Longitude <= {east:.8f}',
-                    ))
+        appointment_lon = self._map_longitude_condition(
+            'Longitude', west, east, longitude_delta
+        )
+        work_order_lon = self._map_longitude_condition(
+            'FSSK__FSK_Work_Order__r.Longitude', west, east, longitude_delta
+        )
+        appointment_scope = (
+            f'Latitude >= {south:.8f} AND Latitude <= {north:.8f}'
+            + (f' AND {appointment_lon}' if appointment_lon else '')
+        )
+        work_order_scope = (
+            f'FSSK__FSK_Work_Order__r.Latitude >= {south:.8f} '
+            f'AND FSSK__FSK_Work_Order__r.Latitude <= {north:.8f}'
+            + (f' AND {work_order_lon}' if work_order_lon else '')
+        )
 
+        locations = {}
+        fields = (
+            'Id',
+            'Latitude',
+            'Longitude',
+            'FSSK__FSK_Work_Order__r.Latitude',
+            'FSSK__FSK_Work_Order__r.Longitude',
+        )
+        for offset in range(0, len(appointment_ids), 100):
+            batch = tuple(appointment_ids[offset:offset + 100])
             query = (
                 'SELECT ' + ', '.join(fields)
-                + ' FROM Lead WHERE ' + ' AND '.join(conditions)
+                + ' FROM ServiceAppointment WHERE Id IN ('
+                + ', '.join(_soql_literal(value) for value in batch) + ')'
+                + ' AND ((' + appointment_scope + ') OR '
+                + '((Latitude = null OR Longitude = null) AND '
+                + work_order_scope + '))'
                 + ' ORDER BY Id ASC LIMIT 1000'
             )
             result = self._run(
@@ -525,39 +547,51 @@ class SalesforceCliAdapter:
             )
             rows = result.get('records') if isinstance(result, dict) else None
             if not isinstance(rows, list) or len(rows) > 1000:
-                raise SalesforceAdapterError('Salesforce nearby-lead query returned an invalid records page.')
+                raise SalesforceAdapterError(
+                    'Salesforce nearby appointment query returned an invalid records page.'
+                )
             if result.get('done') is False or len(rows) >= 1000:
-                raise SalesforceAdapterError('Salesforce nearby-lead query returned an incomplete records page.')
+                raise SalesforceAdapterError(
+                    'Salesforce nearby appointment query returned an incomplete records page.'
+                )
 
             seen = set()
             for row in rows:
                 try:
-                    lead_id = explorer.record_id(row.get('Id') if isinstance(row, dict) else None)
+                    appointment_id = explorer.record_id(
+                        row.get('Id') if isinstance(row, dict) else None
+                    )
                 except ValueError as exc:
                     raise SalesforceAdapterError(
-                        'Salesforce nearby-lead query returned an invalid record ID.'
+                        'Salesforce nearby appointment query returned an invalid record ID.'
                     ) from exc
-                if lead_id not in batch or lead_id in seen:
-                    raise SalesforceAdapterError('Salesforce nearby-lead query returned an unexpected Lead.')
-                seen.add(lead_id)
+                if appointment_id not in batch or appointment_id in seen:
+                    raise SalesforceAdapterError(
+                        'Salesforce nearby appointment query returned an unexpected appointment.'
+                    )
+                seen.add(appointment_id)
+
                 try:
                     item_latitude = float(row.get('Latitude'))
                     item_longitude = float(row.get('Longitude'))
                 except (TypeError, ValueError):
-                    continue
+                    try:
+                        item_latitude = float(
+                            _nested(row, 'FSSK__FSK_Work_Order__r.Latitude')
+                        )
+                        item_longitude = float(
+                            _nested(row, 'FSSK__FSK_Work_Order__r.Longitude')
+                        )
+                    except (TypeError, ValueError):
+                        continue
                 if not (-90 <= item_latitude <= 90 and -180 <= item_longitude <= 180):
                     continue
-                leads[lead_id] = {
-                    'lead_name': str(row.get('Name') or '').strip(),
-                    'lead_status': str(row.get('Status') or '').strip(),
-                    'market': str(row.get('Market__c') or '').strip(),
-                    'latitude': item_latitude,
-                    'longitude': item_longitude,
-                }
-        return leads
+                locations[appointment_id] = (item_latitude, item_longitude)
+
+        return locations
 
     def map_jobs(self, query: MapQuery):
-        """Apply business filters first, then the final five-mile Lead scope."""
+        """Apply business filters first, then Field Service's final five-mile scope."""
         try:
             latitude = float(query.latitude)
             longitude = float(query.longitude)
@@ -581,6 +615,9 @@ class SalesforceCliAdapter:
             'FSSK__FSK_Work_Order__r.WorkOrderNumber',
             'FSSK__FSK_Work_Order__r.Product_Interest__c',
             'FSSK__FSK_Work_Order__r.Lead__r.Id',
+            'FSSK__FSK_Work_Order__r.Lead__r.Name',
+            'FSSK__FSK_Work_Order__r.Lead__r.Status',
+            'FSSK__FSK_Work_Order__r.Lead__r.Market__c',
             'FSSK__FSK_Assigned_Service_Resource__r.Name',
         )
         conditions = ["WorkType.Name LIKE '%Sales%'"]
@@ -602,13 +639,16 @@ class SalesforceCliAdapter:
 
         grouped = {}
         for item in self._appointment_rows(fields, conditions):
+            appointment_id = str(item.get('Id') or '').strip()
             work_order_id = str(item.get('FSSK__FSK_Work_Order__c') or '').strip()
             work_order_number = _nested(item, 'FSSK__FSK_Work_Order__r.WorkOrderNumber').strip()
             lead_id = _nested(item, 'FSSK__FSK_Work_Order__r.Lead__r.Id').strip()
             scheduled = _sf_datetime(item.get('SchedStartTime'))
-            if not work_order_id or not work_order_number or not lead_id or scheduled is None:
+            if (not appointment_id or not work_order_id or not work_order_number
+                    or not lead_id or scheduled is None):
                 continue
             try:
+                appointment_id = explorer.record_id(appointment_id)
                 lead_id = explorer.record_id(lead_id)
             except ValueError:
                 continue
@@ -617,7 +657,8 @@ class SalesforceCliAdapter:
             rep = _nested(item, 'FSSK__FSK_Assigned_Service_Resource__r.Name').strip()
             current = grouped.get(work_order_id)
             candidate = dict(
-                item=item, work_order_number=work_order_number, lead_id=lead_id,
+                item=item, appointment_id=appointment_id,
+                work_order_number=work_order_number, lead_id=lead_id,
                 scheduled=scheduled, created=created, canceled=canceled,
                 assigned_reps=[rep] if rep else [],
             )
@@ -636,29 +677,44 @@ class SalesforceCliAdapter:
                 if rep and rep not in current['assigned_reps']:
                     current['assigned_reps'].append(rep)
 
-        lead_ids = tuple(dict.fromkeys(value['lead_id'] for value in grouped.values()))
-        leads = self._map_leads(lead_ids, latitude, longitude, radius_miles)
-        if not leads:
+        appointment_ids = tuple(dict.fromkeys(
+            value['appointment_id'] for value in grouped.values()
+        ))
+        locations = self._map_locations(
+            appointment_ids, latitude, longitude, radius_miles
+        )
+        if not locations:
             return ()
 
         if not self._instance_url:
             self.status()
         result = []
         for work_order_id, value in grouped.items():
-            lead = leads.get(value['lead_id'])
-            if lead is None:
+            location = locations.get(value['appointment_id'])
+            if location is None:
                 continue
+            lead_name = _nested(
+                value['item'], 'FSSK__FSK_Work_Order__r.Lead__r.Name'
+            ).strip()
+            lead_status = _nested(
+                value['item'], 'FSSK__FSK_Work_Order__r.Lead__r.Status'
+            ).strip()
+            market_name = _nested(
+                value['item'], 'FSSK__FSK_Work_Order__r.Lead__r.Market__c'
+            ).strip()
             result.append(MapJob(
                 source_id=work_order_id,
                 work_order_number=value['work_order_number'],
-                lead_name=lead['lead_name'],
-                lead_status=lead['lead_status'],
-                latitude=lead['latitude'],
-                longitude=lead['longitude'],
+                lead_name=lead_name,
+                lead_status=lead_status,
+                latitude=location[0],
+                longitude=location[1],
                 source_record_url=(self._instance_url + '/lightning/r/Lead/' + value['lead_id'] + '/view')
                     if self._instance_url else '',
-                market=lead['market'],
-                product_type=_nested(value['item'], 'FSSK__FSK_Work_Order__r.Product_Interest__c').strip(),
+                market=market_name,
+                product_type=_nested(
+                    value['item'], 'FSSK__FSK_Work_Order__r.Product_Interest__c'
+                ).strip(),
                 assigned_reps=tuple(value['assigned_reps']),
             ))
         return tuple(result)

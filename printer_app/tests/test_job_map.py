@@ -20,6 +20,7 @@ def _result(payload):
 
 
 def _row(ident, *, work='0WO000000000001AAA', number='02257311', lead='00Q000000000001AAA',
+         name='Customer One', status='Working', market='Seattle',
          product='Bath', rep='Rep One',
          scheduled='2026-09-24T17:00:00.000+0000', created='2026-09-24T16:00:00.000+0000',
          appointment_status='Scheduled'):
@@ -33,25 +34,31 @@ def _row(ident, *, work='0WO000000000001AAA', number='02257311', lead='00Q000000
         'FSSK__FSK_Work_Order__r': {
             'WorkOrderNumber': number,
             'Product_Interest__c': product,
-            'Lead__r': {'Id': lead},
+            'Lead__r': {
+                'Id': lead,
+                'Name': name,
+                'Status': status,
+                'Market__c': market,
+            },
         },
     }
 
 
-def test_map_source_applies_business_filters_before_final_radius_query():
+def test_map_source_applies_business_filters_before_field_service_radius_query():
     calls = []
     appointment_rows = [
         _row('08p000000000001AAA', scheduled='2026-09-23T17:00:00.000+0000'),
         _row('08p000000000002AAA', scheduled='2026-09-25T17:00:00.000+0000',
              appointment_status='Canceled'),
     ]
-    nearby_lead = {
-        'Id': '00Q000000000001AAA',
-        'Name': 'Customer One',
-        'Status': 'Working',
-        'Market__c': 'Seattle',
+    nearby_appointment = {
+        'Id': '08p000000000001AAA',
         'Latitude': '47.25',
         'Longitude': '-122.45',
+        'FSSK__FSK_Work_Order__r': {
+            'Latitude': '10.0',
+            'Longitude': '20.0',
+        },
     }
 
     def runner(command, **kwargs):
@@ -63,12 +70,11 @@ def test_map_source_applies_business_filters_before_final_radius_query():
                 'id': '00D000000000123', 'connectedStatus': 'Connected',
             }})
         query = command[command.index('--query') + 1]
-        if ' FROM ServiceAppointment WHERE ' in query:
-            page = [] if ' AND Id > ' in query else appointment_rows
-        elif ' FROM Lead WHERE ' in query:
-            page = [nearby_lead]
+        assert ' FROM ServiceAppointment WHERE ' in query
+        if 'Latitude >=' in query:
+            page = [nearby_appointment]
         else:
-            raise AssertionError(query)
+            page = [] if ' AND Id > ' in query else appointment_rows
         return _result({'status': 0, 'result': {'records': page}})
 
     adapter = SalesforceCliAdapter(runner=runner, executable='/fake/sf')
@@ -89,23 +95,62 @@ def test_map_source_applies_business_filters_before_final_radius_query():
         call[call.index('--query') + 1]
         for call in calls if call[1:3] == ['data', 'query']
     ]
-    appointment_query = next(
+    business_query = next(
         value for value in queries
-        if ' FROM ServiceAppointment WHERE ' in value and ' AND Id > ' not in value
+        if 'Latitude >=' not in value and ' AND Id > ' not in value
     )
-    lead_query = next(value for value in queries if ' FROM Lead WHERE ' in value)
+    radius_query = next(value for value in queries if 'Latitude >=' in value)
 
-    assert queries.index(appointment_query) < queries.index(lead_query)
-    assert "FSSK__FSK_Work_Order__r.Lead__r.Market__c = 'Seattle'" in appointment_query
-    assert "FSSK__FSK_Work_Order__r.Product_Interest__c INCLUDES ('Bath')" in appointment_query
-    assert "FSSK__FSK_Assigned_Service_Resource__r.Name = 'Rep One'" in appointment_query
-    assert "WorkType.Name LIKE '%Sales%'" in appointment_query
-    assert 'Lead__r.Latitude' not in appointment_query
-    assert 'Lead__r.Longitude' not in appointment_query
+    assert queries.index(business_query) < queries.index(radius_query)
+    assert "FSSK__FSK_Work_Order__r.Lead__r.Market__c = 'Seattle'" in business_query
+    assert "FSSK__FSK_Work_Order__r.Product_Interest__c INCLUDES ('Bath')" in business_query
+    assert "FSSK__FSK_Assigned_Service_Resource__r.Name = 'Rep One'" in business_query
+    assert "WorkType.Name LIKE '%Sales%'" in business_query
+    assert 'Latitude >=' not in business_query
+    assert 'Longitude >=' not in business_query
 
-    assert "Id IN ('00Q000000000001AAA')" in lead_query
-    assert 'Latitude >=' in lead_query and 'Latitude <=' in lead_query
-    assert 'Longitude >=' in lead_query and 'Longitude <=' in lead_query
+    assert "Id IN ('08p000000000001AAA')" in radius_query
+    assert 'FROM ServiceAppointment' in radius_query
+    assert 'Latitude >=' in radius_query and 'Latitude <=' in radius_query
+    assert 'Longitude >=' in radius_query and 'Longitude <=' in radius_query
+    assert 'FSSK__FSK_Work_Order__r.Latitude' in radius_query
+    assert 'FSSK__FSK_Work_Order__r.Longitude' in radius_query
+    assert ' FROM Lead ' not in ' '.join(queries)
+
+
+def test_map_source_uses_work_order_geocode_when_appointment_coordinates_are_blank():
+    appointment = _row('08p000000000001AAA')
+
+    def runner(command, **kwargs):
+        if command[1:3] == ['org', 'display']:
+            return _result({'status': 0, 'result': {
+                'username': 'rep@example.test', 'alias': 'work',
+                'instanceUrl': 'https://example.my.salesforce.com',
+                'id': '00D000000000123', 'connectedStatus': 'Connected',
+            }})
+        query = command[command.index('--query') + 1]
+        if 'Latitude >=' in query:
+            rows = [{
+                'Id': '08p000000000001AAA',
+                'Latitude': None,
+                'Longitude': None,
+                'FSSK__FSK_Work_Order__r': {
+                    'Latitude': '47.251',
+                    'Longitude': '-122.451',
+                },
+            }]
+        else:
+            rows = [] if ' AND Id > ' in query else [appointment]
+        return _result({'status': 0, 'result': {'records': rows}})
+
+    adapter = SalesforceCliAdapter(runner=runner, executable='/fake/sf')
+    jobs = adapter.map_jobs(MapQuery(
+        47.25, -122.45, 5.0,
+        market='Seattle', product_type='Bath', rep='Rep One',
+    ))
+
+    assert len(jobs) == 1
+    assert (jobs[0].latitude, jobs[0].longitude) == (47.251, -122.451)
 
 
 def test_map_source_skips_radius_query_when_business_filters_match_no_appointments():
@@ -124,7 +169,7 @@ def test_map_source_skips_radius_query_when_business_filters_match_no_appointmen
     ))
     assert result == ()
     assert len(queries) == 1
-    assert ' FROM Lead WHERE ' not in queries[0]
+    assert 'Latitude >=' not in queries[0]
 
 
 def test_map_source_boundary_returns_normalized_filter_choices():
@@ -495,10 +540,14 @@ def test_job_map_architecture_is_filters_first_and_worker_owns_external_refresh(
     map_block = adapter.split('    def map_jobs(self, query: MapQuery):', 1)[1].split(
         '    def explorer_objects', 1
     )[0]
-    assert map_block.index('self._appointment_rows') < map_block.index('self._map_leads')
+    assert map_block.index('self._appointment_rows') < map_block.index('self._map_locations')
     assert "Market__c = " in map_block
     assert "Product_Interest__c INCLUDES" in map_block
     assert "Assigned_Service_Resource__r.Name = " in map_block
+    assert '_map_leads' not in adapter
+    assert "FROM Lead WHERE" not in map_block
+    assert "'Latitude'," in adapter
+    assert "'FSSK__FSK_Work_Order__r.Latitude'," in adapter
 
     app = (root / 'app.py').read_text()
     assert 'JobMapRepository(db)' in app
