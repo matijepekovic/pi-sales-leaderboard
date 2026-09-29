@@ -5,10 +5,10 @@
   const status = document.getElementById('jobMapStatus');
   const error = document.getElementById('jobMapError');
   const marketFilter = document.getElementById('jobMapMarket');
-  const productFilter = document.getElementById('jobMapProduct');
   const repFilter = document.getElementById('jobMapRep');
+  const productFilter = document.getElementById('jobMapProduct');
   const locateButton = document.getElementById('jobMapLocate');
-  const filters = [marketFilter, productFilter, repFilter];
+  const filters = [marketFilter, repFilter, productFilter];
   const configuredRadiusMiles = Number(node.dataset.radiusMiles);
 
   if (!Number.isFinite(configuredRadiusMiles) || configuredRadiusMiles <= 0) {
@@ -31,6 +31,7 @@
   let radiusMiles = configuredRadiusMiles;
   let pollTimer = null;
   let loadGeneration = 0;
+  let filtersReady = false;
 
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
@@ -79,7 +80,7 @@
 
   function optionsFor(values) {
     const unique = new Map();
-    for (const value of values) {
+    for (const value of values || []) {
       const clean = String(value || '').trim();
       if (clean) unique.set(normalized(clean), clean);
     }
@@ -102,37 +103,40 @@
     select.value = Array.from(select.options).some(option => option.value === current) ? current : '';
   }
 
-  function populateFilters() {
-    fillSelect(marketFilter, jobs.map(job => job.market), 'All markets');
-    fillSelect(productFilter, jobs.map(job => job.product_type), 'All products');
-    fillSelect(repFilter, jobs.flatMap(job => Array.isArray(job.assigned_reps) ? job.assigned_reps : []), 'All reps');
-    for (const select of filters) select.disabled = false;
+  function selectedFilters() {
+    return {
+      market: marketFilter.value,
+      rep: repFilter.value,
+      product: productFilter.value,
+    };
   }
 
-  function matches(job) {
-    if (marketFilter.value && normalized(job.market) !== normalized(marketFilter.value)) return false;
-    if (productFilter.value && normalized(job.product_type) !== normalized(productFilter.value)) return false;
-    if (repFilter.value) {
-      const reps = Array.isArray(job.assigned_reps) ? job.assigned_reps : [];
-      if (!reps.some(rep => normalized(rep) === normalized(repFilter.value))) return false;
-    }
-    return true;
+  function enableFilters() {
+    filtersReady = true;
+    for (const select of filters) select.disabled = false;
+    locateButton.disabled = false;
+  }
+
+  function clearMapForFilterChange() {
+    if (!filtersReady) return;
+    cancelPoll();
+    loadGeneration += 1;
+    jobs = [];
+    markers.clearLayers();
+    locationLayer.clearLayers();
+    delete error.dataset.sourceError;
+    error.hidden = true;
+    locateButton.disabled = false;
+    status.textContent = 'Filters selected — tap Load nearby.';
   }
 
   function renderJobs() {
     markers.clearLayers();
     let shown = 0;
     for (const job of jobs) {
-      if (!matches(job)) continue;
       if (!Number.isFinite(job.latitude) || !Number.isFinite(job.longitude)) continue;
       L.marker([job.latitude, job.longitude]).addTo(markers).bindPopup(popup(job));
       shown += 1;
-    }
-    if (jobs.length && !shown) {
-      error.textContent = 'No nearby jobs match the selected filters.';
-      error.hidden = false;
-    } else if (!error.dataset.sourceError) {
-      error.hidden = true;
     }
     return shown;
   }
@@ -161,14 +165,9 @@
     }
   }
 
-  async function localSnapshot(latitude, longitude, forceRefresh) {
-    const url = new URL(node.dataset.jobsUrl, window.location.href);
-    url.searchParams.set('lat', String(latitude));
-    url.searchParams.set('lon', String(longitude));
-    if (forceRefresh) url.searchParams.set('refresh', '1');
-
+  async function fetchJson(url, timeoutMs) {
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 10000);
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(url.toString(), {
         headers: {'Accept': 'application/json'},
@@ -176,7 +175,7 @@
       });
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.error || 'Could not read nearby map data.');
+        throw new Error(payload.error || 'Request failed.');
       }
       return payload;
     } catch (exc) {
@@ -189,14 +188,74 @@
     }
   }
 
-  async function readNearby(latitude, longitude, generation, deadline, forceRefresh) {
+  async function readFilters(deadline) {
     try {
-      const payload = await localSnapshot(latitude, longitude, forceRefresh);
+      const url = new URL(node.dataset.filtersUrl, window.location.href);
+      const payload = await fetchJson(url, 10000);
+      const data = payload.filters || {};
+      const hasSnapshot = Number(payload.captured_at) > 0;
+
+      if (hasSnapshot) {
+        fillSelect(marketFilter, data.markets, 'All markets');
+        fillSelect(repFilter, data.reps, 'All reps');
+        fillSelect(productFilter, data.product_types, 'All products');
+        enableFilters();
+      }
+
+      if (payload.error && !hasSnapshot) {
+        status.textContent = 'Map filters unavailable';
+        error.dataset.sourceError = '1';
+        error.textContent = payload.error;
+        error.hidden = false;
+        return;
+      }
+
+      if (payload.refreshing && !hasSnapshot) {
+        status.textContent = 'Preparing map filters…';
+        if (Date.now() < deadline) {
+          pollTimer = window.setTimeout(() => readFilters(deadline), 1500);
+        } else {
+          status.textContent = 'Map filters still refreshing';
+          error.dataset.sourceError = '1';
+          error.textContent = 'Filter refresh is still running in the background. Reload the page to check again.';
+          error.hidden = false;
+        }
+        return;
+      }
+
+      if (payload.refreshing && hasSnapshot) {
+        status.textContent = 'Choose filters, then Load nearby · refreshing filter choices…';
+      } else {
+        status.textContent = 'Choose filters, then tap Load nearby.';
+      }
+      delete error.dataset.sourceError;
+      error.hidden = true;
+    } catch (exc) {
+      status.textContent = 'Map filters unavailable';
+      error.dataset.sourceError = '1';
+      error.textContent = String(exc.message || exc);
+      error.hidden = false;
+    }
+  }
+
+  async function localSnapshot(latitude, longitude) {
+    const url = new URL(node.dataset.jobsUrl, window.location.href);
+    const selected = selectedFilters();
+    url.searchParams.set('lat', String(latitude));
+    url.searchParams.set('lon', String(longitude));
+    if (selected.market) url.searchParams.set('market', selected.market);
+    if (selected.rep) url.searchParams.set('rep', selected.rep);
+    if (selected.product) url.searchParams.set('product', selected.product);
+    return fetchJson(url, 10000);
+  }
+
+  async function readNearby(latitude, longitude, generation, deadline) {
+    try {
+      const payload = await localSnapshot(latitude, longitude);
       if (generation !== loadGeneration) return;
 
       radiusMiles = Number.isFinite(payload.radius_miles) ? payload.radius_miles : configuredRadiusMiles;
       jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
-      populateFilters();
       showLocation(latitude, longitude);
       delete error.dataset.sourceError;
       error.hidden = true;
@@ -210,19 +269,19 @@
 
       if (payload.refreshing) {
         status.textContent = jobs.length
-          ? shown + ' nearby jobs shown · refreshing map data…'
-          : 'Preparing nearby map data…';
+          ? shown + ' filtered nearby jobs shown · refreshing…'
+          : 'Applying filters, then checking ' + radiusMiles + ' miles…';
         locateButton.disabled = false;
         if (Date.now() < deadline) {
           pollTimer = window.setTimeout(
-            () => readNearby(latitude, longitude, generation, deadline, false),
+            () => readNearby(latitude, longitude, generation, deadline),
             1500,
           );
         } else {
           error.dataset.sourceError = '1';
-          error.textContent = 'Map refresh is still running in the background. Tap Refresh location to check again.';
+          error.textContent = 'Filtered map refresh is still running in the background. Tap Load nearby to check again.';
           error.hidden = false;
-          status.textContent = jobs.length ? shown + ' nearby jobs shown' : 'Map data still refreshing';
+          status.textContent = jobs.length ? shown + ' filtered nearby jobs shown' : 'Map data still refreshing';
         }
         return;
       }
@@ -230,12 +289,12 @@
       locateButton.disabled = false;
       if (jobs.length) {
         const noun = shown === 1 ? 'job' : 'jobs';
-        status.textContent = shown + ' ' + noun + ' within ' + radiusMiles + ' miles';
+        status.textContent = shown + ' filtered ' + noun + ' within ' + radiusMiles + ' miles';
       } else if (payload.error) {
         status.textContent = 'Map data unavailable';
       } else {
-        status.textContent = '0 jobs within ' + radiusMiles + ' miles';
-        error.textContent = 'No mapped jobs were found within ' + radiusMiles + ' miles.';
+        status.textContent = '0 filtered jobs within ' + radiusMiles + ' miles';
+        error.textContent = 'No jobs matched the selected filters within ' + radiusMiles + ' miles.';
         error.hidden = false;
       }
     } catch (exc) {
@@ -248,7 +307,8 @@
     }
   }
 
-  function loadNearby(forceRefresh = false) {
+  function loadNearby() {
+    if (!filtersReady) return;
     cancelPoll();
     loadGeneration += 1;
     const generation = loadGeneration;
@@ -261,8 +321,7 @@
     }
 
     locateButton.disabled = true;
-    for (const select of filters) select.disabled = true;
-    status.textContent = 'Finding your location…';
+    status.textContent = 'Getting your location…';
     error.hidden = true;
 
     let settled = false;
@@ -271,7 +330,7 @@
       settled = true;
       locateButton.disabled = false;
       status.textContent = 'Location unavailable';
-      error.textContent = 'Your location took too long to resolve. Tap Refresh location to try again.';
+      error.textContent = 'Your location took too long to resolve. Tap Load nearby to try again.';
       error.hidden = false;
     }, 12000);
 
@@ -291,8 +350,8 @@
         }
         radiusMiles = configuredRadiusMiles;
         showLocation(latitude, longitude);
-        status.textContent = 'Reading nearby map data…';
-        readNearby(latitude, longitude, generation, Date.now() + 60000, forceRefresh);
+        status.textContent = 'Applying filters, then checking ' + radiusMiles + ' miles…';
+        readNearby(latitude, longitude, generation, Date.now() + 60000);
       },
       geolocationError => {
         if (settled || generation !== loadGeneration) return;
@@ -309,11 +368,8 @@
     );
   }
 
-  for (const select of filters) select.addEventListener('change', () => {
-    const shown = renderJobs();
-    const noun = shown === 1 ? 'job' : 'jobs';
-    status.textContent = shown + ' ' + noun + ' within ' + radiusMiles + ' miles';
-  });
-  locateButton.addEventListener('click', () => loadNearby(true));
-  loadNearby(false);
+  for (const select of filters) select.addEventListener('change', clearMapForFilterChange);
+  locateButton.addEventListener('click', loadNearby);
+
+  readFilters(Date.now() + 60000);
 })();
