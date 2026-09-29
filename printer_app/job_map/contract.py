@@ -69,6 +69,7 @@ class MapDiagnostics:
 
     local_records: int = 0
     grouped_jobs: int = 0
+    rep_matched_jobs: int = 0
     jobs_with_location: int = 0
     jobs_missing_location: int = 0
     excluded_status: int = 0
