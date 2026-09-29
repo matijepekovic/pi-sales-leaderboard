@@ -209,6 +209,22 @@ class SalesforceSandboxService:
         except SalesforceAdapterError as exc:
             raise JobMapSourceError(str(exc)) from exc
 
+    def map_records_changed(
+            self, *, modified_since, start_date, end_date, market):
+        """Return bounded map-history records changed since a normalized cursor."""
+        try:
+            records = tuple(self.adapter.map_records_changed(
+                modified_since=modified_since,
+                start_date=start_date,
+                end_date=end_date,
+                market=market,
+            ))
+            if any(not isinstance(record, MapRecord) for record in records):
+                raise SalesforceAdapterError('Salesforce map history returned invalid data.')
+            return records
+        except SalesforceAdapterError as exc:
+            raise JobMapSourceError(str(exc)) from exc
+
     def work_orders(self, work_order_numbers):
         """Resolve complete normalized appointment data directly by work-order number."""
         try:
