@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -277,6 +278,41 @@ def test_worker_history_sync_splits_year_range_into_bounded_chunks(tmp_path):
     assert coverage['through_date'] == '2026-09-29'
 
 
+def test_worker_incremental_sync_uses_cursor_and_updates_local_record(tmp_path):
+    repository = JobMapRepository(Database(tmp_path / 'printer.db'))
+    repository.replace_range(
+        'Olympia', '2026-09-01', '2026-09-30',
+        (_record('a1', 'wo1', 'WO1', status='Working'),),
+        100.0,
+    )
+    repository.update_coverage(
+        'Olympia', '2025-09-29', '2026-09-29', 100.0, cursor_at=100.0
+    )
+    calls = []
+
+    class Source:
+        def map_records_changed(
+                self, *, modified_since, start_date, end_date, market):
+            calls.append((modified_since, start_date, end_date, market))
+            return (_record(
+                'a1', 'wo1', 'WO1', status='Closed - Sale',
+                scheduled_at=100.0, created_at=99.0,
+            ),)
+
+    service = JobMapSyncService(repository, Source(), clock=lambda: 5000.0)
+    assert service.requested_due() is True
+    service.run_requested()
+
+    assert calls == [(
+        100.0, '2025-09-29', date.today().isoformat(), 'Olympia'
+    )]
+    assert repository.records(market='Olympia')[0].lead_status == 'Closed - Sale'
+    coverage = repository.coverage()['olympia']
+    assert coverage['cursor_at'] == 5000.0
+    assert coverage['last_incremental_attempt'] == 5000.0
+    assert coverage['incremental_error'] == ''
+
+
 def test_sync_request_rejects_missing_market_and_accepts_since_date(tmp_path):
     repository = JobMapRepository(Database(tmp_path / 'printer.db'))
     service = JobMapService(
@@ -396,6 +432,8 @@ def test_job_map_architecture_keeps_source_sync_out_of_browser_map_path():
     assert 'self.repository.records(' in local_service
     assert service.count('_distance_miles(') == 2
     assert 'SYNC_CHUNK_DAYS = 31' in service
+    assert 'INCREMENTAL_INTERVAL_SECONDS = 3600' in service
+    assert 'map_records_changed' in service
 
     repository = (root / 'job_map/repository.py').read_text()
     assert 'job_map_records' in repository
@@ -408,6 +446,8 @@ def test_job_map_architecture_keeps_source_sync_out_of_browser_map_path():
 
     adapter = (root / 'salesforce_sandbox/adapter.py').read_text()
     assert 'def map_records(self, *, start_date, end_date, market):' in adapter
+    assert 'def map_records_changed(' in adapter
+    assert 'LastModifiedDate >=' in adapter
     map_block = adapter.split(
         '    def map_records(self, *, start_date, end_date, market):', 1
     )[1].split('    def explorer_objects', 1)[0]
