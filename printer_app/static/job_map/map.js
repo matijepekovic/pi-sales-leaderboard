@@ -41,6 +41,7 @@
   let loadGeneration = 0;
   let filterPollTimer = null;
   let syncPollTimer = null;
+  let syncWasRunning = false;
 
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
@@ -555,10 +556,15 @@
       const payload = await fetchJson(url, 10000);
       const running = renderSyncState(payload);
       if (running) {
+        syncWasRunning = true;
         if (syncPollTimer !== null) window.clearTimeout(syncPollTimer);
         syncPollTimer = window.setTimeout(readSyncStatus, 1800);
       } else {
         updateHistoryButtons();
+        if (syncWasRunning) {
+          syncWasRunning = false;
+          readFilters(Date.now() + 60000);
+        }
       }
     } catch (exc) {
       syncStatus.textContent = 'Could not read history sync status: ' + String(exc.message || exc);
