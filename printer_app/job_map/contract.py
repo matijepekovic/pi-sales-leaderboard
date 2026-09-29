@@ -6,11 +6,14 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class MapQuery:
-    """Geographic scope for one nearby-job lookup."""
+    """Business filters plus final geographic scope for one nearby-job lookup."""
 
     latitude: float
     longitude: float
     radius_miles: float
+    market: str = ''
+    product_type: str = ''
+    rep: str = ''
 
 
 @dataclass(frozen=True)
@@ -27,6 +30,25 @@ class MapJob:
     market: str = ''
     product_type: str = ''
     assigned_reps: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class MapFilters:
+    """Normalized filter choices available before location is requested."""
+
+    markets: tuple[str, ...] = ()
+    product_types: tuple[str, ...] = ()
+    reps: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class MapFilterView:
+    """Local filter choices plus background-refresh state."""
+
+    filters: MapFilters
+    refreshing: bool = False
+    captured_at: float = 0.0
+    error: str = ''
 
 
 @dataclass(frozen=True)
