@@ -346,10 +346,13 @@ def _template_confirmed_tops_native(image, candidates):
         if top is None or len(top) != w:
             continue
         y0 = max(0, int(np.min(top)))
-        # The printed template is about 0.41x its width. Give registration enough
-        # room for the whole form plus normal scanner/handwriting overflow, but do
-        # not let a later form several rows down become evidence for this candidate.
-        y1 = min(h, y0 + max(80, int(round(w * .58))))
+        # The template frame is ~0.406x its own width, while a rendered MOD
+        # sheet spans ~93% of the page. On a page with stacked forms the next
+        # header therefore begins only ~0.41 page-widths below this one. A .58w
+        # probe included that next header and made otherwise-valid two/three-card
+        # PDFs fail registration. Keep this probe bounded to one physical form;
+        # full-resolution registration below still validates the resulting crop.
+        y1 = min(h, y0 + max(80, int(round(w * .405))))
         if y1 - y0 < max(60, int(round(w * .30))):
             continue
 
