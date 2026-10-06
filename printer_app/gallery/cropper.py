@@ -1,9 +1,9 @@
-"""Page geometry for gallery work orders.
+"""Template-owned page geometry for Gallery work orders.
 
-Rendered pages are normalized before form detection: long printed rules establish
-small scan/skew rotation, then the existing outer-edge cutter finds work orders.
-Dense report grids are rejected here at both page and candidate-form level because
-page geometry owns the line-pattern distinction; OCR, repositories and UI do not.
+Rendered pages are normalized before form detection. Generic line geometry may
+propose possible starts, but only a complete registered MOD template may create a
+Gallery card boundary. Internal form rows therefore cannot independently split one
+physical MOD sheet into multiple cards. OCR, repositories and UI remain downstream.
 """
 import cv2
 import numpy as np
@@ -333,11 +333,52 @@ def _form_tops_native(image):
     return sorted(tops, key=lambda top: float(np.median(top)))
 
 
+def _template_confirmed_tops_native(image, candidates):
+    """Keep only starts whose independent forward window matches the full MOD template.
+
+    Candidate detection is intentionally only a proposal mechanism. Each proposed
+    top is checked without using the next candidate as its bottom, so an internal
+    horizontal rule cannot truncate the real form and thereby manufacture two cards.
+    """
+    h, w = image.shape[:2]
+    confirmed = []
+    for top in candidates:
+        if top is None or len(top) != w:
+            continue
+        y0 = max(0, int(np.min(top)))
+        # The printed template is about 0.41x its width. Give registration enough
+        # room for the whole form plus normal scanner/handwriting overflow, but do
+        # not let a later form several rows down become evidence for this candidate.
+        y1 = min(h, y0 + max(80, int(round(w * .58))))
+        if y1 - y0 < max(60, int(round(w * .30))):
+            continue
+
+        probe = image[y0:y1].copy()
+        rows = np.arange(y0, y1)[:, None]
+        probe[rows < top[None, :]] = 255
+
+        registration = register_form(probe)
+        if not registration.matched:
+            continue
+        if template_geometry_score(probe, registration) < .58:
+            continue
+        confirmed.append(top)
+
+    # Template-confirmed starts are the only segmentation contract. De-duplicate
+    # near-identical proposals without resurrecting generic candidates.
+    result = []
+    for top in sorted(confirmed, key=lambda value: float(np.median(value))):
+        if not result or np.median(top - result[-1]) > .08 * w:
+            result.append(top)
+    return result
+
+
 def form_tops(image):
-    """Detect card tops on a small copy and map the traced borders to full resolution."""
+    """Return only template-confirmed MOD starts, mapped to full resolution."""
     original_h, original_w = image.shape[:2]
     analysis, sx, sy = _analysis_image(image)
-    tops = _form_tops_native(analysis)
+    candidates = _form_tops_native(analysis)
+    tops = _template_confirmed_tops_native(analysis, candidates)
     if sx == 1.0 and sy == 1.0:
         return tops
     if not tops:
@@ -421,12 +462,16 @@ def cut_forms(image):
         rows = np.arange(y0, y1)[:, None]
         crop[(rows < top[None, :]) | (rows >= bottom[None, :])] = 255
 
-        # Template registration can refine a real work order, but it must never
-        # override report rejection. Every candidate still passes the generic
-        # structural validator before it can become a Gallery card.
+        # Segmentation is template-owned. Full-resolution registration must still
+        # confirm the same known form before the crop can leave this module.
         registration = register_form(crop)
+        if (not registration.matched
+                or template_geometry_score(crop, registration) < .58):
+            continue
+        # Dense reports remain an independent rejection guard; they cannot become
+        # cards merely because a few rules happen to resemble the template.
         if not is_work_order_form(crop):
             continue
-        if last and registration.matched:
+        if last:
             crop = trim_last_form(crop, registration)
         yield index+1, crop
