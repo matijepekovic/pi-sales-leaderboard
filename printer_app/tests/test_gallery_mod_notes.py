@@ -1,14 +1,13 @@
-"""Notes identity is proved by its printed label and observed cell borders."""
-from io import BytesIO
-import shutil
-import subprocess
+"""MOD Notes presence is template-owned and never OCR-read."""
+from pathlib import Path
 
 import pytest
 
 from printer_app.gallery import recognition
 from printer_app.gallery.form_template import (
-    FormRegistration, TEMPLATE_FIELDS, labelled_notes_crop, map_box, register_form,
+    FormRegistration, TEMPLATE_FIELDS, map_box,
 )
+from printer_app.tests.gallery_form_fixture import form_image
 
 
 @pytest.fixture
@@ -16,269 +15,133 @@ def raster():
     return pytest.importorskip('cv2'), pytest.importorskip('numpy')
 
 
-@pytest.mark.parametrize('text', ['MODNotes1', 'MODNotes12', 'MOD1Notes', 'IMODNotes'])
-def test_notes_label_never_absorbs_appended_numbers(text):
-    word = dict(text=text, left=10, top=10, width=140, height=20)
-    assert recognition._notes_labels([word], (0, 0)) == []
-    assert recognition._notes_labels([
-        dict(word, text='MOD', width=45),
-        dict(word, text='Notes12', left=60, width=90),
-    ], (0, 0)) == []
-
-
-def test_ocr_rule_suppression_preserves_original_and_numerical_note(raster):
-    from printer_app.tests.gallery_form_fixture import form_image
-
-    cv2, np = raster
-    source, registration = form_image(raster)
+def _notes_box(registration):
     field = next(item for item in TEMPLATE_FIELDS if item.key == 'mod_notes')
-    label = map_box(registration, field.label_box)
-    cv2.putText(source, '123', (label[2] + 6, label[3] + 20),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, 80, 2)
-    before = source.copy()
-    cleaned = recognition._without_form_rules(source)
-    assert np.array_equal(source, before)
-    assert (source == 80).any()
-    assert np.all(cleaned[source == 80] == 80)
-    assert (source != cleaned).any()
+    return map_box(registration, field.box)
 
 
-@pytest.mark.parametrize('merged', [False, True])
-def test_numeric_note_merged_with_label_cannot_be_erased(raster, tmp_path, monkeypatch, merged):
-    from printer_app.tests.gallery_form_fixture import form_image
-
-    cv2, _ = raster
+def test_blank_registered_mod_notes_box_is_blank(raster, tmp_path):
     source, registration = form_image(raster)
-    field = next(item for item in TEMPLATE_FIELDS if item.key == 'mod_notes')
-    label = map_box(registration, field.label_box)
-    cv2.putText(source, '12', (label[2] + 2, label[3]),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.1, 0, 2)
-    _, bounds = recognition.field_crop(source, registration, 'mod_notes')
-    word = dict(
-        text='MODNotes12' if merged else 'MODNotes',
-        left=label[0] - bounds[0] + 12,
-        top=label[1] - bounds[1] + 12 - (5 if merged else 0),
-        width=label[2] - label[0] + (50 if merged else 0),
-        height=label[3] - label[1] + (7 if merged else 0),
-    )
-    monkeypatch.setattr(recognition, '_run_tesseract', lambda *args, **kwargs: [word])
-    result = recognition.mod_notes_present(source, registration, tmp_path / 'notes.png')
-    assert result is (None if merged else True)
 
-
-@pytest.mark.parametrize('edge', ['left', 'right', 'top', 'bottom'])
-def test_notes_cell_requires_each_observed_border(raster, edge):
-    from printer_app.tests.gallery_form_fixture import form_image
-
-    cv2, _ = raster
-    source, registration = form_image(raster)
-    field = next(item for item in TEMPLATE_FIELDS if item.key == 'mod_notes')
-    label = map_box(registration, field.label_box)
-    crop, _ = labelled_notes_crop(source, label)
-    assert crop is not None
-    left, top, right, bottom = map_box(registration, field.box)
-    if edge in ('left', 'right'):
-        x = left if edge == 'left' else right
-        cv2.rectangle(source, (x - 7, top - 5), (x + 7, bottom + 5), 255, -1)
-    else:
-        y = top if edge == 'top' else bottom
-        cv2.rectangle(source, (left - 5, y - 7), (right + 5, y + 7), 255, -1)
-    assert labelled_notes_crop(source, label) == (None, (0, 0, 0, 0))
-
-
-def test_notes_crop_excludes_neighbor_cells_and_follows_observed_label(raster):
-    from printer_app.tests.gallery_form_fixture import form_image
-
-    cv2, _ = raster
-    source, registration = form_image(raster)
-    field = next(item for item in TEMPLATE_FIELDS if item.key == 'mod_notes')
-    label = map_box(registration, field.label_box)
-    cv2.putText(source, 'NEIGHBOR', (450, 600), cv2.FONT_HERSHEY_SIMPLEX, 1, 0, 3)
-    crop, bounds = labelled_notes_crop(source, label)
-    assert crop is not None
-    assert bounds[0] < label[0] < bounds[2]
-    assert bounds[0] > 700
-    # The only ink remaining in this blank cell is its label.
-    left, top = bounds[:2]
-    crop[label[1] - top - 2:label[3] - top + 2,
-         label[0] - left - 2:label[2] - left + 2] = 255
-    assert int((crop < 225).sum()) == 0
-
-
-def test_screenshot_clipping_requires_both_horizontal_rules_at_image_edge(raster):
-    from printer_app.tests.gallery_form_fixture import form_image
-
-    cv2, _ = raster
-    source, registration = form_image(raster)
-    field = next(item for item in TEMPLATE_FIELDS if item.key == 'mod_notes')
-    label = map_box(registration, field.label_box)
-    source = source[:, :1550].copy()
-    crop, bounds = labelled_notes_crop(source, label)
-    assert crop is not None and bounds[2] == source.shape[1]
-    # Whitespace between a missing border and the physical image edge is not
-    # evidence of a clipped cell, even when the label and other sides survive.
-    source[:, -10:] = 255
-    assert labelled_notes_crop(source, label) == (None, (0, 0, 0, 0))
-
-
-@pytest.mark.parametrize('clipped', [False, True])
-def test_long_underline_cannot_hide_notes_below_it(raster, clipped):
-    from printer_app.tests.gallery_form_fixture import form_image
-
-    cv2, _ = raster
-    source, registration = form_image(raster)
-    field = next(item for item in TEMPLATE_FIELDS if item.key == 'mod_notes')
-    label = map_box(registration, field.label_box)
-    left, _, right, bottom = map_box(registration, field.box)
-    cv2.line(source, (left, 530), (right, 530), 0, 3)
-    cv2.putText(source, 'Call made', (left + 100, 650), cv2.FONT_HERSHEY_SIMPLEX, 1, 80, 2)
-    if clipped:
-        source = source[:, :1550]
-    crop, bounds = labelled_notes_crop(source, label)
-    assert crop is not None and bounds[3] >= bottom - 5
-    assert (crop == 80).any()
-
-
-@pytest.mark.parametrize('gap_bottom', [588, 610, 700])
-def test_broken_side_below_underline_cannot_hide_later_notes(raster, gap_bottom):
-    from printer_app.tests.gallery_form_fixture import form_image
-
-    cv2, _ = raster
-    source, registration = form_image(raster)
-    field = next(item for item in TEMPLATE_FIELDS if item.key == 'mod_notes')
-    label = map_box(registration, field.label_box)
-    left, _, right, _ = map_box(registration, field.box)
-    cv2.line(source, (left, 560), (right, 560), 0, 3)
-    cv2.putText(source, 'Call made', (left + 100, 650), cv2.FONT_HERSHEY_SIMPLEX, 1, 80, 2)
-    cv2.rectangle(source, (left - 4, 564), (left + 4, gap_bottom), 255, -1)
-    source = source[:, :1550]
-    crop, _ = labelled_notes_crop(source, label)
-    # Uncertain geometry may be reviewed, but must never produce an apparently
-    # blank crop that silently excludes the note below the damaged underline.
-    assert crop is None or (crop == 80).any()
-
-
-@pytest.fixture(scope='module')
-def rendered_blank(tmp_path_factory):
-    missing = [tool for tool in ('pdftoppm', 'tesseract') if not shutil.which(tool)]
-    if missing:
-        pytest.skip('Native PDF/OCR tools unavailable: ' + ', '.join(missing))
-    cv2 = pytest.importorskip('cv2')
-    np = pytest.importorskip('numpy')
-    image_module = pytest.importorskip('PIL.Image')
-    pytest.importorskip('reportlab')
-    from printer_app.gallery.cropper import cut_forms, deskew_page, orient_work_order_page
-    from printer_app.mod_sheet_contract import ModSheetRecord
-    from printer_app.mod_sheets.pdf_renderer import render_mod_pdf
-
-    directory = tmp_path_factory.mktemp('blank-notes')
-    pdf = directory / 'blank.pdf'
-    pdf.write_bytes(render_mod_pdf((ModSheetRecord(
-        source_id='synthetic-notes', work_order_number='02012345',
-        lead_name='Alex Example', address='100 Test Street', phone='2065551234',
-        local_scheduled_start_time='9/26/2026 1:00 PM',
-        scheduled_start='2026.09.26 ; 01:00:00 PM',
-        lead_description='Synthetic ordinary appointment',
-    ),), color_code=False))
-    result = subprocess.run(
-        ['pdftoppm', '-f', '1', '-l', '1', '-singlefile', '-scale-to', '3300',
-         '-png', str(pdf)], capture_output=True, check=True, timeout=60,
-    )
-    page = np.asarray(image_module.open(BytesIO(result.stdout)).convert('RGB'))
-    cards = list(cut_forms(orient_work_order_page(deskew_page(page))))
-    assert len(cards) == 1
-    return cv2.cvtColor(cards[0][1], cv2.COLOR_RGB2GRAY)
-
-
-@pytest.mark.parametrize('registration_kind', ['actual', 'misaligned', 'unknown'])
-def test_app_rendered_blank_notes_rejects_printed_fields_and_ui_decorations(
-        rendered_blank, registration_kind, tmp_path, raster):
-    cv2, _ = raster
-    source = cv2.copyMakeBorder(rendered_blank, 0, 150, 0, 0,
-                               cv2.BORDER_CONSTANT, value=255)
-    cv2.putText(source, 'Refresh   Print', (1200, source.shape[0] - 45),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.2, 0, 3)
-    height, width = source.shape
-    registration = register_form(source)
-    if registration_kind != 'actual':
-        registration = FormRegistration(
-            1 if registration_kind == 'misaligned' else 0, 0, width, 0, height,
-        )
-    assert recognition.mod_notes_present(source, registration, tmp_path / 'notes.png') is False
-
-
-@pytest.mark.parametrize('position', ['beside', 'below'])
-def test_notes_near_printed_label_are_retained(rendered_blank, position, tmp_path, raster):
-    cv2, _ = raster
-    source = rendered_blank.copy()
-    registration = register_form(source)
-    crop, (left, top, _, _) = recognition.field_crop(source, registration, 'mod_notes')
-    assert crop is not None
-    origin = (left + 225, top + 35) if position == 'beside' else (left + 10, top + 65)
-    cv2.putText(source, 'Call made', origin, cv2.FONT_HERSHEY_SIMPLEX, .8, 0, 2)
-    assert recognition.mod_notes_present(source, registration, tmp_path / 'notes.png') is True
-
-
-def test_blank_screenshot_clipped_right_still_excludes_footer(rendered_blank, tmp_path, raster):
-    cv2, _ = raster
-    source = rendered_blank[:, :round(rendered_blank.shape[1] * .80)].copy()
-    bottom = register_form(rendered_blank).bottom
-    cv2.rectangle(source, (0, bottom + 80), (source.shape[1] - 1, bottom + 130), 0, -1)
-    cv2.putText(source, 'Next card', (500, 1400), cv2.FONT_HERSHEY_SIMPLEX, 1.2, 0, 3)
     assert recognition.mod_notes_present(
-        source, register_form(source), tmp_path / 'notes.png',
+        source, registration, tmp_path / 'unused.png'
     ) is False
 
 
-@pytest.mark.parametrize('has_note', [False, True])
-def test_joined_border_label_uses_cleaned_ocr_without_changing_note_ink(
-        rendered_blank, tmp_path, raster, monkeypatch, has_note):
-    cv2, np = raster
-    source = rendered_blank.copy()
-    registration = register_form(source)
-    if has_note:
-        _, (left, top, _, _) = recognition.field_crop(source, registration, 'mod_notes')
-        cv2.putText(source, '123', (left + 260, top + 45),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.3, 80, 3)
-    before = source.copy()
-    read = recognition._run_tesseract
-    suppress = recognition._without_form_rules
-    cleaned = []
-    joined_labels = []
+@pytest.mark.parametrize('kind', ['text', 'number', 'check', 'line'])
+def test_any_meaningful_ink_in_registered_mod_notes_box_means_notes_present(
+        raster, tmp_path, kind):
+    cv2, _ = raster
+    source, registration = form_image(raster)
+    left, top, right, bottom = _notes_box(registration)
 
-    def suppress_rules(image):
-        cleaned.append(True)
-        return suppress(image)
+    if kind == 'text':
+        cv2.putText(
+            source, 'Call made', (left + 210, top + 90),
+            cv2.FONT_HERSHEY_SIMPLEX, .8, 80, 2, cv2.LINE_AA,
+        )
+    elif kind == 'number':
+        cv2.putText(
+            source, '12', (left + 210, top + 70),
+            cv2.FONT_HERSHEY_SIMPLEX, 1.0, 80, 2, cv2.LINE_AA,
+        )
+    elif kind == 'check':
+        cv2.line(source, (left + 220, top + 65), (left + 235, top + 80), 80, 3)
+        cv2.line(source, (left + 235, top + 80), (left + 265, top + 45), 80, 3)
+    else:
+        cv2.line(source, (left + 220, bottom - 80), (right - 100, bottom - 60), 80, 3)
 
-    def joined_border_read(image, *args, **kwargs):
-        words = read(image, *args, **kwargs)
-        if not cleaned:
-            for word in words:
-                letters = ''.join(value for value in word['text'].lower() if value.isalpha())
-                if letters in ('mod', 'modnotes', 'imod', 'imodnotes'):
-                    joined_labels.append(True)
-                    word['text'] = 'IMODNotes' if letters.endswith('notes') else 'IMOD'
-        return words
-
-    monkeypatch.setattr(recognition, '_without_form_rules', suppress_rules)
-    monkeypatch.setattr(recognition, '_run_tesseract', joined_border_read)
-    # Force the independent label search, as a screenshot with bad registration
-    # would. The simulated OCR error is rejected, not accepted as a fuzzy label.
-    unknown = FormRegistration(0, 0, source.shape[1], 0, source.shape[0])
-    result = recognition.mod_notes_present(source, unknown, tmp_path / 'notes.png')
-    assert joined_labels and cleaned == [True]
-    assert result is has_note
-    assert np.array_equal(source, before)
-
-
-@pytest.mark.parametrize('failure', ['unreadable', 'ocr-error'])
-def test_unreadable_notes_label_stays_unknown(rendered_blank, tmp_path, monkeypatch, failure):
-    def read(*args, **kwargs):
-        if failure == 'ocr-error':
-            raise subprocess.SubprocessError('label OCR failed')
-        return []
-
-    monkeypatch.setattr(recognition, '_run_tesseract', read)
     assert recognition.mod_notes_present(
-        rendered_blank, register_form(rendered_blank), tmp_path / 'notes.png',
+        source, registration, tmp_path / 'unused.png'
+    ) is True
+
+
+def test_mod_notes_presence_does_not_call_tesseract(raster, tmp_path, monkeypatch):
+    cv2, _ = raster
+    source, registration = form_image(raster)
+    left, top, _, _ = _notes_box(registration)
+    cv2.putText(
+        source, 'x', (left + 230, top + 75),
+        cv2.FONT_HERSHEY_SIMPLEX, 1.0, 80, 3, cv2.LINE_AA,
+    )
+
+    def fail(*args, **kwargs):
+        raise AssertionError('MOD Notes presence must not use OCR')
+
+    monkeypatch.setattr(recognition, '_run_tesseract', fail)
+
+    assert recognition.mod_notes_present(
+        source, registration, tmp_path / 'unused.png'
+    ) is True
+
+
+def test_known_printed_mod_notes_label_and_cell_borders_do_not_count_as_notes(
+        raster, tmp_path):
+    source, registration = form_image(raster)
+
+    # The synthetic template contains the printed MOD Notes label and all cell
+    # borders. Those known template decorations alone must remain blank.
+    assert recognition.mod_notes_present(
+        source, registration, tmp_path / 'unused.png'
+    ) is False
+
+
+def test_neighboring_form_ink_cannot_make_mod_notes_present(raster, tmp_path):
+    cv2, _ = raster
+    source, registration = form_image(raster)
+    field = next(item for item in TEMPLATE_FIELDS if item.key == 'lead_description')
+    left, top, right, bottom = map_box(registration, field.box)
+    cv2.putText(
+        source, 'NEIGHBOR', (left + 60, top + 85),
+        cv2.FONT_HERSHEY_SIMPLEX, 1.0, 80, 3, cv2.LINE_AA,
+    )
+
+    assert recognition.mod_notes_present(
+        source, registration, tmp_path / 'unused.png'
+    ) is False
+
+
+def test_unregistered_form_keeps_mod_notes_unknown(raster, tmp_path):
+    source, _ = form_image(raster)
+    unknown = FormRegistration(0.0, 0, source.shape[1], 0, source.shape[0])
+
+    assert recognition.mod_notes_present(
+        source, unknown, tmp_path / 'unused.png'
     ) is None
+
+
+def test_clipped_registered_mod_notes_box_keeps_result_unknown(raster, tmp_path):
+    source, registration = form_image(raster)
+    _, _, right, _ = _notes_box(registration)
+    clipped = source[:, :right - 30].copy()
+
+    assert recognition.mod_notes_present(
+        clipped, registration, tmp_path / 'unused.png'
+    ) is None
+
+
+def test_tiny_scan_dust_does_not_count_as_notes(raster, tmp_path):
+    _, np = raster
+    source, registration = form_image(raster)
+    left, top, _, _ = _notes_box(registration)
+    source[top + 100:top + 102, left + 300:left + 302] = 0
+
+    assert recognition.mod_notes_present(
+        source, registration, tmp_path / 'unused.png'
+    ) is False
+
+
+def test_mod_notes_presence_implementation_has_no_ocr_or_label_rediscovery():
+    root = Path(__file__).resolve().parents[1]
+    recognition_source = (root / 'gallery/recognition.py').read_text()
+    block = recognition_source.split('def mod_notes_present', 1)[1].split(
+        'def _candidate_result', 1
+    )[0]
+
+    assert 'map_box(' in block
+    assert '_run_tesseract' not in block
+    assert '_notes_labels' not in block
+    assert 'labelled_notes_crop' not in recognition_source
+
+    template_source = (root / 'gallery/form_template.py').read_text()
+    assert 'def labelled_notes_crop' not in template_source

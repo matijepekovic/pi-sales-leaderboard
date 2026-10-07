@@ -2,26 +2,30 @@
 import pytest
 
 
-def test_borders_not_thirds_preserve_space_until_next_box():
+def test_template_headers_preserve_space_until_next_confirmed_form():
     cv2 = pytest.importorskip('cv2')
     np = pytest.importorskip('numpy')
     from printer_app.gallery.cropper import cut_forms
-    image = np.full((1600, 1000, 3), 255, np.uint8)
-    for top, bottom in ((50, 300), (450, 700), (940, 1300)):
-        cv2.rectangle(image, (60, top), (940, bottom), (0, 0, 0), 3)
-        for row in (top+40, top+90):
-            cv2.line(image, (60, row), (940, row), (0, 0, 0), 2)
-        cv2.line(image, (450, top), (450, bottom), (0, 0, 0), 2)
-    image[370:385, 150:170] = (200, 0, 0)  # Overflow below first box.
-    image[1510:1520, 150:170] = (0, 0, 200)  # Last crop reaches page edge.
-    crops = list(cut_forms(image))
+    from printer_app.tests.gallery_form_fixture import form_image
+
+    form, _ = form_image((cv2, np), scale=.45)
+    height, width = form.shape
+    starts = (35, 35 + height + 95, 35 + height * 2 + 260)
+    page = np.full((starts[-1] + height + 220, width + 100), 255, np.uint8)
+    for top in starts:
+        page[top:top + height, 50:50 + width] = form
+
+    # Ink between two real forms belongs to the preceding card. A generic
+    # thirds/synthetic-box cutter would not preserve this ownership reliably.
+    overflow_y = starts[0] + height + 45
+    page[overflow_y:overflow_y + 12, 140:165] = 80
+
+    crops = list(cut_forms(page))
+
     assert len(crops) == 3
-    assert all(c.shape[1] == 1000 for _, c in crops)
-    assert abs(crops[0][1].shape[0] - 400) < 10
-    assert abs(crops[1][1].shape[0] - 490) < 10
-    assert abs(crops[2][1].shape[0] - 660) < 10
-    assert ((crops[0][1] == [200, 0, 0]).all(axis=2)).any()
-    assert ((crops[-1][1] == [0, 0, 200]).all(axis=2)).any()
+    assert abs(crops[0][1].shape[0] - (starts[1] - starts[0])) < 12
+    assert abs(crops[1][1].shape[0] - (starts[2] - starts[1])) < 12
+    assert np.any(crops[0][1] == 80)
 
 
 def test_template_registration_trims_only_blank_tail_after_last_card():
@@ -64,17 +68,67 @@ def test_large_template_page_uses_same_card_count_as_normal_scale():
     cv2 = pytest.importorskip('cv2')
     np = pytest.importorskip('numpy')
     from printer_app.gallery.cropper import cut_forms
+    from printer_app.tests.gallery_form_fixture import form_image
 
-    base = np.full((900, 700, 3), 255, np.uint8)
-    for top in (30, 310, 590):
-        bottom = min(860, top + 220)
-        cv2.rectangle(base, (40, top), (660, bottom), (0, 0, 0), 3)
-        cv2.line(base, (40, top + 45), (660, top + 45), (0, 0, 0), 2)
-        cv2.line(base, (40, top + 95), (660, top + 95), (0, 0, 0), 2)
-        cv2.line(base, (320, top), (320, bottom), (0, 0, 0), 2)
+    form, _ = form_image((cv2, np), scale=.32)
+    height, width = form.shape
+    margin = 24
+    base = np.full((height * 3 + margin * 4, width + margin * 2), 255, np.uint8)
+    for index in range(3):
+        top = margin + index * (height + margin)
+        base[top:top + height, margin:margin + width] = form
 
-    large = cv2.resize(base, (2800, 3600), interpolation=cv2.INTER_NEAREST)
+    large = cv2.resize(
+        base, (base.shape[1] * 4, base.shape[0] * 4),
+        interpolation=cv2.INTER_NEAREST,
+    )
     assert len(list(cut_forms(base))) == len(list(cut_forms(large))) == 3
+
+
+def test_internal_form_row_cannot_become_a_second_card(monkeypatch):
+    cv2 = pytest.importorskip('cv2')
+    np = pytest.importorskip('numpy')
+    from printer_app.gallery import cropper
+    from printer_app.gallery.form_template import TEMPLATE_FIELDS, map_box
+    from printer_app.tests.gallery_form_fixture import form_image
+
+    form, registration = form_image((cv2, np), scale=.55)
+    width = form.shape[1]
+    real_top = np.full(width, registration.top, dtype=int)
+    internal = next(field for field in TEMPLATE_FIELDS if field.key == 'lead_description')
+    _, false_y, _, _ = map_box(registration, internal.box)
+    false_top = np.full(width, false_y, dtype=int)
+
+    # Reproduce the failure mode directly: the generic geometry detector proposes
+    # both the real MOD header and a strong internal printed row.
+    monkeypatch.setattr(
+        cropper, '_form_tops_native', lambda image: [real_top, false_top]
+    )
+
+    tops = cropper.form_tops(form)
+    crops = list(cropper.cut_forms(form))
+
+    assert len(tops) == 1
+    assert abs(float(np.median(tops[0])) - registration.top) < 3
+    assert len(crops) == 1
+
+
+def test_template_registration_is_required_to_create_a_card(monkeypatch):
+    cv2 = pytest.importorskip('cv2')
+    np = pytest.importorskip('numpy')
+    from printer_app.gallery import cropper
+    from printer_app.gallery.form_template import FormRegistration
+
+    image = np.full((700, 900), 255, np.uint8)
+    top = np.full(image.shape[1], 20, dtype=int)
+    monkeypatch.setattr(cropper, '_form_tops_native', lambda image: [top])
+    monkeypatch.setattr(
+        cropper, 'register_form',
+        lambda crop: FormRegistration(0.0, 0, crop.shape[1], 0, crop.shape[0]),
+    )
+
+    assert cropper.form_tops(image) == []
+    assert list(cropper.cut_forms(image)) == []
 
 
 @pytest.mark.parametrize('turns', [1, 2, 3])

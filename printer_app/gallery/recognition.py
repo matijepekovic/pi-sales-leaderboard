@@ -15,14 +15,14 @@ import sys
 
 if __package__:
     from .form_template import (TEMPLATE_FIELDS, field_boxes, field_crop,
-                                labelled_notes_crop, map_box, register_form)
+                                map_box, register_form)
     from .numeric_parser import numeric_tokens_from_text, parse_numeric_image
     from .policy import (REFERENCE_FIELD_LABELS, normalize_work_order_evidence,
                          scanned_work_order_candidates, work_order_fields,
                          work_order_schedule)
 else:
     from form_template import (TEMPLATE_FIELDS, field_boxes, field_crop,
-                               labelled_notes_crop, map_box, register_form)
+                               map_box, register_form)
     from numeric_parser import numeric_tokens_from_text, parse_numeric_image
     from policy import (REFERENCE_FIELD_LABELS, normalize_work_order_evidence,
                         scanned_work_order_candidates, work_order_fields,
@@ -241,115 +241,72 @@ def _without_form_rules(source):
     return disposable
 
 
-def _notes_labels(words, offset):
-    """Return literal printed MOD Notes label bounds, without fuzzy text guesses."""
-    normalize = lambda value: re.sub(r'[^a-z0-9]', '', value.lower())
-    labels = []
-    for index, word in enumerate(words):
-        group = []
-        if normalize(word['text']) == 'modnotes':
-            group = [word]
-        elif normalize(word['text']) == 'mod' and index + 1 < len(words):
-            following = words[index + 1]
-            size = max(word['height'], following['height'])
-            if (normalize(following['text']) == 'notes'
-                    and abs(word['top'] - following['top']) <= size
-                    and 0 <= following['left'] - word['left'] - word['width'] <= size * 2):
-                group = [word, following]
-        if group:
-            labels.append((
-                min(item['left'] for item in group) + offset[0],
-                min(item['top'] for item in group) + offset[1],
-                max(item['left'] + item['width'] for item in group) + offset[0],
-                max(item['top'] + item['height'] for item in group) + offset[1],
-            ))
-    return labels
+def mod_notes_present(source, registration, _ocr_copy=None):
+    """Return whether the registered MOD Notes box contains meaningful variable ink.
 
-
-def mod_notes_present(source, registration, ocr_copy):
-    """Check only an observed, bordered MOD Notes cell; uncertainty stays None."""
+    The known template owns the cell location. No OCR, label rediscovery, or
+    border inference participates in this decision. An unregistered form remains
+    uncertain; a registered form is simply blank or contains notes.
+    """
     import cv2
     import numpy as np
 
-    if source is None or not source.size:
+    if source is None or not source.size or not getattr(registration, 'matched', False):
         return None
-    # A template crop is a cheap label-search proposal, never proof of the cell.
-    # Screenshots can register while placing its edge inside neighboring fields.
-    proposed, bounds = field_crop(source, registration, 'mod_notes')
-    probes = []
-    if proposed is not None and proposed.size:
-        height, width = proposed.shape
-        for fraction_y, fraction_x, psm in ((.10, .25, 6), (.20, .30, 6), (.20, .30, 11)):
-            probes.append((proposed[:round(height * fraction_y), :round(width * fraction_x)],
-                           bounds[:2], psm))
-    height, width = source.shape
-    top = round(min(height * .15, width * .08))
-    stop = round(min(height * .75, width * .60))
-    # A clipped screenshot can leave the label in the right half while nearby
-    # printed cells confuse whole-region line grouping. Keep both bounded views.
-    for fraction in (.50, .30):
-        left = round(width * fraction)
-        for psm in (11, 6):
-            probes.append((source[top:stop, left:], (left, top), psm))
 
-    crop = None
-    for suppress_rules in (False, True):
-        # Some OCR versions join the bordering rule to MOD and read IMOD.
-        # Retry the same literal-label probes without long rules only after
-        # every original view fails. Whole-image rule lengths protect glyphs.
-        disposable = _without_form_rules(source) if suppress_rules else None
-        for original, (x, y), psm in probes:
-            if not original.size:
-                continue
-            image = original
-            if disposable is not None:
-                h, w = original.shape
-                image = disposable[y:y+h, x:x+w].copy()
-                image[original == 255] = 255  # Preserve the existing cell mask.
-            padded = cv2.copyMakeBorder(image, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=255)
-            try:
-                words = _run_tesseract(padded, ocr_copy, psm=psm)
-            except subprocess.SubprocessError:
-                continue
-            labels = _notes_labels(words, (x - 12, y - 12))
-            if len(labels) != 1:
-                continue
-            label = labels[0]
-            crop, bounds = labelled_notes_crop(source, label)
-            if crop is not None:
-                break
-        if crop is not None:
-            break
-    if crop is None:
+    field = next(field for field in TEMPLATE_FIELDS if field.key == 'mod_notes')
+    left, top, right, bottom = map_box(registration, field.box)
+    label_left, label_top, label_right, label_bottom = map_box(
+        registration, field.label_box
+    )
+
+    height, width = source.shape[:2]
+    frame_width = max(1, registration.right - registration.left)
+    frame_height = max(1, registration.bottom - registration.top)
+    border_pad = max(2, int(round(min(frame_width, frame_height) * .006)))
+
+    # A matched template is expected to own the complete notes cell. If clipping
+    # removes part of that known box, absence of ink is not trustworthy.
+    if (
+        left < 0 or top < 0 or right > width or bottom > height
+        or right - left <= border_pad * 2
+        or bottom - top <= border_pad * 2
+    ):
         return None
-    # Mask the observed printed glyphs, not a template-sized rectangle whose
-    # location can drift into the blank area or nearby handwriting.
-    left, top = bounds[:2]
-    x0, y0 = max(0, label[0] - left - 1), max(0, label[1] - top - 1)
-    x1 = min(crop.shape[1], label[2] - left + 1)
-    y1 = min(crop.shape[0], label[3] - top + 1)
+
+    crop = source[
+        top + border_pad:bottom - border_pad,
+        left + border_pad:right - border_pad,
+    ].copy()
+    if crop.ndim == 3:
+        crop = cv2.cvtColor(
+            crop,
+            cv2.COLOR_RGBA2GRAY if crop.shape[2] == 4 else cv2.COLOR_RGB2GRAY,
+        )
+
+    # The printed "MOD Notes:" label is known template decoration. Mask its
+    # mapped rectangle with a small safety margin; no OCR is needed to find it.
+    label_pad = max(2, int(round(frame_width * .004)))
+    x0 = max(0, label_left - left - border_pad - label_pad)
+    y0 = max(0, label_top - top - border_pad - label_pad)
+    x1 = min(crop.shape[1], label_right - left - border_pad + label_pad)
+    y1 = min(crop.shape[0], label_bottom - top - border_pad + label_pad)
     if x1 > x0 and y1 > y0:
         crop[y0:y1, x0:x1] = 255
 
     ink = cv2.threshold(crop, 225, 255, cv2.THRESH_BINARY_INV)[1]
-    # Eliminate residual printed rules before judging handwriting/notes.
-    h, w = crop.shape
-    horizontal = cv2.morphologyEx(
-        ink, cv2.MORPH_OPEN, np.ones((1, max(18, w // 12)), np.uint8)
-    )
-    vertical = cv2.morphologyEx(
-        ink, cv2.MORPH_OPEN, np.ones((max(14, h // 8), 1), np.uint8)
-    )
-    variable = ink.copy()
-    variable[(horizontal > 0) | (vertical > 0)] = 0
 
-    count, _, stats, _ = cv2.connectedComponentsWithStats((variable > 0).astype(np.uint8), 8)
+    # Ignore scan dust and tiny compression artifacts. Real handwriting, marks,
+    # numbers, checks, and signatures only need to prove that notes exist.
+    count, _, stats, _ = cv2.connectedComponentsWithStats(
+        (ink > 0).astype(np.uint8), 8
+    )
     meaningful = sum(
         int(stats[label, cv2.CC_STAT_AREA])
         for label in range(1, count)
         if stats[label, cv2.CC_STAT_AREA] >= 4
     )
-    return meaningful >= max(40, int(round(crop.size * .0004)))
+    return meaningful >= max(32, int(round(crop.size * .00018)))
 
 
 def _candidate_result(candidates, known_date, reads=()):
