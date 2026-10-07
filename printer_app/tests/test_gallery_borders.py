@@ -155,6 +155,27 @@ def test_crumbling_outer_edges_still_leave_three_full_template_matches(raster):
     assert len(list(cut_forms(page))) == 3
 
 
+
+def test_low_quality_resampled_scan_still_detects_all_cards(raster):
+    cv2, np = raster
+    from printer_app.gallery.cropper import cut_forms
+    from printer_app.gallery.form_template import find_form_registrations
+
+    page, _, _, _ = _form_page(
+        raster, 3, scale=.45, gap=55, margin=35, x_shifts=(8, -6, 5),
+    )
+    small = cv2.resize(
+        page, None, fx=.58, fy=.58, interpolation=cv2.INTER_AREA,
+    )
+    degraded = cv2.resize(
+        small, (page.shape[1], page.shape[0]), interpolation=cv2.INTER_LINEAR,
+    )
+    degraded = cv2.GaussianBlur(degraded, (3, 3), 0)
+
+    assert len(find_form_registrations(degraded)) == 3
+    assert len(list(cut_forms(degraded))) == 3
+
+
 def test_large_template_page_uses_same_card_count_as_normal_scale(raster):
     cv2, np = raster
     from printer_app.gallery.cropper import cut_forms
