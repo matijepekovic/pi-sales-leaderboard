@@ -9,9 +9,9 @@ import cv2
 import numpy as np
 
 if __package__:
-    from .form_template import register_form, template_geometry_score, trim_last_form
+    from .form_template import find_form_registrations, template_geometry_score
 else:
-    from form_template import register_form, template_geometry_score, trim_last_form
+    from form_template import find_form_registrations, template_geometry_score
 
 
 def _runs(mask):
@@ -217,212 +217,42 @@ def is_work_order_form(image):
     return not (dense_repetition or no_large_work_area or sideways_dense_report)
 
 
-def _form_tops_native(image):
-    """Return per-column top-border coordinates, excluding footer/empty frames.
+def _expanded_form_crop(image, registration, previous=None, following=None):
+    """Crop one independently matched form with room for pen overflow and bad edges.
 
-    RETR_EXTERNAL on the whole grid is deliberately not used: a pen stroke can
-    connect two outer rectangles. Follow outside edges and connected horizontal
-    rules, validating starts against the printed header grid. A bowed outer edge
-    can break into short vertical runs while its complete header remains clear.
-    An open bottom edge is valid; an empty footer frame is not a new form.
+    Padding never enters a neighboring matched template. The blank gap between
+    stacked cards may be retained by both crops so handwriting that crosses the
+    printed border is not silently lost.
     """
     h, w = image.shape[:2]
-    if w < 100 or h < 60:
-        return []
-    gray = _gray(image)
-    ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
-    vertical = cv2.morphologyEx(ink, cv2.MORPH_OPEN,
-        np.ones((max(12, w // 65), 1), np.uint8))
-    horizontal = cv2.morphologyEx(ink, cv2.MORPH_OPEN,
-        np.ones((1, max(20, w // 40)), np.uint8))
-    votes = vertical.sum(axis=0)
-    left = int(votes[:w // 5].argmax())
-    right = int(votes[4 * w // 5:].argmax()) + 4 * w // 5
-    if right - left < .60 * w:
-        return []
-    starts = []
-    band = max(6, round(w * .012))
-    for x in (left, right):
-        side = vertical[:, max(0, x-band):min(w, x+band+1)].any(axis=1)
-        side = cv2.morphologyEx(side.astype(np.uint8)[:, None], cv2.MORPH_CLOSE,
-                               np.ones((max(3, w // 200), 1), np.uint8)).ravel() > 0
-        for top, bottom in _runs(side):
-            if bottom - top >= .12 * w:
-                starts.append((int(top), x))
-    clusters = []
-    for entry in sorted(starts):
-        y = entry[0]
-        if clusters and y - clusters[-1][-1][0] < .04 * w:
-            clusters[-1].append(entry)
-        else:
-            clusters.append([entry])
-    tops = []
-    for cluster in clusters:
-        # Trace the first long horizontal rule around this edge start.
-        anchors = sorted((x, y) for y, x in cluster)
-        xx = np.arange(left, right+1)
-        expected = np.rint(np.interp(xx, [a[0] for a in anchors], [a[1] for a in anchors])).astype(int)
-        radius = max(10, round(.02*w))
-        yy = expected[None, :] + np.arange(-radius, radius+1)[:, None]
-        region = (horizontal[np.clip(yy, 0, h-1), xx[None, :]] > 0) & (yy >= 0) & (yy < h)
-        valid = region.any(axis=0)
-        if valid.mean() < .65:
-            continue
-        xs = xx[valid]
-        ys = expected[valid] - radius + region[:, valid].argmax(axis=0)
-        top = np.rint(np.interp(np.arange(w), xs, ys)).astype(int)
-        # Header rules must continue below this border.
-        depth = min(round(.19 * w), h - int(top.max()) - 1)
-        if depth < .08 * w:
-            continue
-        xx = np.arange(left, right + 1)
-        yy = top[xx][None, :] + np.arange(depth)[:, None]
-        rule_rows = (horizontal[yy, xx[None, :]] > 0).mean(axis=1) > .42
-        internal = [(a, b) for a, b in _runs(rule_rows) if a > .008 * w]
-        if len(internal) < 2:
-            continue
-        # The header also contains actual internal vertical partitions.
-        y0, y1 = int(np.median(top) + .01*w), int(np.median(top) + .08*w)
-        support = (vertical[max(0,y0):min(h,y1), left+band:right-band] > 0).mean(axis=0)
-        if not np.any(support > .55):
-            continue
-        if not tops or np.median(top - tops[-1]) > .10 * w:
-            tops.append(top)
+    frame_width = max(1, registration.right - registration.left)
+    frame_height = max(1, registration.bottom - registration.top)
+    x_pad = max(8, int(round(frame_width * .020)))
+    y_pad = max(10, int(round(frame_height * .085)))
 
-    # A single connected printed rule cannot jump between a preceding bottom
-    # border and the next header, unlike independent first-hit column searches.
-    # The short first row and two taller equal rows prove that this is the MOD
-    # header rather than a Lead Name row or a report section heading.
-    joined = cv2.morphologyEx(horizontal, cv2.MORPH_CLOSE, np.ones((3, 9), np.uint8))
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(joined)
-    headers = []
-    for label in range(1, count):
-        x, y, width, height, _ = map(int, stats[label])
-        if width < w * .55 or height > w * .05:
-            continue
-        rule = labels[y:y + height, x:x + width] == label
-        valid = rule.any(axis=0)
-        xs = np.flatnonzero(valid) + x
-        ys = rule[:, valid].argmax(axis=0) + y
-        top = np.rint(np.interp(np.arange(w), xs, ys)).astype(int)
-        depth = min(round(.19 * w), h - int(top.max()) - 1)
-        if depth < .08 * w:
-            continue
-        xx = np.arange(x, x + width)
-        yy = top[xx][None, :] + np.arange(depth)[:, None]
-        rows = _rule_centers(_runs((horizontal[yy, xx[None, :]] > 0).mean(axis=1) > .42))
-        rows = rows[rows > .008 * w]
-        if len(rows) < 3:
-            continue
-        first, second, third = np.diff(np.r_[0.0, rows[:3]])
-        if not (.015 * width <= first <= .04 * width
-                and .03 * width <= second <= .065 * width
-                and first < second * .80 and .75 <= third / second <= 1.25):
-            continue
-        y0, y1 = int(np.median(top) + first * .20), int(np.median(top) + first * .85)
-        partitions = (vertical[max(0, y0):min(h, y1), x + band:x + width - band] > 0).mean(axis=0)
-        if not partitions.size or not np.any(partitions > .55):
-            continue
-        headers.append(top)
-    if headers:
-        # A proven header owns the following header/work rows. Side fragments
-        # inside those rows cannot create another card or cut its first line.
-        tops = [top for top in tops if not any(
-            -.10 * w < np.median(top - header) < .30 * w for header in headers)]
-        tops.extend(headers)
-    return sorted(tops, key=lambda top: float(np.median(top)))
+    x0 = max(0, registration.left - x_pad)
+    x1 = min(w, registration.right + x_pad)
+    y0 = max(0, registration.top - y_pad)
+    y1 = min(h, registration.bottom + y_pad)
 
+    if previous is not None and previous.bottom < registration.top:
+        y0 = max(y0, previous.bottom)
+    if following is not None and registration.bottom < following.top:
+        y1 = min(y1, following.top)
 
-def _template_confirmed_tops_native(image, candidates):
-    """Keep only starts whose independent forward window matches the full MOD template.
-
-    Candidate detection is intentionally only a proposal mechanism. Each proposed
-    top is checked without using the next candidate as its bottom, so an internal
-    horizontal rule cannot truncate the real form and thereby manufacture two cards.
-    """
-    h, w = image.shape[:2]
-    confirmed = []
-    for top in candidates:
-        if top is None or len(top) != w:
-            continue
-        y0 = max(0, int(np.min(top)))
-        # The template frame is ~0.406x its own width, while a rendered MOD
-        # sheet spans ~93% of the page. On a page with stacked forms the next
-        # header therefore begins only ~0.41 page-widths below this one. A .58w
-        # probe included that next header and made otherwise-valid two/three-card
-        # PDFs fail registration. Keep this probe bounded to one physical form;
-        # full-resolution registration below still validates the resulting crop.
-        y1 = min(h, y0 + max(80, int(round(w * .405))))
-        if y1 - y0 < max(60, int(round(w * .30))):
-            continue
-
-        probe = image[y0:y1].copy()
-        rows = np.arange(y0, y1)[:, None]
-        probe[rows < top[None, :]] = 255
-
-        registration = register_form(probe)
-        if not registration.matched:
-            continue
-        if template_geometry_score(probe, registration) < .58:
-            continue
-        confirmed.append(top)
-
-    # Template-confirmed starts are the only segmentation contract. De-duplicate
-    # near-identical proposals without resurrecting generic candidates.
-    result = []
-    for top in sorted(confirmed, key=lambda value: float(np.median(value))):
-        if not result or np.median(top - result[-1]) > .08 * w:
-            result.append(top)
-    return result
-
-
-def form_tops(image):
-    """Return only template-confirmed MOD starts, mapped to full resolution."""
-    original_h, original_w = image.shape[:2]
-    analysis, sx, sy = _analysis_image(image)
-    candidates = _form_tops_native(analysis)
-    tops = _template_confirmed_tops_native(analysis, candidates)
-    if sx == 1.0 and sy == 1.0:
-        return tops
-    if not tops:
-        return []
-    x_small = np.linspace(0.0, original_w - 1.0, analysis.shape[1])
-    x_full = np.arange(original_w, dtype=float)
-    mapped = []
-    for top in tops:
-        y_full = np.interp(x_full, x_small, top.astype(float) / sy)
-        mapped.append(np.rint(np.clip(y_full, 0, original_h - 1)).astype(int))
-    return mapped
+    if x1 <= x0 or y1 <= y0:
+        raise ValueError('Invalid registered MOD template bounds')
+    return image[y0:y1, x0:x1].copy()
 
 
 def _template_orientation_evidence(image):
-    """Return full-template evidence for one page orientation."""
-    h, w = image.shape[:2]
-    tops = form_tops(image)
-    if not tops:
-        return 0, 0.0
-
-    matches = 0
-    score = 0.0
-    for index, top in enumerate(tops[:4]):
-        bottom = tops[index + 1] if index + 1 < len(tops) else np.full(w, h)
-        if np.any(bottom <= top):
-            continue
-        y0, y1 = int(top.min()), int(bottom.max())
-        if y1 - y0 < max(40, int(w * .20)):
-            continue
-        crop = image[y0:y1].copy()
-        rows = np.arange(y0, y1)[:, None]
-        crop[(rows < top[None, :]) | (rows >= bottom[None, :])] = 255
-        registration = register_form(crop)
-        if not registration.matched:
-            continue
-        geometry = template_geometry_score(crop, registration)
-        if geometry < .58:
-            continue
-        matches += 1
-        score += geometry
-    return matches, score
+    """Return whole-template evidence for one page orientation."""
+    registrations = find_form_registrations(image, max_forms=3)
+    return (
+        len(registrations),
+        sum(template_geometry_score(image, registration)
+            for registration in registrations),
+    )
 
 
 def orient_work_order_page(image):
@@ -453,28 +283,15 @@ def orient_work_order_page(image):
 
 
 def cut_forms(image):
-    h, w = image.shape[:2]
-    tops = form_tops(image)
-    for index, top in enumerate(tops):
-        last = index + 1 == len(tops)
-        bottom = tops[index+1] if not last else np.full(w, h)
-        if np.any(bottom <= top):
-            raise ValueError('Ambiguous form boundaries; page needs a clearer scan')
-        y0, y1 = int(top.min()), int(bottom.max())
-        crop = image[y0:y1].copy()
-        rows = np.arange(y0, y1)[:, None]
-        crop[(rows < top[None, :]) | (rows >= bottom[None, :])] = 255
+    """Detect the page's 0-3 complete MOD templates, then crop each independently."""
+    if is_dense_grid_page(image):
+        return
 
-        # Segmentation is template-owned. Full-resolution registration must still
-        # confirm the same known form before the crop can leave this module.
-        registration = register_form(crop)
-        if (not registration.matched
-                or template_geometry_score(crop, registration) < .58):
-            continue
-        # Dense reports remain an independent rejection guard; they cannot become
-        # cards merely because a few rules happen to resemble the template.
-        if not is_work_order_form(crop):
-            continue
-        if last:
-            crop = trim_last_form(crop, registration)
-        yield index+1, crop
+    registrations = find_form_registrations(image, max_forms=3)
+    for index, registration in enumerate(registrations):
+        previous = registrations[index - 1] if index else None
+        following = registrations[index + 1] if index + 1 < len(registrations) else None
+        crop = _expanded_form_crop(
+            image, registration, previous=previous, following=following,
+        )
+        yield index + 1, crop
