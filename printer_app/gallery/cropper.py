@@ -1,9 +1,9 @@
-"""Template-owned page geometry for Gallery work orders.
+"""Page cutting for Gallery work orders.
 
-Rendered pages are normalized before form detection. Generic line geometry may
-propose possible starts, but only a complete registered MOD template may create a
-Gallery card boundary. Internal form rows therefore cannot independently split one
-physical MOD sheet into multiple cards. OCR, repositories and UI remain downstream.
+Rendered pages are normalized, then the template module returns zero to three
+complete MOD-template registrations for the whole page. This module only expands
+those independent bounds enough to retain pen overflow and cuts the images. OCR,
+repositories and UI remain downstream.
 """
 import cv2
 import numpy as np
