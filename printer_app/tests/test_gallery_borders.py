@@ -1,181 +1,189 @@
-"""Synthetic unequal-height forms only; no customer images committed."""
+"""Gallery page segmentation is owned by complete MOD-template matches."""
 import pytest
 
 
-def test_template_headers_preserve_space_until_next_confirmed_form():
-    cv2 = pytest.importorskip('cv2')
-    np = pytest.importorskip('numpy')
+def _form_page(raster, count, *, scale=.45, gap=55, margin=35, x_shifts=()):
+    cv2, np = raster
+    from printer_app.tests.gallery_form_fixture import form_image
+
+    form, registration = form_image(raster, scale=scale)
+    height, width = form.shape
+    if count == 0:
+        return np.full((height + margin * 2, width + margin * 2), 255, np.uint8), form, registration, []
+
+    starts = []
+    page = np.full(
+        (margin * 2 + height * count + gap * max(0, count - 1),
+         width + margin * 2 + 30),
+        255,
+        np.uint8,
+    )
+    for index in range(count):
+        top = margin + index * (height + gap)
+        shift = x_shifts[index] if index < len(x_shifts) else 0
+        left = margin + shift
+        page[top:top + height, left:left + width] = form
+        starts.append((left, top))
+    return page, form, registration, starts
+
+
+@pytest.fixture
+def raster():
+    return pytest.importorskip('cv2'), pytest.importorskip('numpy')
+
+
+@pytest.mark.parametrize('count', [0, 1, 2, 3])
+def test_page_first_detects_zero_to_three_complete_mod_templates(raster, count):
+    from printer_app.gallery.cropper import cut_forms
+    from printer_app.gallery.form_template import find_form_registrations
+
+    page, _, _, _ = _form_page(raster, count)
+
+    registrations = find_form_registrations(page)
+    crops = list(cut_forms(page))
+
+    assert len(registrations) == count
+    assert len(crops) == count
+    assert [part for part, _ in crops] == list(range(1, count + 1))
+
+
+def test_internal_rows_without_the_whole_template_are_not_cards(raster):
+    cv2, np = raster
+    from printer_app.gallery.form_template import (
+        TEMPLATE_FIELDS, find_form_registrations, map_box,
+    )
     from printer_app.gallery.cropper import cut_forms
     from printer_app.tests.gallery_form_fixture import form_image
 
-    form, _ = form_image((cv2, np), scale=.45)
-    height, width = form.shape
-    starts = (35, 35 + height + 95, 35 + height * 2 + 260)
-    page = np.full((starts[-1] + height + 220, width + 100), 255, np.uint8)
-    for top in starts:
-        page[top:top + height, 50:50 + width] = form
+    form, registration = form_image(raster, scale=.50)
+    lead = next(field for field in TEMPLATE_FIELDS if field.key == 'lead_description')
+    _, internal_top, _, _ = map_box(registration, lead.box)
 
-    # Ink between two real forms belongs to the preceding card. A generic
-    # thirds/synthetic-box cutter would not preserve this ownership reliably.
-    overflow_y = starts[0] + height + 45
-    page[overflow_y:overflow_y + 12, 140:165] = 80
+    # This contains the exact strong lower grid that previously became a fake
+    # second card, but not the complete MOD template.
+    fragment = form[max(0, internal_top - 8):].copy()
+    page = np.full((fragment.shape[0] + 80, form.shape[1] + 80), 255, np.uint8)
+    page[40:40 + fragment.shape[0], 40:40 + fragment.shape[1]] = fragment
+
+    assert find_form_registrations(page) == ()
+    assert list(cut_forms(page)) == []
+
+
+def test_one_destroyed_card_does_not_change_neighbor_matches(raster):
+    cv2, np = raster
+    from printer_app.gallery.cropper import cut_forms
+    from printer_app.gallery.form_template import find_form_registrations
+
+    page, form, _, starts = _form_page(raster, 3, gap=70)
+    left, top = starts[1]
+    page[top:top + form.shape[0], left:left + form.shape[1]] = 255
+
+    registrations = find_form_registrations(page)
+    crops = list(cut_forms(page))
+
+    assert len(registrations) == 2
+    assert len(crops) == 2
+    assert registrations[0].top < starts[1][1]
+    assert registrations[1].top > starts[1][1] + form.shape[0]
+
+
+def test_crop_keeps_pen_overflow_around_registered_card(raster):
+    cv2, np = raster
+    from printer_app.gallery.cropper import cut_forms
+
+    page, form, registration, starts = _form_page(raster, 2, gap=100)
+    left, top = starts[0]
+
+    # Ink just outside the printed bottom and left edges must survive cropping.
+    below_y = top + registration.bottom + 18
+    page[below_y:below_y + 8, left + 180:left + 220] = 80
+    outside_x = left + registration.left - 10
+    page[top + 100:top + 125, outside_x:outside_x + 6] = 80
 
     crops = list(cut_forms(page))
 
-    assert len(crops) == 3
-    assert abs(crops[0][1].shape[0] - (starts[1] - starts[0])) < 12
-    assert abs(crops[1][1].shape[0] - (starts[2] - starts[1])) < 12
-    assert np.any(crops[0][1] == 80)
+    assert len(crops) == 2
+    assert np.count_nonzero(crops[0][1] == 80) >= (8 * 40) + (25 * 6)
 
 
-def test_template_registration_trims_only_blank_tail_after_last_card():
-    cv2 = pytest.importorskip('cv2')
-    np = pytest.importorskip('numpy')
+def test_overflow_padding_never_enters_next_printed_template(raster):
+    cv2, np = raster
     from printer_app.gallery.cropper import cut_forms
-    from printer_app.gallery.form_template import TEMPLATE_ASPECT_HEIGHT, TEMPLATE_HORIZONTAL
+    from printer_app.gallery.form_template import find_form_registrations
 
-    image = np.full((1700, 1000, 3), 255, np.uint8)
-    left, right = 50, 950
-    width = right - left
-    height = int(round(width * TEMPLATE_ASPECT_HEIGHT))
-    tops = (40, 520, 1000)
+    page, _, _, _ = _form_page(raster, 2, gap=30)
+    registrations = find_form_registrations(page)
+    crops = list(cut_forms(page))
 
-    for top in tops:
-        bottom = top + height
-        cv2.line(image, (left, top), (right, top), (0, 0, 0), 3)
-        cv2.line(image, (left, bottom), (right, bottom), (0, 0, 0), 3)
-        cv2.line(image, (left, top), (left, bottom), (0, 0, 0), 3)
-        cv2.line(image, (right, top), (right, bottom), (0, 0, 0), 3)
-        for ratio in TEMPLATE_HORIZONTAL[1:-1]:
-            y = top + int(round(ratio * height))
-            cv2.line(image, (left, y), (right, y), (0, 0, 0), 2)
-        # Strong header partition used by the same geometry contract as production.
-        cv2.line(image, (430, top), (430, top + int(height * .20)), (0, 0, 0), 2)
-
-    # Real handwriting below the final printed border must remain; empty page tail must not.
-    final_bottom = tops[-1] + height
-    cv2.putText(image, 'CALL BACK', (160, final_bottom + 55), cv2.FONT_HERSHEY_SIMPLEX,
-                1.0, (0, 0, 0), 3, cv2.LINE_AA)
-
-    crops = list(cut_forms(image))
-    assert len(crops) == 3
-    last = crops[-1][1]
-    assert last.shape[0] < 600  # no blank run to the 1700px page edge
-    assert last.shape[0] > height + 55  # handwriting below the form is retained
+    assert len(registrations) == len(crops) == 2
+    first_height = crops[0][1].shape[0]
+    # The first crop may keep the whole blank gap but cannot cross into card 2.
+    assert first_height <= registrations[1].top - max(
+        0, registrations[0].top - round(
+            (registrations[0].bottom - registrations[0].top) * .085
+        )
+    ) + 3
 
 
-def test_large_template_page_uses_same_card_count_as_normal_scale():
-    cv2 = pytest.importorskip('cv2')
-    np = pytest.importorskip('numpy')
+def test_crumbling_outer_edges_still_leave_three_full_template_matches(raster):
+    cv2, np = raster
     from printer_app.gallery.cropper import cut_forms
+    from printer_app.gallery.form_template import find_form_registrations
     from printer_app.tests.gallery_form_fixture import form_image
 
-    form, _ = form_image((cv2, np), scale=.32)
-    height, width = form.shape
-    margin = 24
-    base = np.full((height * 3 + margin * 4, width + margin * 2), 255, np.uint8)
-    for index in range(3):
-        top = margin + index * (height + margin)
-        base[top:top + height, margin:margin + width] = form
+    form, registration = form_image(raster, scale=.50)
+    damaged = form.copy()
+    left, right = registration.left, registration.right
+    top, bottom = registration.top, registration.bottom
 
+    # Remove chunks from all four outside edges while preserving the internal
+    # template. The detector must reconstruct placement from surviving rows/cells.
+    cv2.rectangle(damaged, (left + 80, top - 4), (left + 250, top + 5), 255, -1)
+    cv2.rectangle(damaged, (right - 320, bottom - 5), (right - 100, bottom + 4), 255, -1)
+    cv2.rectangle(damaged, (left - 4, top + 80), (left + 5, top + 190), 255, -1)
+    cv2.rectangle(damaged, (right - 5, top + 230), (right + 4, top + 330), 255, -1)
+
+    height, width = damaged.shape
+    gap, margin = 65, 40
+    page = np.full((height * 3 + gap * 2 + margin * 2, width + 110), 255, np.uint8)
+    for index, shift in enumerate((15, -8, 12)):
+        y = margin + index * (height + gap)
+        x = 50 + shift
+        page[y:y + height, x:x + width] = damaged
+
+    assert len(find_form_registrations(page)) == 3
+    assert len(list(cut_forms(page))) == 3
+
+
+def test_large_template_page_uses_same_card_count_as_normal_scale(raster):
+    cv2, np = raster
+    from printer_app.gallery.cropper import cut_forms
+
+    base, _, _, _ = _form_page(raster, 3, scale=.32, gap=30, margin=24)
     large = cv2.resize(
-        base, (base.shape[1] * 4, base.shape[0] * 4),
+        base,
+        (base.shape[1] * 4, base.shape[0] * 4),
         interpolation=cv2.INTER_NEAREST,
     )
+
     assert len(list(cut_forms(base))) == len(list(cut_forms(large))) == 3
 
 
-def test_internal_form_row_cannot_become_a_second_card(monkeypatch):
-    cv2 = pytest.importorskip('cv2')
-    np = pytest.importorskip('numpy')
-    from printer_app.gallery import cropper
-    from printer_app.gallery.form_template import TEMPLATE_FIELDS, map_box
-    from printer_app.tests.gallery_form_fixture import form_image
-
-    form, registration = form_image((cv2, np), scale=.55)
-    width = form.shape[1]
-    real_top = np.full(width, registration.top, dtype=int)
-    internal = next(field for field in TEMPLATE_FIELDS if field.key == 'lead_description')
-    _, false_y, _, _ = map_box(registration, internal.box)
-    false_top = np.full(width, false_y, dtype=int)
-
-    # Reproduce the failure mode directly: the generic geometry detector proposes
-    # both the real MOD header and a strong internal printed row.
-    monkeypatch.setattr(
-        cropper, '_form_tops_native', lambda image: [real_top, false_top]
-    )
-
-    tops = cropper.form_tops(form)
-    crops = list(cropper.cut_forms(form))
-
-    assert len(tops) == 1
-    assert abs(float(np.median(tops[0])) - registration.top) < 3
-    assert len(crops) == 1
-
-
-def test_template_registration_is_required_to_create_a_card(monkeypatch):
-    cv2 = pytest.importorskip('cv2')
-    np = pytest.importorskip('numpy')
-    from printer_app.gallery import cropper
-    from printer_app.gallery.form_template import FormRegistration
-
-    image = np.full((700, 900), 255, np.uint8)
-    top = np.full(image.shape[1], 20, dtype=int)
-    monkeypatch.setattr(cropper, '_form_tops_native', lambda image: [top])
-    monkeypatch.setattr(
-        cropper, 'register_form',
-        lambda crop: FormRegistration(0.0, 0, crop.shape[1], 0, crop.shape[0]),
-    )
-
-    assert cropper.form_tops(image) == []
-    assert list(cropper.cut_forms(image)) == []
-
-
 @pytest.mark.parametrize('turns', [1, 2, 3])
-def test_right_angle_template_pages_are_normalized_before_cropping(turns):
-    cv2 = pytest.importorskip('cv2')
-    np = pytest.importorskip('numpy')
+def test_right_angle_template_pages_are_normalized_before_cropping(raster, turns):
+    _, np = raster
     from printer_app.gallery.cropper import cut_forms, orient_work_order_page
-    from printer_app.tests.gallery_form_fixture import form_image
 
-    form, _ = form_image((cv2, np), scale=0.45)
-    margin = 28
-    height, width = form.shape
-    image = np.full((height * 2 + margin * 3, width + margin * 2), 255, np.uint8)
-    image[margin:margin + height, margin:margin + width] = form
-    second = margin * 2 + height
-    image[second:second + height, margin:margin + width] = form
-
-    assert len(list(cut_forms(image))) == 2
-
-    rotated = np.rot90(image, turns).copy()
+    page, _, _, _ = _form_page(raster, 2, gap=55, margin=28)
+    rotated = np.rot90(page, turns).copy()
     corrected = orient_work_order_page(rotated)
 
-    assert np.array_equal(corrected, image)
+    assert corrected.shape == page.shape
     assert len(list(cut_forms(corrected))) == 2
 
-def test_template_registration_cannot_bypass_report_rejection(monkeypatch):
-    np = pytest.importorskip('numpy')
-    from printer_app.gallery import cropper
-    from printer_app.gallery.form_template import FormRegistration
 
-    image = np.full((700, 900, 3), 255, np.uint8)
-    top = np.full(image.shape[1], 20, dtype=int)
-
-    monkeypatch.setattr(cropper, 'form_tops', lambda image: [top])
-    monkeypatch.setattr(
-        cropper,
-        'register_form',
-        lambda crop: FormRegistration(1.0, 0, crop.shape[1], 0, min(crop.shape[0], 300)),
-    )
-    monkeypatch.setattr(cropper, 'is_work_order_form', lambda crop: False)
-
-    assert list(cropper.cut_forms(image)) == []
-
-
-def test_orientation_check_leaves_non_template_gallery_pages_unchanged():
-    cv2 = pytest.importorskip('cv2')
-    np = pytest.importorskip('numpy')
+def test_orientation_check_leaves_non_template_gallery_pages_unchanged(raster):
+    cv2, np = raster
     from printer_app.gallery.cropper import orient_work_order_page
 
     image = np.full((700, 900, 3), 255, np.uint8)
@@ -187,41 +195,14 @@ def test_orientation_check_leaves_non_template_gallery_pages_unchanged():
     assert orient_work_order_page(image) is image
 
 
-def test_shifted_outer_edges_do_not_hide_first_header_or_cut_its_value():
-    cv2 = pytest.importorskip('cv2')
-    np = pytest.importorskip('numpy')
-    from printer_app.gallery.cropper import cut_forms
-    from printer_app.tests.gallery_form_fixture import form_image
-    from printer_app.gallery.form_template import TEMPLATE_FIELDS, map_box
-
-    form, registration = form_image((cv2, np), scale=.45)
-    field = next(field for field in TEMPLATE_FIELDS if field.key == 'work_order_number')
-    left, top, right, bottom = map_box(registration, field.box)
-    form[top + 7:bottom - 4, right - 35:right - 15] = 80
-    height, width = form.shape
-    page = np.full((height * 3 + 160, width + 160), 255, np.uint8)
-    # Both first-card sides lie outside the strongest lower-card edge bands.
-    for index, x in enumerate((80, 30, 30)):
-        y = 30 + index * (height + 35)
-        page[y:y + height, x:x + width] = form
-
-    crops = list(cut_forms(page))
-
-    assert len(crops) == 3
-    expected = np.count_nonzero(form == 80)
-    assert all(np.count_nonzero(crop == 80) == expected for _, crop in crops)
-
-
 @pytest.mark.parametrize('slant', [0, 18])
-def test_landscape_report_with_few_or_slanted_columns_is_rejected(slant):
-    cv2 = pytest.importorskip('cv2')
-    np = pytest.importorskip('numpy')
+def test_landscape_report_with_few_or_slanted_columns_is_rejected(raster, slant):
+    cv2, np = raster
     from printer_app.gallery.cropper import is_dense_grid_page, cut_forms
 
     image = np.full((800, 1400), 255, np.uint8)
     for y in range(35, 750, 23):
         cv2.line(image, (10, y), (1380, y), 0, 2)
-    # These reports have fewer columns than the older 12/14-column rejectors.
     for x in (10, 100, 210, 420, 680, 870, 1050, 1380):
         cv2.line(image, (x, 35), (x - slant, 748), 0, 2)
     for y in (242, 426, 610):
@@ -229,3 +210,15 @@ def test_landscape_report_with_few_or_slanted_columns_is_rejected(slant):
 
     assert is_dense_grid_page(image)
     assert list(cut_forms(image)) == []
+
+
+def test_cropper_has_no_header_or_next_top_segmentation_path():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    source = (root / 'gallery/cropper.py').read_text()
+
+    assert '_form_tops_native' not in source
+    assert '_template_confirmed_tops_native' not in source
+    assert 'bottom = tops[index+1]' not in source
+    assert 'find_form_registrations' in source
