@@ -732,43 +732,71 @@ def find_form_registrations(image, max_forms=MAX_FORMS_PER_PAGE):
         if bottom <= 0 or top >= height:
             continue
 
-        # Recover x bounds from the longest rules belonging to this one vertical
-        # template placement. Several rules vote so chipped corners are harmless.
-        local = []
-        window_top = top - fitted_height * .08
-        window_bottom = bottom + fitted_height * .08
-        for x, y, component_width, component_height, _ in components:
-            center_y = y + component_height / 2.0
-            if window_top <= center_y <= window_bottom:
-                local.append((component_width, x, x + component_width - 1))
-        local.sort(reverse=True)
-        selected = local[:min(8, len(local))]
-        if selected:
-            left = int(round(float(np.median([entry[1] for entry in selected]))))
-            right = int(round(float(np.median([entry[2] for entry in selected]))))
-        else:
-            left = int(round((width - estimated_width) / 2.0))
-            right = int(round(left + estimated_width))
-
-        left = max(0, left)
-        right = min(width, right)
-        top_i = max(0, int(round(top)))
-        bottom_i = min(height, int(round(bottom)))
-        if right - left < width * .55 or bottom_i - top_i < 50:
-            continue
-
-        registration = FormRegistration(
-            score=float(row_score),
-            left=left,
-            right=right,
-            top=top_i,
-            bottom=bottom_i,
+        # Normal scans get a precise local registration using the existing
+        # single-card contract. The window is only a refinement aid: the page
+        # match itself was already proposed by many rows of the whole template.
+        # If worn outer borders make local registration fail, fall back to the
+        # affine placement reconstructed from surviving internal rules.
+        search_pad = max(8, int(round(estimated_width * .055)))
+        probe_top = max(0, int(round(top - search_pad)))
+        probe_bottom = min(
+            height,
+            int(round(top + max(fitted_height, estimated_height) * 1.28 + search_pad)),
         )
+        refined = None
+        if probe_bottom - probe_top >= 60:
+            local_registration = register_form(small[probe_top:probe_bottom])
+            if local_registration.matched:
+                refined = FormRegistration(
+                    score=local_registration.score,
+                    left=local_registration.left,
+                    right=local_registration.right,
+                    top=local_registration.top + probe_top,
+                    bottom=local_registration.bottom + probe_top,
+                )
+
+        if refined is None:
+            # Recover x bounds from the longest rules belonging to this one
+            # vertical template placement. Several rows vote so chipped corners
+            # or one broken side cannot move the whole card.
+            local = []
+            window_top = top - fitted_height * .08
+            window_bottom = bottom + fitted_height * .08
+            for x, y, component_width, component_height, _ in components:
+                center_y = y + component_height / 2.0
+                if window_top <= center_y <= window_bottom:
+                    local.append((component_width, x, x + component_width - 1))
+            local.sort(reverse=True)
+            selected = local[:min(8, len(local))]
+            if selected:
+                left = int(round(float(np.median([entry[1] for entry in selected]))))
+                right = int(round(float(np.median([entry[2] for entry in selected]))))
+            else:
+                left = int(round((width - estimated_width) / 2.0))
+                right = int(round(left + estimated_width))
+
+            left = max(0, left)
+            right = min(width, right)
+            top_i = max(0, int(round(top)))
+            bottom_i = min(height, int(round(bottom)))
+            if right - left < width * .55 or bottom_i - top_i < 50:
+                continue
+            registration = FormRegistration(
+                score=float(row_score),
+                left=left,
+                right=right,
+                top=top_i,
+                bottom=bottom_i,
+            )
+        else:
+            registration = refined
+
         geometry = template_geometry_score(small, registration)
-        if (row_score < PAGE_MATCH_MIN_ROW_SCORE
+        evidence_score = max(float(row_score), float(registration.score))
+        if (evidence_score < PAGE_MATCH_MIN_ROW_SCORE
                 or geometry < PAGE_MATCH_MIN_GEOMETRY):
             continue
-        confidence = row_score * .45 + geometry * .55
+        confidence = evidence_score * .45 + geometry * .55
         candidates.append((confidence, geometry, registration))
 
     # Many rows on one real form generate equivalent placements. Keep one best
