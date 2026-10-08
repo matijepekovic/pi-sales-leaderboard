@@ -46,6 +46,9 @@ TEMPLATE_HORIZONTAL = tuple(_ny(value) for value in (
 ))
 REGISTRATION_MIN_SCORE = 0.72
 ANALYSIS_WIDTH = 1200
+MAX_FORMS_PER_PAGE = 3
+PAGE_MATCH_MIN_ROW_SCORE = 0.50
+PAGE_MATCH_MIN_GEOMETRY = 0.48
 
 
 @dataclass(frozen=True)
@@ -586,6 +589,264 @@ def register_form(image):
         top=max(0, int(round(top * inverse))),
         bottom=min(original_h, int(round(bottom * inverse))),
     )
+
+
+
+def find_form_registrations(image, max_forms=MAX_FORMS_PER_PAGE):
+    """Find zero to three complete MOD templates on one already-deskewed page.
+
+    Page segmentation is decided by the whole known template, never by a header,
+    an internal row, or the next candidate's position. Horizontal template rows
+    propose an affine placement; the complete horizontal/vertical cell geometry
+    confirms it. Missing outer-edge pieces may therefore be reconstructed from
+    surviving internal rules on worn or crumpled scans.
+    """
+    import cv2
+    import numpy as np
+
+    if image is None or not image.size:
+        return ()
+    limit = min(MAX_FORMS_PER_PAGE, max(0, int(max_forms)))
+    if not limit or min(image.shape[:2]) < 80:
+        return ()
+
+    original_h, original_w = image.shape[:2]
+    scale = min(1.0, ANALYSIS_WIDTH / float(original_w))
+    if scale < 1.0:
+        small = cv2.resize(
+            image,
+            (max(1, int(round(original_w * scale))),
+             max(1, int(round(original_h * scale)))),
+            interpolation=cv2.INTER_AREA,
+        )
+    else:
+        small = image
+
+    if small.ndim == 2:
+        gray = small
+    elif small.shape[2] == 4:
+        gray = cv2.cvtColor(small, cv2.COLOR_RGBA2GRAY)
+    else:
+        gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
+
+    height, width = gray.shape
+    ink = cv2.threshold(
+        gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    )[1]
+    horizontal = cv2.morphologyEx(
+        ink,
+        cv2.MORPH_OPEN,
+        np.ones((1, max(20, width // 40)), np.uint8),
+    )
+
+    row_runs = _runs((horizontal > 0).mean(axis=1) > .10, np)
+    centers = np.asarray([(start + stop) / 2.0 for start, stop in row_runs], dtype=float)
+    if len(centers) < 5:
+        return ()
+
+    # Estimate one form's printed width from long surviving rules on the page.
+    # Use several rows so a torn/bowed outside edge cannot own the estimate.
+    joined = cv2.morphologyEx(
+        horizontal, cv2.MORPH_CLOSE, np.ones((3, 9), np.uint8)
+    )
+    count, _, stats, _ = cv2.connectedComponentsWithStats(joined)
+    components = [
+        tuple(map(int, values))
+        for values in stats[1:count]
+        if values[2] >= width * .42 and values[3] < width * .08
+    ]
+    long_widths = [values[2] for values in components]
+    estimated_width = (
+        float(np.percentile(long_widths, 75))
+        if long_widths else width * .90
+    )
+    estimated_width = float(np.clip(estimated_width, width * .65, width))
+    estimated_height = estimated_width * TEMPLATE_ASPECT_HEIGHT
+    if estimated_height < 60:
+        return ()
+
+    ratios = np.asarray(TEMPLATE_HORIZONTAL, dtype=float)
+    proposal_tolerance = max(5.0, estimated_height * .045)
+    proposals = {}
+
+    def matched_rows(top, form_height, tolerance):
+        expected = top + ratios * form_height
+        pairs = []
+        used = set()
+        for ratio, target in zip(ratios, expected):
+            distances = np.abs(centers - target)
+            index = int(np.argmin(distances))
+            if distances[index] <= tolerance and index not in used:
+                used.add(index)
+                pairs.append((float(ratio), float(centers[index])))
+        return pairs
+
+    # Every surviving template row may vote for the form's top. A real card
+    # creates a dense cluster because many different rows predict the same top;
+    # an isolated internal line does not.
+    for center in centers:
+        for ratio in ratios:
+            top = float(center - ratio * estimated_height)
+            if top < -estimated_height * .12 or top > height - estimated_height * .20:
+                continue
+            pairs = matched_rows(top, estimated_height, proposal_tolerance)
+            if len(pairs) < 5:
+                continue
+
+            # Fit y = top + ratio * height from all surviving rules. This lets
+            # missing outer top/bottom pieces be inferred from the intact inside.
+            matrix = np.asarray([[1.0, ratio] for ratio, _ in pairs], dtype=float)
+            observed = np.asarray([value for _, value in pairs], dtype=float)
+            fitted_top, fitted_height = np.linalg.lstsq(
+                matrix, observed, rcond=None
+            )[0]
+            if not (estimated_height * .76 <= fitted_height <= estimated_height * 1.24):
+                continue
+
+            tolerance = max(5.0, fitted_height * .035)
+            pairs = matched_rows(fitted_top, fitted_height, tolerance)
+            if len(pairs) < 5:
+                continue
+            matrix = np.asarray([[1.0, ratio] for ratio, _ in pairs], dtype=float)
+            observed = np.asarray([value for _, value in pairs], dtype=float)
+            fitted_top, fitted_height = np.linalg.lstsq(
+                matrix, observed, rcond=None
+            )[0]
+            if not (estimated_height * .76 <= fitted_height <= estimated_height * 1.24):
+                continue
+
+            expected = fitted_top + np.asarray([pair[0] for pair in pairs]) * fitted_height
+            residual = float(np.mean(np.abs(observed - expected))) / max(1.0, fitted_height)
+            row_score = len(pairs) / float(len(TEMPLATE_HORIZONTAL))
+            bucket = max(4.0, fitted_height * .035)
+            key = int(round(fitted_top / bucket))
+            rank = (row_score, -residual)
+            current = proposals.get(key)
+            if current is None or rank > current[0]:
+                proposals[key] = (rank, float(fitted_top), float(fitted_height), row_score)
+
+    candidates = []
+    for _, fitted_top, fitted_height, row_score in proposals.values():
+        top = fitted_top
+        bottom = fitted_top + fitted_height
+        if bottom <= 0 or top >= height:
+            continue
+
+        # Normal scans get a precise local registration using the existing
+        # single-card contract. The window is only a refinement aid: the page
+        # match itself was already proposed by many rows of the whole template.
+        # If worn outer borders make local registration fail, fall back to the
+        # affine placement reconstructed from surviving internal rules.
+        search_pad = max(8, int(round(estimated_width * .055)))
+        probe_top = max(0, int(round(top - search_pad)))
+        probe_bottom = min(
+            height,
+            int(round(top + max(fitted_height, estimated_height) * 1.28 + search_pad)),
+        )
+        refined = None
+        if probe_bottom - probe_top >= 60:
+            local_registration = register_form(small[probe_top:probe_bottom])
+            if local_registration.matched:
+                refined = FormRegistration(
+                    score=local_registration.score,
+                    left=local_registration.left,
+                    right=local_registration.right,
+                    top=local_registration.top + probe_top,
+                    bottom=local_registration.bottom + probe_top,
+                )
+
+        if refined is None:
+            # Recover x bounds from the longest rules belonging to this one
+            # vertical template placement. Several rows vote so chipped corners
+            # or one broken side cannot move the whole card.
+            local = []
+            window_top = top - fitted_height * .08
+            window_bottom = bottom + fitted_height * .08
+            for x, y, component_width, component_height, _ in components:
+                center_y = y + component_height / 2.0
+                if window_top <= center_y <= window_bottom:
+                    local.append((component_width, x, x + component_width - 1))
+            local.sort(reverse=True)
+            selected = local[:min(8, len(local))]
+            if selected:
+                left = int(round(float(np.median([entry[1] for entry in selected]))))
+                right = int(round(float(np.median([entry[2] for entry in selected]))))
+            else:
+                left = int(round((width - estimated_width) / 2.0))
+                right = int(round(left + estimated_width))
+
+            left = max(0, left)
+            right = min(width, right)
+            top_i = max(0, int(round(top)))
+            bottom_i = min(height, int(round(bottom)))
+            if right - left < width * .55 or bottom_i - top_i < 50:
+                continue
+            registration = FormRegistration(
+                score=float(row_score),
+                left=left,
+                right=right,
+                top=top_i,
+                bottom=bottom_i,
+            )
+        else:
+            registration = refined
+
+        geometry = template_geometry_score(small, registration)
+        evidence_score = max(float(row_score), float(registration.score))
+        if (evidence_score < PAGE_MATCH_MIN_ROW_SCORE
+                or geometry < PAGE_MATCH_MIN_GEOMETRY):
+            continue
+        confidence = evidence_score * .45 + geometry * .55
+        candidates.append((confidence, geometry, registration))
+
+    # Many rows on one real form generate equivalent placements. Keep one best
+    # full-template match for each physical card, then cap the page contract at 3.
+    chosen = []
+    for candidate in sorted(candidates, key=lambda value: (value[0], value[1]), reverse=True):
+        registration = candidate[2]
+        duplicate = False
+        for _, _, existing in chosen:
+            vertical = max(
+                0,
+                min(registration.bottom, existing.bottom)
+                - max(registration.top, existing.top),
+            )
+            horizontal_overlap = max(
+                0,
+                min(registration.right, existing.right)
+                - max(registration.left, existing.left),
+            )
+            min_height = max(
+                1,
+                min(registration.bottom - registration.top,
+                    existing.bottom - existing.top),
+            )
+            min_width = max(
+                1,
+                min(registration.right - registration.left,
+                    existing.right - existing.left),
+            )
+            if vertical / min_height >= .45 and horizontal_overlap / min_width >= .60:
+                duplicate = True
+                break
+        if duplicate:
+            continue
+        chosen.append(candidate)
+        if len(chosen) >= limit:
+            break
+
+    chosen.sort(key=lambda value: (value[2].top, value[2].left))
+    inverse = 1.0 / scale
+    result = []
+    for _, _, registration in chosen:
+        result.append(FormRegistration(
+            score=registration.score,
+            left=max(0, int(round(registration.left * inverse))),
+            right=min(original_w, int(round(registration.right * inverse))),
+            top=max(0, int(round(registration.top * inverse))),
+            bottom=min(original_h, int(round(registration.bottom * inverse))),
+        ))
+    return tuple(result)
 
 
 def trim_last_form(image, registration):
