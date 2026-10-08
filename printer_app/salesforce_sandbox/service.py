@@ -9,6 +9,7 @@ from threading import Lock
 from ..job_map.contract import JobMapSourceError, MapFilters, MapRecord
 from ..mod_sheet_contract import ModSheetSourceError, NO_MOD_SHEET_RECORDS, SourceStatus
 from .adapter import PortalField, SalesforceAdapterError
+from .reports import search_reports
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,9 @@ class SalesforceSandboxService:
         # Saved rep names are optional normalized source metadata used by MOD and Map workflows.
         self.rep_repository = rep_repository
         self._rep_refresh_lock = Lock()
+
+    def search_reports(self, term):
+        return search_reports(self.adapter, term)
 
     def portal(self):
         """Return the MOD portal shell without blocking on Salesforce CLI."""
