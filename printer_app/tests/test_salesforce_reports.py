@@ -33,7 +33,7 @@ class ReportSearchTests(unittest.TestCase):
     def test_escapes_single_quote(self):
         cli = FakeCli([])
         search_reports(cli, "Bob's")
-        self.assertIn("Bob\\'s", cli.calls[0][3-1])
+        self.assertIn("Bob\\'s", cli.calls[0][3])
 
     def test_invalid_id_is_rejected(self):
         with self.assertRaises(Exception):
