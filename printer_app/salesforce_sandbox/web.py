@@ -36,6 +36,22 @@ def blueprint(service):
     def page():
         return render_template('salesforce_sandbox.html', snapshot=service.portal())
 
+    @bp.get('/salesforce-sandbox/reports')
+    def reports_page():
+        term = request.args.get('q', '')
+        reports, error = None, ''
+        if 'q' in request.args:
+            try:
+                reports = service.search_reports(term)
+            except ValueError as exc:
+                error = str(exc)
+            except Exception as exc:
+                from .adapter import SalesforceAdapterError
+                if not isinstance(exc, SalesforceAdapterError):
+                    raise
+                error = str(exc)
+        return render_template('salesforce_reports.html', term=term, reports=reports, error=error)
+
     @bp.get('/salesforce-sandbox/explorer')
     def explorer_page():
         # Rendering the shell must never connect or query Salesforce.
