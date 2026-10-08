@@ -7,6 +7,7 @@ import json
 from flask import Blueprint, g, jsonify, render_template, request, send_file
 
 from ..mod_sheets.pdf_renderer import render_mod_pdf
+from .adapter import SalesforceAdapterError
 
 
 def _bool_arg(name, default=False):
@@ -45,10 +46,7 @@ def blueprint(service):
                 reports = service.search_reports(term)
             except ValueError as exc:
                 error = str(exc)
-            except Exception as exc:
-                from .adapter import SalesforceAdapterError
-                if not isinstance(exc, SalesforceAdapterError):
-                    raise
+            except SalesforceAdapterError as exc:
                 error = str(exc)
         return render_template('salesforce_reports.html', term=term, reports=reports, error=error)
 
