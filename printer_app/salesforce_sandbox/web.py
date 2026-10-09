@@ -43,14 +43,19 @@ def blueprint(service):
         folder = request.args.get('folder', '')
         reports, error = None, ''
         folders = ()
+        total, pages, page = 0, 1, 1
         try:
             all_reports = service.search_reports(term, refresh=request.args.get('refresh') == '1', folder=folder)
             folders = tuple(sorted({r['folder'] or 'Unfiled' for r in all_reports}, key=str.casefold))
-            reports = tuple(r for r in all_reports if not folder or (r['folder'] or 'Unfiled') == folder)
+            filtered = tuple(r for r in all_reports if not folder or (r['folder'] or 'Unfiled') == folder)
+            total = len(filtered)
+            pages = max(1, (total + 49) // 50)
+            page = max(1, min(request.args.get('page', default=1, type=int), pages))
+            reports = filtered[(page - 1) * 50:page * 50]
         except (ValueError, SalesforceAdapterError) as exc:
             error = str(exc)
         return render_template('salesforce_reports.html', term=term, folder=folder,
-                               folders=folders, reports=reports, error=error)
+                               folders=folders, reports=reports, total=total, pages=pages, page=page, error=error)
 
     @bp.get('/salesforce-sandbox/reports/<report_id>/download')
     def download_report(report_id):
