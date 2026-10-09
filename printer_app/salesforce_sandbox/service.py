@@ -69,6 +69,9 @@ class SalesforceSandboxService:
     def search_reports(self, term):
         return search_reports(self.adapter, term)
 
+    def download_formatted_report(self, report_id):
+        return self.adapter.download_formatted_report(report_id)
+
     def portal(self):
         """Return the MOD portal shell without blocking on Salesforce CLI."""
         return PortalSnapshot(
