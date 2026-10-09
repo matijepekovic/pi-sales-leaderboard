@@ -13,6 +13,8 @@ from pathlib import Path
 
 from . import converter
 from .print_options import PrintOptions
+from .report_printing_repository import ReportPrintingRepository
+from .report_printing_service import ReportPrintingService
 from .print_dispatch import PrintDispatchService
 from .print_queue_repository import PrintQueueRepository
 from dataclasses import replace
@@ -331,6 +333,10 @@ def main():
             return daily, references, manual_gallery, map_sync
 
         daily_mod_sheets, mod_references, manual_mod_gallery, map_sync = make_mod_workflows(cfg)
+        report_printing = ReportPrintingService(
+            ReportPrintingRepository(db),
+            SalesforceSandboxService(SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')),
+            db, cfg)
 
         def heartbeat():
             while not stop.is_set():
@@ -367,6 +373,10 @@ def main():
                                 gmail = GmailClient(cfg, db, stop=stop, gallery=GalleryInbox(cfg.data_dir, cfg.gallery))
                                 retention = make_retention(cfg)
                                 daily_mod_sheets, mod_references, manual_mod_gallery, map_sync = make_mod_workflows(cfg)
+                                report_printing = ReportPrintingService(
+                                    ReportPrintingRepository(db),
+                                    SalesforceSandboxService(SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')),
+                                    db, cfg)
                                 next_poll, next_status = 0, 0
                             active_revision = revision
                             db.set('settings_revision', revision)
@@ -429,6 +439,7 @@ def main():
                         mod_reference_task = background.submit(mod_references.run_hourly)
                     if map_sync_task is None and map_sync.requested_due():
                         map_sync_task = background.submit(map_sync.run_requested)
+                    report_printing.run_due(datetime.fromtimestamp(now, timezone.utc))
                     if daily_mod_task is None and daily_mod_sheets.due(now):
                         daily_mod_task = background.submit(daily_mod_sheets.run_due)
                     if cleaning is None and polling is None and retention.due(now):
