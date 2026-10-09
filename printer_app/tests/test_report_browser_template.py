@@ -14,6 +14,9 @@ class ReportBrowserTemplateTests(unittest.TestCase):
         self.assertIn('salesforce_reports.css', template)
         self.assertIn("salesforce_sandbox.download_report", template)
         self.assertIn('Download XLSX', template)
+        self.assertIn('<th>Report ID</th>', template)
+        self.assertIn('class="report-id">{{ report.id }}</code>', template)
+        self.assertIn('colspan="4"', template)
 
 
 if __name__ == '__main__':
