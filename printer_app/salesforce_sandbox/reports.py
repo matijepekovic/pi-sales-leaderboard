@@ -15,7 +15,7 @@ def search_reports(cli, term):
     escaped = term.replace('\\', '\\\\').replace("'", "\\'")
     escaped = escaped.replace('%', '\\%').replace('_', '\\_')
     where = (" WHERE Name LIKE '%" + escaped + "%'") if term else ''
-    soql = 'SELECT Id, Name, DeveloperName, FolderName FROM Report' + where + ' ORDER BY Name LIMIT 100'
+    soql = 'SELECT Id, Name, DeveloperName, FolderName FROM Report' + where + ' ORDER BY Name LIMIT 2000'
     result = cli._run(['data', 'query', '--query', soql, *cli._target_args()], timeout=60)
     rows = result.get('records') if isinstance(result, dict) else None
     if not isinstance(rows, list):
