@@ -1,6 +1,7 @@
 """Focused tests for the independent Salesforce printing feature."""
 from datetime import datetime, timezone
 import os
+import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
@@ -51,6 +52,7 @@ class ReportPrintingTests(unittest.TestCase):
         self.assertTrue(parser.has_search)
         self.assertNotIn("searchDialog.showModal()", markup)
 
+    @unittest.skipUnless(importlib.util.find_spec('flask'), 'Flask not installed in contract-only CI')
     def test_folder_first_search_and_id_persistence(self):
         from flask import Flask, g
         from types import SimpleNamespace
