@@ -2,31 +2,43 @@
 {% block title %}Salesforce Reports · Print Control{% endblock %}
 {% block content %}
 <div class="heading"><div><p class="eyebrow">SALESFORCE</p><h1>Report browser</h1></div></div>
-<p>Browse accessible report folders, find a report, and download Salesforce's original formatted Excel workbook. Nothing is printed or scheduled.</p>
+<p>Browse folders and download Salesforce's original formatted Excel reports.</p>
 <form method="get" action="{{ url_for('salesforce_sandbox.reports_page') }}">
-  <label for="reportSearch">Search report names</label>
-  <input id="reportSearch" type="search" name="q" maxlength="100" value="{{ term }}" placeholder="Search all accessible reports">
+  {% if folder %}<input type="hidden" name="folder" value="{{ folder }}">{% endif %}
+  <label for="reportSearch">Search reports</label>
+  <input id="reportSearch" type="search" name="q" maxlength="100" value="{{ term }}" placeholder="Report name">
   <button type="submit">Search</button>
 </form>
 {% if error %}<p role="alert">{{ error }}</p>{% endif %}
 {% if reports is not none %}
-<nav aria-label="Report folders" style="display:flex;gap:0.65rem;flex-wrap:wrap;margin:1rem 0">
-  <a href="{{ url_for('salesforce_sandbox.reports_page', q=term) }}" {% if not folder %}aria-current="page"{% endif %}>All folders</a>
-  {% for name in folders %}
-  <a href="{{ url_for('salesforce_sandbox.reports_page', q=term, folder=name) }}" {% if folder == name %}aria-current="page"{% endif %}>📁 {{ name }}</a>
-  {% endfor %}
-</nav>
-<h2>{{ folder if folder else 'All accessible reports' }}</h2>
-<p>{{ reports|length }} report(s) displayed. {% if reports|length >= 2000 %}Showing the first 2,000; narrow your search.{% endif %}</p>
-<div class="table-wrap"><table>
-<thead><tr><th>Report</th><th>Folder</th><th>Action</th></tr></thead>
-<tbody>{% for report in reports %}
-<tr>
-<td>{{ report.name }}</td><td>{{ report.folder or 'Unfiled' }}</td>
-<td><a href="{{ url_for('salesforce_sandbox.download_report', report_id=report.id) }}">Download XLSX</a></td>
-</tr>
-{% else %}<tr><td colspan="3">No reports in this view.</td></tr>{% endfor %}</tbody>
-</table></div>
+<div style="display:grid;grid-template-columns:minmax(170px,260px) minmax(0,1fr);gap:1.2rem;margin-top:1.25rem;align-items:start">
+  <aside style="border:1px solid var(--border,#8885);border-radius:12px;padding:1rem;max-height:65vh;overflow:auto">
+    <h2 style="font-size:1rem">Folders</h2>
+    <nav aria-label="Report folders" style="display:flex;flex-direction:column;gap:.65rem">
+      <a href="{{ url_for('salesforce_sandbox.reports_page', q=term) }}" {% if not folder %}aria-current="page"{% endif %}>All reports</a>
+      {% for name in folders %}
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:.4rem">
+        <a href="{{ url_for('salesforce_sandbox.reports_page', q=term, folder=name) }}" {% if folder == name %}aria-current="page" style="font-weight:700"{% endif %}>📁 {{ name }}</a>
+        <a href="{{ url_for('salesforce_sandbox.reports_page', q=term, folder=name, refresh=1) }}" title="Refresh {{ name }}" aria-label="Refresh {{ name }}">↻</a>
+      </div>
+      {% endfor %}
+    </nav>
+  </aside>
+  <section style="min-width:0">
+    <p class="muted"><a href="{{ url_for('salesforce_sandbox.reports_page') }}">All reports</a>{% if folder %} / {{ folder }}{% endif %}</p>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap">
+      <h2>{{ folder or 'All accessible reports' }}</h2>
+      <a href="{{ url_for('salesforce_sandbox.reports_page', q=term, folder=folder, refresh=1) }}" aria-label="Refresh current folder" onclick="this.textContent='Refreshing…'">↻ Refresh {{ 'folder' if folder else 'all reports' }}</a>
+    </div>
+    <p>{{ reports|length }} report(s){% if reports|length >= 2000 %}; narrow your search for more{% endif %}</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Report</th><th>Folder</th><th>Download</th></tr></thead>
+      <tbody>{% for report in reports %}
+        <tr><td>{{ report.name }}</td><td>{{ report.folder or 'Unfiled' }}</td><td><a href="{{ url_for('salesforce_sandbox.download_report', report_id=report.id) }}">Download XLSX</a></td></tr>
+      {% else %}<tr><td colspan="3">No reports in this folder.</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </section>
+</div>
 {% endif %}
-<p class="muted">Exports use the existing Salesforce login and require Salesforce's Export Reports permission. Large exports may take longer.</p>
+<p class="muted">Downloads use the existing Salesforce connection and preserve the original formatted workbook.</p>
 {% endblock %}
