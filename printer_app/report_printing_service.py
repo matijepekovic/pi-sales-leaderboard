@@ -1,6 +1,6 @@
 """Salesforce printing workflow; existing printer services remain unchanged."""
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import time
 
@@ -20,7 +20,7 @@ class ReportPrintingService:
         for job in self.repository.list():
             # At startup, catch the current minute only. Never replay old
             # schedules blindly after a downtime.
-            since = now.replace(second=0, microsecond=0)
+            since = now.replace(second=0, microsecond=0) - timedelta(microseconds=1)
             for occurrence in job.due_occurrences(since, now):
                 self.run(job, occurrence.isoformat())
 
