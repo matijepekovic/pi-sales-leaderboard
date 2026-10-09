@@ -51,13 +51,20 @@
 {% endfor %}{% endif %}
 </div>
 <details id="search-dialog">
-<summary id="add-report" role="button">+ Add report</summary>
-<h3>Find a Salesforce report</h3>
-<label>Search by name <input id="report-search" type="search" maxlength="100" placeholder="Report name"></label>
-<button type="button" id="run-search">Search</button>
-<label>Folder <select id="report-folder"><option value="">All folders</option></select></label>
-<p id="search-status"></p>
+<summary id="add-report">+ Add report</summary>
+<div>
+<h3>1. Find a folder</h3>
+<label>Search folders <input id="folder-search" type="search" maxlength="100" placeholder="Folder name"></label>
+<button type="button" id="find-folders">Find folders</button>
+<p id="folder-status" role="status"></p>
+<div id="folder-results"></div>
+<h3>2. Choose reports</h3>
+<p id="selected-folder">Choose a folder above.</p>
+<label>Search reports in selected folder <input id="report-search" type="search" maxlength="100" disabled placeholder="Report name"></label>
+<button type="button" id="run-search" disabled>Search reports</button>
+<p id="search-status" role="status"></p>
 <div id="search-results" style="max-height:350px;overflow:auto"></div>
+</div>
 </details>
 <dialog id="override-dialog">
 <h3>Report-specific print settings</h3>
@@ -77,40 +84,61 @@ const choices = {{ choices|tojson }};
 const numbers = {{ numbers|tojson }};
 const dialog = document.getElementById('override-dialog');
 let activeId = null;
-const searchDialog = document.getElementById('search-dialog');
 const results = document.getElementById('search-results');
 const searchStatus = document.getElementById('search-status');
-
+const folderStatus = document.getElementById('folder-status');
+const folderResults = document.getElementById('folder-results');
+let activeFolder = '';
+async function findFolders() {
+  folderStatus.textContent = 'Searching folders…';
+  folderResults.replaceChildren();
+  try {
+    const q = document.getElementById('folder-search').value.trim();
+    const response = await fetch({{ url_for('report_printing.folders')|tojson }} + '?q=' + encodeURIComponent(q));
+    const data = await response.json();
+    if (!response.ok) throw Error(data.error || 'Folder search failed');
+    folderStatus.textContent = data.total + ' matching folders';
+    for (const folder of data.folders) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = folder;
+      button.onclick = () => openFolder(folder);
+      folderResults.append(button, document.createTextNode(' '));
+    }
+  } catch (err) { folderStatus.textContent = err.message; }
+}
+function openFolder(folder) {
+  activeFolder = folder;
+  document.getElementById('selected-folder').textContent = 'Folder: ' + folder;
+  document.getElementById('report-search').disabled = false;
+  document.getElementById('run-search').disabled = false;
+  document.getElementById('report-search').value = '';
+  findReports();
+}
 async function findReports() {
-  const q = document.getElementById('report-search').value.trim();
-  const folder = document.getElementById('report-folder').value;
-  if (!q && !folder) { searchStatus.textContent = 'Enter a report name or choose a folder.'; return; }
-  searchStatus.textContent = 'Searching…';
+  if (!activeFolder) return;
+  searchStatus.textContent = 'Searching reports…';
   results.replaceChildren();
   try {
-    const response = await fetch({{ url_for('report_printing.search')|tojson }} + '?q=' + encodeURIComponent(q) + '&folder=' + encodeURIComponent(folder));
+    const q = document.getElementById('report-search').value.trim();
+    const response = await fetch({{ url_for('report_printing.search')|tojson }} + '?q=' + encodeURIComponent(q) + '&folder=' + encodeURIComponent(activeFolder));
     const data = await response.json();
-    if (!response.ok) throw Error(data.error || 'Search failed');
-    const folderSelect = document.getElementById('report-folder');
-    const prior = folderSelect.value;
-    if (data.folders.length) {
-      folderSelect.replaceChildren(new Option('All folders', ''));
-      for (const name of data.folders) folderSelect.add(new Option(name, name));
-      folderSelect.value = prior;
-    }
+    if (!response.ok) throw Error(data.error || 'Report search failed');
     searchStatus.textContent = data.total + ' matching reports' + (data.total > 50 ? ' (first 50 shown)' : '');
     for (const report of data.reports) {
       const row = document.createElement('div');
       const add = document.createElement('button');
-      add.type = 'button'; add.textContent = '+ Add';
+      add.type = 'button';
+      add.textContent = '+ Add';
       add.onclick = () => { addSelectedReport(report); add.disabled = true; add.textContent = 'Added'; };
-      row.append(add, document.createTextNode(' ' + report.name + ' (' + report.folder + ')'));
+      row.append(add, document.createTextNode(' ' + report.name));
       results.append(row);
     }
   } catch (err) { searchStatus.textContent = err.message; }
 }
+document.getElementById('find-folders').onclick = findFolders;
 document.getElementById('run-search').onclick = findReports;
-document.getElementById('report-folder').onchange = findReports;
+document.getElementById('folder-search').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); findFolders(); } });
 document.getElementById('report-search').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); findReports(); } });
 function addSelectedReport(report) {
   if (Array.from(document.querySelectorAll('.report-row')).some(row => row.dataset.id === report.id)) return;
