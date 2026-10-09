@@ -1,5 +1,6 @@
 """Focused tests for the independent Salesforce printing feature."""
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -76,6 +77,28 @@ class ReportPrintingTests(unittest.TestCase):
     def test_reject_invalid_override(self):
         with self.assertRaises(ValueError):
             self.job(reports=(ScheduledReport('a', 'Daily', {'PRINT_PAPER': 'unsupported'}),))
+
+    @unittest.skipUnless(os.environ.get('PRINTER_BROWSER_TESTS') == '1', 'Browser test dependencies')
+    def test_add_report_click_opens_search_in_real_browser(self):
+        from playwright.sync_api import sync_playwright, expect
+        markup = (Path(__file__).resolve().parents[1] / 'templates' / 'report_printing.html').read_text()
+        start = markup.index('<details id="search-dialog">')
+        end = markup.index('</details>', start) + len('</details>')
+        selector = markup[start:end]
+        with sync_playwright() as pw:
+            for browser_type in (pw.chromium, pw.webkit):
+                browser = browser_type.launch(headless=True)
+                try:
+                    page = browser.new_page()
+                    page.set_content(selector)
+                    search = page.locator('#report-search')
+                    expect(search).not_to_be_visible()
+                    page.locator('#add-report').click()
+                    expect(search).to_be_visible()
+                    search.fill('Daily Sales')
+                    expect(search).to_have_value('Daily Sales')
+                finally:
+                    browser.close()
 
 
 if __name__ == '__main__':
