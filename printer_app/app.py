@@ -195,6 +195,8 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             session['csrf'] = secrets.token_urlsafe(32)
             session.permanent = True
         if request.method == 'POST':
+            if request.endpoint == 'report_printing.save':
+                request.max_form_parts = 3000  # Salesforce report selection may contain many entries.
             origin = request.headers.get('Origin')
             if (origin and normalized_origin(origin) != effective_request_origin()) or request.headers.get('Sec-Fetch-Site') == 'cross-site':
                 abort(403, 'Cross-site changes are not allowed')
