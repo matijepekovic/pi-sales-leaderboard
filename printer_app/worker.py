@@ -10,9 +10,12 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from datetime import datetime, timezone
 
 from . import converter
 from .print_options import PrintOptions
+from .report_printing_repository import ReportPrintingRepository
+from .report_printing_service import ReportPrintingService
 from .print_dispatch import PrintDispatchService
 from .print_queue_repository import PrintQueueRepository
 from dataclasses import replace
@@ -331,6 +334,10 @@ def main():
             return daily, references, manual_gallery, map_sync
 
         daily_mod_sheets, mod_references, manual_mod_gallery, map_sync = make_mod_workflows(cfg)
+        report_printing = ReportPrintingService(
+            ReportPrintingRepository(db),
+            SalesforceSandboxService(SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')),
+            db, cfg)
 
         def heartbeat():
             while not stop.is_set():
@@ -346,6 +353,8 @@ def main():
         # The process lock still prevents a second worker from double-printing.
         background = ThreadPoolExecutor(max_workers=4, thread_name_prefix='printer-work')
         polling, preparing, cleaning, daily_mod_task = None, None, None, None
+        report_print_task = None
+        last_report_minute = None
         mod_reference_task = background.submit(mod_references.backfill_existing)
         map_sync_task = None
         next_poll, next_status = 0, 0
@@ -367,6 +376,10 @@ def main():
                                 gmail = GmailClient(cfg, db, stop=stop, gallery=GalleryInbox(cfg.data_dir, cfg.gallery))
                                 retention = make_retention(cfg)
                                 daily_mod_sheets, mod_references, manual_mod_gallery, map_sync = make_mod_workflows(cfg)
+                                report_printing = ReportPrintingService(
+                                    ReportPrintingRepository(db),
+                                    SalesforceSandboxService(SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')),
+                                    db, cfg)
                                 next_poll, next_status = 0, 0
                             active_revision = revision
                             db.set('settings_revision', revision)
@@ -429,6 +442,17 @@ def main():
                         mod_reference_task = background.submit(mod_references.run_hourly)
                     if map_sync_task is None and map_sync.requested_due():
                         map_sync_task = background.submit(map_sync.run_requested)
+                    report_minute = int(now // 60)
+                    if report_print_task is not None and report_print_task.done():
+                        finished, report_print_task = report_print_task, None
+                        try:
+                            finished.result()
+                        except Exception:
+                            log.exception('Salesforce report printing failed')
+                    if report_print_task is None and report_minute != last_report_minute:
+                        last_report_minute = report_minute
+                        report_print_task = background.submit(
+                            report_printing.run_due, datetime.fromtimestamp(now, timezone.utc))
                     if daily_mod_task is None and daily_mod_sheets.due(now):
                         daily_mod_task = background.submit(daily_mod_sheets.run_due)
                     if cleaning is None and polling is None and retention.due(now):

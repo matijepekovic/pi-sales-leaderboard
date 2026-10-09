@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Salesforce Report Printing{% endblock %}
+{% block content %}
+<h1>Salesforce Report Printing</h1>
+<p>Create a scheduled printing job. Every report inherits the job's print settings unless edited.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+<section><h2>Printing jobs</h2>
+{% for job in jobs %}
+<article><strong>{{ job.name }}</strong> — {{ "%02d:%02d"|format(job.hour, job.minute) }} ({{ job.timezone }})
+— {{ job.reports|length }} reports — {{ "Enabled" if job.enabled else "Paused" }}
+<a href="{{ url_for('report_printing.page', edit=job.job_id) }}">✎ Edit</a>
+<form method="post" action="{{ url_for('report_printing.delete', job_id=job.job_id) }}" style="display:inline">
+<input type="hidden" name="csrf" value="{{ session.csrf }}"><button>Delete</button></form></article>
+{% else %}<p>No printing jobs yet.</p>{% endfor %}
+</section>
+<section>
+<h2>{{ 'Edit printing job' if selected else 'Create printing job' }}</h2>
+<form method="post" action="{{ url_for('report_printing.save') }}" id="job-form">
+<input type="hidden" name="csrf" value="{{ session.csrf }}">
+<input type="hidden" name="job_id" value="{{ selected.job_id if selected else '' }}">
+<label>Job name <input required name="name" maxlength="100" value="{{ selected.name if selected else '' }}"></label>
+<label>Print time <input required type="time" name="time" value="{{ '%02d:%02d'|format(selected.hour,selected.minute) if selected else '08:00' }}"></label>
+<fieldset><legend>Days of week</legend>
+{% for label in ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'] %}
+<label><input type="checkbox" name="weekday" value="{{ loop.index0 }}" {% if (selected and loop.index0 in selected.weekdays) or (not selected and loop.index0 < 5) %}checked{% endif %}>{{ label }}</label>
+{% endfor %}
+</fieldset>
+<label><input type="checkbox" name="enabled" {% if not selected or selected.enabled %}checked{% endif %}> Enabled</label>
+<h3>Default print settings</h3>
+{% for key, spec in choices.items() %}
+<label>{{ spec[1] }}
+<select name="{{ key }}">
+{% for value, label in spec[2] %}
+<option value="{{ value }}" {% if selected and selected.defaults.environment()[key] == value %}selected{% elif not selected and loop.first %}selected{% endif %}>{{ label }}</option>
+{% endfor %}
+</select></label>
+{% endfor %}
+{% for key, spec in numbers.items() %}
+<label>{{ spec[1] }} <input type="number" name="{{ key }}" min="{{ spec[2] }}" max="{{ spec[3] }}" value="{{ selected.defaults.environment()[key] if selected else (1 if key == 'PRINT_COPIES' else 100) }}"></label>
+{% endfor %}
+<h3>Reports</h3>
+<p>Search reports and check the ones to include. Click ✎ to override individual print settings.</p>
+<label>Find report <input id="report-filter" type="search" placeholder="Search by report name or ID"></label>
+<div id="report-list" style="max-height:400px;overflow:auto">
+{% for report in available %}
+{% set chosen = (selected.reports | selectattr('report_id', 'equalto', report.id) | list | first) if selected else none %}
+<div class="report-row" data-search="{{ (report.name ~ ' ' ~ report.id)|lower }}">
+<label><input type="checkbox" name="report_id" value="{{ report.id }}" {% if chosen %}checked{% endif %}>{{ report.name }} <small>{{ report.id }}</small></label>
+<button type="button" class="edit-override" data-id="{{ report.id }}" aria-label="Edit print settings for {{ report.name }}">✎</button>
+<input type="hidden" data-override="{{ report.id }}" id="override_{{ report.id }}" value="{{ chosen.overrides|tojson|forceescape if chosen else '{}' }}">
+</div>
+{% endfor %}
+</div>
+<dialog id="override-dialog">
+<h3>Report-specific print settings</h3>
+<p>Leave a setting as Inherit to use the printing job's defaults.</p>
+<div id="override-fields"></div>
+<button type="button" id="override-save">Save overrides</button>
+<button type="button" id="override-cancel">Cancel</button>
+</dialog>
+<button type="submit">Save printing job</button>
+</form>
+</section>
+<section><h2>Recent scheduled report runs</h2><table><thead><tr><th>Run</th><th>Status</th><th>Queue job</th><th>Error</th></tr></thead><tbody>
+{% for run in runs %}<tr><td>{{ run.identity }}</td><td>{{ run.state }}</td><td>{{ run.queued_job_id or '—' }}</td><td>{{ run.error }}</td></tr>
+{% else %}<tr><td colspan="4">No runs yet.</td></tr>{% endfor %}</tbody></table></section>
+<script>
+const choices = {{ choices|tojson }};
+const numbers = {{ numbers|tojson }};
+const dialog = document.getElementById('override-dialog');
+let activeId = null;
+document.getElementById('report-filter').addEventListener('input', e => {
+  const q = e.target.value.trim().toLowerCase();
+  document.querySelectorAll('.report-row').forEach(row => row.hidden = !row.dataset.search.includes(q));
+});
+document.querySelectorAll('.edit-override').forEach(button => button.addEventListener('click', () => {
+  activeId = button.dataset.id;
+  const values = JSON.parse(document.getElementById('override_' + activeId).value);
+  const fields = document.getElementById('override-fields');
+  fields.replaceChildren();
+  for (const [key, spec] of Object.entries(choices)) {
+    const label = document.createElement('label');
+    label.textContent = spec[1] + ' ';
+    const select = document.createElement('select');
+    select.dataset.key = key;
+    for (const [value, name] of [['', 'Inherit job default'], ...spec[2]]) {
+      const option = new Option(name, value);
+      option.selected = (values[key] || '') === value;
+      select.add(option);
+    }
+    label.append(select);
+    fields.append(label);
+  }
+  for (const [key, spec] of Object.entries(numbers)) {
+    const label = document.createElement('label');
+    label.textContent = spec[1] + ' ';
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = spec[2]; input.max = spec[3];
+    input.placeholder = 'Inherit';
+    input.dataset.key = key;
+    input.value = values[key] || '';
+    label.append(input); fields.append(label);
+  }
+  dialog.showModal();
+}));
+document.getElementById('override-save').addEventListener('click', () => {
+  const values = {};
+  dialog.querySelectorAll('[data-key]').forEach(field => {
+    if (field.value !== '') values[field.dataset.key] = field.value;
+  });
+  document.getElementById('override_' + activeId).value = JSON.stringify(values);
+  dialog.close();
+});
+document.getElementById('override-cancel').addEventListener('click', () => dialog.close());
+// Only submit selected report overrides, respecting the application's form limit.
+document.getElementById('job-form').addEventListener('submit', () => {
+  document.querySelectorAll('[data-override]').forEach(input => {
+    const checked = document.querySelector('input[name="report_id"][value="' + input.dataset.override + '"]').checked;
+    if (checked) input.name = 'override_' + input.dataset.override;
+  });
+});
+</script>
+{% endblock %}
