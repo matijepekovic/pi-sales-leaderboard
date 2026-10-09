@@ -10,7 +10,7 @@ class ReportBrowserTemplateTests(unittest.TestCase):
         self.assertIn('Refresh current folder', template)
         self.assertIn('folder=folder, refresh=1', template)
         self.assertIn("salesforce_sandbox.download_report", template)
-        self.assertIn('Downloading', template.replace('Download XLSX', 'Downloading'))
+        self.assertIn('Download XLSX', template)
 
 
 if __name__ == '__main__':
