@@ -50,16 +50,15 @@
 </div>
 {% endfor %}{% endif %}
 </div>
-<button type="button" id="add-report">+ Add report</button>
-<dialog id="search-dialog">
+<details id="search-dialog">
+<summary id="add-report" role="button">+ Add report</summary>
 <h3>Find a Salesforce report</h3>
 <label>Search by name <input id="report-search" type="search" maxlength="100" placeholder="Report name"></label>
 <button type="button" id="run-search">Search</button>
 <label>Folder <select id="report-folder"><option value="">All folders</option></select></label>
 <p id="search-status"></p>
 <div id="search-results" style="max-height:350px;overflow:auto"></div>
-<button type="button" id="search-close">Close</button>
-</dialog>
+</details>
 <dialog id="override-dialog">
 <h3>Report-specific print settings</h3>
 <p>Leave a setting as Inherit to use the printing job's defaults.</p>
@@ -81,8 +80,7 @@ let activeId = null;
 const searchDialog = document.getElementById('search-dialog');
 const results = document.getElementById('search-results');
 const searchStatus = document.getElementById('search-status');
-document.getElementById('add-report').onclick = () => searchDialog.showModal();
-document.getElementById('search-close').onclick = () => searchDialog.close();
+
 async function findReports() {
   const q = document.getElementById('report-search').value.trim();
   const folder = document.getElementById('report-folder').value;
@@ -95,9 +93,11 @@ async function findReports() {
     if (!response.ok) throw Error(data.error || 'Search failed');
     const folderSelect = document.getElementById('report-folder');
     const prior = folderSelect.value;
-    folderSelect.replaceChildren(new Option('All folders', ''));
-    for (const name of data.folders) folderSelect.add(new Option(name, name));
-    folderSelect.value = prior;
+    if (data.folders.length) {
+      folderSelect.replaceChildren(new Option('All folders', ''));
+      for (const name of data.folders) folderSelect.add(new Option(name, name));
+      folderSelect.value = prior;
+    }
     searchStatus.textContent = data.total + ' matching reports' + (data.total > 50 ? ' (first 50 shown)' : '');
     for (const report of data.reports) {
       const row = document.createElement('div');
@@ -113,7 +113,7 @@ document.getElementById('run-search').onclick = findReports;
 document.getElementById('report-folder').onchange = findReports;
 document.getElementById('report-search').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); findReports(); } });
 function addSelectedReport(report) {
-  if (document.querySelector('.report-row[data-id="' + report.id + '"]')) return;
+  if (Array.from(document.querySelectorAll('.report-row')).some(row => row.dataset.id === report.id)) return;
   const row = document.createElement('div'); row.className = 'report-row'; row.dataset.id = report.id;
   const label = document.createElement('label');
   const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.name = 'report_id'; checkbox.value = report.id; checkbox.checked = true;
