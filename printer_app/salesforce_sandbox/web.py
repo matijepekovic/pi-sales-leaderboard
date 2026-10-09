@@ -44,7 +44,7 @@ def blueprint(service):
         reports, error = None, ''
         folders = ()
         try:
-            all_reports = service.search_reports(term)
+            all_reports = service.search_reports(term, refresh=request.args.get('refresh') == '1', folder=folder)
             folders = tuple(sorted({r['folder'] or 'Unfiled' for r in all_reports}, key=str.casefold))
             reports = tuple(r for r in all_reports if not folder or (r['folder'] or 'Unfiled') == folder)
         except (ValueError, SalesforceAdapterError) as exc:

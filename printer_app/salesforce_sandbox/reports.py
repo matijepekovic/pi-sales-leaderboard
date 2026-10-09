@@ -6,7 +6,7 @@ import re
 from .adapter import SalesforceAdapterError
 
 
-def search_reports(cli, term):
+def search_reports(cli, term, folder=None):
     term = str(term or '').strip()
     if len(term) > 100 or any(ord(c) < 32 for c in term):
         raise ValueError('Search must be at most 100 printable characters.')
@@ -15,6 +15,12 @@ def search_reports(cli, term):
     escaped = term.replace('\\', '\\\\').replace("'", "\\'")
     escaped = escaped.replace('%', '\\%').replace('_', '\\_')
     where = (" WHERE Name LIKE '%" + escaped + "%'") if term else ''
+    if folder is not None:
+        folder = str(folder)
+        if len(folder) > 255 or any(ord(c) < 32 for c in folder):
+            raise ValueError('Invalid folder name.')
+        safe_folder = folder.replace(chr(92), chr(92) * 2).replace(chr(39), chr(92) + chr(39))
+        where += (' AND ' if where else ' WHERE ') + "FolderName = '" + safe_folder + "'"
     soql = 'SELECT Id, Name, DeveloperName, FolderName FROM Report' + where + ' ORDER BY Name LIMIT 2000'
     result = cli._run(['data', 'query', '--query', soql, *cli._target_args()], timeout=60)
     rows = result.get('records') if isinstance(result, dict) else None

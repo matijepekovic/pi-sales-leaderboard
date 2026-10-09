@@ -65,9 +65,25 @@ class SalesforceSandboxService:
         # Saved rep names are optional normalized source metadata used by MOD and Map workflows.
         self.rep_repository = rep_repository
         self._rep_refresh_lock = Lock()
+        self._report_cache_lock = Lock()
+        self._report_cache = None
 
-    def search_reports(self, term):
-        return search_reports(self.adapter, term)
+    def search_reports(self, term, *, refresh=False, folder=''):
+        term = str(term or '').strip()
+        if len(term) > 100 or any(ord(c) < 32 for c in term):
+            raise ValueError('Invalid report search.')
+        with self._report_cache_lock:
+            if refresh and folder and self._report_cache is not None:
+                source_folder = '' if folder == 'Unfiled' else folder
+                updated = search_reports(self.adapter, '', folder=source_folder)
+                previous = self._report_cache
+                self._report_cache = tuple(
+                    r for r in previous if (r['folder'] or 'Unfiled') != folder
+                ) + updated
+            elif refresh or self._report_cache is None:
+                self._report_cache = search_reports(self.adapter, '')
+            records = self._report_cache
+        return tuple(r for r in records if term.casefold() in r['name'].casefold())
 
     def download_formatted_report(self, report_id):
         return self.adapter.download_formatted_report(report_id)
