@@ -19,6 +19,37 @@ class ReportPrintingTests(unittest.TestCase):
         values.update(patch)
         return ReportPrintingJob(**values)
 
+    def test_add_report_opens_without_javascript(self):
+        """The Add Report control must not rely on a JS event handler."""
+        from html.parser import HTMLParser
+
+        class SelectorParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.details_depth = 0
+                self.has_summary = False
+                self.has_search = False
+
+            def handle_starttag(self, tag, attrs):
+                attributes = dict(attrs)
+                if tag == 'details' and attributes.get('id') == 'search-dialog':
+                    self.details_depth = 1
+                elif self.details_depth and tag == 'summary' and attributes.get('id') == 'add-report':
+                    self.has_summary = True
+                elif self.details_depth and tag == 'input' and attributes.get('id') == 'report-search':
+                    self.has_search = True
+
+            def handle_endtag(self, tag):
+                if tag == 'details':
+                    self.details_depth = 0
+
+        markup = (Path(__file__).resolve().parents[1] / 'templates' / 'report_printing.html').read_text()
+        parser = SelectorParser()
+        parser.feed(markup)
+        self.assertTrue(parser.has_summary)
+        self.assertTrue(parser.has_search)
+        self.assertNotIn("searchDialog.showModal()", markup)
+
     def test_override_does_not_mutate_default(self):
         job = self.job()
         self.assertEqual(job.reports[0].effective_options(job.defaults).paper, 'tabloid')
