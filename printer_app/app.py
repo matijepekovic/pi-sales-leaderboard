@@ -31,6 +31,8 @@ from .job_map.repository import JobMapRepository
 from .job_map.service import JobMapService
 from .job_map.web import blueprint as job_map_blueprint
 from .https_adapter import GalleryHttpsAdapter
+from .report_printing_repository import ReportPrintingRepository
+from .report_printing_web import blueprint as report_printing_blueprint
 from .salesforce_sandbox.adapter import SalesforceCliAdapter
 from .salesforce_sandbox.service import SalesforceSandboxService
 from .salesforce_sandbox.web import blueprint as salesforce_sandbox_blueprint
@@ -96,6 +98,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     )
     app.extensions['salesforce_sandbox'] = salesforce_sandbox
     app.register_blueprint(salesforce_sandbox_blueprint(salesforce_sandbox))
+    app.register_blueprint(report_printing_blueprint(ReportPrintingRepository(db), salesforce_sandbox))
 
     job_map = JobMapService(JobMapRepository(db), salesforce_sandbox, render_mod_pdf)
     app.extensions['job_map'] = job_map
