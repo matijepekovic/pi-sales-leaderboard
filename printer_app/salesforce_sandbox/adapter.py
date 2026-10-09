@@ -235,6 +235,44 @@ class SalesforceCliAdapter:
         result = payload.get('result')
         return {} if result is None else result
 
+
+    def download_formatted_report(self, report_id):
+        """Request Salesforce's native formatted XLSX; never reconstruct it."""
+        import os
+        import tempfile
+        import zipfile
+        from pathlib import Path
+
+        if not re.fullmatch(r'00O[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?', str(report_id)):
+            raise ValueError('Invalid Salesforce report ID.')
+        with tempfile.TemporaryDirectory(prefix='printer-sf-report-') as folder:
+            destination = Path(folder) / 'report.xlsx'
+            command = [
+                self._executable, 'api', 'request', 'rest',
+                '/services/data/v60.0/analytics/reports/' + report_id,
+                '--header', 'Accept: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                '--stream-to-file', str(destination),
+                *self._target_args(),
+            ]
+            try:
+                result = self._runner(command, check=False, capture_output=True,
+                                      text=True, timeout=180)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise SalesforceAdapterError('Salesforce report export could not complete.') from exc
+            if result.returncode:
+                raise SalesforceAdapterError(
+                    'Salesforce formatted export failed: '
+                    + (_safe_cli_detail(result.stderr) or 'Check report export permissions.'))
+            if not destination.is_file() or destination.stat().st_size > 40 * 1024 * 1024:
+                raise SalesforceAdapterError('Salesforce export is missing or exceeds 40 MB.')
+            payload = destination.read_bytes()
+            if not zipfile.is_zipfile(destination):
+                raise SalesforceAdapterError('Salesforce did not return an XLSX file.')
+            with zipfile.ZipFile(destination) as archive:
+                if '[Content_Types].xml' not in archive.namelist() or 'xl/workbook.xml' not in archive.namelist():
+                    raise SalesforceAdapterError('Salesforce response is not an Excel workbook.')
+            return payload
+
     def _target_args(self):
         return ['--target-org', self.target_org]
 
