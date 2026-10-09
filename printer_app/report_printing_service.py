@@ -32,8 +32,7 @@ class ReportPrintingService:
             try:
                 options = report.effective_options(job.defaults)
                 payload = self.source.download_formatted_report(report.report_id)
-                directory = self.cfg.data_dir / 'report-printing' / job.job_id / str(abs(hash(identity)))
-                # Use a stable filename derived from report and occurrence, not hash()
+                # Stable path allows post-crash diagnosis without relying on Python hash().
                 import hashlib
                 directory = self.cfg.data_dir / 'report-printing' / hashlib.sha256(identity.encode()).hexdigest()
                 directory.mkdir(parents=True, exist_ok=True)
