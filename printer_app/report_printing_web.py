@@ -21,7 +21,8 @@ def blueprint(repository, source):
         except Exception as exc:
             reports, error = (), str(exc)
         return render_template('report_printing.html', jobs=jobs, selected=selected,
-                               available=reports, error=error, choices=CHOICES, numbers=NUMBERS)
+                               available=reports, error=error, choices=CHOICES, numbers=NUMBERS,
+                               runs=repository.runs())
 
     @bp.post('/save')
     def save():
