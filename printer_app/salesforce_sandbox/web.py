@@ -40,15 +40,34 @@ def blueprint(service):
     @bp.get('/salesforce-sandbox/reports')
     def reports_page():
         term = request.args.get('q', '')
+        folder = request.args.get('folder', '')
         reports, error = None, ''
-        if 'q' in request.args:
-            try:
-                reports = service.search_reports(term)
-            except ValueError as exc:
-                error = str(exc)
-            except SalesforceAdapterError as exc:
-                error = str(exc)
-        return render_template('salesforce_reports.html', term=term, reports=reports, error=error)
+        folders = ()
+        try:
+            all_reports = service.search_reports(term)
+            folders = tuple(sorted({r['folder'] or 'Unfiled' for r in all_reports}, key=str.casefold))
+            reports = tuple(r for r in all_reports if not folder or (r['folder'] or 'Unfiled') == folder)
+        except (ValueError, SalesforceAdapterError) as exc:
+            error = str(exc)
+        return render_template('salesforce_reports.html', term=term, folder=folder,
+                               folders=folders, reports=reports, error=error)
+
+    @bp.get('/salesforce-sandbox/reports/<report_id>/download')
+    def download_report(report_id):
+        try:
+            payload = service.download_formatted_report(report_id)
+        except ValueError:
+            return render_template('salesforce_sandbox_error.html', message='Invalid report ID.'), 400
+        except SalesforceAdapterError as exc:
+            return render_template('salesforce_sandbox_error.html', message=str(exc)), 502
+        response = send_file(
+            BytesIO(payload),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name='Salesforce-Report-' + report_id + '.xlsx',
+        )
+        response.headers['Cache-Control'] = 'no-store'
+        return response
 
     @bp.get('/salesforce-sandbox/explorer')
     def explorer_page():
