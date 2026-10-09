@@ -17,7 +17,10 @@
     <nav aria-label="Report folders" style="display:flex;flex-direction:column;gap:.65rem">
       <a href="{{ url_for('salesforce_sandbox.reports_page', q=term) }}" {% if not folder %}aria-current="page"{% endif %}>All reports</a>
       {% for name in folders %}
-      <a href="{{ url_for('salesforce_sandbox.reports_page', q=term, folder=name) }}" {% if folder == name %}aria-current="page" style="font-weight:700"{% endif %}>📁 {{ name }}</a>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:.4rem">
+        <a href="{{ url_for('salesforce_sandbox.reports_page', q=term, folder=name) }}" {% if folder == name %}aria-current="page" style="font-weight:700"{% endif %}>📁 {{ name }}</a>
+        <a href="{{ url_for('salesforce_sandbox.reports_page', q=term, folder=name, refresh=1) }}" title="Refresh {{ name }}" aria-label="Refresh {{ name }}">↻</a>
+      </div>
       {% endfor %}
     </nav>
   </aside>
