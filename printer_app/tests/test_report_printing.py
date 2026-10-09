@@ -51,6 +51,61 @@ class ReportPrintingTests(unittest.TestCase):
         self.assertTrue(parser.has_search)
         self.assertNotIn("searchDialog.showModal()", markup)
 
+    def test_folder_first_search_and_id_persistence(self):
+        from flask import Flask, g
+        from types import SimpleNamespace
+        from printer_app.report_printing_web import blueprint
+
+        records = [
+            {'id': '00O123456789012', 'name': 'Daily Sales', 'folder': 'Sales'},
+            {'id': '00O123456789013', 'name': 'Weekly Sales', 'folder': 'Sales'},
+            {'id': '00O123456789014', 'name': 'Operations', 'folder': 'Operations'},
+        ]
+
+        class Source:
+            def search_reports(self, term, **kwargs):
+                return [record for record in records if term.lower() in record['name'].lower()]
+
+        class Repository:
+            saved = None
+
+            def list(self):
+                return [self.saved] if self.saved else []
+
+            def runs(self):
+                return []
+
+            def save(self, job):
+                self.saved = job
+
+        repo = Repository()
+        app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[1] / 'templates'))
+        app.secret_key = 'test'
+        app.register_blueprint(blueprint(repo, Source()))
+
+        @app.before_request
+        def config():
+            g.printer_config = SimpleNamespace(timezone='UTC')
+
+        client = app.test_client()
+        self.assertEqual(client.get('/report-printing/search?q=Daily').status_code, 400)
+        folders = client.get('/report-printing/folders?q=sal').json
+        self.assertEqual(folders['folders'], ['Sales'])
+        found = client.get('/report-printing/search?folder=Sales&q=Daily').json
+        self.assertEqual([r['id'] for r in found['reports']], ['00O123456789012'])
+        self.assertEqual(client.get('/report-printing/search?folder=Operations').json['total'], 1)
+
+        response = client.post('/report-printing/save', data={
+            'name': 'Morning reports', 'time': '08:30', 'weekday': '0',
+            'enabled': 'on', 'report_id': '00O123456789012',
+            'report_name_00O123456789012': 'Daily Sales',
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(repo.saved.reports[0].report_id, '00O123456789012')
+        self.assertEqual(repo.saved.reports[0].name, 'Daily Sales')
+        self.assertEqual(repo.saved.hour, 8)
+        self.assertEqual(repo.saved.minute, 30)
+
     def test_override_does_not_mutate_default(self):
         job = self.job()
         self.assertEqual(job.reports[0].effective_options(job.defaults).paper, 'tabloid')
