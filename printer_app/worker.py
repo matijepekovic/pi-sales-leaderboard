@@ -353,6 +353,8 @@ def main():
         # The process lock still prevents a second worker from double-printing.
         background = ThreadPoolExecutor(max_workers=4, thread_name_prefix='printer-work')
         polling, preparing, cleaning, daily_mod_task = None, None, None, None
+        report_print_task = None
+        last_report_minute = None
         mod_reference_task = background.submit(mod_references.backfill_existing)
         map_sync_task = None
         next_poll, next_status = 0, 0
@@ -440,7 +442,17 @@ def main():
                         mod_reference_task = background.submit(mod_references.run_hourly)
                     if map_sync_task is None and map_sync.requested_due():
                         map_sync_task = background.submit(map_sync.run_requested)
-                    report_printing.run_due(datetime.fromtimestamp(now, timezone.utc))
+                    report_minute = int(now // 60)
+                    if report_print_task is not None and report_print_task.done():
+                        finished, report_print_task = report_print_task, None
+                        try:
+                            finished.result()
+                        except Exception:
+                            log.exception('Salesforce report printing failed')
+                    if report_print_task is None and report_minute != last_report_minute:
+                        last_report_minute = report_minute
+                        report_print_task = background.submit(
+                            report_printing.run_due, datetime.fromtimestamp(now, timezone.utc))
                     if daily_mod_task is None and daily_mod_sheets.due(now):
                         daily_mod_task = background.submit(daily_mod_sheets.run_due)
                     if cleaning is None and polling is None and retention.due(now):
