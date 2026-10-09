@@ -32,10 +32,10 @@
         <div class="report-search-controls"><input id="reportSearch" type="search" name="q" maxlength="100" value="{{ term }}" placeholder="Search reports"><button type="submit">Search</button></div>
       </form>
       <p class="muted">{{ total }} matching report(s){% if total >= 2000 %}; Salesforce returns at most 2,000 records, so narrow your search for additional reports{% endif %}</p>
-      <div class="table-wrap"><table><thead><tr><th>Report</th><th>Folder</th><th>Download</th></tr></thead>
+      <div class="table-wrap"><table><thead><tr><th>Report</th><th>Report ID</th><th>Folder</th><th>Download</th></tr></thead>
       <tbody>{% for report in reports %}
-      <tr><td>{{ report.name }}</td><td>{{ report.folder or 'Unfiled' }}</td><td><a href="{{ url_for('salesforce_sandbox.download_report', report_id=report.id) }}">Download XLSX</a></td></tr>
-      {% else %}<tr><td colspan="3">No reports found.</td></tr>{% endfor %}</tbody></table></div>
+      <tr><td>{{ report.name }}</td><td><code class="report-id">{{ report.id }}</code></td><td>{{ report.folder or 'Unfiled' }}</td><td><a href="{{ url_for('salesforce_sandbox.download_report', report_id=report.id) }}">Download XLSX</a></td></tr>
+      {% else %}<tr><td colspan="4">No reports found.</td></tr>{% endfor %}</tbody></table></div>
       {% if pages > 1 %}
       <nav class="report-pagination" aria-label="Report pages">
         {% if page > 1 %}<a href="{{ url_for('salesforce_sandbox.reports_page', q=term, folder=folder, page=page-1) }}">← Previous</a>{% endif %}
