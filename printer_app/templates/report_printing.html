@@ -38,19 +38,28 @@
 {% for key, spec in numbers.items() %}
 <label>{{ spec[1] }} <input type="number" name="{{ key }}" min="{{ spec[2] }}" max="{{ spec[3] }}" value="{{ selected.defaults.environment()[key] if selected else (1 if key == 'PRINT_COPIES' else 100) }}"></label>
 {% endfor %}
-<h3>Reports</h3>
-<p>Search reports and check the ones to include. Click ✎ to override individual print settings.</p>
-<label>Find report <input id="report-filter" type="search" placeholder="Search by report name or ID"></label>
-<div id="report-list" style="max-height:400px;overflow:auto">
-{% for report in available %}
-{% set chosen = (selected.reports | selectattr('report_id', 'equalto', report.id) | list | first) if selected else none %}
-<div class="report-row" data-search="{{ (report.name ~ ' ' ~ report.id)|lower }}">
-<label><input type="checkbox" name="report_id" value="{{ report.id }}" {% if chosen %}checked{% endif %}>{{ report.name }} <small>{{ report.id }}</small></label>
-<button type="button" class="edit-override" data-id="{{ report.id }}" aria-label="Edit print settings for {{ report.name }}">✎</button>
-<input type="hidden" data-override="{{ report.id }}" id="override_{{ report.id }}" value="{{ chosen.overrides|tojson|forceescape if chosen else '{}' }}">
+<h3>Reports in this job</h3>
+<p>Only reports added to this job appear here.</p>
+<div id="report-list">
+{% if selected %}{% for report in selected.reports %}
+<div class="report-row" data-id="{{ report.report_id }}">
+<label><input type="checkbox" name="report_id" value="{{ report.report_id }}" checked> {{ report.name }} <small>{{ report.report_id }}</small></label>
+<input type="hidden" name="report_name_{{ report.report_id }}" value="{{ report.name }}">
+<button type="button" class="edit-override" data-id="{{ report.report_id }}">✎ Edit</button>
+<input type="hidden" data-override="{{ report.report_id }}" id="override_{{ report.report_id }}" value="{{ report.overrides|tojson|forceescape }}">
 </div>
-{% endfor %}
+{% endfor %}{% endif %}
 </div>
+<button type="button" id="add-report">+ Add report</button>
+<dialog id="search-dialog">
+<h3>Find a Salesforce report</h3>
+<label>Search by name <input id="report-search" type="search" maxlength="100" placeholder="Report name"></label>
+<button type="button" id="run-search">Search</button>
+<label>Folder <select id="report-folder"><option value="">All folders</option></select></label>
+<p id="search-status"></p>
+<div id="search-results" style="max-height:350px;overflow:auto"></div>
+<button type="button" id="search-close">Close</button>
+</dialog>
 <dialog id="override-dialog">
 <h3>Report-specific print settings</h3>
 <p>Leave a setting as Inherit to use the printing job's defaults.</p>
@@ -69,11 +78,54 @@ const choices = {{ choices|tojson }};
 const numbers = {{ numbers|tojson }};
 const dialog = document.getElementById('override-dialog');
 let activeId = null;
-document.getElementById('report-filter').addEventListener('input', e => {
-  const q = e.target.value.trim().toLowerCase();
-  document.querySelectorAll('.report-row').forEach(row => row.hidden = !row.dataset.search.includes(q));
-});
-document.querySelectorAll('.edit-override').forEach(button => button.addEventListener('click', () => {
+const searchDialog = document.getElementById('search-dialog');
+const results = document.getElementById('search-results');
+const searchStatus = document.getElementById('search-status');
+document.getElementById('add-report').onclick = () => searchDialog.showModal();
+document.getElementById('search-close').onclick = () => searchDialog.close();
+async function findReports() {
+  const q = document.getElementById('report-search').value.trim();
+  const folder = document.getElementById('report-folder').value;
+  if (!q && !folder) { searchStatus.textContent = 'Enter a report name or choose a folder.'; return; }
+  searchStatus.textContent = 'Searching…';
+  results.replaceChildren();
+  try {
+    const response = await fetch({{ url_for('report_printing.search')|tojson }} + '?q=' + encodeURIComponent(q) + '&folder=' + encodeURIComponent(folder));
+    const data = await response.json();
+    if (!response.ok) throw Error(data.error || 'Search failed');
+    const folderSelect = document.getElementById('report-folder');
+    const prior = folderSelect.value;
+    folderSelect.replaceChildren(new Option('All folders', ''));
+    for (const name of data.folders) folderSelect.add(new Option(name, name));
+    folderSelect.value = prior;
+    searchStatus.textContent = data.total + ' matching reports' + (data.total > 50 ? ' (first 50 shown)' : '');
+    for (const report of data.reports) {
+      const row = document.createElement('div');
+      const add = document.createElement('button');
+      add.type = 'button'; add.textContent = '+ Add';
+      add.onclick = () => { addSelectedReport(report); add.disabled = true; add.textContent = 'Added'; };
+      row.append(add, document.createTextNode(' ' + report.name + ' (' + report.folder + ')'));
+      results.append(row);
+    }
+  } catch (err) { searchStatus.textContent = err.message; }
+}
+document.getElementById('run-search').onclick = findReports;
+document.getElementById('report-folder').onchange = findReports;
+document.getElementById('report-search').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); findReports(); } });
+function addSelectedReport(report) {
+  if (document.querySelector('.report-row[data-id="' + report.id + '"]')) return;
+  const row = document.createElement('div'); row.className = 'report-row'; row.dataset.id = report.id;
+  const label = document.createElement('label');
+  const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.name = 'report_id'; checkbox.value = report.id; checkbox.checked = true;
+  label.append(checkbox, document.createTextNode(' ' + report.name + ' (' + report.id + ')'));
+  const name = document.createElement('input'); name.type = 'hidden'; name.name = 'report_name_' + report.id; name.value = report.name;
+  const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'edit-override'; edit.dataset.id = report.id; edit.textContent = '✎ Edit';
+  const override = document.createElement('input'); override.type = 'hidden'; override.dataset.override = report.id; override.id = 'override_' + report.id; override.value = '{}';
+  row.append(label, name, edit, override); document.getElementById('report-list').append(row);
+}
+document.getElementById('report-list').addEventListener('click', event => {
+  const button = event.target.closest('.edit-override');
+  if (!button) return;
   activeId = button.dataset.id;
   const values = JSON.parse(document.getElementById('override_' + activeId).value);
   const fields = document.getElementById('override-fields');
@@ -103,7 +155,7 @@ document.querySelectorAll('.edit-override').forEach(button => button.addEventLis
     label.append(input); fields.append(label);
   }
   dialog.showModal();
-}));
+});
 document.getElementById('override-save').addEventListener('click', () => {
   const values = {};
   dialog.querySelectorAll('[data-key]').forEach(field => {

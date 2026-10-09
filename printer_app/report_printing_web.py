@@ -2,7 +2,7 @@
 import json
 import uuid
 
-from flask import Blueprint, g, redirect, render_template, request, url_for
+from flask import Blueprint, g, jsonify, redirect, render_template, request, url_for
 
 from .print_options import PrintOptions, CHOICES, NUMBERS
 from .report_printing_contract import ReportPrintingJob, ScheduledReport
@@ -15,14 +15,24 @@ def blueprint(repository, source):
     def page():
         jobs = repository.list()
         selected = next((j for j in jobs if j.job_id == request.args.get('edit')), None)
-        try:
-            reports = source.search_reports('')
-            error = ''
-        except Exception as exc:
-            reports, error = (), str(exc)
         return render_template('report_printing.html', jobs=jobs, selected=selected,
-                               available=reports, error=error, choices=CHOICES, numbers=NUMBERS,
-                               runs=repository.runs())
+                               choices=CHOICES, numbers=NUMBERS, runs=repository.runs())
+
+    @bp.get('/search')
+    def search():
+        term = request.args.get('q', '').strip()
+        folder = request.args.get('folder', '').strip()
+        if len(term) > 100 or len(folder) > 200:
+            return jsonify(error='Invalid search'), 400
+        if not term and not folder:
+            return jsonify(reports=[], folders=[], total=0)
+        try:
+            all_reports = source.search_reports(term, folder=folder)
+            folders = sorted({r['folder'] or 'Unfiled' for r in all_reports}, key=str.casefold)
+            matched = [r for r in all_reports if not folder or (r['folder'] or 'Unfiled') == folder]
+            return jsonify(reports=matched[:50], folders=folders, total=len(matched))
+        except Exception:
+            return jsonify(error='Report search unavailable'), 503
 
     @bp.post('/save')
     def save():
@@ -31,16 +41,19 @@ def blueprint(repository, source):
             options = PrintOptions().apply({key: request.form[key] for key in (*CHOICES, *NUMBERS)
                                            if key in request.form})
             selected = request.form.getlist('report_id')
-            catalog = {r['id']: r['name'] for r in source.search_reports('')}
-            if not selected or any(r not in catalog for r in selected):
-                raise ValueError('Select valid Salesforce reports.')
+            if not selected or len(selected) != len(set(selected)):
+                raise ValueError('Select reports without duplicates.')
+            previous = {r.report_id: r.name for r in old.reports} if old else {}
             reports = []
             for report_id in selected:
                 raw = request.form.get('override_' + report_id, '{}')
                 overrides = json.loads(raw)
                 if not isinstance(overrides, dict):
                     raise ValueError('Invalid report overrides')
-                reports.append(ScheduledReport(report_id, catalog[report_id], overrides))
+                name = previous.get(report_id) or request.form.get('report_name_' + report_id, '')
+                if not name or len(name) > 255 or not report_id.startswith('00O'):
+                    raise ValueError('Invalid selected report.')
+                reports.append(ScheduledReport(report_id, name, overrides))
             hour, minute = map(int, request.form['time'].split(':'))
             job = ReportPrintingJob(
                 job_id=old.job_id if old else uuid.uuid4().hex,
