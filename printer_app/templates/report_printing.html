@@ -47,7 +47,7 @@
 <div class="report-row" data-search="{{ (report.name ~ ' ' ~ report.id)|lower }}">
 <label><input type="checkbox" name="report_id" value="{{ report.id }}" {% if chosen %}checked{% endif %}>{{ report.name }} <small>{{ report.id }}</small></label>
 <button type="button" class="edit-override" data-id="{{ report.id }}" aria-label="Edit print settings for {{ report.name }}">✎</button>
-<input type="hidden" name="override_{{ report.id }}" id="override_{{ report.id }}" value="{{ chosen.overrides|tojson|forceescape if chosen else '{}' }}">
+<input type="hidden" data-override="{{ report.id }}" id="override_{{ report.id }}" value="{{ chosen.overrides|tojson|forceescape if chosen else '{}' }}">
 </div>
 {% endfor %}
 </div>
@@ -110,5 +110,12 @@ document.getElementById('override-save').addEventListener('click', () => {
   dialog.close();
 });
 document.getElementById('override-cancel').addEventListener('click', () => dialog.close());
+// Only submit selected report overrides, respecting the application's form limit.
+document.getElementById('job-form').addEventListener('submit', () => {
+  document.querySelectorAll('[data-override]').forEach(input => {
+    const checked = document.querySelector('input[name="report_id"][value="' + input.dataset.override + '"]').checked;
+    if (checked) input.name = 'override_' + input.dataset.override;
+  });
+});
 </script>
 {% endblock %}
