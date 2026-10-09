@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Salesforce Reports · Print Control{% endblock %}
+{% block content %}
+<div class="heading"><div><p class="eyebrow">SALESFORCE</p><h1>Reports</h1></div></div>
+<p>Search reports accessible to the existing Salesforce account, including your private reports. This page is read-only and does not schedule or print anything.</p>
+<form method="get" action="{{ url_for('salesforce_sandbox.reports_page') }}">
+  <label for="reportSearch">Report name</label>
+  <input id="reportSearch" type="search" name="q" maxlength="100" value="{{ term }}" placeholder="Search report names">
+  <button type="submit">Search reports</button>
+</form>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% if reports is not none %}
+<p>{{ reports|length }} report(s) returned{% if reports|length == 100 %} (first 100; narrow your search){% endif %}.</p>
+<div class="table-wrap"><table><thead><tr><th>Report</th><th>Folder</th><th>Report ID</th></tr></thead><tbody>
+{% for report in reports %}<tr><td>{{ report.name }}</td><td>{{ report.folder }}</td><td><code>{{ report.id }}</code></td></tr>{% endfor %}
+</tbody></table></div>
+{% endif %}
+<p class="muted">Formatted Excel export has not yet been verified against this Salesforce org. No reconstructed files or unverified export URLs are used.</p>
+{% endblock %}

@@ -7,6 +7,7 @@ import json
 from flask import Blueprint, g, jsonify, render_template, request, send_file
 
 from ..mod_sheets.pdf_renderer import render_mod_pdf
+from .adapter import SalesforceAdapterError
 
 
 def _bool_arg(name, default=False):
@@ -35,6 +36,19 @@ def blueprint(service):
     @bp.get('/salesforce-sandbox')
     def page():
         return render_template('salesforce_sandbox.html', snapshot=service.portal())
+
+    @bp.get('/salesforce-sandbox/reports')
+    def reports_page():
+        term = request.args.get('q', '')
+        reports, error = None, ''
+        if 'q' in request.args:
+            try:
+                reports = service.search_reports(term)
+            except ValueError as exc:
+                error = str(exc)
+            except SalesforceAdapterError as exc:
+                error = str(exc)
+        return render_template('salesforce_reports.html', term=term, reports=reports, error=error)
 
     @bp.get('/salesforce-sandbox/explorer')
     def explorer_page():
