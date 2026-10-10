@@ -18,19 +18,31 @@ def blueprint(repository, source):
         return render_template('report_printing.html', jobs=jobs, selected=selected,
                                choices=CHOICES, numbers=NUMBERS, runs=repository.runs())
 
+    @bp.get('/folders')
+    def folders():
+        """Search folder names before opening any folder."""
+        term = request.args.get('q', '').strip()
+        if len(term) > 100:
+            return jsonify(error='Invalid folder search'), 400
+        try:
+            reports = source.search_reports('')
+            names = sorted({r['folder'] or 'Unfiled' for r in reports}, key=str.casefold)
+            matched = [name for name in names if term.casefold() in name.casefold()]
+            return jsonify(folders=matched, total=len(matched))
+        except Exception:
+            return jsonify(error='Folder search unavailable'), 503
+
     @bp.get('/search')
     def search():
+        """Search report names only inside an explicitly selected folder."""
         term = request.args.get('q', '').strip()
         folder = request.args.get('folder', '').strip()
-        if len(term) > 100 or len(folder) > 200:
-            return jsonify(error='Invalid search'), 400
-        if not term and not folder:
-            return jsonify(reports=[], folders=[], total=0)
+        if len(term) > 100 or len(folder) > 200 or not folder:
+            return jsonify(error='Choose a folder first'), 400
         try:
             all_reports = source.search_reports(term, folder=folder)
-            folders = sorted({r['folder'] or 'Unfiled' for r in all_reports}, key=str.casefold)
-            matched = [r for r in all_reports if not folder or (r['folder'] or 'Unfiled') == folder]
-            return jsonify(reports=matched[:50], folders=folders, total=len(matched))
+            matched = [r for r in all_reports if (r['folder'] or 'Unfiled') == folder]
+            return jsonify(reports=matched[:50], total=len(matched))
         except Exception:
             return jsonify(error='Report search unavailable'), 503
 
