@@ -6,3 +6,16 @@
 .picker-item{display:block;width:100%;text-align:left;padding:10px;border:0;border-radius:6px;background:transparent;cursor:pointer}
 .picker-item:hover:not(:disabled){background:#e9f2fa}
 .picker-item:disabled{opacity:.6;cursor:default}
+#override-dialog{width:min(720px,90vw);max-height:85vh;overflow:auto;box-sizing:border-box}
+#override-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+#override-fields label,#notes-editor label{display:block}
+#notes-editor{margin:18px 0;padding-top:12px;border-top:1px solid #dbe3eb}
+#notes-editor [hidden]{display:none}
+.notes-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:12px}
+.notes-controls input{display:block;max-width:120px}
+#notes-columns{max-height:250px;overflow:auto;margin-top:10px}
+.notes-column{display:flex;align-items:center;gap:6px;padding:5px 0}
+.notes-column label{flex:1;overflow-wrap:anywhere}
+.notes-column small{color:#9a3412}
+#notes-status{min-height:1.5em;overflow-wrap:anywhere}
+#notes-preview-link{display:inline-block;margin:8px}
