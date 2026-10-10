@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Salesforce Report Printing{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='report_printing.css') }}">{% endblock %}
 {% block content %}
 <h1>Salesforce Report Printing</h1>
 <p>Create a scheduled printing job. Every report inherits the job's print settings unless edited.</p>
@@ -67,15 +68,7 @@
 </section>
 </div>
 </details>
-<style>
-.report-picker{max-width:620px;padding:12px;border:1px solid #dbe3eb;border-radius:10px;margin:10px 0}
-.report-picker [hidden]{display:none}
-.report-picker input{width:100%;box-sizing:border-box}
-.picker-list{display:flex;flex-direction:column;gap:3px;max-height:350px;overflow-y:auto}
-.picker-item{display:block;width:100%;text-align:left;padding:10px;border:0;border-radius:6px;background:transparent;cursor:pointer}
-.picker-item:hover:not(:disabled){background:#e9f2fa}
-.picker-item:disabled{opacity:.6;cursor:default}
-</style>
+
 <dialog id="override-dialog">
 <h3>Report-specific print settings</h3>
 <p>Leave a setting as Inherit to use the printing job's defaults.</p>
@@ -89,154 +82,6 @@
 <section><h2>Recent scheduled report runs</h2><table><thead><tr><th>Run</th><th>Status</th><th>Queue job</th><th>Error</th></tr></thead><tbody>
 {% for run in runs %}<tr><td>{{ run.identity }}</td><td>{{ run.state }}</td><td>{{ run.queued_job_id or '—' }}</td><td>{{ run.error }}</td></tr>
 {% else %}<tr><td colspan="4">No runs yet.</td></tr>{% endfor %}</tbody></table></section>
-<script>
-const choices = {{ choices|tojson }};
-const numbers = {{ numbers|tojson }};
-const dialog = document.getElementById('override-dialog');
-let activeId = null;
-const picker = document.getElementById('search-dialog');
-const folderPanel = document.getElementById('picker-folders');
-const reportPanel = document.getElementById('picker-reports');
-const folderResults = document.getElementById('folder-results');
-const folderStatus = document.getElementById('folder-status');
-const results = document.getElementById('search-results');
-const searchStatus = document.getElementById('search-status');
-let folders = [];
-let reports = [];
-let folderRequest = 0;
-let reportRequest = 0;
-function filterFolders() {
-  folderResults.replaceChildren();
-  folderStatus.textContent = folders.length + ' folders';
-  for (const folder of folders) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'picker-item';
-    button.textContent = '📁 ' + folder;
-    button.onclick = () => openFolder(folder);
-    folderResults.append(button);
-  }
-}
-async function loadFolders() {
-  const requestId = ++folderRequest;
-  folderStatus.textContent = 'Loading folders…';
-  folderResults.replaceChildren();
-  try {
-    const response = await fetch({{ url_for('report_printing.folders')|tojson }});
-    const data = await response.json();
-    if (!response.ok) throw Error(data.error || 'Folder lookup failed');
-    if (requestId !== folderRequest) return;
-    folders = data.folders;
-    filterFolders();
-  } catch (error) {
-    if (requestId === folderRequest) folderStatus.textContent = error.message;
-  }
-}
-function filterReports() {
-  results.replaceChildren();
-  searchStatus.textContent = reports.length + ' reports';
-  for (const report of reports) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'picker-item';
-    const added = Array.from(document.querySelectorAll('.report-row')).some(row => row.dataset.id === report.id);
-    button.textContent = (added ? '✓ ' : '+ ') + report.name;
-    button.disabled = added;
-    button.onclick = () => { addSelectedReport(report); filterReports(); };
-    results.append(button);
-  }
-}
-async function openFolder(folder) {
-  const requestId = ++reportRequest;
-  folderPanel.hidden = true;
-  reportPanel.hidden = false;
-  document.getElementById('selected-folder').textContent = folder;
-  results.replaceChildren();
-  searchStatus.textContent = 'Loading reports…';
-  try {
-    const response = await fetch({{ url_for('report_printing.search')|tojson }} + '?folder=' + encodeURIComponent(folder));
-    const data = await response.json();
-    if (!response.ok) throw Error(data.error || 'Report lookup failed');
-    if (requestId !== reportRequest) return;
-    reports = data.reports;
-    filterReports();
-    if (data.total > reports.length) searchStatus.textContent += ' (first ' + reports.length + ' shown)';
-  } catch (error) {
-    if (requestId === reportRequest) searchStatus.textContent = error.message;
-  }
-}
-picker.addEventListener('toggle', () => {
-  if (!picker.open) return;
-  ++reportRequest;
-  folderPanel.hidden = false;
-  reportPanel.hidden = true;
-  loadFolders();
-});
-document.getElementById('back-to-folders').onclick = () => {
-  ++reportRequest;
-  reportPanel.hidden = true;
-  folderPanel.hidden = false;
-  filterFolders();
-};
-function addSelectedReport(report) {
-  if (Array.from(document.querySelectorAll('.report-row')).some(row => row.dataset.id === report.id)) return;
-  const row = document.createElement('div'); row.className = 'report-row'; row.dataset.id = report.id;
-  const label = document.createElement('label');
-  const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.name = 'report_id'; checkbox.value = report.id; checkbox.checked = true;
-  label.append(checkbox, document.createTextNode(' ' + report.name + ' (' + report.id + ')'));
-  const name = document.createElement('input'); name.type = 'hidden'; name.name = 'report_name_' + report.id; name.value = report.name;
-  const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'edit-override'; edit.dataset.id = report.id; edit.textContent = '✎ Edit';
-  const override = document.createElement('input'); override.type = 'hidden'; override.dataset.override = report.id; override.id = 'override_' + report.id; override.value = '{}';
-  row.append(label, name, edit, override); document.getElementById('report-list').append(row);
-}
-document.getElementById('report-list').addEventListener('click', event => {
-  const button = event.target.closest('.edit-override');
-  if (!button) return;
-  activeId = button.dataset.id;
-  const values = JSON.parse(document.getElementById('override_' + activeId).value);
-  const fields = document.getElementById('override-fields');
-  fields.replaceChildren();
-  for (const [key, spec] of Object.entries(choices)) {
-    const label = document.createElement('label');
-    label.textContent = spec[1] + ' ';
-    const select = document.createElement('select');
-    select.dataset.key = key;
-    for (const [value, name] of [['', 'Inherit job default'], ...spec[2]]) {
-      const option = new Option(name, value);
-      option.selected = (values[key] || '') === value;
-      select.add(option);
-    }
-    label.append(select);
-    fields.append(label);
-  }
-  for (const [key, spec] of Object.entries(numbers)) {
-    const label = document.createElement('label');
-    label.textContent = spec[1] + ' ';
-    const input = document.createElement('input');
-    input.type = 'number';
-    input.min = spec[2]; input.max = spec[3];
-    input.placeholder = 'Inherit';
-    input.dataset.key = key;
-    input.value = values[key] || '';
-    label.append(input); fields.append(label);
-  }
-  dialog.showModal();
-});
-document.getElementById('override-save').addEventListener('click', () => {
-  const values = {};
-  dialog.querySelectorAll('[data-key]').forEach(field => {
-    if (field.value !== '') values[field.dataset.key] = field.value;
-  });
-  document.getElementById('override_' + activeId).value = JSON.stringify(values);
-  dialog.close();
-});
-document.getElementById('override-cancel').addEventListener('click', () => dialog.close());
-// Only submit selected report overrides, respecting the application's form limit.
-document.getElementById('job-form').addEventListener('submit', () => {
-  document.querySelectorAll('[data-override]').forEach(input => {
-    const checked = document.querySelector('input[name="report_id"][value="' + input.dataset.override + '"]').checked;
-    if (checked) input.name = 'override_' + input.dataset.override;
-  });
-});
-</script>
+<div id="report-printing-config" data-choices='{{ choices|tojson|forceescape }}' data-numbers='{{ numbers|tojson|forceescape }}' data-folders-url="{{ url_for('report_printing.folders') }}" data-reports-url="{{ url_for('report_printing.search') }}"></div>
+<script src="{{ url_for('static', filename='report_printing.js') }}" defer></script>
 {% endblock %}

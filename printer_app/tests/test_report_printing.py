@@ -168,9 +168,10 @@ class ReportPrintingTests(unittest.TestCase):
                 self.saved = job
 
         repo = Repository()
-        app = Flask(__name__)
+        printer_dir = Path(__file__).resolve().parents[1]
+        app = Flask(__name__, static_folder=str(printer_dir / 'static'), static_url_path='/static')
         app.secret_key = 'test-secret'
-        template_dir = Path(__file__).resolve().parents[1] / 'templates'
+        template_dir = printer_dir / 'templates'
         app.jinja_loader = ChoiceLoader([
             DictLoader({'base.html': '<!doctype html><html><body>{% block content %}{% endblock %}</body></html>'}),
             FileSystemLoader(str(template_dir)),
@@ -181,6 +182,12 @@ class ReportPrintingTests(unittest.TestCase):
         def setup_request():
             g.printer_config = SimpleNamespace(timezone='UTC')
             session.setdefault('csrf', 'browser-token')
+
+        @app.after_request
+        def real_security_policy(response):
+            response.headers['Content-Security-Policy'] = ("default-src 'self'; script-src 'self' https://unpkg.com; "
+                "style-src 'self' https://unpkg.com; img-src 'self' data:; object-src 'none'")
+            return response
 
         server = make_server('127.0.0.1', 0, app, threaded=True)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -195,6 +202,7 @@ class ReportPrintingTests(unittest.TestCase):
                         errors = []
                         page.on('pageerror', lambda error: errors.append(str(error)))
                         page.goto(origin + '/report-printing/')
+                        expect(page.locator('script[src*="report_printing.js"]')).to_have_count(1)
                         expect(page.locator('#folder-results')).not_to_be_visible()
                         page.locator('#add-report').click()
                         expect(page.locator('#folder-results .picker-item')).to_have_count(2)
