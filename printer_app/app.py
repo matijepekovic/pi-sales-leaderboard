@@ -200,7 +200,8 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             origin = request.headers.get('Origin')
             if (origin and normalized_origin(origin) != effective_request_origin()) or request.headers.get('Sec-Fetch-Site') == 'cross-site':
                 abort(403, 'Cross-site changes are not allowed')
-            if any(len(request.form.getlist(key)) != 1 for key in request.form):
+            repeated = {'weekday', 'report_id'} if request.endpoint == 'report_printing.save' else set()
+            if any(len(request.form.getlist(key)) != 1 for key in request.form if key not in repeated):
                 abort(400, 'Duplicate form field')
             supplied = request.form.get('csrf', '')
             if not hmac.compare_digest(str(session['csrf']).encode(), supplied.encode()):
