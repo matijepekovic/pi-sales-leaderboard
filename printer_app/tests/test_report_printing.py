@@ -151,9 +151,10 @@ class ReportPrintingTests(unittest.TestCase):
                     search = page.locator('#report-search')
                     expect(search).not_to_be_visible()
                     page.locator('#add-report').click()
-                    expect(search).to_be_visible()
-                    search.fill('Daily Sales')
-                    expect(search).to_have_value('Daily Sales')
+                    expect(page.locator('#folder-search')).to_be_visible()
+                    expect(search).to_be_disabled()
+                    page.locator('#folder-search').fill('Sales')
+                    expect(page.locator('#folder-search')).to_have_value('Sales')
                 finally:
                     browser.close()
 
