@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .print_options import PrintOptions, FIELDS
+from .report_notes_contract import ReportNotesOptions
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,11 @@ class ScheduledReport:
     report_id: str
     name: str
     overrides: dict[str, str]
+    notes: ReportNotesOptions = ReportNotesOptions()
+
+    def __post_init__(self):
+        if not isinstance(self.notes, ReportNotesOptions):
+            raise ValueError('Invalid report notes settings.')
 
     def effective_options(self, defaults: PrintOptions) -> PrintOptions:
         return defaults.apply(self.overrides)

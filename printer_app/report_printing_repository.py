@@ -3,6 +3,7 @@ import json
 import uuid
 
 from .print_options import PrintOptions
+from .report_notes_contract import ReportNotesOptions
 from .report_printing_contract import ReportPrintingJob, ScheduledReport
 
 
@@ -32,8 +33,8 @@ class ReportPrintingRepository:
             hour=int(data['hour']), minute=int(data['minute']),
             weekdays=tuple(data['weekdays']),
             defaults=PrintOptions(**data['defaults']),
-            reports=tuple(ScheduledReport(r['report_id'], r['name'], r['overrides'])
-                          for r in data['reports']),
+            reports=tuple(ScheduledReport(r['report_id'], r['name'], r['overrides'],
+                          ReportNotesOptions.from_dict(r.get('notes', {}))) for r in data['reports']),
             enabled=data['enabled'],
         )
 
@@ -42,8 +43,8 @@ class ReportPrintingRepository:
         return dict(job_id=job.job_id, name=job.name, timezone=job.timezone,
                     hour=job.hour, minute=job.minute, weekdays=list(job.weekdays),
                     defaults=job.defaults.snapshot(), enabled=job.enabled,
-                    reports=[dict(report_id=r.report_id, name=r.name, overrides=r.overrides)
-                             for r in job.reports])
+                    reports=[dict(report_id=r.report_id, name=r.name, overrides=r.overrides,
+                                  notes=r.notes.snapshot()) for r in job.reports])
 
     def save(self, job):
         payload = json.dumps(self.encode(job))

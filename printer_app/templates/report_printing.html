@@ -48,6 +48,7 @@
 <input type="hidden" name="report_name_{{ report.report_id }}" value="{{ report.name }}">
 <button type="button" class="edit-override" data-id="{{ report.report_id }}">✎ Edit</button>
 <input type="hidden" data-override="{{ report.report_id }}" id="override_{{ report.report_id }}" value="{{ report.overrides|tojson|forceescape }}">
+<input type="hidden" data-notes="{{ report.report_id }}" id="notes_{{ report.report_id }}" value="{{ report.notes.snapshot()|tojson|forceescape }}">
 </div>
 {% endfor %}{% endif %}
 </div>
@@ -68,20 +69,39 @@
 </section>
 </div>
 </details>
-
+<button type="submit">Save printing job</button>
+</form>
 <dialog id="override-dialog">
 <h3>Report-specific print settings</h3>
 <p>Leave a setting as Inherit to use the printing job's defaults.</p>
 <div id="override-fields"></div>
-<button type="button" id="override-save">Save overrides</button>
+<section id="notes-editor">
+<h3>Handwriting notes overlay</h3>
+<label><input type="checkbox" id="notes-enabled"> Print selected columns below the table</label>
+<p>The start follows the table's actual bottom edge on each page. If needed, the report and notes shrink together to fit, without adding pages or hiding jobs.</p>
+<fieldset id="notes-fields" disabled>
+<legend>Notes layout</legend>
+<div class="notes-controls">
+<label>Text size (pt) <input id="notes-font-size" type="number" min="6" max="36" step="0.5" required value="12"></label>
+<label>Blank space after each job (mm) <input id="notes-row-spacing" type="number" min="0" max="100" step="0.5" required value="8"></label>
+<label>Gap below table (mm) <input id="notes-table-gap" type="number" min="0" max="50" step="0.5" required value="5"></label>
+</div>
+<button type="button" id="notes-load-columns">Load columns from this report</button>
+<p>Select the fields to repeat. Use ↑ and ↓ to set their printed order. An Updates area is left for your pen.</p>
+<div id="notes-columns"></div>
+</fieldset>
+<button type="button" id="notes-preview">Build PDF preview</button>
+<a id="notes-preview-link" target="_blank" rel="noopener" hidden>Open PDF preview</a>
+<p id="notes-status" role="status" aria-live="polite"></p>
+</section>
+<p>After closing this window, click Save printing job to keep your changes.</p>
+<button type="button" id="override-save">Save report settings</button>
 <button type="button" id="override-cancel">Cancel</button>
 </dialog>
-<button type="submit">Save printing job</button>
-</form>
 </section>
 <section><h2>Recent scheduled report runs</h2><table><thead><tr><th>Run</th><th>Status</th><th>Queue job</th><th>Error</th></tr></thead><tbody>
 {% for run in runs %}<tr><td>{{ run.identity }}</td><td>{{ run.state }}</td><td>{{ run.queued_job_id or '—' }}</td><td>{{ run.error }}</td></tr>
 {% else %}<tr><td colspan="4">No runs yet.</td></tr>{% endfor %}</tbody></table></section>
-<div id="report-printing-config" data-choices='{{ choices|tojson|forceescape }}' data-numbers='{{ numbers|tojson|forceescape }}' data-folders-url="{{ url_for('report_printing.folders') }}" data-reports-url="{{ url_for('report_printing.search') }}"></div>
-<script src="{{ url_for('static', filename='report_printing.js') }}" defer></script>
+<div id="report-printing-config" data-choices='{{ choices|tojson|forceescape }}' data-numbers='{{ numbers|tojson|forceescape }}' data-folders-url="{{ url_for('report_printing.folders') }}" data-reports-url="{{ url_for('report_printing.search') }}" data-preview-url="{{ url_for('report_printing.preview') }}"></div>
+<script type="module" src="{{ url_for('static', filename='report_printing.js') }}" defer></script>
 {% endblock %}

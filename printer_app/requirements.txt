@@ -6,3 +6,4 @@ pypdf>=6.1,<7
 reportlab>=4.4.3,<5
 defusedxml>=0.7.1,<1
 pycups>=2.0.4,<3
+pdfplumber>=0.11.7,<0.12

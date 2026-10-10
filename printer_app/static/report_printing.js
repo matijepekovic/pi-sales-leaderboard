@@ -1,5 +1,7 @@
 'use strict';
 
+import {createNotesEditor} from './report_notes_editor.js';
+
 const choices = JSON.parse(document.getElementById('report-printing-config').dataset.choices);
 const numbers = JSON.parse(document.getElementById('report-printing-config').dataset.numbers);
 const dialog = document.getElementById('override-dialog');
@@ -97,7 +99,8 @@ function addSelectedReport(report) {
   const name = document.createElement('input'); name.type = 'hidden'; name.name = 'report_name_' + report.id; name.value = report.name;
   const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'edit-override'; edit.dataset.id = report.id; edit.textContent = '✎ Edit';
   const override = document.createElement('input'); override.type = 'hidden'; override.dataset.override = report.id; override.id = 'override_' + report.id; override.value = '{}';
-  row.append(label, name, edit, override); document.getElementById('report-list').append(row);
+  const notes = document.createElement('input'); notes.type = 'hidden'; notes.dataset.notes = report.id; notes.id = 'notes_' + report.id; notes.value = '{}';
+  row.append(label, name, edit, override, notes); document.getElementById('report-list').append(row);
 }
 document.getElementById('report-list').addEventListener('click', event => {
   const button = event.target.closest('.edit-override');
@@ -130,21 +133,44 @@ document.getElementById('report-list').addEventListener('click', event => {
     input.value = values[key] || '';
     label.append(input); fields.append(label);
   }
+  notesEditor.open(activeId, JSON.parse(document.getElementById('notes_' + activeId).value));
   dialog.showModal();
 });
 document.getElementById('override-save').addEventListener('click', () => {
+  const inputs = Array.from(dialog.querySelectorAll('[data-key]'));
+  if (inputs.some(field => !field.reportValidity())) return;
+  const notes = notesEditor.read();
+  if (!notes) return;
   const values = {};
-  dialog.querySelectorAll('[data-key]').forEach(field => {
-    if (field.value !== '') values[field.dataset.key] = field.value;
-  });
+  inputs.forEach(field => { if (field.value !== '') values[field.dataset.key] = field.value; });
   document.getElementById('override_' + activeId).value = JSON.stringify(values);
+  document.getElementById('notes_' + activeId).value = JSON.stringify(notes);
   dialog.close();
 });
 document.getElementById('override-cancel').addEventListener('click', () => dialog.close());
-// Only submit selected report overrides, respecting the application's form limit.
+// Only submit selected report settings, respecting the application's form limit.
 document.getElementById('job-form').addEventListener('submit', () => {
-  document.querySelectorAll('[data-override]').forEach(input => {
-    const checked = document.querySelector('input[name="report_id"][value="' + input.dataset.override + '"]').checked;
-    if (checked) input.name = 'override_' + input.dataset.override;
+  document.querySelectorAll('.report-row').forEach(row => {
+    const checked = row.querySelector('input[name="report_id"]').checked;
+    for (const key of ['override', 'notes']) {
+      const input = row.querySelector('[data-' + key + ']');
+      if (checked) input.name = key + '_' + row.dataset.id;
+      else input.removeAttribute('name');
+    }
   });
+});
+
+function effectivePreviewOptions() {
+  const values = {};
+  for (const key of [...Object.keys(choices), ...Object.keys(numbers)]) {
+    values[key] = document.querySelector('#job-form [name="' + key + '"]').value;
+  }
+  dialog.querySelectorAll('[data-key]').forEach(input => { if (input.value !== '') values[input.dataset.key] = input.value; });
+  return values;
+}
+const notesEditor = createNotesEditor({
+  dialog,
+  previewUrl: document.getElementById('report-printing-config').dataset.previewUrl,
+  csrf: () => document.querySelector('#job-form [name="csrf"]').value,
+  effectiveOptions: effectivePreviewOptions,
 });

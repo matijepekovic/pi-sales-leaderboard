@@ -3,14 +3,37 @@ on:
   pull_request:
     paths:
       - 'printer_app/report_printing_*.py'
+      - 'printer_app/report_notes_*.py'
+      - 'printer_app/report_table_pdf.py'
+      - 'printer_app/templates/report_printing.html'
+      - 'printer_app/static/report_printing.*'
+      - 'printer_app/static/report_notes_editor.js'
       - 'printer_app/tests/test_report_printing.py'
+      - 'printer_app/tests/test_report_notes*.py'
+      - 'printer_app/requirements.txt'
       - '.github/workflows/report-printing.yml'
+permissions:
+  contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m unittest printer_app.tests.test_report_printing -v
+      - name: Native report, PDF and browser dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcups2-dev libreoffice-calc python3-uno fonts-liberation fonts-dejavu-core
+          python -m pip install -r printer_app/requirements.txt 'playwright>=1.55,<2'
+          python -m playwright install --with-deps chromium webkit
+      - name: Real conversion, notes layout, queue, HTTP and two-browser tests
+        env:
+          PRINTER_BROWSER_TESTS: '1'
+        run: |
+          python -m compileall -q printer_app
+          node --input-type=module --check < printer_app/static/report_printing.js
+          node --input-type=module --check < printer_app/static/report_notes_editor.js
+          python -m unittest printer_app.tests.test_report_notes printer_app.tests.test_report_notes_integration printer_app.tests.test_report_notes_web printer_app.tests.test_report_printing -v
