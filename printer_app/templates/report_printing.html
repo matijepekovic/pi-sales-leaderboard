@@ -103,5 +103,5 @@
 {% for run in runs %}<tr><td>{{ run.identity }}</td><td>{{ run.state }}</td><td>{{ run.queued_job_id or '—' }}</td><td>{{ run.error }}</td></tr>
 {% else %}<tr><td colspan="4">No runs yet.</td></tr>{% endfor %}</tbody></table></section>
 <div id="report-printing-config" data-choices='{{ choices|tojson|forceescape }}' data-numbers='{{ numbers|tojson|forceescape }}' data-folders-url="{{ url_for('report_printing.folders') }}" data-reports-url="{{ url_for('report_printing.search') }}" data-preview-url="{{ url_for('report_printing.preview') }}"></div>
-<script src="{{ url_for('static', filename='report_printing.js') }}" defer></script>
+<script type="module" src="{{ url_for('static', filename='report_printing.js') }}" defer></script>
 {% endblock %}
