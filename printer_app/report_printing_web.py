@@ -2,9 +2,10 @@
 import json
 import uuid
 
-from flask import Blueprint, g, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, g, jsonify, make_response, redirect, render_template, request, url_for
 
 from .print_options import PrintOptions, CHOICES, NUMBERS
+from .report_notes_contract import ReportNotesError, ReportNotesOptions
 from .report_printing_contract import ReportPrintingJob, ScheduledReport
 
 
@@ -47,6 +48,44 @@ def blueprint(repository, source):
         except Exception:
             return jsonify(error='Report search unavailable'), 503
 
+    @bp.post('/preview')
+    def preview():
+        # The application's normal admin, origin, duplicate-field, and CSRF
+        # protections apply. Downloads/conversion belong to the service, not HTTP.
+        from .report_printing_service import preview_report
+        try:
+            report_id = request.form['report_id']
+            if not report_id.isalnum() or not 1 <= len(report_id) <= 100:
+                raise ValueError('Invalid report ID.')
+            kind = request.form.get('kind', 'pdf')
+            if kind not in ('columns', 'pdf'):
+                raise ValueError('Invalid preview request.')
+            raw_options = json.loads(request.form.get('options', '{}'))
+            if not isinstance(raw_options, dict):
+                raise ValueError('Invalid print settings.')
+            options = PrintOptions().apply(raw_options)
+            notes = None if kind == 'columns' else ReportNotesOptions.from_dict(
+                json.loads(request.form.get('notes', '{}')))
+        except (ValueError, KeyError, TypeError):
+            return jsonify(error='Invalid preview settings. Check the selected columns and spacing.'), 400
+        try:
+            data, columns, placements = preview_report(source, report_id, g.printer_config, options, notes)
+            if kind == 'columns':
+                response = jsonify(columns=list(columns))
+            else:
+                response = make_response(data)
+                response.headers['Content-Type'] = 'application/pdf'
+                response.headers['Content-Disposition'] = 'inline; filename="report-preview.pdf"'
+                response.headers['X-Notes-Rows'] = str(sum(p.rows for p in placements))
+                response.headers['X-Notes-Scale'] = str(min((p.scale for p in placements), default=1))
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except ReportNotesError as exc:
+            return jsonify(error=str(exc)), 422
+        except Exception:
+            # No source credentials, workbook contents, or local paths in errors.
+            return jsonify(error='Report preview unavailable. Check the connection, print settings, and page policy.'), 503
+
     @bp.post('/save')
     def save():
         try:
@@ -56,17 +95,21 @@ def blueprint(repository, source):
             selected = request.form.getlist('report_id')
             if not selected or len(selected) != len(set(selected)):
                 raise ValueError('Select reports without duplicates.')
-            previous = {r.report_id: r.name for r in old.reports} if old else {}
+            previous = {r.report_id: r for r in old.reports} if old else {}
             reports = []
             for report_id in selected:
                 raw = request.form.get('override_' + report_id, '{}')
                 overrides = json.loads(raw)
                 if not isinstance(overrides, dict):
                     raise ValueError('Invalid report overrides')
-                name = previous.get(report_id) or request.form.get('report_name_' + report_id, '')
+                prior = previous.get(report_id)
+                name = prior.name if prior else request.form.get('report_name_' + report_id, '')
                 if not name or len(name) > 255 or not report_id.startswith('00O'):
                     raise ValueError('Invalid selected report.')
-                reports.append(ScheduledReport(report_id, name, overrides))
+                notes = prior.notes if prior else ReportNotesOptions()
+                if 'notes_' + report_id in request.form:
+                    notes = ReportNotesOptions.from_dict(json.loads(request.form['notes_' + report_id]))
+                reports.append(ScheduledReport(report_id, name, overrides, notes))
             hour, minute = map(int, request.form['time'].split(':'))
             job = ReportPrintingJob(
                 job_id=old.job_id if old else uuid.uuid4().hex,
