@@ -136,27 +136,90 @@ class ReportPrintingTests(unittest.TestCase):
             self.job(reports=(ScheduledReport('a', 'Daily', {'PRINT_PAPER': 'unsupported'}),))
 
     @unittest.skipUnless(os.environ.get('PRINTER_BROWSER_TESTS') == '1', 'Browser test dependencies')
-    def test_add_report_click_opens_search_in_real_browser(self):
+    def test_folder_picker_full_browser_flow(self):
+        """Real rendered page, real HTTP requests, both browser engines, persisted ID."""
+        import threading
+        from types import SimpleNamespace
+        from flask import Flask, g, session
+        from jinja2 import ChoiceLoader, DictLoader, FileSystemLoader
         from playwright.sync_api import sync_playwright, expect
-        markup = (Path(__file__).resolve().parents[1] / 'templates' / 'report_printing.html').read_text()
-        start = markup.index('<details id="search-dialog">')
-        end = markup.index('</details>', start) + len('</details>')
-        selector = markup[start:end]
-        with sync_playwright() as pw:
-            for browser_type in (pw.chromium, pw.webkit):
-                browser = browser_type.launch(headless=True)
-                try:
-                    page = browser.new_page()
-                    page.set_content(selector)
-                    search = page.locator('#report-search')
-                    expect(search).not_to_be_visible()
-                    page.locator('#add-report').click()
-                    expect(page.locator('#folder-search')).to_be_visible()
-                    expect(search).to_be_disabled()
-                    page.locator('#folder-search').fill('Sales')
-                    expect(page.locator('#folder-search')).to_have_value('Sales')
-                finally:
-                    browser.close()
+        from werkzeug.serving import make_server
+        from printer_app.report_printing_web import blueprint
+
+        records = (
+            {'id': '00O123456789012', 'name': 'Daily Sales', 'folder': 'Sales'},
+            {'id': '00O123456789013', 'name': 'Weekly Sales', 'folder': 'Sales'},
+            {'id': '00O123456789014', 'name': 'Operations Report', 'folder': 'Operations'},
+        )
+
+        class Source:
+            def search_reports(self, term, **kwargs):
+                return tuple(r for r in records if term.casefold() in r['name'].casefold())
+
+        class Repository:
+            saved = None
+            def list(self):
+                return [self.saved] if self.saved else []
+            def runs(self):
+                return []
+            def save(self, job):
+                self.saved = job
+
+        repo = Repository()
+        app = Flask(__name__)
+        app.secret_key = 'test-secret'
+        template_dir = Path(__file__).resolve().parents[1] / 'templates'
+        app.jinja_loader = ChoiceLoader([
+            DictLoader({'base.html': '<!doctype html><html><body>{% block content %}{% endblock %}</body></html>'}),
+            FileSystemLoader(str(template_dir)),
+        ])
+        app.register_blueprint(blueprint(repo, Source()))
+
+        @app.before_request
+        def setup_request():
+            g.printer_config = SimpleNamespace(timezone='UTC')
+            session.setdefault('csrf', 'browser-token')
+
+        server = make_server('127.0.0.1', 0, app, threaded=True)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        origin = 'http://127.0.0.1:' + str(server.server_port)
+        try:
+            with sync_playwright() as pw:
+                for engine in (pw.chromium, pw.webkit):
+                    browser = engine.launch(headless=True)
+                    try:
+                        page = browser.new_page()
+                        errors = []
+                        page.on('pageerror', lambda error: errors.append(str(error)))
+                        page.goto(origin + '/report-printing/')
+                        expect(page.locator('#folder-search')).not_to_be_visible()
+                        page.locator('#add-report').click()
+                        expect(page.locator('#folder-search')).to_be_visible()
+                        expect(page.locator('#folder-results .picker-item')).to_have_count(2)
+                        page.locator('#folder-search').fill('sal')
+                        expect(page.locator('#folder-results .picker-item')).to_have_count(1)
+                        page.get_by_role('button', name='Sales', exact=False).first.click()
+                        expect(page.locator('#report-search')).to_be_visible()
+                        expect(page.locator('#search-results .picker-item')).to_have_count(2)
+                        page.locator('#report-search').fill('Daily')
+                        expect(page.locator('#search-results .picker-item')).to_have_count(1)
+                        page.locator('#search-results .picker-item').click()
+                        expect(page.locator('#report-list .report-row')).to_have_count(1)
+                        self.assertEqual(page.locator('#report-list input[name="report_id"]').input_value(),
+                                         '00O123456789012')
+                        page.locator('input[name="name"]').fill('Morning Reports')
+                        page.locator('#job-form button[type="submit"]').click()
+                        expect(page.get_by_text('Morning Reports').first).to_be_visible()
+                        self.assertEqual(repo.saved.reports[0].report_id, '00O123456789012')
+                        self.assertEqual(repo.saved.reports[0].name, 'Daily Sales')
+                        self.assertFalse(errors, errors)
+                    finally:
+                        browser.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
 
 if __name__ == '__main__':
