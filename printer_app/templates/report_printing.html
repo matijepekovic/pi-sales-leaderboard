@@ -54,16 +54,14 @@
 <summary id="add-report">+ Add report</summary>
 <div class="report-picker">
 <section id="picker-folders">
-<label for="folder-search">Folders</label>
-<input id="folder-search" type="search" placeholder="Search folders…" autocomplete="off">
+<h3>Folders</h3>
 <p id="folder-status" role="status"></p>
 <div id="folder-results" class="picker-list"></div>
 </section>
 <section id="picker-reports" hidden>
 <button type="button" id="back-to-folders">← Folders</button>
 <h3 id="selected-folder"></h3>
-<label for="report-search">Reports</label>
-<input id="report-search" type="search" placeholder="Search reports…" autocomplete="off">
+
 <p id="search-status" role="status"></p>
 <div id="search-results" class="picker-list"></div>
 </section>
@@ -103,18 +101,14 @@ const folderResults = document.getElementById('folder-results');
 const folderStatus = document.getElementById('folder-status');
 const results = document.getElementById('search-results');
 const searchStatus = document.getElementById('search-status');
-const folderSearch = document.getElementById('folder-search');
-const reportSearch = document.getElementById('report-search');
 let folders = [];
 let reports = [];
 let folderRequest = 0;
 let reportRequest = 0;
 function filterFolders() {
   folderResults.replaceChildren();
-  const query = folderSearch.value.trim().toLowerCase();
-  const matches = folders.filter(name => name.toLowerCase().includes(query));
-  folderStatus.textContent = matches.length + ' folders';
-  for (const folder of matches) {
+  folderStatus.textContent = folders.length + ' folders';
+  for (const folder of folders) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'picker-item';
@@ -140,10 +134,8 @@ async function loadFolders() {
 }
 function filterReports() {
   results.replaceChildren();
-  const query = reportSearch.value.trim().toLowerCase();
-  const matches = reports.filter(report => report.name.toLowerCase().includes(query));
-  searchStatus.textContent = matches.length + ' reports';
-  for (const report of matches) {
+  searchStatus.textContent = reports.length + ' reports';
+  for (const report of reports) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'picker-item';
@@ -159,7 +151,6 @@ async function openFolder(folder) {
   folderPanel.hidden = true;
   reportPanel.hidden = false;
   document.getElementById('selected-folder').textContent = folder;
-  reportSearch.value = '';
   results.replaceChildren();
   searchStatus.textContent = 'Loading reports…';
   try {
@@ -179,7 +170,6 @@ picker.addEventListener('toggle', () => {
   ++reportRequest;
   folderPanel.hidden = false;
   reportPanel.hidden = true;
-  folderSearch.value = '';
   loadFolders();
 });
 document.getElementById('back-to-folders').onclick = () => {
@@ -188,8 +178,6 @@ document.getElementById('back-to-folders').onclick = () => {
   folderPanel.hidden = false;
   filterFolders();
 };
-folderSearch.addEventListener('input', filterFolders);
-reportSearch.addEventListener('input', filterReports);
 function addSelectedReport(report) {
   if (Array.from(document.querySelectorAll('.report-row')).some(row => row.dataset.id === report.id)) return;
   const row = document.createElement('div'); row.className = 'report-row'; row.dataset.id = report.id;
