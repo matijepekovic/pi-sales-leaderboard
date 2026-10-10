@@ -52,20 +52,32 @@
 </div>
 <details id="search-dialog">
 <summary id="add-report">+ Add report</summary>
-<div>
-<h3>1. Find a folder</h3>
-<label>Search folders <input id="folder-search" type="search" maxlength="100" placeholder="Folder name"></label>
-<button type="button" id="find-folders">Find folders</button>
+<div class="report-picker">
+<section id="picker-folders">
+<label for="folder-search">Folders</label>
+<input id="folder-search" type="search" placeholder="Search folders…" autocomplete="off">
 <p id="folder-status" role="status"></p>
-<div id="folder-results"></div>
-<h3>2. Choose reports</h3>
-<p id="selected-folder">Choose a folder above.</p>
-<label>Search reports in selected folder <input id="report-search" type="search" maxlength="100" disabled placeholder="Report name"></label>
-<button type="button" id="run-search" disabled>Search reports</button>
+<div id="folder-results" class="picker-list"></div>
+</section>
+<section id="picker-reports" hidden>
+<button type="button" id="back-to-folders">← Folders</button>
+<h3 id="selected-folder"></h3>
+<label for="report-search">Reports</label>
+<input id="report-search" type="search" placeholder="Search reports…" autocomplete="off">
 <p id="search-status" role="status"></p>
-<div id="search-results" style="max-height:350px;overflow:auto"></div>
+<div id="search-results" class="picker-list"></div>
+</section>
 </div>
 </details>
+<style>
+.report-picker{max-width:620px;padding:12px;border:1px solid #dbe3eb;border-radius:10px;margin:10px 0}
+.report-picker [hidden]{display:none}
+.report-picker input{width:100%;box-sizing:border-box}
+.picker-list{display:flex;flex-direction:column;gap:3px;max-height:350px;overflow-y:auto}
+.picker-item{display:block;width:100%;text-align:left;padding:10px;border:0;border-radius:6px;background:transparent;cursor:pointer}
+.picker-item:hover:not(:disabled){background:#e9f2fa}
+.picker-item:disabled{opacity:.6;cursor:default}
+</style>
 <dialog id="override-dialog">
 <h3>Report-specific print settings</h3>
 <p>Leave a setting as Inherit to use the printing job's defaults.</p>
@@ -84,62 +96,100 @@ const choices = {{ choices|tojson }};
 const numbers = {{ numbers|tojson }};
 const dialog = document.getElementById('override-dialog');
 let activeId = null;
+const picker = document.getElementById('search-dialog');
+const folderPanel = document.getElementById('picker-folders');
+const reportPanel = document.getElementById('picker-reports');
+const folderResults = document.getElementById('folder-results');
+const folderStatus = document.getElementById('folder-status');
 const results = document.getElementById('search-results');
 const searchStatus = document.getElementById('search-status');
-const folderStatus = document.getElementById('folder-status');
-const folderResults = document.getElementById('folder-results');
-let activeFolder = '';
-async function findFolders() {
-  folderStatus.textContent = 'Searching folders…';
+const folderSearch = document.getElementById('folder-search');
+const reportSearch = document.getElementById('report-search');
+let folders = [];
+let reports = [];
+let folderRequest = 0;
+let reportRequest = 0;
+function filterFolders() {
+  folderResults.replaceChildren();
+  const query = folderSearch.value.trim().toLowerCase();
+  const matches = folders.filter(name => name.toLowerCase().includes(query));
+  folderStatus.textContent = matches.length + ' folders';
+  for (const folder of matches) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'picker-item';
+    button.textContent = '📁 ' + folder;
+    button.onclick = () => openFolder(folder);
+    folderResults.append(button);
+  }
+}
+async function loadFolders() {
+  const requestId = ++folderRequest;
+  folderStatus.textContent = 'Loading folders…';
   folderResults.replaceChildren();
   try {
-    const q = document.getElementById('folder-search').value.trim();
-    const response = await fetch({{ url_for('report_printing.folders')|tojson }} + '?q=' + encodeURIComponent(q));
+    const response = await fetch({{ url_for('report_printing.folders')|tojson }});
     const data = await response.json();
-    if (!response.ok) throw Error(data.error || 'Folder search failed');
-    folderStatus.textContent = data.total + ' matching folders';
-    for (const folder of data.folders) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = folder;
-      button.onclick = () => openFolder(folder);
-      folderResults.append(button, document.createTextNode(' '));
-    }
-  } catch (err) { folderStatus.textContent = err.message; }
+    if (!response.ok) throw Error(data.error || 'Folder lookup failed');
+    if (requestId !== folderRequest) return;
+    folders = data.folders;
+    filterFolders();
+  } catch (error) {
+    if (requestId === folderRequest) folderStatus.textContent = error.message;
+  }
 }
-function openFolder(folder) {
-  activeFolder = folder;
-  document.getElementById('selected-folder').textContent = 'Folder: ' + folder;
-  document.getElementById('report-search').disabled = false;
-  document.getElementById('run-search').disabled = false;
-  document.getElementById('report-search').value = '';
-  findReports();
-}
-async function findReports() {
-  if (!activeFolder) return;
-  searchStatus.textContent = 'Searching reports…';
+function filterReports() {
   results.replaceChildren();
-  try {
-    const q = document.getElementById('report-search').value.trim();
-    const response = await fetch({{ url_for('report_printing.search')|tojson }} + '?q=' + encodeURIComponent(q) + '&folder=' + encodeURIComponent(activeFolder));
-    const data = await response.json();
-    if (!response.ok) throw Error(data.error || 'Report search failed');
-    searchStatus.textContent = data.total + ' matching reports' + (data.total > 50 ? ' (first 50 shown)' : '');
-    for (const report of data.reports) {
-      const row = document.createElement('div');
-      const add = document.createElement('button');
-      add.type = 'button';
-      add.textContent = '+ Add';
-      add.onclick = () => { addSelectedReport(report); add.disabled = true; add.textContent = 'Added'; };
-      row.append(add, document.createTextNode(' ' + report.name));
-      results.append(row);
-    }
-  } catch (err) { searchStatus.textContent = err.message; }
+  const query = reportSearch.value.trim().toLowerCase();
+  const matches = reports.filter(report => report.name.toLowerCase().includes(query));
+  searchStatus.textContent = matches.length + ' reports';
+  for (const report of matches) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'picker-item';
+    const added = Array.from(document.querySelectorAll('.report-row')).some(row => row.dataset.id === report.id);
+    button.textContent = (added ? '✓ ' : '+ ') + report.name;
+    button.disabled = added;
+    button.onclick = () => { addSelectedReport(report); filterReports(); };
+    results.append(button);
+  }
 }
-document.getElementById('find-folders').onclick = findFolders;
-document.getElementById('run-search').onclick = findReports;
-document.getElementById('folder-search').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); findFolders(); } });
-document.getElementById('report-search').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); findReports(); } });
+async function openFolder(folder) {
+  const requestId = ++reportRequest;
+  folderPanel.hidden = true;
+  reportPanel.hidden = false;
+  document.getElementById('selected-folder').textContent = folder;
+  reportSearch.value = '';
+  results.replaceChildren();
+  searchStatus.textContent = 'Loading reports…';
+  try {
+    const response = await fetch({{ url_for('report_printing.search')|tojson }} + '?folder=' + encodeURIComponent(folder));
+    const data = await response.json();
+    if (!response.ok) throw Error(data.error || 'Report lookup failed');
+    if (requestId !== reportRequest) return;
+    reports = data.reports;
+    filterReports();
+    if (data.total > reports.length) searchStatus.textContent += ' (first ' + reports.length + ' shown)';
+  } catch (error) {
+    if (requestId === reportRequest) searchStatus.textContent = error.message;
+  }
+}
+picker.addEventListener('toggle', () => {
+  if (!picker.open) return;
+  ++reportRequest;
+  folderPanel.hidden = false;
+  reportPanel.hidden = true;
+  folderSearch.value = '';
+  loadFolders();
+});
+document.getElementById('back-to-folders').onclick = () => {
+  ++reportRequest;
+  reportPanel.hidden = true;
+  folderPanel.hidden = false;
+  filterFolders();
+};
+folderSearch.addEventListener('input', filterFolders);
+reportSearch.addEventListener('input', filterReports);
 function addSelectedReport(report) {
   if (Array.from(document.querySelectorAll('.report-row')).some(row => row.dataset.id === report.id)) return;
   const row = document.createElement('div'); row.className = 'report-row'; row.dataset.id = report.id;
