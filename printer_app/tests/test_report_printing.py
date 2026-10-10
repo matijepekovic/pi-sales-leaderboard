@@ -70,6 +70,9 @@ class ReportPrintingTests(unittest.TestCase):
             def search_reports(self, term, **kwargs):
                 return [record for record in records if term.lower() in record['name'].lower()]
 
+            def refresh_report_folder(self, folder):
+                return [record for record in records if record['folder'] == folder]
+
         class Repository:
             saved = None
 
@@ -109,6 +112,37 @@ class ReportPrintingTests(unittest.TestCase):
         self.assertEqual(repo.saved.reports[0].name, 'Daily Sales')
         self.assertEqual(repo.saved.hour, 8)
         self.assertEqual(repo.saved.minute, 30)
+
+    @unittest.skipUnless(importlib.util.find_spec('flask'), 'Flask not installed')
+    def test_open_folder_refreshes_source_every_time(self):
+        from flask import Flask
+        from printer_app.report_printing_web import blueprint
+
+        class Source:
+            calls = []
+            def refresh_report_folder(self, folder):
+                self.calls.append(folder)
+                count = len(self.calls)
+                return [{'id': '00O123456789012', 'name': 'Sales ' + str(count),
+                         'folder': folder}]
+
+        class Repository:
+            def list(self):
+                return []
+            def runs(self):
+                return []
+
+        source = Source()
+        app = Flask(__name__)
+        app.register_blueprint(blueprint(Repository(), source))
+        client = app.test_client()
+        first = client.get('/report-printing/search?folder=Sales')
+        second = client.get('/report-printing/search?folder=Sales')
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json['reports'][0]['name'], 'Sales 1')
+        self.assertEqual(second.json['reports'][0]['name'], 'Sales 2')
+        self.assertEqual(source.calls, ['Sales', 'Sales'])
 
     def test_override_does_not_mutate_default(self):
         job = self.job()
@@ -157,6 +191,9 @@ class ReportPrintingTests(unittest.TestCase):
         class Source:
             def search_reports(self, term, **kwargs):
                 return tuple(r for r in records if term.casefold() in r['name'].casefold())
+
+            def refresh_report_folder(self, folder):
+                return tuple(r for r in records if r['folder'] == folder)
 
         class Repository:
             saved = None
