@@ -85,6 +85,23 @@ class SalesforceSandboxService:
             records = self._report_cache
         return tuple(r for r in records if term.casefold() in r['name'].casefold())
 
+    def refresh_report_folder(self, folder):
+        """Fetch this folder from Salesforce on every open, bypassing the global
+        2,000-report discovery snapshot. Leave that snapshot intact on failure.
+        """
+        folder = str(folder or '')
+        if not folder or len(folder) > 200 or any(ord(c) < 32 for c in folder):
+            raise ValueError('Invalid report folder.')
+        source_folder = '' if folder == 'Unfiled' else folder
+        updated = search_reports(self.adapter, '', folder=source_folder)
+        with self._report_cache_lock:
+            if self._report_cache is not None:
+                self._report_cache = tuple(
+                    record for record in self._report_cache
+                    if (record['folder'] or 'Unfiled') != folder
+                ) + updated
+        return updated
+
     def download_formatted_report(self, report_id):
         return self.adapter.download_formatted_report(report_id)
 

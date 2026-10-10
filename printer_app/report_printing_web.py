@@ -40,8 +40,9 @@ def blueprint(repository, source):
         if len(term) > 100 or len(folder) > 200 or not folder:
             return jsonify(error='Choose a folder first'), 400
         try:
-            all_reports = source.search_reports(term, folder=folder)
-            matched = [r for r in all_reports if (r['folder'] or 'Unfiled') == folder]
+            fresh_reports = source.refresh_report_folder(folder)
+            matched = [r for r in fresh_reports if (r['folder'] or 'Unfiled') == folder
+                       and term.casefold() in r['name'].casefold()]
             return jsonify(reports=matched, total=len(matched))
         except Exception:
             return jsonify(error='Report search unavailable'), 503
