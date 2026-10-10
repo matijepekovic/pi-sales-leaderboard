@@ -30,7 +30,7 @@ class ReportPrintingTests(unittest.TestCase):
                 super().__init__()
                 self.details_depth = 0
                 self.has_summary = False
-                self.has_search = False
+                self.has_folder_list = False
 
             def handle_starttag(self, tag, attrs):
                 attributes = dict(attrs)
@@ -38,8 +38,8 @@ class ReportPrintingTests(unittest.TestCase):
                     self.details_depth = 1
                 elif self.details_depth and tag == 'summary' and attributes.get('id') == 'add-report':
                     self.has_summary = True
-                elif self.details_depth and tag == 'input' and attributes.get('id') == 'report-search':
-                    self.has_search = True
+                elif self.details_depth and attributes.get('id') == 'folder-results':
+                    self.has_folder_list = True
 
             def handle_endtag(self, tag):
                 if tag == 'details':
@@ -49,7 +49,9 @@ class ReportPrintingTests(unittest.TestCase):
         parser = SelectorParser()
         parser.feed(markup)
         self.assertTrue(parser.has_summary)
-        self.assertTrue(parser.has_search)
+        self.assertTrue(parser.has_folder_list)
+        self.assertNotIn('id="folder-search"', markup)
+        self.assertNotIn('id="report-search"', markup)
         self.assertNotIn("searchDialog.showModal()", markup)
 
     @unittest.skipUnless(importlib.util.find_spec('flask'), 'Flask not installed in contract-only CI')
