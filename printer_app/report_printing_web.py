@@ -42,7 +42,7 @@ def blueprint(repository, source):
         try:
             all_reports = source.search_reports(term, folder=folder)
             matched = [r for r in all_reports if (r['folder'] or 'Unfiled') == folder]
-            return jsonify(reports=matched[:50], total=len(matched))
+            return jsonify(reports=matched, total=len(matched))
         except Exception:
             return jsonify(error='Report search unavailable'), 503
 
