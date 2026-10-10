@@ -144,6 +144,48 @@ class ReportPrintingTests(unittest.TestCase):
         self.assertEqual(second.json['reports'][0]['name'], 'Sales 2')
         self.assertEqual(source.calls, ['Sales', 'Sales'])
 
+    @unittest.skipUnless(importlib.util.find_spec('flask'), 'Flask not installed')
+    def test_real_app_accepts_multiple_reports_and_weekdays(self):
+        from werkzeug.datastructures import MultiDict
+        from printer_app.app import create_app
+        from printer_app.config import Config
+        from printer_app.tests.auth_helpers import login_admin
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = root / 'env'
+            env.write_text('EMAIL_ENABLED=0\\n')
+            app = create_app(Config(data_dir=root / 'data', env_file=env,
+                                    secret_key='s' * 64, email_enabled=False))
+            app.testing = True
+            client = app.test_client()
+            csrf = login_admin(client)
+            fields = MultiDict([
+                ('csrf', csrf),
+                ('name', 'Morning reports'),
+                ('time', '08:00'),
+                ('weekday', '0'),
+                ('weekday', '1'),
+                ('enabled', 'on'),
+                ('report_id', '00O123456789012'),
+                ('report_name_00O123456789012', 'Daily'),
+                ('report_id', '00O123456789013'),
+                ('report_name_00O123456789013', 'Weekly'),
+            ])
+            response = client.post('/report-printing/save', data=fields)
+            self.assertEqual(response.status_code, 302, response.get_data(as_text=True)[:300])
+            from printer_app.report_printing_repository import ReportPrintingRepository
+            saved = ReportPrintingRepository(app.extensions['printer_db']).list()
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0].weekdays, (0, 1))
+            self.assertEqual([r.report_id for r in saved[0].reports],
+                             ['00O123456789012', '00O123456789013'])
+
+            duplicate_name = MultiDict(list(fields.items(multi=True)) + [('name', 'Injected')])
+            denied = client.post('/report-printing/save', data=duplicate_name)
+            self.assertEqual(denied.status_code, 400)
+            self.assertIn('Duplicate form field', denied.get_data(as_text=True))
+
     def test_override_does_not_mutate_default(self):
         job = self.job()
         self.assertEqual(job.reports[0].effective_options(job.defaults).paper, 'tabloid')
