@@ -66,7 +66,7 @@ class OutlookSandboxService:
             cfg = self.configuration()
             account = ''
             if cfg is not None:
-                accounts = self._cache().find(msal.TokenCache.CredentialType.ACCOUNT)
+                accounts = list(self._cache().search(msal.TokenCache.CredentialType.ACCOUNT))
                 account = str(accounts[0].get('username', '')) if accounts else ''
             return dict(configured=cfg is not None, signed_in=bool(account),
                         account=account, **self._login)
@@ -128,10 +128,12 @@ class OutlookSandboxService:
             if cfg is None:
                 raise SandboxError('Save the Outlook settings first.')
             cache = self._cache()
+            if not list(cache.search(msal.TokenCache.CredentialType.ACCOUNT)):
+                raise SandboxError('Sign in to Microsoft before testing Outlook.')
             client = self._app(cfg, cache)
             accounts = client.get_accounts()
             if not accounts:
-                raise SandboxError('Sign in to Microsoft before testing Outlook.')
+                raise SandboxError('Outlook sign-in is no longer valid. Disconnect and sign in again.')
             token = client.acquire_token_silent(SCOPES, account=accounts[0])
             if cache.has_state_changed:
                 self.repository.write_tokens(cache.serialize())
