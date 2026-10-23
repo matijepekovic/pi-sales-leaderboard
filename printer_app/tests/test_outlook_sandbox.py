@@ -12,7 +12,7 @@ import pytest
 from printer_app.app import create_app
 from printer_app.config import Config
 from printer_app.outlook_sandbox.adapter import OutlookImapAdapter
-from printer_app.outlook_sandbox.repository import OutlookConfig, SandboxError, SandboxRepository
+from printer_app.outlook_sandbox.repository import OAuthRegistration, OutlookConfig, SandboxError, SandboxRepository
 from printer_app.outlook_sandbox.service import OutlookSandboxService
 from printer_app.tests.auth_helpers import login_admin
 
@@ -22,17 +22,16 @@ CLIENT = '22222222-2222-4222-8222-222222222222'
 
 
 def values(**overrides):
-    data = dict(tenant_id=TENANT, client_id=CLIENT,
-                mailbox='reports@example.test', folder='Printer')
+    data = dict(mailbox='reports@example.test', folder='Printer')
     data.update(overrides)
     return data
 
 
 def test_configuration_rejects_bad_tenant_mailbox_and_mailbox_injection():
     cfg = OutlookConfig.from_form(values())
-    assert cfg.folder == 'Printer' and cfg.identity()[0] == TENANT
+    assert cfg.folder == 'Printer' and cfg.identity() == 'reports@example.test'
     for bad in [
-        dict(tenant_id='common'), dict(client_id='no-app'),
+        dict(tenant_id=TENANT), dict(client_id=CLIENT),
         dict(mailbox='not-an-email'), dict(mailbox='a@b.test\x01injected'), dict(folder=''),
         dict(folder='INBOX\r\nSTORE 1'), dict(folder='INBOX\x00Printer'),
         dict(folder='a' * 201),
@@ -55,6 +54,64 @@ def test_private_storage_preserves_gmail_and_invalidates_credentials_on_identity
     assert repo.read_tokens() == ''
     assert not (tmp_path / 'attachments').exists()
     assert not (tmp_path / 'printer_app.db').exists()
+
+
+
+def test_registration_is_admin_setting_and_old_registration_is_reused(tmp_path, monkeypatch):
+    env = tmp_path / 'env'
+    env.write_text('OUTLOOK_OAUTH_CLIENT_ID=' + CLIENT + '\n')
+    repo = SandboxRepository(tmp_path, env_file=env)
+    reg = repo.registration()
+    assert isinstance(reg, OAuthRegistration)
+    assert reg.client_id == CLIENT
+    assert reg.tenant == 'organizations'
+    assert repo.read_config() is None
+
+    # App IDs cannot be submitted through normal Outlook mailbox settings.
+    with pytest.raises(SandboxError):
+        OutlookConfig.from_form(values(client_id=CLIENT))
+
+    legacy = dict(values(), client_id=CLIENT, tenant_id=TENANT)
+    repo._private_write(repo.settings_path, __import__('json').dumps(legacy).encode())
+    repo.write_tokens('keep-saved-authorization')
+    env.write_text('')
+    assert repo.registration().client_id == CLIENT
+    assert repo.registration().tenant == TENANT
+    repo.save_config(OutlookConfig.from_form(values(folder='Archive/Printer')))
+    assert repo.read_tokens() == 'keep-saved-authorization'
+    assert repo.registration().client_id == CLIENT
+    assert repo.read_config().folder == 'Archive/Printer'
+
+
+def test_company_login_can_detect_mailbox_without_manual_email_entry(tmp_path, monkeypatch):
+    env = tmp_path / 'env'
+    env.write_text('OUTLOOK_OAUTH_CLIENT_ID=' + CLIENT + '\n')
+    repository = SandboxRepository(tmp_path, env_file=env)
+    service = OutlookSandboxService(repository)
+    started = threading.Event()
+
+    class FakeMsal:
+        def initiate_device_flow(self, **kwargs):
+            assert kwargs['scopes'] == ['https://outlook.office.com/IMAP.AccessAsUser.All']
+            return dict(user_code='MICROSOFT-CODE', expires_in=60)
+
+        def acquire_token_by_device_flow(self, flow):
+            started.set()
+            return dict(access_token='never-printed-token',
+                        id_token_claims={'preferred_username': 'reports@example.test'})
+
+    monkeypatch.setattr(service, '_app', lambda reg, cache: FakeMsal())
+    assert service.configuration() is None
+    assert service.start_login()['state'] == 'pending'
+    assert started.wait(2)
+    for thread in threading.enumerate():
+        if thread.name == 'outlook-sandbox-oauth':
+            thread.join(timeout=2)
+            assert not thread.is_alive()
+    assert repository.read_config() == OutlookConfig(mailbox='reports@example.test', folder='Printer')
+    assert repository.tokens_path.stat().st_mode & 0o777 == 0o600
+    assert service.status()['state'] == 'connected'
+    assert service.status()['app_ready']
 
 
 def test_staged_files_are_private_and_non_traversable(tmp_path):
@@ -155,8 +212,10 @@ def test_exchange_imap_only_selects_readonly_and_reads_actual_attachments(monkey
 
 def test_logout_during_signin_cannot_restore_revoked_token(tmp_path, monkeypatch):
     repository = SandboxRepository(tmp_path)
+    env = tmp_path / 'env'
+    env.write_text('OUTLOOK_OAUTH_CLIENT_ID=' + CLIENT + '\n')
+    repository = SandboxRepository(tmp_path, env_file=env)
     service = OutlookSandboxService(repository)
-    service.configure(values())
     started, release = threading.Event(), threading.Event()
 
     class FakeMsal:
@@ -170,6 +229,7 @@ def test_logout_during_signin_cannot_restore_revoked_token(tmp_path, monkeypatch
 
     monkeypatch.setattr(service, '_app', lambda cfg, cache: FakeMsal())
     assert service.start_login()['state'] == 'pending'
+    assert service.configuration() is None
     assert started.wait(2)
     service.disconnect()
     release.set()
@@ -195,7 +255,12 @@ def web(tmp_path):
 
 def test_admin_csrf_and_gmail_isolation(web):
     app, client, csrf, env = web
-    assert client.get('/outlook-sandbox').status_code == 200
+    page = client.get('/outlook-sandbox')
+    assert page.status_code == 200
+    assert b'name="tenant_id"' not in page.data
+    assert b'name="client_id"' not in page.data
+    assert b'Connect Outlook' in page.data
+    assert b'If Okta asks for a verification code' in page.data
     assert client.get('/settings').status_code == 200
     assert b'Open Outlook Sandbox' in client.get('/settings').data
     before = env.read_bytes()
@@ -203,7 +268,9 @@ def test_admin_csrf_and_gmail_isolation(web):
     assert client.post('/outlook-sandbox/config', data=dict(values(), csrf=csrf)).status_code == 303
     assert env.read_bytes() == before
     status = client.get('/outlook-sandbox/status').json['result']
-    assert status['configured'] and not status['signed_in']
+    assert status['configured'] and not status['signed_in'] and not status['app_ready']
+    resp = client.post('/outlook-sandbox/connect', data={'csrf': csrf})
+    assert resp.status_code == 400 and 'one-time application approval' in resp.json['message']
     resp = client.post('/outlook-sandbox/check', data={'csrf': csrf})
     assert resp.status_code == 400 and not resp.json['ok']
     assert app.extensions['printer_db'].rows('SELECT * FROM attachments') == []
@@ -279,7 +346,8 @@ def test_real_browser_folder_preview_and_stage(web, monkeypatch):
 
     monkeypatch.setattr(service, '_adapter', lambda: BrowserAdapter())
     monkeypatch.setattr(service, 'status', lambda: dict(
-        configured=True, signed_in=True, account='reports@example.test', state='connected'))
+        configured=True, app_ready=True, signed_in=True, mailbox='reports@example.test',
+        folder='Printer', account='reports@example.test', state='connected'))
 
     server = make_server('127.0.0.1', 0, app, threaded=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
