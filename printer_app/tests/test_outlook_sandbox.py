@@ -248,3 +248,65 @@ def test_outlook_boundary_does_not_enter_live_email_or_print_workflow():
     source = (root / 'outlook_sandbox' / 'service.py').read_text()
     assert 'PrintQueue' not in source and 'GmailClient' not in source
     assert 'outlook_sandbox' in (root / 'app.py').read_text()
+
+@pytest.mark.skipif(__import__('os').environ.get('PRINTER_BROWSER_TESTS') != '1',
+                    reason='Run in CI with real Chromium')
+def test_real_browser_folder_preview_and_stage(web, monkeypatch):
+    from playwright.sync_api import expect, sync_playwright
+    from werkzeug.serving import make_server
+    from printer_app.tests.auth_helpers import browser_login
+
+    app, _, _, _ = web
+    service = app.extensions['outlook_sandbox']
+    service.configure(values())
+    config = service.configuration()
+
+    class BrowserAdapter:
+        def __init__(self):
+            self.config = config
+
+        def folders(self):
+            return ['INBOX', 'Printer']
+
+        def recent(self):
+            return {'folder': 'Printer', 'uidvalidity': '19',
+                    'messages': [{'uid': '104', 'subject': 'Actual PDF report',
+                                  'sender': 'sales@example.test', 'date': 'Today'}]}
+
+        def attachments(self, uid):
+            assert uid == '104'
+            return '19', [('Report.pdf', b'%PDF-BROWSER')]
+
+    monkeypatch.setattr(service, '_adapter', lambda: BrowserAdapter())
+    monkeypatch.setattr(service, 'status', lambda: dict(
+        configured=True, signed_in=True, account='reports@example.test', state='connected'))
+
+    server = make_server('127.0.0.1', 0, app, threaded=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    origin = f'http://printer.test:{server.server_port}'
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True,
+                args=['--no-proxy-server', '--host-resolver-rules=MAP printer.test 127.0.0.1'])
+            try:
+                page = browser.new_page()
+                browser_login(page, app, origin)
+                assert page.goto(origin + '/outlook-sandbox').status == 200
+                expect(page.locator('#outlookConnectionStatus')).to_contain_text('reports@example.test')
+                page.locator('#outlookFolders').click()
+                expect(page.locator('#outlookFolderResult')).to_contain_text('Printer')
+                page.locator('#outlookCheck').click()
+                expect(page.locator('#outlookCheckResult')).to_contain_text('Read-only connection succeeded')
+                expect(page.locator('#outlookMessages')).to_contain_text('Actual PDF report')
+                page.get_by_role('button', name='Stage attachments').click()
+                expect(page.locator('#outlookStageResult')).to_contain_text('No printing occurred')
+                expect(page.locator('#outlookStageResult a')).to_have_count(1)
+                assert page.locator('#outlookStageResult a').get_attribute('href').startswith(
+                    '/outlook-sandbox/staged/')
+                assert app.extensions['printer_db'].rows('SELECT * FROM jobs') == []
+            finally:
+                browser.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
