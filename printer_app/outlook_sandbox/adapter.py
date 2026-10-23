@@ -1,7 +1,6 @@
 """Read-only Exchange Online IMAP transport; no Gmail, CUPS, or queue dependency."""
 from __future__ import annotations
 
-from datetime import datetime
 from email import policy
 from email.parser import BytesHeaderParser, BytesParser
 import imaplib
