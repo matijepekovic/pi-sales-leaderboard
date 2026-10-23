@@ -8,7 +8,7 @@ import time
 import msal
 
 from .adapter import OutlookImapAdapter
-from .repository import OutlookConfig, SandboxError, SandboxRepository
+from .repository import OAuthRegistration, OutlookConfig, SandboxError, SandboxRepository
 
 # MSAL adds openid/profile/offline_access automatically, including refresh-token support.
 SCOPES = ['https://outlook.office.com/IMAP.AccessAsUser.All']
@@ -30,11 +30,12 @@ class OutlookSandboxService:
     def configure(self, values: dict[str, str]) -> OutlookConfig:
         cfg = OutlookConfig.from_form(values)
         with self._lock:
-            if self._flow is not None:
-                self._flow['expires_at'] = 0
-                self._flow = None
-            self.repository.save_config(cfg)
-            self._login = {'state': 'not_started'}
+            if cfg != self.configuration():
+                if self._flow is not None:
+                    self._flow['expires_at'] = 0
+                    self._flow = None
+                self.repository.save_config(cfg)
+                self._login = {'state': 'not_started'}
         return cfg
 
     def disconnect(self) -> None:
@@ -46,9 +47,10 @@ class OutlookSandboxService:
             self._login = {'state': 'not_started'}
 
     @staticmethod
-    def _app(cfg: OutlookConfig, cache: msal.SerializableTokenCache):
+    def _app(registration: OAuthRegistration, cache: msal.SerializableTokenCache):
         return msal.PublicClientApplication(
-            cfg.client_id, authority='https://login.microsoftonline.com/' + cfg.tenant_id,
+            registration.client_id,
+            authority='https://login.microsoftonline.com/' + registration.tenant,
             token_cache=cache)
 
     def _cache(self) -> msal.SerializableTokenCache:
@@ -64,30 +66,37 @@ class OutlookSandboxService:
     def status(self) -> dict:
         with self._lock:
             cfg = self.configuration()
+            registration = self.repository.registration()
             account = ''
-            if cfg is not None:
+            if cfg is not None and registration is not None:
                 accounts = list(self._cache().search(msal.TokenCache.CredentialType.ACCOUNT))
                 account = str(accounts[0].get('username', '')) if accounts else ''
-            return dict(configured=cfg is not None, signed_in=bool(account),
-                        account=account, **self._login)
+            return dict(configured=cfg is not None,
+                        app_ready=registration is not None,
+                        mailbox=cfg.mailbox if cfg is not None else '',
+                        folder=cfg.folder if cfg is not None else 'Printer',
+                        signed_in=bool(account), account=account, **self._login)
 
     def start_login(self) -> dict:
         with self._lock:
             cfg = self.configuration()
-            if cfg is None:
-                raise SandboxError('Save the Outlook settings first.')
+            registration = self.repository.registration()
+            if registration is None:
+                raise SandboxError(
+                    'Outlook needs one-time application approval. The printer administrator '
+                    'must configure OUTLOOK_OAUTH_CLIENT_ID before sign-in can work.')
             if self._flow is not None:
                 raise SandboxError('A Microsoft sign-in is already in progress.')
             self._login = {'state': 'starting'}
             # Hold the lock while initiating: repeated clicks cannot create two flows.
             try:
                 cache = msal.SerializableTokenCache()
-                client = self._app(cfg, cache)
+                client = self._app(registration, cache)
                 flow = client.initiate_device_flow(scopes=SCOPES)
                 if 'user_code' not in flow:
                     raise SandboxError('Microsoft declined to start sign-in. Ask IT to approve public-client OAuth and device-code flow.')
             except Exception as exc:
-                self._login = {'state': 'failed', 'message': 'Microsoft sign-in could not start. Verify IDs and IT consent.'}
+                self._login = {'state': 'failed', 'message': 'Microsoft sign-in could not start. Check application approval and IT consent.'}
                 if isinstance(exc, SandboxError):
                     raise
                 raise SandboxError(self._login['message']) from None
@@ -116,6 +125,25 @@ class OutlookSandboxService:
             if self._flow is not flow or cfg != self.configuration():
                 return  # Disconnect or settings change must not resurrect a token.
             self._flow = None
+            if success and cfg is None:
+                # In the normal path the approved Microsoft login supplies the
+                # mailbox identity; the user should not have to type an email.
+                try:
+                    claims = result.get('id_token_claims') or {}
+                    usernames = [
+                        claims.get('preferred_username'), claims.get('email'),
+                        *[a.get('username') for a in list(
+                            cache.search(msal.TokenCache.CredentialType.ACCOUNT))],
+                    ]
+                    identity = next(
+                        (str(name) for name in usernames if name and '@' in str(name)), '')
+                    discovered = OutlookConfig.from_form(
+                        {'mailbox': identity, 'folder': 'Printer'})
+                    self.repository.save_config(discovered)
+                except (SandboxError, TypeError, ValueError, KeyError):
+                    success = False
+                    message = ('Microsoft authorized the app, but did not return an Outlook address. '
+                               'Enter your work email below and reconnect.')
             if success:
                 self.repository.write_tokens(cache.serialize())
                 self._login = {'state': 'connected'}
@@ -126,11 +154,14 @@ class OutlookSandboxService:
         with self._lock:
             cfg = self.configuration()
             if cfg is None:
-                raise SandboxError('Save the Outlook settings first.')
+                raise SandboxError('Save your Outlook email and folder first.')
+            registration = self.repository.registration()
+            if registration is None:
+                raise SandboxError('Microsoft app approval is not configured for this printer.')
             cache = self._cache()
             if not list(cache.search(msal.TokenCache.CredentialType.ACCOUNT)):
                 raise SandboxError('Sign in to Microsoft before testing Outlook.')
-            client = self._app(cfg, cache)
+            client = self._app(registration, cache)
             accounts = client.get_accounts()
             if not accounts:
                 raise SandboxError('Outlook sign-in is no longer valid. Disconnect and sign in again.')

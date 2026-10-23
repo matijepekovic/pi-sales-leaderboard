@@ -2,34 +2,36 @@
 
 ## Outlook sandbox (does not replace Gmail)
 
-Open **Print Control → Settings → Outlook Sandbox**. This is an admin-only,
-manually operated test area, completely separate from production Gmail polling,
-email cleanup, Gallery and print submission. Its mailbox configuration, MSAL
-token cache and staged files live under `PRINTER_DATA_DIR/outlook_sandbox/`
-with private file permissions; the token cache never appears in the browser.
+Open **Print Control → Settings → Outlook Sandbox**, then click **Connect
+Outlook**. Sign in through Microsoft's device-code page and your company's
+normal SSO/Okta flow; enter any Okta verification code **on Okta**, not in
+the Printer App. On successful sign-in the sandbox detects your Outlook
+address and defaults to the `Printer` folder. You can change the email
+address or folder after sign-in if necessary.
 
-IT must register/approve a Microsoft Entra **public client** for the company's
-tenant, grant delegated `IMAP.AccessAsUser.All` for Office 365 Exchange Online,
-and allow the device-code authorization flow. Enter the **Tenant ID**, **Client
-ID**, your Outlook **mailbox**, and the exact IMAP **folder** (for example
-`Printer`). Save, then click **Connect Outlook**, follow Microsoft's
-`microsoft.com/devicelogin` instructions, and complete normal company/Okta
-authentication. Consent and device-code access are controlled by IT; some
-organizations block device-code flow under Conditional Access. No Okta bypass,
-app password, SMTP permission, or mailbox-wide service credentials are used.
+**One-time IT authorization is still required.** Microsoft 365 does **not**
+accept an Okta MFA code as a standalone email credential. The company must
+approve a Microsoft Entra public-client application with delegated
+`IMAP.AccessAsUser.All` for Exchange Online, and allow device-code sign-in
+under its policies. The application's client ID must be provisioned once in
+the private printer environment file (`OUTLOOK_OAUTH_CLIENT_ID`). Normally
+the sandbox uses the `organizations` authority, so a user never supplies a
+Tenant ID; if the IT-approved app requires a tenant-specific authority, the
+administrator may also set `OUTLOOK_OAUTH_TENANT`. These are administrative
+deployment settings, **not fields in the mailbox sign-in interface**.
+Previously saved, valid sandbox app registrations remain usable after an update.
+The UI reports a clear blocker instead of pretending the Okta code alone
+can grant Microsoft IMAP authorization.
 
-Click **List Outlook folders** to discover the exact mailbox path, then save it.
-Click **Check selected folder** for the latest 12 message headers, or **Stage
-attachments** on a message to download its attachments to the private sandbox.
-Stage supports messages up to 60 MB and up to 40 attachments. Staged files can
-be downloaded from the sandbox page for comparison. No automatic Outlook poll,
-import, conversion, email deletion, mark-read, print job, or provider switch is
-wired in: Gmail remains the only live email source. **Disconnect** clears the
-locally cached authorization; IT may separately revoke its grant in Entra.
-
-The Outlook adapter depends only on the sandbox service contract. Any future
-production cutover must be a separate explicit change to the composition root
-and worker after the read-only sandbox is proven and approved.
+Click **List Outlook folders** to discover the exact folder, then save it
+if different; **Check selected folder** previews the latest 12 message headers.
+**Stage attachments** on a message saves test files to private storage for
+comparison. The sandbox stages messages up to 60 MB and up to 40 attachments.
+Its credentials, email, and staged files live under the printer app's private
+`PRINTER_DATA_DIR/outlook_sandbox/` storage. It does not automatically monitor
+Outlook, modify or delete messages, import to Gallery, create print jobs, or
+change Gmail. Disconnect clears local Microsoft credentials. Only a future,
+explicit provider switch would activate Outlook for production email printing.
 
 
 A second application in `matijepekovic/pi-sales-leaderboard`, delivered on `main`.

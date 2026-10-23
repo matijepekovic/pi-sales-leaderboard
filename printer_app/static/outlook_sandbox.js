@@ -22,17 +22,19 @@
       const answer = await response.json();
       if (!response.ok || !answer.ok) throw new Error(answer.message || 'Could not read Outlook status.');
       const current = answer.result;
-      if (!current.configured) {
-        statusNode.textContent = 'Not configured. Save your Tenant ID, Client ID, mailbox, and folder.';
-      } else if (current.signed_in) {
-        statusNode.textContent = 'Microsoft authorization saved for ' + current.account +
-            '. You can check the selected Outlook folder.';
+      if (current.state === 'pending') {
+        statusNode.textContent = 'Sign-in pending. Complete Microsoft / Okta verification in your browser.';
       } else if (current.state === 'failed') {
         statusNode.textContent = current.message || 'Microsoft sign-in failed.';
-      } else if (current.state === 'pending') {
-        statusNode.textContent = 'Sign-in pending. Complete the Microsoft / Okta login using the code below.';
+      } else if (!current.app_ready) {
+        statusNode.textContent = 'Microsoft application approval is not configured yet. Okta verification alone cannot connect Outlook.';
+      } else if (current.signed_in) {
+        statusNode.textContent = 'Connected as ' + (current.account || current.mailbox) + '. You can test your Outlook folder.';
       } else {
-        statusNode.textContent = 'Configured but not signed in.';
+        statusNode.textContent = 'Ready to connect. Click Connect Outlook and complete your normal company sign-in.';
+      }
+      if (current.mailbox && get('outlookMailbox').value.trim() === '') {
+        get('outlookMailbox').value = current.mailbox;
       }
       codeBox.hidden = current.state !== 'pending';
       get('outlookUserCode').textContent = current.state === 'pending' ? current.code : '';

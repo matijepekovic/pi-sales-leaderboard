@@ -74,7 +74,8 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.extensions['printer_settings'] = settings
     app.extensions['printer_admin_auth'] = admin_auth
     # Optional Outlook trial: independent token store, manual staging, never a print source.
-    outlook_sandbox = OutlookSandboxService(SandboxRepository(cfg.data_dir))
+    outlook_sandbox = OutlookSandboxService(
+        SandboxRepository(cfg.data_dir, env_file=cfg.env_file or environment_file()))
     app.extensions['outlook_sandbox'] = outlook_sandbox
     app.register_blueprint(outlook_sandbox_blueprint(outlook_sandbox))
     gallery = build_gallery(cfg.data_dir)
