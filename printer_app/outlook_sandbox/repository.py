@@ -36,7 +36,8 @@ class OutlookConfig:
                     raise ValueError
             except (ValueError, AttributeError):
                 raise SandboxError('Enter the Microsoft Entra Tenant ID and Application (Client) ID as UUIDs.') from None
-        if not re.fullmatch(r'[^\s@]{1,100}@[^\s@]{1,150}', mailbox):
+        if (not re.fullmatch(r'[^\s@]{1,100}@[^\s@]{1,150}', mailbox)
+                or any(ord(c) < 33 or ord(c) == 127 for c in mailbox)):
             raise SandboxError('Enter a valid work Outlook email address.')
         if not folder or len(folder) > 200 or any(ord(c) < 32 or ord(c) > 126 for c in folder):
             raise SandboxError('Enter the exact Outlook IMAP folder name (such as Printer).')
@@ -118,7 +119,7 @@ class SandboxRepository:
             items = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))
             item = items[index]
             name = item['name']
-            if safe_name(name) != name:
+            if not isinstance(name, str) or not name or name in ('.', '..') or '/' in name or '\\' in name:
                 raise ValueError
             target = folder / name
             if not target.is_file() or target.is_symlink():
