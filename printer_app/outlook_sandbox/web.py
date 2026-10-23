@@ -13,6 +13,7 @@ def blueprint(service: OutlookSandboxService) -> Blueprint:
     def page(error: str = '', code: int = 200):
         return render_template('outlook_sandbox.html',
                                config=service.configuration(),
+                               registration_ready=service.status()['app_ready'],
                                error=error,
                                saved=request.args.get('saved') == '1'), code
 
@@ -32,7 +33,12 @@ def blueprint(service: OutlookSandboxService) -> Blueprint:
     @bp.post('/outlook-sandbox/config')
     def configure():
         try:
-            service.configure(request.form.to_dict())
+            if set(request.form) - {'csrf', 'mailbox', 'folder'}:
+                raise SandboxError('Unexpected Outlook configuration field.')
+            service.configure({
+                'mailbox': request.form.get('mailbox', ''),
+                'folder': request.form.get('folder', ''),
+            })
         except SandboxError as exc:
             return page(str(exc), 400)
         return redirect(url_for('outlook_sandbox.page_view', saved='1'), code=303)
