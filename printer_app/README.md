@@ -1,5 +1,37 @@
 # Independent Raspberry Pi printer automation
 
+## Outlook sandbox (does not replace Gmail)
+
+Open **Print Control → Settings → Outlook Sandbox**. This is an admin-only,
+manually operated test area, completely separate from production Gmail polling,
+email cleanup, Gallery and print submission. Its mailbox configuration, MSAL
+token cache and staged files live under `PRINTER_DATA_DIR/outlook_sandbox/`
+with private file permissions; the token cache never appears in the browser.
+
+IT must register/approve a Microsoft Entra **public client** for the company's
+tenant, grant delegated `IMAP.AccessAsUser.All` for Office 365 Exchange Online,
+and allow the device-code authorization flow. Enter the **Tenant ID**, **Client
+ID**, your Outlook **mailbox**, and the exact IMAP **folder** (for example
+`Printer`). Save, then click **Connect Outlook**, follow Microsoft's
+`microsoft.com/devicelogin` instructions, and complete normal company/Okta
+authentication. Consent and device-code access are controlled by IT; some
+organizations block device-code flow under Conditional Access. No Okta bypass,
+app password, SMTP permission, or mailbox-wide service credentials are used.
+
+Click **List Outlook folders** to discover the exact mailbox path, then save it.
+Click **Check selected folder** for the latest 12 message headers, or **Stage
+attachments** on a message to download its attachments to the private sandbox.
+Stage supports messages up to 60 MB and up to 40 attachments. Staged files can
+be downloaded from the sandbox page for comparison. No automatic Outlook poll,
+import, conversion, email deletion, mark-read, print job, or provider switch is
+wired in: Gmail remains the only live email source. **Disconnect** clears the
+locally cached authorization; IT may separately revoke its grant in Entra.
+
+The Outlook adapter depends only on the sandbox service contract. Any future
+production cutover must be a separate explicit change to the composition root
+and worker after the read-only sandbox is proven and approved.
+
+
 A second application in `matijepekovic/pi-sales-leaderboard`, delivered on `main`.
 It does not import or require the Stats app, routes, database, scheduler or service.
 

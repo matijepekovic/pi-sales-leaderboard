@@ -44,6 +44,9 @@ from .mod_sheets.service import (
     ModSheetSettingsService, ModSheetTestPrintService,
 )
 from .mod_sheets.web import blueprint as mod_sheets_blueprint
+from .outlook_sandbox.repository import SandboxRepository
+from .outlook_sandbox.service import OutlookSandboxService
+from .outlook_sandbox.web import blueprint as outlook_sandbox_blueprint
 
 
 def create_app(cfg: Config | None = None, settings_service: SettingsService | None = None) -> Flask:
@@ -70,6 +73,10 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.extensions['printer_db'] = db
     app.extensions['printer_settings'] = settings
     app.extensions['printer_admin_auth'] = admin_auth
+    # Optional Outlook trial: independent token store, manual staging, never a print source.
+    outlook_sandbox = OutlookSandboxService(SandboxRepository(cfg.data_dir))
+    app.extensions['outlook_sandbox'] = outlook_sandbox
+    app.register_blueprint(outlook_sandbox_blueprint(outlook_sandbox))
     gallery = build_gallery(cfg.data_dir)
     gallery_access = build_gallery_access(cfg.data_dir)
     gallery_https = GalleryHttpsAdapter(cfg.data_dir)
