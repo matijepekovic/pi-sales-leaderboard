@@ -33,7 +33,7 @@ def test_configuration_rejects_bad_tenant_mailbox_and_mailbox_injection():
     assert cfg.folder == 'Printer' and cfg.identity()[0] == TENANT
     for bad in [
         dict(tenant_id='common'), dict(client_id='no-app'),
-        dict(mailbox='not-an-email'), dict(folder=''),
+        dict(mailbox='not-an-email'), dict(mailbox='a@b.test\x01injected'), dict(folder=''),
         dict(folder='INBOX\r\nSTORE 1'), dict(folder='INBOX\x00Printer'),
         dict(folder='a' * 201),
     ]:
@@ -73,6 +73,9 @@ def test_staged_files_are_private_and_non_traversable(tmp_path):
             repo.file(bad, 0)
     with pytest.raises(SandboxError):
         repo.file(sid, 55)
+    sid_long = repo.stage_id(cfg, '19', '101')
+    repo.save_attachments(sid_long, [('x' * 149 + '.pdf', b'safe')])
+    assert repo.file(sid_long, 0)[0].read_bytes() == b'safe'
 
 
 def sample_email():
@@ -170,10 +173,10 @@ def test_logout_during_signin_cannot_restore_revoked_token(tmp_path, monkeypatch
     assert started.wait(2)
     service.disconnect()
     release.set()
-    for _ in range(100):
-        if not service._flow:
-            break
-        time.sleep(0.01)
+    for thread in threading.enumerate():
+        if thread.name == 'outlook-sandbox-oauth':
+            thread.join(timeout=2)
+            assert not thread.is_alive()
     assert not repository.tokens_path.exists()
 
 
