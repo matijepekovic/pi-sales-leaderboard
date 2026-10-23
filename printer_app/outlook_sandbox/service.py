@@ -73,6 +73,8 @@ class OutlookSandboxService:
                 account = str(accounts[0].get('username', '')) if accounts else ''
             return dict(configured=cfg is not None,
                         app_ready=registration is not None,
+                        mailbox=cfg.mailbox if cfg is not None else '',
+                        folder=cfg.folder if cfg is not None else 'Printer',
                         signed_in=bool(account), account=account, **self._login)
 
     def start_login(self) -> dict:
