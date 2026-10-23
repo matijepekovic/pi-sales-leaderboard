@@ -203,7 +203,6 @@ def test_admin_csrf_and_gmail_isolation(web):
     assert status['configured'] and not status['signed_in']
     resp = client.post('/outlook-sandbox/check', data={'csrf': csrf})
     assert resp.status_code == 400 and not resp.json['ok']
-    assert not list((app.extensions['printer_db'].db_path.parent / 'attachments').glob('*')) if False else True
     assert app.extensions['printer_db'].rows('SELECT * FROM attachments') == []
 
 
