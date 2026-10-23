@@ -78,8 +78,6 @@ class OutlookSandboxService:
     def start_login(self) -> dict:
         with self._lock:
             cfg = self.configuration()
-            if cfg is None:
-                raise SandboxError('Enter your Outlook email and folder first.')
             registration = self.repository.registration()
             if registration is None:
                 raise SandboxError(
@@ -125,6 +123,25 @@ class OutlookSandboxService:
             if self._flow is not flow or cfg != self.configuration():
                 return  # Disconnect or settings change must not resurrect a token.
             self._flow = None
+            if success and cfg is None:
+                # In the normal path the approved Microsoft login supplies the
+                # mailbox identity; the user should not have to type an email.
+                try:
+                    claims = result.get('id_token_claims') or {}
+                    usernames = [
+                        claims.get('preferred_username'), claims.get('email'),
+                        *[a.get('username') for a in list(
+                            cache.search(msal.TokenCache.CredentialType.ACCOUNT))],
+                    ]
+                    identity = next(
+                        (str(name) for name in usernames if name and '@' in str(name)), '')
+                    discovered = OutlookConfig.from_form(
+                        {'mailbox': identity, 'folder': 'Printer'})
+                    self.repository.save_config(discovered)
+                except (SandboxError, TypeError, ValueError, KeyError):
+                    success = False
+                    message = ('Microsoft authorized the app, but did not return an Outlook address. '
+                               'Enter your work email below and reconnect.')
             if success:
                 self.repository.write_tokens(cache.serialize())
                 self._login = {'state': 'connected'}
