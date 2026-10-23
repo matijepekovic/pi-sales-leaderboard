@@ -1,7 +1,7 @@
 """Admin-only Outlook trial HTTP interface. All workflow decisions live in the service."""
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Blueprint, jsonify, redirect, render_template, request, send_file, url_for
 
 from .repository import SandboxError
 from .service import OutlookSandboxService
