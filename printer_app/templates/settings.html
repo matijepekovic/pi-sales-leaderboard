@@ -35,6 +35,10 @@
 <p class="notice">Saving with email printing enabled automatically processes matching messages in this lookback window. Empty filters match every email. Previously processed messages are not printed again.</p>
 </section>
 </div>
+<section><h2>Outlook sandbox (test only)</h2>
+<p>Try an Okta-connected Microsoft 365 mailbox and Outlook folder while Gmail keeps printing normally. Preview and stage test attachments without sending them to the printer.</p>
+<a class="button" href="{{ url_for('outlook_sandbox.page_view') }}">Open Outlook Sandbox</a>
+</section>
 <section><h2>Printing and time</h2>
 <div class="form-grid">
 <label>Existing printer queue<input value="{{ queue }}" readonly aria-readonly="true"><span class="muted">Uses the working CUPS queue. Driver and Account Track settings are not changed here.</span></label>
