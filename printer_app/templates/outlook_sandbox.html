@@ -2,52 +2,51 @@
 {% block title %}Outlook Sandbox{% endblock %}
 {% block content %}
 <div class="heading"><div><p class="eyebrow">PRINTER AUTOMATION · TEST ONLY</p><h1>Outlook Sandbox</h1></div><a class="button" href="{{ url_for('settings_page') }}">Back to Settings</a></div>
-<p class="notice">Outlook is isolated from Gmail and the real print queue. Messages are read-only. Test attachments stay in private sandbox storage and are never printed, imported into Gallery, or deleted from Outlook.</p>
+<p class="notice">Outlook is isolated from Gmail and the real printer. Checking or downloading test attachments never sends anything to the print queue or Gallery.</p>
 {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
-{% if saved %}<p class="notice good" role="status">Outlook sandbox configuration saved. Gmail settings were not changed.</p>{% endif %}
-<div class="cards">
+{% if saved %}<p class="notice good" role="status">Outlook folder settings saved. Gmail was not changed.</p>{% endif %}
 <section>
-<h2>1. Outlook connection</h2>
-<p class="muted">IT must approve a Microsoft Entra application with delegated IMAP.AccessAsUser.All access and public-client device sign-in. Your normal company Okta sign-in is used when Microsoft redirects you.</p>
+<h2>1. Connect Outlook</h2>
+<p>Click Connect, follow Microsoft's sign-in link, and complete your usual company Okta verification on the official sign-in page. No password or Okta verification code is entered into the Printer App.</p>
+<p id="outlookConnectionStatus" class="muted" role="status">Checking connection…</p>
+<div class="toolbar">
+<button type="button" class="primary" id="outlookConnect" data-url="{{ url_for('outlook_sandbox.connect') }}">Connect Outlook</button>
+<button type="button" id="outlookDisconnect" data-url="{{ url_for('outlook_sandbox.disconnect') }}">Disconnect Outlook</button>
+</div>
+<div id="outlookSignIn" class="notice" hidden>
+<p>Open <a href="https://microsoft.com/devicelogin" rel="noopener noreferrer" target="_blank">microsoft.com/devicelogin</a> and enter the Microsoft device sign-in code:</p>
+<p><strong><code id="outlookUserCode"></code></strong></p>
+<p>Then sign in with your company account. If Okta asks for a verification code, enter it directly into Okta. This page updates when sign-in completes.</p>
+</div>
+<p id="outlookActionResult" class="muted" role="status"></p>
+{% if not registration_ready %}
+<p class="notice" role="status">Microsoft has not yet approved/configured this printer as an email application. An Okta code alone cannot unlock Outlook; the app must first be authorized. No Tenant ID or Client ID needs to be entered on this page.</p>
+{% endif %}
+</section>
+<section>
+<h2>2. Outlook folder</h2>
+<p class="muted">After connecting, your work email is detected automatically. The default test folder is <strong>Printer</strong>. Edit these only if needed.</p>
 <form method="post" action="{{ url_for('outlook_sandbox.configure') }}" autocomplete="off">
 <input type="hidden" name="csrf" id="outlookCsrf" value="{{ session.csrf }}">
-<label>Tenant ID<input name="tenant_id" value="{{ config.tenant_id if config else '' }}" maxlength="36" placeholder="Microsoft Entra Tenant ID" required></label>
-<label>Application (Client) ID<input name="client_id" value="{{ config.client_id if config else '' }}" maxlength="36" placeholder="Microsoft Entra Application ID" required></label>
-<label>Outlook email address<input name="mailbox" type="email" value="{{ config.mailbox if config else '' }}" maxlength="254" placeholder="you@company.com" required></label>
-<label>IMAP folder<input id="outlookFolder" name="folder" value="{{ config.folder if config else 'Printer' }}" maxlength="200" list="outlookFolderNames" required></label>
+<label>Outlook email<input id="outlookMailbox" name="mailbox" type="email" value="{{ config.mailbox if config else '' }}" maxlength="254" placeholder="Detected when you connect" required></label>
+<label>Folder to test<input id="outlookFolder" name="folder" value="{{ config.folder if config else 'Printer' }}" maxlength="200" list="outlookFolderNames" required></label>
 <datalist id="outlookFolderNames"></datalist>
-<p class="muted">Create a folder named Printer in Outlook first. Save these settings before connecting. If it is nested, use its exact IMAP folder path.</p>
-<button class="primary" type="submit">Save Outlook Sandbox Settings</button>
+<button type="submit">Save email / folder</button>
 </form>
 </section>
 <section>
-<h2>2. Sign in with Microsoft / Okta</h2>
-<p id="outlookConnectionStatus" class="muted" role="status">Checking sandbox connection…</p>
-<div class="toolbar">
-<button type="button" id="outlookConnect" data-url="{{ url_for('outlook_sandbox.connect') }}">Connect Outlook</button>
-<button type="button" id="outlookDisconnect" data-url="{{ url_for('outlook_sandbox.disconnect') }}">Disconnect</button>
-</div>
-<div id="outlookSignIn" class="notice" hidden>
-<p>Open <a href="https://microsoft.com/devicelogin" rel="noopener noreferrer" target="_blank">microsoft.com/devicelogin</a> and enter this code:</p>
-<p><strong><code id="outlookUserCode"></code></strong></p>
-<p>Complete your company Microsoft / Okta sign-in. This code expires; the status updates automatically.</p>
-</div>
-<p id="outlookActionResult" class="muted" role="status"></p>
-</section>
-</div>
-<section>
-<h2>3. Verify the folder and messages</h2>
+<h2>3. Test the folder</h2>
 <div class="toolbar">
 <button type="button" id="outlookFolders" data-url="{{ url_for('outlook_sandbox.folders') }}">List Outlook folders</button>
 <button type="button" id="outlookCheck" data-url="{{ url_for('outlook_sandbox.check') }}">Check selected folder</button>
 </div>
 <p id="outlookFolderResult" class="muted" role="status"></p>
-<p id="outlookCheckResult" class="muted" role="status">Only the latest 12 messages from the saved folder are shown. Checking does not download attachments.</p>
+<p id="outlookCheckResult" class="muted" role="status">Only the latest 12 message headers in your selected folder are shown. Nothing is downloaded by a folder check.</p>
 <div id="outlookMessages"></div>
 </section>
 <section>
-<h2>4. Stage a test attachment</h2>
-<p class="muted">Click <strong>Stage attachments</strong> beside a message above. Its files are saved privately and can be downloaded for comparison. No printer jobs are created, and there is no automatic Outlook monitoring yet.</p>
+<h2>4. Test attachments (no printing)</h2>
+<p class="muted">Click <strong>Stage attachments</strong> beside a message to download them privately for inspection. Outlook is not automatically monitored or connected to the print queue.</p>
 <div id="outlookStageResult" role="status"></div>
 </section>
 <script src="{{ url_for('static', filename='outlook_sandbox.js') }}" defer></script>
