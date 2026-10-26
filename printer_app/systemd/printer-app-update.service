@@ -1,0 +1,22 @@
+[Unit]
+Description=Install an authenticated printer-only software update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=scoreboard
+Group=scoreboard
+WorkingDirectory=@BASE@/current
+EnvironmentFile=@ENV@
+Environment=PRINTER_ENV_FILE=@ENV@
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m printer_app.update run
+TimeoutStartSec=30min
+UMask=0077
+PrivateTmp=true
+# Unlike the web/worker sandboxes, this separate installation process must
+# retain sudo's pre-existing package/service permissions. It never runs Stats.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=printer-app-update
