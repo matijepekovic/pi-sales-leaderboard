@@ -56,6 +56,8 @@ class PrinterUpdateService:
 
     def __init__(self, data_dir: Path):
         self.directory = Path(data_dir) / "updates"
+        # The systemd PathExists watcher needs a stable parent directory.
+        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     def status(self) -> dict:
         saved = _read_json(self.directory / "status.json")
