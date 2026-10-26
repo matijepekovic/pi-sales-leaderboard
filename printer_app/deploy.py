@@ -19,9 +19,15 @@ from pathlib import Path
 
 UNITS = ['printer-app-web.service', 'printer-app-worker.service']
 OPTIONAL_UNITS = ['printer-app-gallery.service', 'printer-app-https.service']
+UPDATE_SERVICE = 'printer-app-update.service'
+UPDATE_PATH = 'printer-app-update.path'
+
 
 def release_units(release):
-    return UNITS + [u for u in OPTIONAL_UNITS if (release / 'printer_app/systemd' / u).is_file()]
+    units = UNITS + [u for u in OPTIONAL_UNITS if (release / 'printer_app/systemd' / u).is_file()]
+    if all((release / 'printer_app/systemd' / u).is_file() for u in (UPDATE_SERVICE, UPDATE_PATH)):
+        units += [UPDATE_SERVICE, UPDATE_PATH]
+    return units
 SKIP = {'data', '.venv', '__pycache__', '.pytest_cache', '.git'}
 
 
@@ -75,7 +81,11 @@ def install_units(release: Path, base: Path, paths: dict, *, unattended=False):
             target.write_text(text)
             run(['sudo', 'install', '-m', '0644', str(target), '/etc/systemd/system/' + unit], unattended=unattended)
     run(['sudo', 'systemctl', 'daemon-reload'], unattended=unattended)
-    run(['sudo', 'systemctl', 'enable', *release_units(release)], unattended=unattended)
+    # A triggered one-shot service must never be enabled as a boot service.
+    # Only its path unit watches for the web's authenticated request file.
+    run(['sudo', 'systemctl', 'enable',
+         *(unit for unit in release_units(release) if unit != UPDATE_SERVICE)],
+        unattended=unattended)
 
 
 def healthy(paths: dict) -> bool:
@@ -99,7 +109,7 @@ def activate(base: Path, release: Path, *, unattended=False):
     if old and old != release:
         atomic_link(base / 'previous', old)
     if old:
-        removed = set(release_units(old)) - set(release_units(release))
+        removed = set(release_units(old)) - set(release_units(release)) - {UPDATE_SERVICE}
         if removed:
             run(['sudo', 'systemctl', 'disable', '--now', *sorted(removed)], unattended=unattended)
     atomic_link(current, release)
@@ -110,14 +120,16 @@ def activate(base: Path, release: Path, *, unattended=False):
     except Exception:
         if old and old != release:
             atomic_link(current, old)
-            added = set(release_units(release)) - set(release_units(old))
+            added = set(release_units(release)) - set(release_units(old)) - {UPDATE_SERVICE}
             if added:
                 run(['sudo', 'systemctl', 'disable', '--now', *sorted(added)], unattended=unattended)
             install_units(old, base, release_paths(old), unattended=unattended)
-            run(['sudo', 'systemctl', 'restart', *release_units(old)], unattended=unattended)
+            run(['sudo', 'systemctl', 'restart',
+                 *(unit for unit in release_units(old) if unit != UPDATE_SERVICE)],
+                unattended=unattended)
             print('Restored previous printer release. Database was NOT rolled back.', file=sys.stderr)
         raise
-    for unit in set(release_units(release)) - set(UNITS):
+    for unit in set(release_units(release)) - set(UNITS) - {UPDATE_SERVICE}:
         try:
             run(['sudo', 'systemctl', 'restart', unit], unattended=unattended)
         except subprocess.SubprocessError:
