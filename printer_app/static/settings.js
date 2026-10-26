@@ -21,3 +21,29 @@
     }
   });
 })();
+
+/* Read-only status: web restarts during installation, so transient errors retry. */
+(() => {
+  const section = document.getElementById('printerUpdate');
+  if (!section) return;
+  const output = document.getElementById('printerUpdateStatus');
+  const button = document.getElementById('updatePrinterOnly');
+  async function refreshPrinterUpdate() {
+    try {
+      const response = await fetch(section.dataset.statusUrl, {
+        credentials: 'same-origin', cache: 'no-store'
+      });
+      if (!response.ok) return;
+      const status = await response.json();
+      output.textContent = status.state + ' — ' + status.message;
+      const busy = status.state === 'QUEUED' || status.state === 'INSTALLING';
+      button.disabled = busy;
+      output.className = status.state === 'ERROR' ? 'error' :
+        status.state === 'READY' || status.state === 'UP TO DATE' ? 'good' : 'muted';
+    } catch (_) {
+      // Printer web can briefly restart while the update service installs it.
+    }
+  }
+  refreshPrinterUpdate();
+  setInterval(refreshPrinterUpdate, 5000);
+})();

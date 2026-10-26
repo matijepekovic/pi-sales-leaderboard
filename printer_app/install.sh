@@ -18,7 +18,7 @@ done
 # Do not allow package-maintenance helpers to restart unrelated services.
 "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get update
 # CUPS client/development headers only. No driver, queue, filter or Account Track changes.
-"${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y --no-install-recommends --no-upgrade python3-venv python3-dev build-essential libcups2-dev cups-client \
+"${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y --no-install-recommends --no-upgrade python3-venv python3-dev build-essential libcups2-dev cups-client git \
   libreoffice-calc fonts-liberation fonts-dejavu-core
 # Optional gallery tools use the system Python, never the printer venv.
 # A gallery package failure must not prevent the existing printer update.

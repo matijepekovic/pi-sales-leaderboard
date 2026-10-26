@@ -759,6 +759,21 @@ class GalleryService:
         self.repository.progress(ident, clean)
 
 
+    def recover_saved_fallback_candidates(self):
+        """Repair past failed scans from their retained OCR diagnostics, without OCR."""
+        self.initialize()
+        from .recognition import saved_fallback_candidates
+        changed = 0
+        for item in self.repository.unresolved_fallback_items():
+            candidates = saved_fallback_candidates(item.get('work_order_reads') or ())
+            if candidates:
+                changed += self.repository.save_work_order_candidates(
+                    item['id'], candidates, expected_text=item['text'],
+                    reads=item['work_order_reads'],
+                    expected_image_revision=item.get('image_revision'),
+                )
+        return changed
+
     def repair_one(self, reader):
         """Low-priority worker operation; reader returns normalized OCR values.
 

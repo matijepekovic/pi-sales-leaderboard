@@ -68,7 +68,7 @@
 </div>
 {% if item.state == 'REVIEW' %}
 {% if item.mod_notes_status == 'unknown' %}
-<p class="notice error"><strong>MOD notes need checking.</strong> This card stays out of Gallery until its notes can be read. Reprocess the original scan to try again.</p>
+<p class="notice error"><strong>MOD notes need checking.</strong> If you can see handwritten notes on this card, select Approve to Gallery to accept them manually. Otherwise reprocess the original scan.</p>
 {% endif %}
 {% if not item.work_order_number %}
 {% if item.work_order_candidates %}
@@ -80,6 +80,9 @@
 {% else %}
 <p class="good"><strong>In Gallery</strong></p>
 {% endif %}
+{% if item.mod_notes_status == 'manual' %}
+<p class="muted">MOD notes manually approved; not automatically verified.</p>
+{% endif %}
 <form class="gallery-job-work-order-form" method="post" action="{{ url_for('gallery.import_item_work_order_number', ident=job.id, item_id=item.id) }}">
 <input type="hidden" name="csrf" value="{{ session.csrf }}"><input type="hidden" name="offset" value="{{ offset }}">
 <label>Work order number<input name="work_order_number" maxlength="80" inputmode="numeric" value="{{ item.work_order_number }}" placeholder="Enter 8-digit work order" required></label>
@@ -87,7 +90,7 @@
 </form>
 <img class="gallery-job-image" loading="lazy" src="{{ url_for('gallery.import_item_image', ident=job.id, item_id=item.id) }}" alt="Generated work order, page {{ item.page }}, card {{ item.part }}">
 <div class="toolbar">
-{% if item.state == 'REVIEW' and item.mod_notes_status != 'unknown' %}
+{% if item.state == 'REVIEW' %}
 <form method="post" action="{{ url_for('gallery.approve_import_item', ident=job.id, item_id=item.id) }}"><input type="hidden" name="csrf" value="{{ session.csrf }}"><input type="hidden" name="offset" value="{{ offset }}"><button class="primary" type="submit">Approve to Gallery</button></form>
 {% endif %}
 <form method="post" action="{{ url_for('gallery.delete_import_item', ident=job.id, item_id=item.id) }}"><input type="hidden" name="csrf" value="{{ session.csrf }}"><input type="hidden" name="offset" value="{{ offset }}"><button class="danger" type="submit">Delete</button></form>

@@ -142,7 +142,7 @@ def address_key(value):
     return ' '.join(re.findall(r'[a-z0-9]+', value))
 
 
-def _work_order_field_spans(text):
+def _work_order_field_spans(text, *, allow_wrapped_digits=False):
     original = str(text or '')
     labels = list(re.finditer(
         r'\bWork[ \t]+Order[ \t]+Number\b[ \t]*[:;]?[ \t]*', original, re.I))
@@ -151,14 +151,22 @@ def _work_order_field_spans(text):
     boundary = r'[\r\n|]|\b(?:' + fields + r')\b|\b[A-Za-z][A-Za-z0-9 /_-]*[:;]'
     for index, label in enumerate(labels):
         end = labels[index + 1].start() if index + 1 < len(labels) else len(original)
-        boundary_match = re.search(boundary, original[label.end():end], flags=re.I)
-        yield label.end(), label.end() + boundary_match.start() if boundary_match else end
+        start = label.end()
+        if allow_wrapped_digits:
+            # Whole-card OCR sometimes puts the eight visible header digits on
+            # the line below their printed label. Only permit that exact shape:
+            # never skip another label, a blank line, or arbitrary card text.
+            wrap = re.match(r'\r?\n[ \t]*(?=0[2][0-9OoBb!]{6}(?![0-9OoBb!]))', original[start:end])
+            if wrap:
+                start += wrap.end()
+        boundary_match = re.search(boundary, original[start:end], flags=re.I)
+        yield start, start + boundary_match.start() if boundary_match else end
 
 
-def work_order_fields(text):
-    """Yield explicit single-line work-order values, without normalizing OCR glyphs."""
+def work_order_fields(text, *, allow_wrapped_digits=False):
+    """Yield labeled values; optional one-line OCR wrap stays fallback-only."""
     original = str(text or '')
-    for start, end in _work_order_field_spans(original):
+    for start, end in _work_order_field_spans(original, allow_wrapped_digits=allow_wrapped_digits):
         yield original[start:end]
 
 

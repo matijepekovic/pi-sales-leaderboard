@@ -56,6 +56,33 @@ printer administration. A Gallery link cannot unlock Print Control by changing i
 URL. CSRF/same-origin checks remain in addition to authentication. After updating,
 reopen Settings rather than resubmitting an old page.
 
+## Update only the printer from Print Control
+
+After the first Stats-delivered printer update that contains this feature,
+open **Print Control → Settings → Printer software update → Update Printer**.
+This is a separate form from Gmail/print settings. The button checks the
+published `main` printer tree and downloads **only** `printer_app/`
+when that tree has changed. It does not update or restart Stats, alter Stats
+data, or select a different source or branch.
+
+The web service can only write a fixed, authenticated/CSRF-protected update
+request to private printer storage. A dedicated `printer-app-update.path`
+triggers the `printer-app-update.service` one-shot process, which validates
+the exact Git tree before running the existing printer-only installer. Its
+isolated release installer preserves printer data and automatically restores
+the previous working printer code if the health check fails. The Settings
+screen shows QUEUED, INSTALLING, UP TO DATE, READY or ERROR status, including
+after a temporary web restart. The separate one-shot service needs the same
+already-provisioned, noninteractive sudo permissions as the existing
+Stats-delivered printer installer. No new privileged web endpoint is added.
+
+Existing Gallery review cards with readable work-order numbers in the retained
+fallback OCR diagnostics have those numbers recovered as **unverified
+candidates** when the Gallery worker restarts. The normal Salesforce lookup
+must still validate them before Gallery accepts the identity; unrelated
+phone/date numbers are never adopted. For newly processed scans, a number
+immediately below a Work Order Number label is also preserved as a candidate.
+
 ## Keep collecting emails; print on selected days
 
 Open **Print Control → Settings → When reports print**. Choose **Queue emails

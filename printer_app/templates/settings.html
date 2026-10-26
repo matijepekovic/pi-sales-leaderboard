@@ -52,5 +52,14 @@
 </section>
 <div class="toolbar"><button class="primary" type="submit">Save Settings</button><a class="button" href="{{ url_for('settings_page') }}">Discard changes</a></div>
 </form>
+<section id="printerUpdate" data-status-url="{{ url_for('printer_update_status') }}">
+<h2>Printer software update</h2>
+<p>Update only the independent printer app from its published GitHub release. Stats, its services, and its data are not updated or restarted.</p>
+<form method="post" action="{{ url_for('update_printer') }}">
+<input type="hidden" name="csrf" value="{{ session.csrf }}">
+<button class="primary" type="submit" id="updatePrinterOnly">Update Printer</button>
+</form>
+<p id="printerUpdateStatus" class="muted" role="status">{{ printer_update.state }} — {{ printer_update.message }}</p>
+</section>
 <script src="{{ url_for('static', filename='settings.js') }}" defer></script>
 {% endblock %}

@@ -213,13 +213,28 @@ def _run_tesseract(image, ocr_copy, *, digits_only=False, psm=None):
 
 def _work_order_candidates(text, *, labeled=False):
     """Normalize observed glyphs, then apply the single scan-policy boundary."""
-    fields = work_order_fields(text) if labeled else (text,)
+    fields = work_order_fields(text, allow_wrapped_digits=True) if labeled else (text,)
     return tuple(dict.fromkeys(
         candidate
         for field in fields
         for token in numeric_tokens_from_text(field, allow_separated=True)
         for candidate in scanned_work_order_candidates(token)
     ))
+
+
+def saved_fallback_candidates(reads):
+    """Recover explicit work-order reads retained by older failed OCR passes.
+
+    The diagnostics were flattened for display, often removing an OCR line wrap
+    that defeated the old labeled-field parser. Never read free-form card text,
+    concatenate digit fragments, or accept these as verified identities.
+    """
+    values = {}
+    for read in reads:
+        if isinstance(read, dict) and read.get('label') == 'Fallback whole card':
+            for number in _work_order_candidates(str(read.get('text') or ''), labeled=True):
+                values.setdefault(number, None)
+    return tuple(values)
 
 
 def _without_form_rules(source):

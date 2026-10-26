@@ -161,8 +161,8 @@ def test_unknown_notes_prevent_all_identity_activation_and_leave_placeholder(rep
     _save(repository, 'morning', origin='morning')
     _save(repository, 'scan', pending=True, notes='unknown')
     assert _accept(repository) == 0
-    with pytest.raises(ValueError, match='MOD Notes'):
-        repository.approve_import_item('batch-scan', 'scan')
+    # Without a human decision, source enrichment still cannot publish scans
+    # whose MOD Notes cannot be verified.
     repository.correct_import_item_lead('batch-scan', 'scan', 'Corrected Name', 'corrected name')
     assert repository.item('scan') is None
     repository.correct_import_item_work_order('batch-scan', 'scan', NUMBER)
@@ -173,6 +173,21 @@ def test_unknown_notes_prevent_all_identity_activation_and_leave_placeholder(rep
     assert retry['id'] == 'scan'
     assert retry['work_order_key'] == NUMBER
     assert retry['mod_notes_status'] == 'unknown'
+
+
+def test_manual_notes_approval_is_explicit_and_preserves_unverified_work_order(repository):
+    _save(repository, 'morning', origin='morning')
+    _save(repository, 'scan', pending=True, notes='unknown')
+    assert _accept(repository) == 0
+    assert repository.approve_import_item('batch-scan', 'scan')
+    approved = repository.item('scan')
+    assert approved['state'] == 'ACTIVE'
+    assert approved['mod_notes_status'] == 'manual'
+    assert approved['work_order_number'] == ''
+    assert repository.item('morning') is not None
+    assert repository.update_notes_status('scan', 'scan', 'present') == 0
+    assert repository.discard_candidate('scan', 'scan') == 0
+    assert repository.approve_import_item('batch-scan', 'scan') is False
 
 
 def test_unknown_scan_cannot_replace_an_existing_image_at_persistence_boundary(repository):
