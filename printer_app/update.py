@@ -7,25 +7,20 @@ This module never imports, replaces, or restarts Stats.
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
-import shutil
-import stat
 import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 import uuid
-import zipfile
 
 from .deploy import fingerprint
 
 REPOSITORY = "matijepekovic/pi-sales-leaderboard"
-MAX_ARCHIVE = 128 * 1024 * 1024
+MAX_SOURCE = 128 * 1024 * 1024
 ACTIVE_STATES = frozenset(("QUEUED", "INSTALLING"))
 
 
@@ -88,92 +83,49 @@ class PrinterUpdateService:
             return self.status()
 
 
-def _api_json(path: str) -> dict:
-    url = "https://api.github.com/repos/" + REPOSITORY + path
-    request = urllib.request.Request(url, headers={
-        "Accept": "application/vnd.github+json", "User-Agent": "printer-app-update",
-    })
-    with urllib.request.urlopen(request, timeout=20) as response:
-        return json.loads(response.read(2 * 1024 * 1024))
+def _checkout(destination: Path) -> tuple[Path, dict]:
+    """Obtain one verified Git checkout of the fixed public main branch.
 
+    This uses Git's native object integrity checks rather than duplicating the
+    existing legacy Stats-to-printer bootstrap ZIP verifier. Only printer_app/
+    is passed to the installer; no checked-out Stats code is ever executed.
+    """
+    repository = destination / "repository"
+    source = "https://github.com/" + REPOSITORY + ".git"
+    command = [
+        "git", "-c", "core.autocrlf=false", "-c", "core.hooksPath=/dev/null",
+        "clone", "--quiet", "--depth", "1", "--single-branch",
+        "--no-tags", "--branch", "main", "--", source, str(repository),
+    ]
+    environment = dict(os.environ, GIT_TERMINAL_PROMPT="0",
+                       GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null")
+    subprocess.run(command, env=environment, stdin=subprocess.DEVNULL,
+                   check=True, timeout=180)
 
-def _remote_bundle() -> dict:
-    revision = _api_json("/git/ref/heads/main")["object"]["sha"]
-    if not re.fullmatch(r"[0-9a-f]{40}", revision):
-        raise ValueError("Invalid upstream commit")
-    tree = _api_json("/git/trees/" + revision)
-    entries = [item for item in tree.get("tree", ())
-               if item.get("path") == "printer_app" and item.get("type") == "tree"]
-    if len(entries) != 1 or not re.fullmatch(r"[0-9a-f]{40}", entries[0].get("sha", "")):
-        raise ValueError("No verified printer source in upstream commit")
-    return {"revision": revision, "tree": entries[0]["sha"]}
+    def revision(ref: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(repository), "rev-parse", "--verify", ref],
+            env=environment, stdin=subprocess.DEVNULL, capture_output=True,
+            text=True, check=True, timeout=15,
+        )
+        value = result.stdout.strip()
+        if not re.fullmatch(r"[0-9a-f]{40}", value):
+            raise ValueError("Invalid printer source commit or tree")
+        return value
 
-
-def _git_tree(directory: Path) -> str:
-    """Use Git's exact tree/hash format, including executable file modes."""
-    entries = []
-    for path in directory.iterdir():
-        if path.is_symlink():
-            raise ValueError("Symlink not allowed in printer update")
-        name = path.name.encode("utf-8")
-        if path.is_dir():
-            mode, digest, order = b"40000", _git_tree(path), name + b"/"
-        elif path.is_file():
-            data = path.read_bytes()
-            mode = b"100755" if path.stat().st_mode & 0o111 else b"100644"
-            digest = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
-            order = name
-        else:
-            raise ValueError("Unsupported printer update file")
-        entries.append((order, mode + b" " + name + b"\0" + bytes.fromhex(digest)))
-    payload = b"".join(record for _, record in sorted(entries))
-    return hashlib.sha1(b"tree " + str(len(payload)).encode() + b"\0" + payload).hexdigest()
-
-
-def _download(bundle: dict, directory: Path) -> Path:
-    url = ("https://api.github.com/repos/" + REPOSITORY + "/zipball/"
-           + bundle["revision"])
-    request = urllib.request.Request(url, headers={"User-Agent": "printer-app-update"})
-    archive = directory / "upstream.zip"
-    with urllib.request.urlopen(request, timeout=60) as response, archive.open("xb") as output:
-        total = 0
-        while chunk := response.read(1024 * 1024):
-            total += len(chunk)
-            if total > MAX_ARCHIVE:
-                raise ValueError("Printer source archive exceeds the size limit")
-            output.write(chunk)
-
-    package = directory / "printer_app"
-    package.mkdir(mode=0o700)
+    bundle = {"revision": revision("HEAD"), "tree": revision("HEAD:printer_app")}
+    package = repository / "printer_app"
+    if not package.is_dir():
+        raise ValueError("Printer source not found in verified checkout")
     total = 0
-    selected = set()
-    with zipfile.ZipFile(archive) as source:
-        for info in source.infolist():
-            parts = PurePosixPath(info.filename).parts
-            if (PurePosixPath(info.filename).is_absolute() or ".." in parts
-                    or "\\" in info.filename):
-                raise ValueError("Unsafe path in printer source archive")
-            if len(parts) < 2 or parts[1] != "printer_app":
-                continue
-            if info.is_dir():
-                continue
-            relative = Path(*parts[2:])
-            mode = info.external_attr >> 16
-            if (not relative.parts or relative in selected
-                    or stat.S_IFMT(mode) not in (0, stat.S_IFREG)):
-                raise ValueError("Unsupported or duplicate printer source file")
-            selected.add(relative)
-            total += info.file_size
-            if total > MAX_ARCHIVE:
-                raise ValueError("Extracted printer source exceeds the size limit")
-            target = package / relative
-            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            with source.open(info) as incoming, target.open("xb") as outgoing:
-                shutil.copyfileobj(incoming, outgoing)
-            target.chmod(0o755 if mode & 0o111 else 0o644)
-    if _git_tree(package) != bundle["tree"]:
-        raise ValueError("Printer files did not match the upstream Git tree")
-    return package
+    for entry in package.rglob("*"):
+        if entry.is_symlink():
+            raise ValueError("Links are not allowed in printer source")
+        if entry.is_file():
+            total += entry.stat().st_size
+            if total > MAX_SOURCE:
+                raise ValueError("Printer source exceeds the update size limit")
+    return package, bundle
 
 
 def run_update(data_dir: Path) -> int:
@@ -198,10 +150,9 @@ def run_update(data_dir: Path) -> int:
 
         try:
             record("INSTALLING", "Checking the latest published printer release…")
-            bundle = _remote_bundle()
-            record("INSTALLING", "Downloading and verifying printer files…", **bundle)
             with tempfile.TemporaryDirectory(prefix="printer-update-", dir=directory) as temp:
-                package = _download(bundle, Path(temp))
+                record("INSTALLING", "Fetching the verified printer source…")
+                package, bundle = _checkout(Path(temp))
                 if fingerprint(package) == fingerprint(Path(__file__).resolve().parent):
                     record("UP TO DATE", "Printer is already up to date; Stats was not changed.", **bundle)
                     return 0
