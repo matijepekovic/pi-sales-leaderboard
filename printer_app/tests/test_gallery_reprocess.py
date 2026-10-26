@@ -306,7 +306,7 @@ def test_processing_job_keeps_live_progress(gallery_admin):
         assert message in page.split('<details class="gallery-processing-log">')[0]
 
 
-def test_unreadable_notes_do_not_offer_identity_approval(gallery_admin):
+def test_unreadable_mod_notes_allow_explicit_admin_approval_to_gallery(gallery_admin):
     _, gallery, client, _ = gallery_admin
     ident = hashlib.sha256(b'notes review scan').hexdigest()
     item_id = hashlib.sha256(b'notes review card').hexdigest()
@@ -316,10 +316,40 @@ def test_unreadable_notes_do_not_offer_identity_approval(gallery_admin):
         work_order_number='02000001', work_order_candidates=(),
         document_date='2026-09-17', date_status='printed', bytes=20, created=time.time(),
         mod_notes_status='unknown')])
+    gallery.files.path('crops', item_id).write_bytes(b'original-card-image')
+    retained = gallery.repository.import_item(ident, item_id)
 
+    assert retained['state'] == 'REVIEW'
+    assert gallery.item(item_id) is None
     page = client.get(f'/gallery/jobs/{ident}').get_data(as_text=True)
-
     assert 'MOD notes need checking.' in page
     assert 'Work order needs correction.</strong>' not in page
-    assert '>Approve to Gallery</button>' not in page
+    assert '>Approve to Gallery</button>' in page
     assert 'need MOD Notes review' not in page  # Older imports have no publication breakdown.
+
+    with client.session_transaction() as session:
+        csrf = session['csrf']
+    response = client.post(f'/gallery/jobs/{ident}/items/{item_id}/approve', data={'csrf': csrf})
+    assert response.status_code == 303
+    assert 'action=approved' in response.headers['Location']
+
+    approved = gallery.repository.import_item(ident, item_id)
+    assert approved['state'] == 'ACTIVE'
+    assert approved['mod_notes_status'] == 'manual'  # Not mistaken for OCR-verified 'present'
+    assert approved['work_order_number'] == retained['work_order_number']
+    assert approved['image_revision'] == retained['image_revision']
+    assert gallery.item(item_id)['id'] == item_id
+    assert gallery.files.path('crops', item_id).read_bytes() == b'original-card-image'
+    assert gallery.repository.update_notes_status(item_id, retained['image_revision'], 'present') == 0
+    assert gallery.repository.discard_candidate(item_id, retained['image_revision']) == 0
+
+    steps = gallery.import_job(ident)['steps']
+    assert 'MOD Notes manually approved.' in steps[-1]['message']
+    approved_page = client.get(f'/gallery/jobs/{ident}').get_data(as_text=True)
+    assert 'MOD notes manually approved; not automatically verified.' in approved_page
+    assert '>Approve to Gallery</button>' not in approved_page
+
+    # Repeated submissions are harmless and do not create another approval entry.
+    assert client.post(f'/gallery/jobs/{ident}/items/{item_id}/approve',
+                       data={'csrf': csrf}).status_code == 303
+    assert gallery.import_job(ident)['steps'] == steps
