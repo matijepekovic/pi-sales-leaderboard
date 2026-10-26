@@ -222,6 +222,21 @@ def _work_order_candidates(text, *, labeled=False):
     ))
 
 
+def saved_fallback_candidates(reads):
+    """Recover explicit work-order reads retained by older failed OCR passes.
+
+    The diagnostics were flattened for display, often removing an OCR line wrap
+    that defeated the old labeled-field parser. Never read free-form card text,
+    concatenate digit fragments, or accept these as verified identities.
+    """
+    values = {}
+    for read in reads:
+        if isinstance(read, dict) and read.get('label') == 'Fallback whole card':
+            for number in _work_order_candidates(str(read.get('text') or ''), labeled=True):
+                values.setdefault(number, None)
+    return tuple(values)
+
+
 def _without_form_rules(source):
     """Suppress long printed rules in a disposable whole-image OCR copy."""
     import cv2
