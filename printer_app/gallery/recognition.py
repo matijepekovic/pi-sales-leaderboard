@@ -213,7 +213,7 @@ def _run_tesseract(image, ocr_copy, *, digits_only=False, psm=None):
 
 def _work_order_candidates(text, *, labeled=False):
     """Normalize observed glyphs, then apply the single scan-policy boundary."""
-    fields = work_order_fields(text) if labeled else (text,)
+    fields = work_order_fields(text, allow_wrapped_digits=True) if labeled else (text,)
     return tuple(dict.fromkeys(
         candidate
         for field in fields
