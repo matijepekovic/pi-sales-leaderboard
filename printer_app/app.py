@@ -47,6 +47,7 @@ from .mod_sheets.web import blueprint as mod_sheets_blueprint
 from .outlook_sandbox.repository import SandboxRepository
 from .outlook_sandbox.service import OutlookSandboxService
 from .outlook_sandbox.web import blueprint as outlook_sandbox_blueprint
+from .update import PrinterUpdateService
 
 
 def create_app(cfg: Config | None = None, settings_service: SettingsService | None = None) -> Flask:
@@ -64,6 +65,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     db = Database(cfg.db_path)
     admin_auth = AdminAuthService(AdminAuthRepository(db))
     print_queue = PrintQueueRepository(db)
+    printer_updates = PrinterUpdateService(cfg.data_dir)
 
     def request_command(name):
         with db.connect() as conn:
@@ -72,6 +74,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
 
     app.extensions['printer_db'] = db
     app.extensions['printer_settings'] = settings
+    app.extensions['printer_updates'] = printer_updates
     app.extensions['printer_admin_auth'] = admin_auth
     # Optional Outlook trial: independent token store, manual staging, never a print source.
     outlook_sandbox = OutlookSandboxService(
@@ -395,7 +398,8 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             password_saved=bool(current.email_password), revision=revision, queue=current.queue,
             print_choices=PRINT_CHOICES, print_numbers=PRINT_NUMBERS,
             schedule_days=SCHEDULE_DAYS, schedule_modes=SCHEDULE_MODES,
-            error=error, saved=request.args.get('saved') == '1', state=state()), code
+            error=error, saved=request.args.get('saved') == '1',
+            state=state(), printer_update=printer_updates.status()), code
 
     @app.route('/settings', methods=['GET', 'POST'])
     def settings_page():
@@ -408,6 +412,17 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
                 return settings_view(str(exc), 400)
             return redirect(url_for('settings_page', saved='1'), code=303)
         return settings_view()
+
+    @app.post('/settings/update-printer')
+    def update_printer():
+        # Only the authenticated printer admin can enqueue this fixed request.
+        # A separate systemd path/service installs the verified printer tree.
+        printer_updates.request()
+        return redirect(url_for('settings_page') + '#printerUpdate', code=303)
+
+    @app.get('/api/printer-update')
+    def printer_update_status():
+        return jsonify(printer_updates.status())
 
     @app.post('/settings/test-email')
     def settings_test_email():
