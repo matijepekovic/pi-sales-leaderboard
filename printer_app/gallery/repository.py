@@ -1331,6 +1331,16 @@ class GalleryRepository:
                 result.append(value)
             return result
 
+    def unresolved_fallback_items(self):
+        """Read retained failed-scan diagnostics without interpreting OCR text."""
+        with self.connect() as c:
+            return [self._recognition_view(row) for row in c.execute(
+                """SELECT id,text,image_revision,work_order_reads,work_order_candidates
+                FROM items WHERE origin='scan' AND state='REVIEW' AND work_order_key=''
+                  AND work_order_candidates='[]' AND work_order_reads!='[]'
+                ORDER BY created,id"""
+            )]
+
     def save_work_order_candidates(self, ident, candidates, *, expected_text=None, reads=(),
                                    evidence=_UNSET, expected_image_revision=None):
         """Persist one completed multi-read OCR result without accepting its identity."""
