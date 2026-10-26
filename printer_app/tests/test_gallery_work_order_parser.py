@@ -145,3 +145,103 @@ def test_reader_glyph_normalization_must_preserve_positions_before_scan_validati
     assert scanned_work_order_candidates(normalize_numeric_token('O2278B5!')) == ('02278851',)
     assert scanned_work_order_candidates(normalize_numeric_token('O2278B5!1')) == ()
     assert scanned_work_order_candidates(normalize_numeric_token('O2278B5')) == ()
+
+
+def test_fallback_whole_card_recovers_wrapped_work_order_value_only_at_explicit_label():
+    from printer_app.gallery.recognition import _work_order_candidates
+    # search_text() preserves OCR line breaks; the Gallery Job diagnostic
+    # collapses them into one line, masking the original parsing failure.
+    raw = ('i|Work Order Number:\n02314464 Local Scheduled Start Time: Oct 20 2026 03:00 PM\n'
+           'Lead Name: Example Customer Address: 727 West Ash Street')
+    assert printed_work_order_number(raw) == ''  # Existing one-line contract unchanged.
+    assert scanned_work_order_candidates(raw, labeled=True) == ()
+    assert _work_order_candidates(raw, labeled=True) == ('02314464',)
+    assert _work_order_candidates(raw.replace('\n', '\r\n'), labeled=True) == ('02314464',)
+
+
+@pytest.mark.parametrize('raw', [
+    'Work Order Number:\nLead Name: Example Customer\nPhone: 02314464',
+    'Work Order Number:\n\n02314464',
+    'Work Order Number:\n023144649',
+    'Work Order Number:\n0231 4464',
+    'Work Order Number:\nAddress: 02314464 Main St',
+    'Notes: 02314464\nWork Order Number:',
+])
+def test_fallback_wrapped_field_does_not_steal_other_numbers(raw):
+    from printer_app.gallery.recognition import _work_order_candidates
+    assert _work_order_candidates(raw, labeled=True) == ()
+
+
+def test_saved_fallback_diagnostics_recover_existing_card_without_rescanning(tmp_path):
+    from printer_app.gallery.bootstrap import build
+    from printer_app.gallery.recognition import saved_fallback_candidates
+    from printer_app.tests.test_gallery_scan_identity import _record
+    from printer_app.tests.test_gallery_reference import DAY
+
+    gallery = build(tmp_path)
+    gallery.initialize()
+    source = 'a' * 64
+    item_id = 'b' * 64
+    gallery.repository.enqueue(source, 'scan.pdf')
+    retained_reads = [
+        {'label': 'Numerical parser', 'psm': None, 'text': '', 'candidate': '', 'ok': False},
+        {'label': 'Fallback whole card', 'psm': 6,
+         'text': 'i|Work Order Number: 02314464 Local Scheduled Start Time: Oct 20 2026',
+         'candidate': '', 'ok': True},
+        {'label': 'Fallback whole card', 'psm': 11,
+         'text': 'i|Work Order Number: 02314464 Lead Name: Example Customer',
+         'candidate': '', 'ok': True},
+    ]
+    assert saved_fallback_candidates(retained_reads) == ('02314464',)
+    gallery.repository.finish(source, [dict(
+        id=item_id, import_id=source, page=1, part=1,
+        filename='scan.pdf', text='Lead Name: Example Customer', origin='scan',
+        work_order_candidates=(), work_order_reads=retained_reads,
+        mod_notes_status='present', document_date=DAY, date_status='printed',
+        bytes=21, created=12345,
+    )])
+    gallery.files.path('crops', item_id).write_bytes(b'original-card')
+    before = gallery.repository.import_item(source, item_id)
+    assert before['work_order_candidates'] == ()
+    assert before['state'] == 'REVIEW'
+    assert gallery.item(item_id) is None
+
+    assert gallery.recover_saved_fallback_candidates() == 1
+    assert gallery.recover_saved_fallback_candidates() == 0
+    recovered = gallery.repository.import_item(source, item_id)
+    assert recovered['state'] == 'REVIEW'
+    assert recovered['work_order_number'] == ''
+    assert recovered['work_order_candidates'] == ('02314464',)
+    assert gallery.files.path('crops', item_id).read_bytes() == b'original-card'
+    assert gallery.work_order_lookup_numbers() == ['02314464']
+
+    # A candidate is not an accepted work order until the independent source
+    # validates that exact number. No false Gallery publication.
+    assert gallery.publish_work_order_records(['02314464'], [], 100)['enriched'] == 0
+    assert gallery.item(item_id) is None
+    assert gallery.publish_work_order_records(['02314464'],
+                                              [_record('02314464')], 101)['enriched'] == 1
+    assert gallery.item(item_id)['work_order_number'] == '02314464'
+
+
+def test_saved_diagnostics_never_promote_phone_or_unlabeled_number(tmp_path):
+    from printer_app.gallery.bootstrap import build
+    from printer_app.gallery.recognition import saved_fallback_candidates
+
+    reads = [{'label': 'Fallback whole card', 'psm': 6,
+              'text': 'Phone: 02314464 Notes: 02314464', 'candidate': '', 'ok': True},
+             {'label': 'Whole field', 'psm': 7, 'text': '02314464',
+              'candidate': '', 'ok': True}]
+    assert saved_fallback_candidates(reads) == ()
+    gallery = build(tmp_path)
+    gallery.initialize()
+    source, item_id = 'a' * 64, 'b' * 64
+    gallery.repository.enqueue(source, 'scan.pdf')
+    gallery.repository.finish(source, [dict(
+        id=item_id, import_id=source, page=1, part=1, filename='scan.pdf',
+        text='Lead Name: Example Customer', origin='scan', work_order_candidates=(),
+        work_order_reads=reads, mod_notes_status='present',
+        document_date='2026-10-20', date_status='printed', bytes=1, created=1,
+    )])
+    assert gallery.recover_saved_fallback_candidates() == 0
+    assert gallery.work_order_lookup_numbers() == []
