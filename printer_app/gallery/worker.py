@@ -79,6 +79,11 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         gallery.repository.recover()
         gallery.clear_temporary()
+        # Existing review cards can already have valid numbers in recorded
+        # fallback passes. Recover the candidates once without rereading scans.
+        if gallery.recover_saved_fallback_candidates():
+            current, _ = settings.read()
+            request_reference_refresh(current)
         next_cleanup = 0
         read_saved = saved_image_reader(gallery, stop)
         while not stop.is_set():
