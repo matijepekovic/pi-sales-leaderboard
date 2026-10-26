@@ -155,7 +155,7 @@ def test_worker_installs_only_verified_printer_package(tmp_path, monkeypatch):
 def test_updater_path_unit_is_enabled_but_never_the_one_shot_service(tmp_path, monkeypatch):
     root = tmp_path / 'release/printer_app/systemd'
     root.mkdir(parents=True)
-    for name in (deploy.UPDATE_SERVICE, deploy.UPDATE_PATH):
+    for name in (*deploy.UNITS, deploy.UPDATE_SERVICE, deploy.UPDATE_PATH):
         (root / name).write_text((Path(deploy.__file__).parent / 'systemd' / name).read_text())
 
     units = deploy.release_units(tmp_path / 'release')
