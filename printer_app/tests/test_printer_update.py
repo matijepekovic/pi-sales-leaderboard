@@ -136,7 +136,8 @@ def test_worker_installs_only_verified_printer_package(tmp_path, monkeypatch):
         return package
     monkeypatch.setattr(update, '_download', download)
     monkeypatch.setattr(update, 'fingerprint',
-                        lambda source: 'new-release' if source.name == 'printer_app' else 'old-release')
+                        lambda source: 'new-release' if Path(source).is_relative_to(tmp_path / 'updates')
+                        else 'old-release')
     commands = []
     monkeypatch.setattr(update.subprocess, 'run',
                         lambda args, **kwargs: commands.append((args, kwargs)) or SimpleNamespace(returncode=0))
