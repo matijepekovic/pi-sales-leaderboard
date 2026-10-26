@@ -1,14 +1,10 @@
-"""Printer-only software update: authenticated request, verified runner, no Stats writes."""
+"""Printer-only software update: authenticated requests and isolated deployment."""
 from __future__ import annotations
 
-import hashlib
-import io
 import json
 from pathlib import Path
-import stat
 import subprocess
 from types import SimpleNamespace
-import zipfile
 
 import pytest
 
@@ -50,13 +46,11 @@ def test_admin_controls_one_fixed_printer_update_request(tmp_path):
     assert not list(tmp_path.glob('**/stats*'))
 
 
-def test_update_request_reports_safe_states_and_resets_stale_attempt(tmp_path, monkeypatch):
+def test_update_request_reports_safe_states_and_resets_stale_attempt(tmp_path):
     service = update.PrinterUpdateService(tmp_path)
     assert service.status()['state'] == 'NOT CHECKED'
     assert service.request()['state'] == 'QUEUED'
     assert service.status()['state'] == 'QUEUED'
-    # The web does not display exception strings, credentials, source paths,
-    # or other private data from the stored installer receipt.
     current = update._read_json(service.directory / 'status.json')
     update._write_json(service.directory / 'status.json',
                        dict(current, state='INSTALLING', updated=0))
@@ -64,60 +58,77 @@ def test_update_request_reports_safe_states_and_resets_stale_attempt(tmp_path, m
     assert service.request()['state'] == 'QUEUED'
 
 
-def _archive(folder: Path, *, extra=None):
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, 'w') as source:
-        for path in folder.rglob('*'):
-            if path.is_file():
-                source.write(path, 'repo/printer_app/' + path.relative_to(folder).as_posix())
-        if extra:
-            source.writestr(*extra)
-    return buffer.getvalue()
+def _mock_checkout(monkeypatch, destination_fixture):
+    """Fake Git transport while inspecting exact arguments sent to Git."""
+    calls = []
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        if 'clone' in args:
+            root = Path(args[-1]) / 'printer_app'
+            root.mkdir(parents=True)
+            (root / 'install.sh').write_text('#!/bin/bash\nexit 0\n')
+            return SimpleNamespace(returncode=0)
+        if args[-1] == 'HEAD':
+            return SimpleNamespace(returncode=0, stdout='a' * 40 + '\n')
+        if args[-1] == 'HEAD:printer_app':
+            return SimpleNamespace(returncode=0, stdout='b' * 40 + '\n')
+        raise AssertionError(f'Unexpected Git invocation: {args}')
+    monkeypatch.setattr(update.subprocess, 'run', fake_run)
+    source, bundle = update._checkout(destination_fixture)
+    return source, bundle, calls
 
 
-def test_git_tree_and_pinned_archive_reject_tampering(tmp_path, monkeypatch):
-    folder = tmp_path / 'source'
-    folder.mkdir()
-    (folder / 'install.sh').write_text('#!/bin/bash\nexit 0\n')
-    (folder / 'install.sh').chmod(0o755)
-    (folder / 'worker.py').write_text('print("printer only")\n')
-    bundle = {'revision': 'a' * 40, 'tree': update._git_tree(folder)}
-    urls = []
-    def get_archive(request, **kwargs):
-        urls.append(request.full_url)
-        return io.BytesIO(_archive(folder))
-    monkeypatch.setattr(update.urllib.request, 'urlopen', get_archive)
-    output = tmp_path / 'download'
-    output.mkdir()
-    package = update._download(bundle, output)
-    assert (package / 'worker.py').read_text() == 'print("printer only")\n'
-    assert urls == ['https://api.github.com/repos/' + update.REPOSITORY
-                    + '/zipball/' + 'a' * 40]
-    assert update._git_tree(package) == bundle['tree']
-    with pytest.raises(ValueError, match='Git tree'):
-        failed = tmp_path / 'wrong-hash'
-        failed.mkdir()
-        update._download(dict(bundle, tree='b' * 40), failed)
+def test_git_checkout_is_fixed_branch_and_only_printer_source(tmp_path, monkeypatch):
+    source, bundle, calls = _mock_checkout(monkeypatch, tmp_path)
+    assert source == tmp_path / 'repository/printer_app'
+    assert (source / 'install.sh').is_file()
+    assert bundle == {'revision': 'a' * 40, 'tree': 'b' * 40}
+    clone, options = calls[0]
+    assert clone[:2] == ['git', '-c']
+    assert '--depth' in clone and clone[clone.index('--depth') + 1] == '1'
+    assert '--single-branch' in clone and '--no-tags' in clone
+    assert clone[clone.index('--branch') + 1] == 'main'
+    assert clone[clone.index('--') + 1] == 'https://github.com/' + update.REPOSITORY + '.git'
+    assert options['stdin'] == subprocess.DEVNULL
+    assert options['env']['GIT_TERMINAL_PROMPT'] == '0'
+    assert options['env']['GIT_CONFIG_GLOBAL'] == '/dev/null'
+    assert calls[1][0][-1] == 'HEAD'
+    assert calls[2][0][-1] == 'HEAD:printer_app'
+    assert all(call[1]['check'] is True for call in calls)
 
-    path = zipfile.ZipInfo('repo/printer_app/link')
-    path.external_attr = 0o120777 << 16
-    monkeypatch.setattr(update.urllib.request, 'urlopen',
-                        lambda *a, **k: io.BytesIO(_archive(folder, extra=(path, 'bad'))))
-    with pytest.raises(ValueError, match='Unsupported'):
-        failed = tmp_path / 'unsafe'
-        failed.mkdir()
-        update._download(bundle, failed)
+
+def test_git_checkout_rejects_symlinked_printer_source(tmp_path, monkeypatch):
+    def fake_run(args, **options):
+        if 'clone' in args:
+            root = Path(args[-1]) / 'printer_app'
+            root.mkdir(parents=True)
+            (root / 'external').symlink_to('/etc/passwd')
+            return SimpleNamespace(returncode=0)
+        return SimpleNamespace(returncode=0, stdout=('a' * 40) + '\n')
+    monkeypatch.setattr(update.subprocess, 'run', fake_run)
+    with pytest.raises(ValueError, match='Links are not allowed'):
+        update._checkout(tmp_path)
+
+
+def test_git_checkout_rejects_untrusted_tree_id(tmp_path, monkeypatch):
+    def fake_run(args, **options):
+        if 'clone' in args:
+            (Path(args[-1]) / 'printer_app').mkdir(parents=True)
+            return SimpleNamespace(returncode=0)
+        return SimpleNamespace(returncode=0, stdout='not-a-git-object\n')
+    monkeypatch.setattr(update.subprocess, 'run', fake_run)
+    with pytest.raises(ValueError, match='Invalid printer source'):
+        update._checkout(tmp_path)
 
 
 def test_worker_up_to_date_never_restarts_any_service(tmp_path, monkeypatch):
     service = update.PrinterUpdateService(tmp_path)
     service.request()
-    monkeypatch.setattr(update, '_remote_bundle', lambda: {'revision': 'a' * 40, 'tree': 'b' * 40})
-    def download(bundle, directory):
-        package = directory / 'printer_app'
+    def checkout(destination):
+        package = destination / 'printer_app'
         package.mkdir()
-        return package
-    monkeypatch.setattr(update, '_download', download)
+        return package, {'revision': 'a' * 40, 'tree': 'b' * 40}
+    monkeypatch.setattr(update, '_checkout', checkout)
     monkeypatch.setattr(update, 'fingerprint', lambda source: 'same-source')
     monkeypatch.setattr(update.subprocess, 'run', lambda *args, **kwargs: pytest.fail('No reinstall for same printer release'))
     assert update.run_update(tmp_path) == 0
@@ -128,13 +139,12 @@ def test_worker_up_to_date_never_restarts_any_service(tmp_path, monkeypatch):
 def test_worker_installs_only_verified_printer_package(tmp_path, monkeypatch):
     service = update.PrinterUpdateService(tmp_path)
     service.request()
-    monkeypatch.setattr(update, '_remote_bundle', lambda: {'revision': 'a' * 40, 'tree': 'b' * 40})
-    def download(bundle, directory):
-        package = directory / 'printer_app'
+    def checkout(destination):
+        package = destination / 'printer_app'
         package.mkdir()
         (package / 'install.sh').write_text('echo fixture')
-        return package
-    monkeypatch.setattr(update, '_download', download)
+        return package, {'revision': 'a' * 40, 'tree': 'b' * 40}
+    monkeypatch.setattr(update, '_checkout', checkout)
     monkeypatch.setattr(update, 'fingerprint',
                         lambda source: 'new-release' if Path(source).is_relative_to(tmp_path / 'updates')
                         else 'old-release')
@@ -149,7 +159,7 @@ def test_worker_installs_only_verified_printer_package(tmp_path, monkeypatch):
     assert options['stdin'] == subprocess.DEVNULL
     assert not any('pi-tableau-leaderboard' in item for item in cmd)
     assert service.status()['state'] == 'READY'
-    assert update.run_update(tmp_path) == 0  # No second request, no second install
+    assert update.run_update(tmp_path) == 0
 
 
 def test_updater_path_unit_is_enabled_but_never_the_one_shot_service(tmp_path, monkeypatch):
@@ -157,7 +167,6 @@ def test_updater_path_unit_is_enabled_but_never_the_one_shot_service(tmp_path, m
     root.mkdir(parents=True)
     for name in (*deploy.UNITS, deploy.UPDATE_SERVICE, deploy.UPDATE_PATH):
         (root / name).write_text((Path(deploy.__file__).parent / 'systemd' / name).read_text())
-
     units = deploy.release_units(tmp_path / 'release')
     assert deploy.UPDATE_SERVICE in units
     assert deploy.UPDATE_PATH in units
