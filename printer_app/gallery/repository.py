@@ -656,15 +656,19 @@ class GalleryRepository:
                 WHERE id=? AND import_id=?""", (item_id, import_id)).fetchone()
             if not row or row['state'] not in ('ACTIVE','REVIEW'):
                 raise LookupError('This generated card is unavailable.')
-            if row['mod_notes_status'] == 'unknown':
-                raise ValueError('MOD Notes could not be read. Reprocess this scan before publishing it.')
             if row['state'] == 'ACTIVE':
                 return False
-            c.execute("UPDATE items SET state='ACTIVE' WHERE id=? AND import_id=? AND state='REVIEW'",
-                      (item_id, import_id))
+            # Unknown MOD notes can be verified by the admin. Keep that decision
+            # distinct from an automatic 'present' result and make it atomic
+            # with publication so an in-flight notes retry cannot discard it.
+            manual_notes = row['mod_notes_status'] == 'unknown'
+            c.execute("""UPDATE items SET state='ACTIVE',
+                mod_notes_status=CASE WHEN mod_notes_status='unknown' THEN 'manual' ELSE mod_notes_status END
+                WHERE id=? AND import_id=? AND state='REVIEW'""", (item_id, import_id))
             self._reconcile_morning_cards(c, item_id, row['document_date'], row['work_order_key'])
+            reason = ' MOD Notes manually approved.' if manual_notes else ''
             self._step(c, import_id, time.time(),
-                       f"Manual approval published page {row['page']} card {row['part']} to Gallery.")
+                       f"Manual approval published page {row['page']} card {row['part']} to Gallery.{reason}")
             return True
 
     def claim_import_item_delete(self, import_id, item_id):
