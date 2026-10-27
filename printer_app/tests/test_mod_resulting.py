@@ -248,7 +248,7 @@ def test_sandbox_is_reachable_from_printer_and_never_writes_salesforce(tmp_path)
     from printer_app.tests.auth_helpers import login_admin
     root=tmp_path
     env=root/'env'
-    env.write_text('EMAIL_ENABLED=0\\n')
+    env.write_text('EMAIL_ENABLED=0\n')
     app=create_app(Config(data_dir=root/'data',env_file=env,
                           secret_key='s'*64,email_enabled=False))
     app.testing=True
