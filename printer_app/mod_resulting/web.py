@@ -46,6 +46,7 @@ def blueprint(service):
             result_details=choices['result_details'],
             dnr_reasons=choices['dnr_reasons'],
             row_heights=MOD_ROW_HEIGHTS, sheet_width=MOD_TABLE_WIDTH,
+            live_writes_enabled=service.allow_salesforce_writes,
             notice=notice,
         )
 
