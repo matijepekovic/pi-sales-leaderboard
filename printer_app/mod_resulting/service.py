@@ -12,7 +12,8 @@ from .contract import clean_draft, outcome_fields, dnr_redline
 
 class ResultingService:
     def __init__(self, repository, source, writer, settings_repository, timezone,
-                 pdf_exporter=None, output_directory=None):
+                 pdf_exporter=None, output_directory=None,
+                 allow_salesforce_writes=False):
         self.repository = repository
         self.source = source
         self.writer = writer
@@ -20,6 +21,9 @@ class ResultingService:
         self.zone = ZoneInfo(timezone)
         self.pdf_exporter = pdf_exporter
         self.output_directory = Path(output_directory) if output_directory else None
+        # Safe-by-default: the sandbox can read, edit, and review drafts on main
+        # without permitting unverified writes to the live Salesforce org.
+        self.allow_salesforce_writes = bool(allow_salesforce_writes)
 
     def day(self):
         return datetime.now(self.zone).date().isoformat()
@@ -124,6 +128,10 @@ class ResultingService:
         )
 
     def submit(self, day):
+        if not self.allow_salesforce_writes:
+            raise ValueError(
+                'Live Salesforce submission is disabled in the MOD sandbox '
+                'until field mappings and write behavior are verified.')
         day_state = self.repository.day(day)
         if not day_state or not day_state['mod_user_id']:
             raise ValueError('Select a MOD from Salesforce first.')
