@@ -326,11 +326,8 @@ class ResultingSalesforceAdapter:
             for label,key in [('Need','need'),('Want','want')]:
                 if payload['draft'][key]:
                     work_order_fields.update(self._mapped(wo,{label:payload['draft'][key]}))
-            if payload['final_redlines']:
-                review = self._field(wo, 'Review')
-                work_order_fields.update(self._mapped(
-                    wo, {'Review':payload['final_redlines']}))
-            for label,key in [('Docs','docs'),('Promotion','promotion'),
+            # Review is an independent checkbox. Redlines belong only in MOD Notes.
+            for label,key in [('Docs','docs'),('Promotion','promotion'),('Review','review'),
                               ('Bid Sheet Submitted','bid_sheets'),
                               ('Pictures','pictures'),('Power Questions','power_questions'),
                               ('T Close','t_close'),('90 Min','ninety_min')]:

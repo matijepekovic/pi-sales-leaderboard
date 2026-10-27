@@ -99,14 +99,27 @@ def _overlay_one(c,index,draft):
                    MOD_ROW_HEIGHTS[3]-12,start=7)
 
     # Preserve the three fixed lower checklist cells. Docs replaces Fin
-    # Checklist, and Promo shares the existing Bid Sheets cell.
+    # Checklist; Bid Sheets, Promo, and Review share the existing middle cell.
     _erase(c,index,0,6)
     x,t=_location(index,0,6)
     _check(c,x+2,t+2,d['docs'],'Docs')
     _erase(c,index,1,6,2)
     x,t=_location(index,1,6)
-    _check(c,x+2,t+2,d['bid_sheets'],'Bid Sheets')
-    _check(c,x+COL_WIDTH*1.1,t+2,d['promotion'],'Promo')
+    # Match the on-sheet checklist without changing any original box borders.
+    slot = (COL_WIDTH * 2 - 4) / 3.5
+    for offset, label, key in ((0, 'Bid Sheets', 'bid_sheets'),
+                               (1.5, 'Promo', 'promotion'),
+                               (2.5, 'Review', 'review')):
+        check_x = x + 2 + offset * slot
+        _write(c,check_x,t+2,label,8.5,bold=True)
+        check_y = letter[1] - (t + 20)
+        c.setStrokeColor(colors.black)
+        c.setLineWidth(0.5)
+        c.rect(check_x,check_y,6,6,stroke=1,fill=0)
+        if d[key]:
+            c.setLineWidth(0.8)
+            c.line(check_x+1,check_y+3,check_x+2.5,check_y+1.5)
+            c.line(check_x+2.5,check_y+1.5,check_x+5,check_y+4.5)
     if d['pictures']:
         x,t=_location(index,3,6)
         _check(c,x+3,t+11,True,'')

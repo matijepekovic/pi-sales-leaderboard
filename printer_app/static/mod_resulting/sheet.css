@@ -33,7 +33,8 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .notes-text .dnr-in-redline{font-size:2.18cqw;font-weight:700;color:#b00000;line-height:1.1}
 .checklist{display:flex;gap:.1cqw}
 .checklist label{display:flex;flex:1;flex-direction:column;gap:.6cqw;align-items:flex-start}
-.field-bids label:first-child{flex:1.2}
+.field-bids label{min-width:0;white-space:nowrap}
+.field-bids label:first-child{flex:1.5}
 .field-dispo{display:flex;align-items:center;gap:.4cqw}
 .field-dispo select{flex:1;font-size:1.4cqw}
 .field-extras{display:flex;align-items:center;justify-content:space-around;gap:.2cqw;border-left:1px solid #000}
