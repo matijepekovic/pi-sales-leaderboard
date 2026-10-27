@@ -94,7 +94,7 @@
     </select></label>
     <label>Result Detail <select data-product-detail>
       <option value="">None</option>
-      {% for option in result_details %}<option value="{{ option }}">{{ option }}</option>{% endfor %}
+      {% for option in result_details %}<option value="{{ option.value }}">{{ option.label }}</option>{% endfor %}
     </select></label>
    </div>
    {% endif %}{% endfor %}
@@ -111,7 +111,7 @@
   <b>Result Detail:</b>
   <select data-key="result_detail" aria-label="Result Detail">
    <option value="">—</option>
-   {% for option in result_details %}<option value="{{ option }}" {% if d.result_detail==option %}selected{% endif %}>{{ option }}</option>{% endfor %}
+   {% for option in result_details %}<option value="{{ option.value }}" {% if d.result_detail==option.value %}selected{% endif %}>{{ option.label }}</option>{% endfor %}
   </select>
  </div>
  <div class="cell" style="grid-column:1/span 4;grid-row:5/span 2">
@@ -172,8 +172,8 @@
    <label>DNR Reason
     <select data-key="dnr_reason">
      <option value="">Choose</option>
-     {% for reason in ['Roofing','Bath','Siding','Windows','Behavior','Finance'] %}
-     <option value="{{ reason }}" {% if d.dnr_reason==reason %}selected{% endif %}>{{ reason }}</option>
+     {% for reason in dnr_reasons %}
+     <option value="{{ reason.value }}" {% if d.dnr_reason==reason.value %}selected{% endif %}>{{ reason.label }}</option>
      {% endfor %}
     </select>
    </label>
