@@ -11,7 +11,8 @@ from .contract import clean_draft, outcome_fields
 
 
 class ResultingService:
-    def __init__(self, repository, source, writer, settings_repository, timezone,\n                 pdf_exporter=None, output_directory=None):
+    def __init__(self, repository, source, writer, settings_repository, timezone,
+                 pdf_exporter=None, output_directory=None):
         self.repository = repository
         self.source = source
         self.writer = writer
