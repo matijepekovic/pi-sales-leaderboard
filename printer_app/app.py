@@ -44,6 +44,11 @@ from .mod_sheets.service import (
     ModSheetSettingsService, ModSheetTestPrintService,
 )
 from .mod_sheets.web import blueprint as mod_sheets_blueprint
+from .mod_resulting.repository import ResultingRepository
+from .mod_resulting.pdf_export import render_resulting_pdf
+from .mod_resulting.service import ResultingService
+from .mod_resulting.salesforce_adapter import ResultingSalesforceAdapter
+from .mod_resulting.web import blueprint as mod_resulting_blueprint
 from .outlook_sandbox.repository import SandboxRepository
 from .outlook_sandbox.service import OutlookSandboxService
 from .outlook_sandbox.web import blueprint as outlook_sandbox_blueprint
@@ -146,6 +151,19 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
     app.register_blueprint(mod_sheets_blueprint(
         mod_sheet_settings, mod_sheet_test_print, mod_sheet_manual_gallery
     ))
+
+    # Independently replaceable digital MOD resulting sandbox.
+    # The existing printer PDF generator and read-only source remain unchanged.
+    mod_resulting = ResultingService(
+        ResultingRepository(db), salesforce_sandbox,
+        ResultingSalesforceAdapter(
+            executable='/usr/bin/sf', target_org='work', timezone_name=cfg.timezone),
+        mod_sheet_repository, cfg.timezone,
+        pdf_exporter=render_resulting_pdf,
+        output_directory=cfg.data_dir / 'mod-resulting',
+    )
+    app.extensions['mod_resulting'] = mod_resulting
+    app.register_blueprint(mod_resulting_blueprint(mod_resulting))
 
     @app.template_filter('localtime')
     def localtime(value):

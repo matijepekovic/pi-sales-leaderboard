@@ -1,0 +1,98 @@
+/* MOD sheet itself is the screen. Grid proportions mirror pdf_renderer.MOD_ROW_HEIGHTS. */
+:root{color-scheme:light}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:#fff}
+body{font-family:"Times New Roman",Times,serif;color:#0a0a0a}
+.sheets{padding:90px 12px 24px;display:flex;flex-direction:column;align-items:center;gap:28px}
+.mod-sheet{
+ position:relative;flex:none;width:min(1460px,max(990px,calc(100vw - 24px)));
+ aspect-ratio:571.65 / 236.25;display:grid;container-type:inline-size;
+ grid-template-columns:repeat(10,minmax(0,1fr));
+ grid-template-rows:13.5fr 25.5fr 25.5fr 25.5fr 13.5fr 33.75fr 25.5fr 13.5fr 13.5fr 16.5fr 30fr;
+ border-top:1.34px solid #000;border-left:1.34px solid #000;
+ font-family:"Times New Roman",Times,serif;background:white
+}
+.mod-sheet .cell{border-right:1.34px solid #000;border-bottom:1.34px solid #000;
+ padding:.27cqw .22cqw;overflow:hidden;min-width:0;min-height:0;
+ font-size:1.58cqw;line-height:1.06;position:relative;
+ overflow-wrap:break-word}
+.mod-sheet .cell b{font-weight:700}
+.mod-sheet .cell label{display:flex;flex-direction:column;align-items:flex-start;gap:1.3cqw;height:100%;font-weight:700}
+.mod-sheet input,.mod-sheet select,.mod-sheet textarea{font-family:inherit;color:inherit}
+.mod-sheet input[type=checkbox]{width:1.28cqw;height:1.28cqw;margin:0;accent-color:#111}
+.mod-sheet button,.floating-controls button{cursor:pointer}
+.mod-sheet :focus-visible{outline:1.5px dotted #444;outline-offset:0}
+.mod-sheet input:not([type=checkbox]),.mod-sheet textarea,.mod-sheet select{
+ border:0;border-radius:0;background:transparent;box-shadow:none;
+ outline:0;min-width:0
+}
+.mod-sheet .result-detail{padding:.1cqw}
+.mod-sheet .result-detail b{display:block;font-size:1.13cqw;white-space:nowrap}
+.mod-sheet .result-detail select{display:block;width:100%;font-size:1.17cqw;padding:0}
+.mod-sheet .product-cell{overflow:visible;font-size:1.45cqw}
+.mod-sheet .product-cell>select{font-size:1.24cqw;max-width:70%;margin-left:.2cqw}
+.mod-sheet .product-cell .small-checkbox{
+ height:auto;display:flex;flex-direction:row;align-items:center;gap:.22cqw;
+ white-space:nowrap;font-size:1.0cqw;margin-top:.4cqw
+}
+.mod-sheet .small-checkbox input{width:1.1cqw;height:1.1cqw}
+.mod-sheet .notes{padding:.26cqw .22cqw}
+.mod-sheet .notes-content{height:calc(100% - 1.7cqw);margin-top:.4cqw;display:flex;min-height:0}
+.mod-sheet .notes textarea{display:block;resize:none;font-size:1.55cqw;line-height:1.13;
+ width:100%;height:100%;padding:0;white-space:pre-wrap;overflow-y:auto}
+.mod-sheet .notes textarea[data-key=numbers]{width:21%;flex:none;margin-right:.25cqw}
+.mod-sheet .notes-text{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+.mod-sheet .notes-text textarea[data-key=notes]{height:32%;flex:none}
+.mod-sheet .notes-text .redlines{font-size:2.18cqw;font-weight:900;color:#bf0404;line-height:1.05;flex:1}
+.mod-sheet .notes-text .dnr-in-redline{font-size:2.18cqw;font-weight:900;color:#bf0404;line-height:1.05}
+.mod-sheet .bid-promo{display:flex;gap:0}
+.mod-sheet .bid-promo label{height:100%;flex:1}
+.mod-sheet .dispo{display:flex;align-items:center;gap:.3cqw}
+.mod-sheet .dispo select{width:calc(100% - 4.6cqw);font-size:1.30cqw}
+.mod-sheet .extra-checks{display:flex;flex-direction:row;align-items:center;gap:.8cqw}
+.mod-sheet .extra-checks label{display:inline-flex;flex-direction:row;align-items:center;
+ font-size:1.32cqw;white-space:nowrap;height:auto;gap:.2cqw}
+.mod-sheet .time-entry{display:block;margin-top:.1cqw;width:100%;font-size:1.3cqw}
+.mod-sheet .box-text{resize:none;width:100%;height:calc(100% - 1.6cqw);font-size:1.45cqw}
+.mod-sheet .ninety-dnr{padding:0;display:flex;flex-direction:column}
+.mod-sheet .ninety-dnr>label{display:flex;flex-direction:row;justify-content:space-between;align-items:center;
+ height:50%;padding:.17cqw .3cqw;gap:.1cqw}
+.mod-sheet .ninety-dnr>label+label{border-top:1.34px solid #000}
+.floating-controls{position:fixed;z-index:30;top:9px;right:14px;max-width:calc(100vw - 28px);
+ display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;
+ background:#fff;border:1px solid #bbb;border-radius:8px;padding:8px 10px;
+ font:13px system-ui,-apple-system,sans-serif;box-shadow:0 2px 12px #0002}
+.floating-controls input[type=search],.floating-controls select{
+ background:#fff;border:1px solid #bbb;border-radius:5px;padding:6px 8px;font:inherit}
+.floating-controls input[type=search]{width:min(200px,26vw)}
+.floating-controls .mod-choice,.floating-controls .toggle-hide{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.floating-controls button,.confirm-box button{background:white;border:1px solid #888;border-radius:5px;font:inherit;padding:7px 12px}
+.floating-controls #submitDay,.confirm-box #confirmEnd{background:#111;color:#fff}
+.notification{position:fixed;z-index:50;top:75px;right:14px;padding:9px 13px;background:#fffbdf;border:1px solid #ad9b4c;border-radius:4px;max-width:430px;
+ font:12px system-ui,-apple-system,sans-serif}
+.product-panel,.dnr-panel,.cxl-panel{position:absolute;z-index:10;background:white;border:1px solid black;box-shadow:2px 4px 18px #0002;
+ padding:12px;font:13px system-ui,-apple-system,sans-serif;min-width:220px;color:#111}
+.product-panel{top:100%;left:0;min-width:310px;max-height:50vh;overflow-y:auto}
+.product-panel .product-result-row{border-top:1px solid #ddd;padding:9px 0;display:flex;flex-direction:column;gap:6px}
+.product-panel .product-result-row label{font-size:12px;display:flex;flex-direction:row;align-items:center;justify-content:space-between;height:auto}
+.product-panel select,.dnr-panel select{border:1px solid #aaa!important;padding:3px!important;max-width:170px}
+.dnr-panel{left:100%;bottom:0}
+.dnr-panel label{height:auto!important;gap:9px!important}
+.cxl-panel{top:69.2%;left:40%;min-width:190px}
+.cxl-panel>label{display:flex;align-items:center;gap:6px}
+.close-popover{float:right;background:white;border:1px solid #aaa;border-radius:3px}
+.sheet-message{position:absolute;z-index:12;bottom:101%;left:0;font:12px system-ui,sans-serif;color:#8c341b;background:#fff9de;padding:5px 8px;border:1px solid #e8cf86}
+.confirm-backdrop{position:fixed;inset:0;background:#0006;z-index:40;display:grid;place-items:center}
+.confirm-box{background:#fff;border:1px solid #111;box-shadow:0 8px 24px #0004;
+ padding:22px;min-width:min(360px,95vw);font:14px system-ui,sans-serif}
+.confirm-box #reviewCount{font-size:12px;line-height:1.5}
+.confirm-box button{margin-right:8px}
+.submitted{opacity:.65}
+.no-sheets{padding:60px;text-align:center;font:15px system-ui,sans-serif}
+[hidden]{display:none!important}
+@media(max-width:1100px){.sheets{align-items:flex-start;overflow-x:auto}.floating-controls{top:0;right:0;border-radius:0}}
+@media print{
+ .floating-controls,.notification,.confirm-backdrop,.cxl-panel,.dnr-panel,.product-panel,.sheet-message{display:none!important}
+ .sheets{padding:0;gap:18pt}
+ .mod-sheet{page-break-inside:avoid;width:571.65pt;height:236.25pt;box-shadow:none}
+}

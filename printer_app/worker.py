@@ -34,6 +34,8 @@ from .retention_repository import RetentionRepository
 from .retention_files import RetentionFiles
 from .gmail_cleanup import GmailCleanup
 from .mod_sheets.pdf_renderer import render_mod_pdf
+from .mod_resulting.repository import ResultingRepository
+from .mod_resulting.service import ResultingService, ResultingDailyPull
 from .mod_sheets.repository import ModSheetAutomationRepository
 from .mod_sheets.rep_repository import ModSheetRepRepository
 from .mod_sheets.service import (
@@ -331,9 +333,11 @@ def main():
                 captured.timezone,
             )
             map_sync = JobMapSyncService(JobMapRepository(db), source)
-            return daily, references, manual_gallery, map_sync
+            digital = ResultingDailyPull(ResultingService(
+                ResultingRepository(db), source, None, repository, captured.timezone))
+            return daily, references, manual_gallery, map_sync, digital
 
-        daily_mod_sheets, mod_references, manual_mod_gallery, map_sync = make_mod_workflows(cfg)
+        daily_mod_sheets, mod_references, manual_mod_gallery, map_sync, daily_resulting = make_mod_workflows(cfg)
         report_printing = ReportPrintingService(
             ReportPrintingRepository(db),
             SalesforceSandboxService(SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')),
@@ -353,6 +357,7 @@ def main():
         # The process lock still prevents a second worker from double-printing.
         background = ThreadPoolExecutor(max_workers=4, thread_name_prefix='printer-work')
         polling, preparing, cleaning, daily_mod_task = None, None, None, None
+        resulting_task = None
         report_print_task = None
         last_report_minute = None
         mod_reference_task = background.submit(mod_references.backfill_existing)
@@ -375,7 +380,7 @@ def main():
                                 engine = Engine(cfg, db, stop=stop)
                                 gmail = GmailClient(cfg, db, stop=stop, gallery=GalleryInbox(cfg.data_dir, cfg.gallery))
                                 retention = make_retention(cfg)
-                                daily_mod_sheets, mod_references, manual_mod_gallery, map_sync = make_mod_workflows(cfg)
+                                daily_mod_sheets, mod_references, manual_mod_gallery, map_sync, daily_resulting = make_mod_workflows(cfg)
                                 report_printing = ReportPrintingService(
                                     ReportPrintingRepository(db),
                                     SalesforceSandboxService(SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')),
@@ -423,6 +428,11 @@ def main():
                     if daily_mod_task is not None and daily_mod_task.done():
                         finished, daily_mod_task = daily_mod_task, None
                         finished.result()
+                    if resulting_task is not None and resulting_task.done():
+                        finished, resulting_task = resulting_task, None
+                        result = finished.result()
+                        if not result.get('ok'):
+                            log.warning('Digital MOD morning pull failed: %s',result.get('error',''))
                     if mod_reference_task is not None and mod_reference_task.done():
                         finished, mod_reference_task = mod_reference_task, None
                         finished.result()
@@ -455,6 +465,8 @@ def main():
                             report_printing.run_due, datetime.fromtimestamp(now, timezone.utc))
                     if daily_mod_task is None and daily_mod_sheets.due(now):
                         daily_mod_task = background.submit(daily_mod_sheets.run_due)
+                    if resulting_task is None and daily_resulting.due(now):
+                        resulting_task = background.submit(daily_resulting.run_due,now)
                     if cleaning is None and polling is None and retention.due(now):
                         cleaning = background.submit(retention.run)
                     paused = db.get('paused', False)
