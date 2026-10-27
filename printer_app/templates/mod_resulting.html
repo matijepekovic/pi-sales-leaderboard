@@ -73,8 +73,13 @@
   <b>Work Type:</b> {{ sheet.work_type }}
  </div>
  <div class="cell product-cell" style="grid-column:3/span 3;grid-row:4">
-  <b>Product Interest:</b> {{ sheet.product_interest }}
+  <b>Product Interest:</b>
   {% if xs|length > 1 %}
+  <select data-key="primary_product" aria-label="Primary Product Interest">
+  {% for interest in xs %}{% if interest.strip() %}
+   <option value="{{ interest.strip() }}" {% if d.primary_product==interest.strip() %}selected{% endif %}>{{ interest.strip() }}</option>
+  {% endif %}{% endfor %}
+  </select>
   <label class="small-checkbox"><input type="checkbox" data-key="additional_products" {% if d.additional_products %}checked{% endif %}> Result individually</label>
   <div class="product-panel" hidden>
    <button class="close-popover" type="button">×</button>
@@ -94,7 +99,7 @@
    </div>
    {% endif %}{% endfor %}
   </div>
-  {% endif %}
+  {% else %}{{ sheet.product_interest }}{% endif %}
  </div>
  <div class="cell" style="grid-column:6/span 2;grid-row:4">
   <b>Source:</b> {{ sheet.source }}
