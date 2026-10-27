@@ -27,9 +27,24 @@ def blueprint(service):
         except Exception as exc:
             users = []
             notice = notice or 'Salesforce MOD list unavailable: ' + str(exc)[:180]
+        try:
+            choices = service.dropdowns()
+        except Exception:
+            # Training reference options permit safe offline draft review;
+            # the Salesforce writer independently validates live picklists.
+            choices = {
+                'result_details':[{'value':value,'label':value}
+                                  for value in RESULT_DETAILS],
+                'dnr_reasons':[{'value':value,'label':value}
+                               for value in ('Roofing','Bath','Siding','Windows',
+                                             'Behavior','Finance')],
+            }
+            notice = notice or 'Salesforce picklists unavailable; draft choices are unverified.'
         return render_template(
             'mod_resulting.html',
-            data=data, users=users, result_details=RESULT_DETAILS,
+            data=data, users=users,
+            result_details=choices['result_details'],
+            dnr_reasons=choices['dnr_reasons'],
             row_heights=MOD_ROW_HEIGHTS, sheet_width=MOD_TABLE_WIDTH,
             notice=notice,
         )
