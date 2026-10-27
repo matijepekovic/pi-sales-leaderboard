@@ -116,6 +116,7 @@ CREATE TABLE IF NOT EXISTS mod_result_sheets (
  draft TEXT NOT NULL DEFAULT '{}',
  revision INTEGER NOT NULL DEFAULT 0,
  current INTEGER NOT NULL DEFAULT 1,
+ display_order INTEGER NOT NULL DEFAULT 0,
  submitted_at REAL,
  submit_error TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(day, work_order_id));
