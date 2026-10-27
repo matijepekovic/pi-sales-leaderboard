@@ -7,7 +7,7 @@ from pathlib import Path
 import os
 from zoneinfo import ZoneInfo
 
-from .contract import clean_draft, outcome_fields
+from .contract import clean_draft, outcome_fields, dnr_redline
 
 
 class ResultingService:
