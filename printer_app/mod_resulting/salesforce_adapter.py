@@ -81,6 +81,31 @@ class ResultingSalesforceAdapter:
                 users.append({'id': ident, 'name': name})
         return users
 
+    def dropdowns(self):
+        """Live choices from Salesforce, never derived from training screenshots."""
+        lead = self._describe('Lead')
+        reason = self._field(lead, 'DNR Reason')
+        sa = self._describe('ServiceAppointment')
+        relation = next((field for field in sa.get('fields', [])
+                         if field.get('name') == 'FSSK__FSK_Work_Order__c'), None)
+        if (not relation or relation.get('type') != 'reference'
+                or len(relation.get('referenceTo') or []) != 1):
+            raise ResultingSalesforceError('Cannot identify Work Order relationship.')
+        product, _ = self._result_schema(relation['referenceTo'][0])
+        detail = self._field(product, 'Result Detail')
+        def choices(field):
+            if field.get('type') not in ('picklist','multipicklist'):
+                raise ResultingSalesforceError('Expected a Salesforce dropdown: ' + field['label'])
+            options = []
+            for item in field.get('picklistValues') or ():
+                if isinstance(item, dict) and item.get('active', True) and item.get('value'):
+                    options.append({'value':str(item['value']),
+                                    'label':str(item.get('label') or item['value'])})
+            if not options:
+                raise ResultingSalesforceError('Salesforce dropdown has no available choices.')
+            return options
+        return {'result_details':choices(detail), 'dnr_reasons':choices(reason)}
+
     def _describe(self, name):
         if not NAME_RE.fullmatch(name):
             raise ResultingSalesforceError('Invalid Salesforce object name.')
