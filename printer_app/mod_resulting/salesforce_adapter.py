@@ -361,7 +361,7 @@ class ResultingSalesforceAdapter:
                     lead,{'Previous Result':payload['fields']['previous_result']}))
             if payload['draft']['dnr']:
                 lead_fields.update(self._mapped(lead,{'DNR - Do Not Reset':True,
-                                                     'DNR Reason':'DNR - '+payload['draft']['dnr_reason']}))
+                                                     'DNR Reason':payload['draft']['dnr_reason']}))
             op.append(('update','Lead',lead_id,lead_fields))
             op.extend(self._product_operations(payload,product,relation))
             operations.append(op)
