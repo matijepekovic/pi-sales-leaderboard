@@ -43,7 +43,8 @@
   function dnrPreview(sheet, draft) {
     const text = sheet.querySelector('.dnr-in-redline');
     if (!text) return;
-    text.textContent = draft.dnr && draft.dnr_reason ? 'DNR - ' + draft.dnr_reason : '';
+    const reason = String(draft.dnr_reason || '').trim();
+    text.textContent = draft.dnr && reason ? (/^dnr\s*-/i.test(reason) ? reason : 'DNR - ' + reason) : '';
     text.hidden = !text.textContent;
   }
   function applyVisibility() {
