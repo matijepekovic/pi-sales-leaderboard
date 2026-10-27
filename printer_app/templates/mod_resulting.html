@@ -20,7 +20,7 @@
  </select></label>
  <label class="toggle-hide"><input type="checkbox" id="hideCompleted"> Hide completed</label>
  <button type="button" id="refresh">Refresh</button>
- <button type="button" id="submitDay">End of day</button>
+ <button type="button" id="submitDay" data-live-writes="{{ 'yes' if live_writes_enabled else 'no' }}">End of day</button>
  {% if data.state and data.state.submitted_at %}
  <a class="completed-pdf" href="{{ url_for('mod_resulting.pdf') }}">PDF</a>
  {% endif %}
@@ -197,7 +197,7 @@
   <p>Submit all resulted MOD sheets to Salesforce?</p>
   <p id="reviewCount"></p>
   <button type="button" id="cancelEnd">Cancel</button>
-  <button type="button" id="confirmEnd">Submit</button>
+  <button type="button" id="confirmEnd" {% if not live_writes_enabled %}disabled title="Salesforce writes disabled for sandbox testing"{% endif %}>Submit</button>
  </div>
 </div>
 </body></html>
