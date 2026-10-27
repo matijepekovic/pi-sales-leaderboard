@@ -56,6 +56,9 @@ class ResultingService:
     def users(self):
         return self.writer.mod_users()
 
+    def dropdowns(self):
+        return self.writer.dropdowns()
+
     def set_mod(self, day, user_id):
         users = self.users()
         matches = [(item['id'], item['name']) for item in users if item['id'] == user_id]
