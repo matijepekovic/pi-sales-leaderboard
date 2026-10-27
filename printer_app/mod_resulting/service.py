@@ -2,18 +2,22 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
+import os
 from zoneinfo import ZoneInfo
 
 from .contract import clean_draft, outcome_fields
 
 
 class ResultingService:
-    def __init__(self, repository, source, writer, settings_repository, timezone):
+    def __init__(self, repository, source, writer, settings_repository, timezone,\n                 pdf_exporter=None, output_directory=None):
         self.repository = repository
         self.source = source
         self.writer = writer
         self.settings_repository = settings_repository
         self.zone = ZoneInfo(timezone)
+        self.pdf_exporter = pdf_exporter
+        self.output_directory = Path(output_directory) if output_directory else None
 
     def day(self):
         return datetime.now(self.zone).date().isoformat()
@@ -127,6 +131,10 @@ class ResultingService:
                      for row in rows]
             # Preflight ALL Salesforce object/field mappings before a single write.
             plans = self.writer.prepare(batch)
+            # PDF generation must succeed before Salesforce is modified.
+            pdf_payload = None
+            if self.pdf_exporter:
+                pdf_payload = self.pdf_exporter(rows)
             for row, plan in zip(rows, plans):
                 try:
                     self.writer.apply(plan)
@@ -135,7 +143,18 @@ class ResultingService:
                     raise
                 self.repository.finish_item(day, row['work_order_id'])
                 sent += 1
+            if pdf_payload is not None and self.output_directory:
+                directory = self.output_directory
+                directory.mkdir(parents=True,exist_ok=True,mode=0o700)
+                target = directory / (day + '-completed.pdf')
+                temp = directory / ('.' + day + '-completed.tmp')
+                with temp.open('wb') as stream:
+                    os.chmod(temp,0o600)
+                    stream.write(pdf_payload)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                temp.replace(target)
             complete = True
-            return {'submitted': sent, 'day': day}
+            return {'submitted': sent, 'day': day, 'pdf': bool(pdf_payload)}
         finally:
             self.repository.finish_submit(day, complete)
