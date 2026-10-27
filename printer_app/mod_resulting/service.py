@@ -80,6 +80,8 @@ class ResultingService:
         fields = outcome_fields(draft)
         if fields is None:
             raise ValueError('A disposition is required.')
+        if draft['dnr'] and not draft['dnr_reason']:
+            raise ValueError('Choose a DNR Reason.')
         if draft['dispo'] == 'sale' and not fields['price']['lowest']:
             raise ValueError('Sale requires a numeric price in MOD Notes.')
         products = [part.strip() for part in
