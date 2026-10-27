@@ -32,15 +32,12 @@ class ResultingService:
         kwargs = dict(
             start_date=date, end_date=date,
             market_segment=config.market_segment if config else '',
-            product_category=config.product_category if config else 'All',
-            source_type=config.source_type if config else '',
+            # The sandbox lists every lead in the selected MOD market, not
+            # a subset filtered to one product, source, or assigned rep.
+            product_category='All', source_type='',
             remove_canceled=False, remove_unconfirmed=False, limit=None,
         )
         records = tuple(self.source.records(**kwargs))
-        if config and config.assigned_service_resource:
-            wanted = config.assigned_service_resource.casefold()
-            records = tuple(r for r in records
-                            if any(n.casefold() == wanted for n in r.assigned_service_resources))
         self.repository.refresh(day, records)
         return len(records)
 
