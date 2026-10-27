@@ -49,8 +49,8 @@ def clean_draft(raw):
         data[key] = value
     if data['dispo'] not in DISPOSITIONS:
         raise ValueError('Choose a valid disposition.')
-    if data['result_detail'] and data['result_detail'] not in RESULT_DETAILS:
-        raise ValueError('Choose a valid Result Detail.')
+    # The selectable Result Details come from Salesforce metadata, not a
+    # baked-in training list. The writer validates actual picklist values.
     if not data['dnr']:
         data['dnr_reason'] = ''
     for key in ('call_1', 'call_2'):
