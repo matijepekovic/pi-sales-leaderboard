@@ -162,7 +162,7 @@ def _overlay_one(c,index,draft):
                    start=9)
     red=d['redlines'].strip()
     if d['dnr'] and d['dnr_reason']:
-        dnr_line='DNR - '+d['dnr_reason']
+        dnr_line=dnr_redline(d['dnr_reason'])
         if dnr_line.casefold() not in red.casefold():
             red=(red+'\n'+dnr_line).strip()
     if red:
