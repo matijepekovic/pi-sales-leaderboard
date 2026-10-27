@@ -272,7 +272,7 @@ def test_sandbox_is_reachable_from_printer_and_never_writes_salesforce(tmp_path)
     assert b'Hide completed' in sandbox.data
     assert b'End of day' in sandbox.data
     assert b'MOD Notes:' in sandbox.data
-    assert b'Sample MOD' in sandbox.data
+    assert b'MOD Example' in sandbox.data
     assert b'<header>' not in sandbox.data
     assert service.allow_salesforce_writes is False
 
