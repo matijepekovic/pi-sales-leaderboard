@@ -23,7 +23,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libcups2-dev cups-client cups-daemon libreoffice-calc fonts-liberation fonts-dejavu-core python3-opencv python3-pil python3-pypdf python3-pytest poppler-utils tesseract-ocr tesseract-ocr-eng
-          python -m pip install -r printer_app/requirements.txt pytest xlwt 'playwright>=1.55,<2' 'opencv-python-headless>=4.10,<5'
+          # WebKit 27.2 in Playwright 1.64 reports false CSP violations for native select controls.
+          # Keep the strict assertions; use the preceding browser build until the upstream fix lands.
+          # https://github.com/microsoft/playwright/issues/43497
+          python -m pip install -r printer_app/requirements.txt pytest xlwt 'playwright==1.63.0' 'opencv-python-headless>=4.10,<5'
           python -m playwright install --with-deps chromium webkit
       - name: MOD Sheet source and automation regressions
         env:
@@ -52,7 +55,6 @@ jobs:
             printer_app/tests/test_gallery_contact_actions.py \
             printer_app/tests/test_gallery_search_fields.py \
             printer_app/tests/test_gallery_search_offline.py \
-            printer_app/tests/test_gallery_search_browser.py \
             printer_app/tests/test_gallery_search_browser.py \
             printer_app/tests/test_core.py::test_printer_one_sided_uses_verified_konica_print_type \
             printer_app/tests/test_core.py::test_printer_does_not_invent_konica_binding_for_two_sided_modes \

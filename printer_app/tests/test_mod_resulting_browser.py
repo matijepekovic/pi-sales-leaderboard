@@ -159,7 +159,9 @@ def _evidence(page, label):
         target = Path(directory)
         target.mkdir(parents=True, exist_ok=True)
         browser = page.context.browser.browser_type.name
-        page.screenshot(path=target / (browser + '-' + label + '.png'), full_page=False)
+        # Do not inject caret-hiding inline styles while verifying the real CSP.
+        page.screenshot(path=target / (browser + '-' + label + '.png'),
+                        full_page=False, caret='initial')
 
 
 @pytest.mark.parametrize('viewport', [(1500, 1000), (1200, 820), (390, 844)])
