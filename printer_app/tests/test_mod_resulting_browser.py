@@ -239,7 +239,8 @@ def test_original_renderer_image_and_controls_align_under_real_csp(mod_browser, 
     notes = first.locator('.field-notes').bounding_box()
     assert notes['width'] > paper['width'] * .59
     assert notes['height'] > paper['height'] * .54
-    checklist = first.locator('.bid-promo')
+    checklist = first.locator('.field-bids')
+    expect(checklist).to_have_count(1)
     parent = checklist.bounding_box()
     for key in ('bid_sheets', 'promotion', 'review'):
         checkbox = checklist.locator('[data-key=' + key + ']')
@@ -314,13 +315,16 @@ def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
     def hold_first_save(route):
         if not held:
             held.append(route)
+            # request events precede route dispatch. Signal that the request is
+            # actually held instead of racing the Python callback with an assert.
+            page.evaluate('window.firstModSaveHeld = true')
         else:
             route.continue_()
 
     page.route('**/mod-resulting/api/save', hold_first_save)
-    with page.expect_request('**/mod-resulting/api/save'):
-        first.locator('[data-key=review]').check()
-        first.locator('[data-key=numbers]').fill('0')
+    first.locator('[data-key=review]').check()
+    first.locator('[data-key=numbers]').fill('0')
+    page.wait_for_function('window.firstModSaveHeld === true')
     assert held
     # The first snapshot is still in flight while the user finishes the sheet.
     first.locator('[data-key=review]').uncheck()
