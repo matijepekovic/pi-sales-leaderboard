@@ -65,7 +65,8 @@ def clean_draft(raw):
             raise ValueError('Invalid product selection.')
         outcome = info.get('result', '')
         detail = info.get('detail', '')
-        if outcome not in PRODUCT_RESULTS or detail not in ('', *RESULT_DETAILS):
+        if (outcome not in PRODUCT_RESULTS or not isinstance(detail, str)
+                or len(detail) > 120):
             raise ValueError('Invalid product result.')
         normalized[product] = {'result': outcome, 'detail': detail}
     data['product_results'] = normalized
