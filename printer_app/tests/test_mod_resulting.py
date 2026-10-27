@@ -3,6 +3,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from dataclasses import asdict
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from pypdf import PdfReader
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
@@ -11,7 +16,8 @@ from printer_app.db import Database
 from printer_app.mod_sheet_contract import ModSheetRecord
 from printer_app.mod_resulting.contract import clean_draft, prices, outcome_fields
 from printer_app.mod_resulting.repository import ResultingRepository
-from printer_app.mod_resulting.service import ResultingService
+from printer_app.mod_resulting.service import ResultingService, ResultingDailyPull
+from printer_app.mod_resulting.pdf_export import render_resulting_pdf
 from printer_app.mod_resulting.salesforce_adapter import ResultingSalesforceAdapter, ResultingSalesforceError
 
 DAY = '2026-10-26'
@@ -160,3 +166,45 @@ def test_mod_sheet_grid_and_architecture_boundaries_are_stable():
     assert 'import salesforce' not in service
     assert 'sf data' not in service
     assert 'subprocess' not in service
+
+
+def test_single_product_result_uses_selected_primary_product(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    service.refresh(DAY)
+    sheet=dict(repo.sheets(DAY)[0],day=DAY)
+    sheet['draft']=clean_draft({'dispo':'pns','primary_product':'Siding'})
+    payload=service.submission_payload(sheet,USER)
+    assert payload['product_results']==[{
+        'product':'Siding','result':'pns','detail':'',
+    }]
+
+
+def test_eight_am_pull_keeps_the_existing_printer_schedule_untouched(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    scheduler=ResultingDailyPull(service)
+    zone=ZoneInfo('America/Los_Angeles')
+    early=datetime(2026,10,26,7,59,tzinfo=zone).timestamp()
+    due=datetime(2026,10,26,8,0,tzinfo=zone).timestamp()
+    assert not scheduler.due(early)
+    assert scheduler.due(due)
+    assert scheduler.run_due(due)=={'ok':True,'count':1}
+    assert not scheduler.due(due+120)
+
+
+def test_pdf_uses_existing_print_renderer_with_redlines_and_fixed_sheets():
+    notes=clean_draft({'dispo':'sale','numbers':'25000\n17000',
+                       'notes':'Customer comment',
+                       'redlines':'CHANGE SCOPE','docs':True,
+                       'ninety_min':True,'dnr':True,'dnr_reason':'Roofing'})
+    sheet={'snapshot':asdict(RECORD),'draft':notes}
+    payload=render_resulting_pdf([sheet])
+    pdf=PdfReader(BytesIO(payload))
+    assert len(pdf.pages)==1
+    text=pdf.pages[0].extract_text()
+    assert 'Work Order Number:' in text
+    assert 'MOD Notes:' in text
+    assert 'CHANGE SCOPE' in text
+    assert 'DNR - Roofing' in text
+    assert 'Customer comment' in text
+    # Print generator's original label must remain; never redraw all boxes.
+    assert 'Local Scheduled Start Time:' in text
