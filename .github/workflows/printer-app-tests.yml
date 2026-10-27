@@ -12,6 +12,8 @@ jobs:
   printer:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      MOD_RESULTING_QA_DIR: /tmp/mod-resulting-qa
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,6 +30,8 @@ jobs:
           PRINTER_BROWSER_TESTS: '1'
         run: |
           python -m pytest \
+            printer_app/tests/test_mod_resulting_surface.py \
+            printer_app/tests/test_mod_resulting_browser.py \
             printer_app/tests/test_salesforce_sandbox.py \
             printer_app/tests/test_salesforce_lead_status.py \
             printer_app/tests/test_salesforce_explorer_adapter.py \
@@ -110,6 +114,14 @@ jobs:
           sudo systemctl is-active --quiet printer-app-web.service
           for i in $(seq 1 10); do curl -s http://127.0.0.1:5055/health >/tmp/printer-health.json && break || sleep 1; done
           python -c 'import json; assert json.load(open("/tmp/printer-health.json"))["worker_running"] is False'
+      - name: MOD sheet visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mod-resulting-render-evidence
+          path: /tmp/mod-resulting-qa
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Printer service diagnostics
         if: always()
         run: sudo journalctl -u printer-app-web.service -u printer-app-worker.service --no-pager -n 80

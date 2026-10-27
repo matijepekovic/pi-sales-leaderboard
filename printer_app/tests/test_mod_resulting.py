@@ -158,9 +158,12 @@ def test_mod_sheet_grid_and_architecture_boundaries_are_stable():
     css=(root/'static/mod_resulting/sheet.css').read_text()
     html=(root/'templates/mod_resulting.html').read_text()
     service=(root/'mod_resulting/service.py').read_text()
-    assert '571.65 / 236.25' in css
-    for height in ('13.5fr','25.5fr','33.75fr','16.5fr','30fr'):
-        assert height in css
+    # The form must never be rebuilt as a parallel browser grid.
+    assert 'grid-template-columns' not in css
+    assert 'grid-template-rows' not in css
+    assert 'style=' not in html
+    assert 'printer-sheet' in html and 'mod_resulting.sheet_image' in html
+    assert 'mod_resulting.surface_styles' in html
     for label in ('MOD Notes:','Dispo:','90 Min','DNR','CXL At Lead'):
         assert label in html
     assert 'Lead Name:' in html and 'Address:' in html

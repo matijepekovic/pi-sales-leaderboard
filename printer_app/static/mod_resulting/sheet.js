@@ -112,6 +112,16 @@
     throw new Error('An unsaved sheet is still changing; retry after editing.');
   }
   function setup(sheet) {
+    const background = sheet.querySelector('.printer-sheet');
+    const showSurface = () => {
+      if (background.naturalWidth > 0) sheet.classList.add('surface-ready');
+    };
+    background.addEventListener('load', showSurface);
+    background.addEventListener('error', () => {
+      sheet.classList.remove('surface-ready');
+      message('Printer could not render this MOD sheet. Refresh to retry.', sheet);
+    });
+    if (background.complete) showSurface();
     const init = JSON.parse(sheet.dataset.initial || '{}');
     for (const row of sheet.querySelectorAll('[data-product]')) {
       const selected = init.product_results?.[row.dataset.product];
