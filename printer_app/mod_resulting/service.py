@@ -71,11 +71,12 @@ class ResultingService:
                     if s['work_order_id'] == work_order_id), None)
         if row is None:
             raise LookupError('This MOD sheet is not part of the selected day.')
-        if data['additional_products']:
-            available = {name.strip() for name in
-                         row['snapshot']['product_interest'].split(';') if name.strip()}
-            if not set(data['product_results']).issubset(available):
-                raise ValueError('Results must belong to a product on the MOD sheet.')
+        available = {name.strip() for name in
+                     row['snapshot']['product_interest'].split(';') if name.strip()}
+        if data['primary_product'] and data['primary_product'] not in available:
+            raise ValueError('Choose a product listed on the MOD sheet.')
+        if data['additional_products'] and not set(data['product_results']).issubset(available):
+            raise ValueError('Results must belong to a product on the MOD sheet.')
         return self.repository.save_draft(day, work_order_id, data, revision)
 
     @staticmethod
@@ -88,11 +89,16 @@ class ResultingService:
             raise ValueError('Choose a DNR Reason.')
         if draft['dispo'] == 'sale' and not fields['price']['lowest']:
             raise ValueError('Sale requires a numeric price in MOD Notes.')
-        products = [part.strip() for part in
+        available_products = [part.strip() for part in
                     sheet['snapshot']['product_interest'].split(';') if part.strip()]
+        if not available_products:
+            raise ValueError('Product Interest is required for resulting.')
+        primary = draft['primary_product'] or available_products[0]
+        if primary not in available_products:
+            raise ValueError('Choose a product listed on the MOD sheet.')
+        products = available_products if draft['additional_products'] else [primary]
         per_product = draft['product_results'] if draft['additional_products'] else {}
-        if draft['additional_products'] and (
-                not products or set(per_product) != set(products)):
+        if draft['additional_products'] and set(per_product) != set(products):
             raise ValueError('Result each selected product or uncheck additional products.')
         results = [{
             'product': product,
