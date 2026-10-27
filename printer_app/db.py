@@ -100,6 +100,27 @@ CREATE INDEX IF NOT EXISTS job_map_records_market
  ON job_map_records(market,scheduled_day);
 CREATE INDEX IF NOT EXISTS job_map_records_work_order
  ON job_map_records(work_order_id,scheduled_at,created_at);
+
+-- Digital MOD resulting data, independently persisted from Gallery and print jobs.
+CREATE TABLE IF NOT EXISTS mod_result_days (
+ day TEXT PRIMARY KEY,
+ mod_user_id TEXT NOT NULL DEFAULT '',
+ mod_user_name TEXT NOT NULL DEFAULT '',
+ refreshed_at REAL NOT NULL DEFAULT 0,
+ submitting INTEGER NOT NULL DEFAULT 0,
+ submitted_at REAL);
+CREATE TABLE IF NOT EXISTS mod_result_sheets (
+ day TEXT NOT NULL REFERENCES mod_result_days(day),
+ work_order_id TEXT NOT NULL,
+ snapshot TEXT NOT NULL,
+ draft TEXT NOT NULL DEFAULT '{}',
+ revision INTEGER NOT NULL DEFAULT 0,
+ current INTEGER NOT NULL DEFAULT 1,
+ submitted_at REAL,
+ submit_error TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(day, work_order_id));
+CREATE INDEX IF NOT EXISTS mod_result_pending
+ ON mod_result_sheets(day, submitted_at);
 '''
 
 
