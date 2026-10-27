@@ -45,6 +45,7 @@ from .mod_sheets.service import (
 )
 from .mod_sheets.web import blueprint as mod_sheets_blueprint
 from .mod_resulting.repository import ResultingRepository
+from .mod_resulting.surface import ModSheetSurface
 from .mod_resulting.pdf_export import render_resulting_pdf
 from .mod_resulting.service import ResultingService
 from .mod_resulting.salesforce_adapter import ResultingSalesforceAdapter
@@ -163,7 +164,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         output_directory=cfg.data_dir / 'mod-resulting',
     )
     app.extensions['mod_resulting'] = mod_resulting
-    app.register_blueprint(mod_resulting_blueprint(mod_resulting))
+    app.register_blueprint(mod_resulting_blueprint(mod_resulting, ModSheetSurface(render_mod_pdf)))
 
     @app.template_filter('localtime')
     def localtime(value):

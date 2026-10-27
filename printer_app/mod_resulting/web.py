@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import json
 
-from flask import Blueprint, abort, jsonify, render_template, request, send_file
+from flask import Blueprint, Response, abort, jsonify, render_template, request, send_file
 
-from ..mod_sheets.pdf_renderer import MOD_ROW_HEIGHTS, MOD_TABLE_WIDTH
+from .surface import SheetSurfaceError, overlay_css
 from .contract import RESULT_DETAILS
 
 
-def blueprint(service):
+def blueprint(service, surface):
     bp = Blueprint('mod_resulting', __name__, url_prefix='/mod-resulting')
 
     @bp.get('')
@@ -45,10 +45,25 @@ def blueprint(service):
             data=data, users=users,
             result_details=choices['result_details'],
             dnr_reasons=choices['dnr_reasons'],
-            row_heights=MOD_ROW_HEIGHTS, sheet_width=MOD_TABLE_WIDTH,
             live_writes_enabled=service.allow_salesforce_writes,
             notice=notice,
         )
+
+    @bp.get('/surface.css')
+    def surface_styles():
+        return Response(overlay_css(), mimetype='text/css')
+
+    @bp.get('/sheet/<day>/<work_order_id>.png')
+    def sheet_image(day, work_order_id):
+        try:
+            record = service.sheet_record(day, work_order_id)
+        except (LookupError, ValueError):
+            abort(404)
+        try:
+            payload = surface.image(record)
+        except SheetSurfaceError as exc:
+            return Response(str(exc), status=503, mimetype='text/plain')
+        return Response(payload, mimetype='image/png')
 
     @bp.get('/pdf')
     def pdf():

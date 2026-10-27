@@ -31,6 +31,14 @@ class ResultingRepository:
             row['draft'] = json.loads(row['draft'])
         return rows
 
+    def sheet_snapshot(self, day, work_order_id):
+        row = self.db.one(
+            'SELECT snapshot FROM mod_result_sheets WHERE day=? AND work_order_id=?',
+            (day, work_order_id))
+        if row is None:
+            raise LookupError('This MOD sheet is not part of the selected day.')
+        return json.loads(row['snapshot'])
+
     def refresh(self, day, records):
         """Replace external snapshots, never an unsubmitted draft or receipt."""
         now = time.time()

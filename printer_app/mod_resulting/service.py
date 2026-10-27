@@ -7,6 +7,7 @@ from pathlib import Path
 import os
 from zoneinfo import ZoneInfo
 
+from ..mod_sheet_contract import ModSheetRecord
 from .contract import clean_draft, outcome_fields, dnr_redline
 
 
@@ -56,6 +57,13 @@ class ResultingService:
             sheet['draft'] = data
             sheet['result'] = outcome_fields(data)
         return {'day': day, 'state': state, 'sheets': sheets}
+
+    def sheet_record(self, day, work_order_id):
+        # Image requests read the saved day snapshot, never Salesforce again.
+        datetime.strptime(day, '%Y-%m-%d')
+        data = self.repository.sheet_snapshot(day, work_order_id)
+        data['assigned_service_resources'] = tuple(data.get('assigned_service_resources', ()))
+        return ModSheetRecord(**data)
 
     def users(self):
         return self.writer.mod_users()

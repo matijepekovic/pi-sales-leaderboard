@@ -12,6 +12,8 @@ jobs:
   printer:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      MOD_RESULTING_QA_DIR: /tmp/mod-resulting-qa
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,13 +23,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libcups2-dev cups-client cups-daemon libreoffice-calc fonts-liberation fonts-dejavu-core python3-opencv python3-pil python3-pypdf python3-pytest poppler-utils tesseract-ocr tesseract-ocr-eng
-          python -m pip install -r printer_app/requirements.txt pytest xlwt 'playwright>=1.55,<2' 'opencv-python-headless>=4.10,<5'
+          # WebKit 27.2 in Playwright 1.64 reports false CSP violations for native select controls.
+          # Keep the strict assertions; use the preceding browser build until the upstream fix lands.
+          # https://github.com/microsoft/playwright/issues/43497
+          python -m pip install -r printer_app/requirements.txt pytest xlwt 'playwright==1.63.0' 'opencv-python-headless>=4.10,<5'
           python -m playwright install --with-deps chromium webkit
       - name: MOD Sheet source and automation regressions
         env:
           PRINTER_BROWSER_TESTS: '1'
         run: |
           python -m pytest \
+            printer_app/tests/test_mod_resulting_surface.py \
+            printer_app/tests/test_mod_resulting_browser.py \
             printer_app/tests/test_salesforce_sandbox.py \
             printer_app/tests/test_salesforce_lead_status.py \
             printer_app/tests/test_salesforce_explorer_adapter.py \
@@ -53,7 +60,7 @@ jobs:
             printer_app/tests/test_core.py::test_printer_does_not_invent_konica_binding_for_two_sided_modes \
             printer_app/tests/test_core.py::test_printer_high_priority_maps_to_cups_priority_100 \
             printer_app/tests/test_core.py::test_immediate_generated_job_uses_high_printer_priority \
-            -v
+            -v --junitxml=/tmp/mod-resulting-qa/source-tests.xml
 
       - name: Gallery template fast-path regressions
         run: |
@@ -74,7 +81,7 @@ jobs:
             printer_app/tests/test_gallery_pdf_date.py::test_invalid_month_first_dates_are_not_readings \
             printer_app/tests/test_gallery_pdf_date.py::test_template_date_still_requires_two_independent_agreeing_boxes \
             printer_app/tests/test_gallery_pdf_date.py::test_processor_reuses_first_reliable_day_and_backfills_earlier_card \
-            -v -rs
+            -v -rs --junitxml=/tmp/mod-resulting-qa/gallery-tests.xml
       - name: Isolated CI-only CUPS sink (never a physical printer)
         run: |
           echo 'FileDevice Yes' | sudo tee -a /etc/cups/cups-files.conf
@@ -87,8 +94,8 @@ jobs:
         run: |
           python -m compileall -q printer_app
           bash -n printer_app/install.sh printer_app/launch.sh scripts/update-printer-app.sh
-          python -m pytest printer_app/tests -v
-          /usr/bin/python3 -m pytest printer_app/tests/test_gallery_borders.py printer_app/tests/test_gallery_recognition.py printer_app/tests/test_gallery_render_size.py -v
+          python -m pytest printer_app/tests -v --junitxml=/tmp/mod-resulting-qa/printer-tests.xml
+          /usr/bin/python3 -m pytest printer_app/tests/test_gallery_borders.py printer_app/tests/test_gallery_recognition.py printer_app/tests/test_gallery_render_size.py -v --junitxml=/tmp/mod-resulting-qa/system-tests.xml
       - name: Standalone systemd deployment smoke test (no Stats service)
         run: |
           sudo useradd --create-home --shell /bin/bash scoreboard
@@ -110,6 +117,14 @@ jobs:
           sudo systemctl is-active --quiet printer-app-web.service
           for i in $(seq 1 10); do curl -s http://127.0.0.1:5055/health >/tmp/printer-health.json && break || sleep 1; done
           python -c 'import json; assert json.load(open("/tmp/printer-health.json"))["worker_running"] is False'
+      - name: MOD sheet visual evidence and structured test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mod-resulting-render-evidence
+          path: /tmp/mod-resulting-qa
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Printer service diagnostics
         if: always()
         run: sudo journalctl -u printer-app-web.service -u printer-app-worker.service --no-pager -n 80

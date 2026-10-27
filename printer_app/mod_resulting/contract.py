@@ -13,7 +13,7 @@ RESULT_DETAILS = (
     'Porched', 'Price Objection', 'Procrastination', 'Repair Only',
 )
 CHECKBOXES = (
-    'docs', 'bid_sheets', 'pictures', 'promotion', 'one_leg',
+    'docs', 'bid_sheets', 'pictures', 'promotion', 'review', 'one_leg',
     'free_lead', 'power_questions', 't_close', 'ninety_min',
     'dnr', 'cxl_at_lead', 'additional_products',
 )
