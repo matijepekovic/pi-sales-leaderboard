@@ -21,6 +21,9 @@
  <label class="toggle-hide"><input type="checkbox" id="hideCompleted"> Hide completed</label>
  <button type="button" id="refresh">Refresh</button>
  <button type="button" id="submitDay">End of day</button>
+ {% if data.state and data.state.submitted_at %}
+ <a class="completed-pdf" href="{{ url_for('mod_resulting.pdf') }}">PDF</a>
+ {% endif %}
 </div>
 <div id="notice" role="status" aria-live="polite" class="notification" {% if not notice %}hidden{% endif %}>{{ notice }}</div>
 <div class="sheets" id="sheets">
