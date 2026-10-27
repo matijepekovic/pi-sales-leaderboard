@@ -315,16 +315,16 @@ def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
     def hold_first_save(route):
         if not held:
             held.append(route)
-            # request events precede route dispatch. Signal that the request is
-            # actually held instead of racing the Python callback with an assert.
-            page.evaluate('window.firstModSaveHeld = true')
+            # request events precede route dispatch. A DOM assertion waits for
+            # the actual interception without eval-based polling under CSP.
+            page.evaluate("() => { document.body.dataset.testSaveHeld = 'yes'; }")
         else:
             route.continue_()
 
     page.route('**/mod-resulting/api/save', hold_first_save)
     first.locator('[data-key=review]').check()
     first.locator('[data-key=numbers]').fill('0')
-    page.wait_for_function('window.firstModSaveHeld === true')
+    expect(page.locator('body')).to_have_attribute('data-test-save-held', 'yes')
     assert held
     # The first snapshot is still in flight while the user finishes the sheet.
     first.locator('[data-key=review]').uncheck()
@@ -366,13 +366,14 @@ def test_real_policy_rejects_an_inline_style_in_a_separate_probe_page(mod_browse
             window.probeViolations = [];
             document.addEventListener('securitypolicyviolation', event => {
                 window.probeViolations.push(event.violatedDirective);
+                document.body.dataset.probeViolation = event.violatedDirective;
             });
             const forbidden = document.createElement('style');
             forbidden.textContent = '.mod-sheet { display: none !important; }';
             document.head.appendChild(forbidden);
         }""")
-        probe.wait_for_function('window.probeViolations.length > 0')
-        assert 'style-src-elem' in probe.evaluate('window.probeViolations')
+        expect(probe.locator('body')).to_have_attribute('data-probe-violation', 'style-src-elem')
+        assert probe.evaluate('window.probeViolations') == ['style-src-elem']
         expect(probe.locator('.mod-sheet').first).to_be_visible()
     finally:
         probe.close()
