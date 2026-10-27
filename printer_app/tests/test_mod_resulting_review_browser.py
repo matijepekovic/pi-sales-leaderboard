@@ -14,7 +14,7 @@ pytestmark = pytest.mark.skipif(
 def test_review_checkbox_persists_independently_in_checklist_row(mod_browser, viewport):
     from playwright.sync_api import expect
 
-    page, service, writer, origin = mod_browser
+    page, service, writer, origin, evidence = mod_browser
     page.set_viewport_size({'width': viewport[0], 'height': viewport[1]})
     assert page.goto(origin + '/mod-resulting').status == 200
     first = page.locator('.mod-sheet').first
@@ -60,3 +60,4 @@ def test_review_checkbox_persists_independently_in_checklist_row(mod_browser, vi
         assert draft['redlines'] == 'REDLINE STAYS IN MOD NOTES.'
     assert page.evaluate('window.modCspViolations') == []
     assert service.allow_salesforce_writes is False and not writer.applied
+    evidence('review-roundtrip-' + str(viewport[0]))

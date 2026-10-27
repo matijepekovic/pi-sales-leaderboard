@@ -1,6 +1,7 @@
-"""Native browser regression for the actual MOD sandbox, not DOM-source assertions."""
+"""Exercise the actual sandbox; verify application behavior before diagnostic capture."""
 from __future__ import annotations
 
+import json
 import os
 import threading
 from pathlib import Path
@@ -34,11 +35,11 @@ class FakeModWriter:
         self.applied = []
 
     def mod_users(self):
-        return [{'id':MOD,'name':'Sample MOD'}]
+        return [{'id': MOD, 'name': 'Sample MOD'}]
 
     def dropdowns(self):
-        return {'result_details':[{'value':'Price Objection','label':'Price Objection'}],
-                'dnr_reasons':[{'value':'Roofing','label':'Roofing'}]}
+        return {'result_details': [{'value': 'Price Objection', 'label': 'Price Objection'}],
+                'dnr_reasons': [{'value': 'Roofing', 'label': 'Roofing'}]}
 
     def prepare(self, payload):
         return [[('sample',)] for _ in payload]
@@ -47,21 +48,41 @@ class FakeModWriter:
         self.applied.append(plan)
 
 
-@pytest.fixture(params=['chromium','webkit'])
+def _capture_evidence(page, name, application_audit):
+    """Capture only after all application assertions, never during the test flow.
+
+    Playwright's WebKit screenshot preparation appends an inline `body {}`
+    stylesheet even with caret='initial' and animations='allow'. That diagnostic
+    operation itself triggers strict CSP. Do not relax Printer CSP, filter its
+    events, or disable WebKit coverage to accommodate screenshot instrumentation.
+    https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/screenshotter.ts
+    """
+    directory = os.environ.get('MOD_RESULTING_QA_DIR')
+    if not directory:
+        return
+    target = Path(directory)
+    target.mkdir(parents=True, exist_ok=True)
+    browser = page.context.browser.browser_type.name
+    prefix = target / (browser + '-' + name)
+    prefix.with_suffix('.json').write_text(json.dumps(application_audit, indent=2))
+    page.screenshot(path=prefix.with_suffix('.png'), full_page=False, caret='initial')
+
+
+@pytest.fixture(params=['chromium', 'webkit'])
 def mod_browser(tmp_path, request):
     from playwright.sync_api import sync_playwright
     from werkzeug.serving import make_server
 
     env = tmp_path / 'env'
     env.write_text('EMAIL_ENABLED=0\n')
-    app = create_app(Config(data_dir=tmp_path/'data', env_file=env,
-                            secret_key='s'*64, email_enabled=False))
+    app = create_app(Config(data_dir=tmp_path / 'data', env_file=env,
+                            secret_key='s' * 64, email_enabled=False))
     app.testing = True
     source = FakeModSource([
         ModSheetRecord(source_id='0WO000000000001AAA',
-            lead_name='Alex Example',work_order_number='00011111',product_interest='Roofing;Siding'),
+            lead_name='Alex Example', work_order_number='00011111', product_interest='Roofing;Siding'),
         ModSheetRecord(source_id='0WO000000000002AAA',
-            lead_name='Blair Sample',work_order_number='00022222',product_interest='Bath'),
+            lead_name='Blair Sample', work_order_number='00022222', product_interest='Bath'),
     ])
     writer = FakeModWriter()
     service = app.extensions['mod_resulting']
@@ -69,31 +90,60 @@ def mod_browser(tmp_path, request):
     service.writer = writer
     service.refresh(service.day())
     server = make_server('127.0.0.1', 0, app, threaded=True)
-    thread = threading.Thread(target=server.serve_forever,daemon=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     origin = f'http://127.0.0.1:{server.server_port}'
     try:
         with sync_playwright() as pw:
             browser = getattr(pw, request.param).launch(headless=True)
-            context = browser.new_context(viewport={'width':1200,'height':820})
+            context = browser.new_context(viewport={'width': 1200, 'height': 820})
             try:
                 page = context.new_page()
+                # Keep every application's CSP event across Refresh/navigation;
+                # a later successful page must not erase an earlier violation.
+                violations = []
+                page.expose_binding('recordModCspViolation',
+                                    lambda source, event: violations.append(event))
                 page.add_init_script("""
                     window.modCspViolations = [];
                     document.addEventListener('securitypolicyviolation', event => {
-                        window.modCspViolations.push(event.violatedDirective);
+                        const detail = {
+                            directive: event.violatedDirective,
+                            blockedURI: event.blockedURI,
+                            documentURI: event.documentURI,
+                            sourceFile: event.sourceFile,
+                            lineNumber: event.lineNumber,
+                            disposition: event.disposition
+                        };
+                        window.modCspViolations.push(detail);
+                        window.recordModCspViolation(detail);
                     });
                 """)
                 errors = []
-                page.on('pageerror',lambda err:errors.append(str(err)))
-                browser_login(page,app,origin)
-                yield page,service,writer,origin
-                assert not errors
+                page.on('pageerror', lambda err: errors.append(str(err)))
+                evidence = []
+                browser_login(page, app, origin)
+                yield page, service, writer, origin, evidence.append
+                # Drain queued DOM/security events before checking the complete
+                # interaction history. No screenshot has run on this page yet.
+                page.evaluate('() => new Promise(resolve => setTimeout(resolve, 0))')
+                assert not errors, errors
+                assert not violations, violations
                 if '/mod-resulting' in page.url:
                     assert page.evaluate('window.modCspViolations') == []
+                assert service.allow_salesforce_writes is False
+                assert not writer.applied
                 db = app.extensions['printer_db']
-                for table in ('jobs','print_attempts','commands','print_queue_releases'):
-                    assert db.rows('SELECT * FROM '+table)==[]
+                for table in ('jobs', 'print_attempts', 'commands', 'print_queue_releases'):
+                    assert db.rows('SELECT * FROM ' + table) == []
+                # Diagnostic screenshots are the last operation, after the
+                # real page and all its interactions pass unchanged strict CSP.
+                audit = {'application_csp_violations': list(violations),
+                         'page_errors': list(errors), 'salesforce_writes': len(writer.applied),
+                         'viewport': page.viewport_size,
+                         'capture_phase': 'after all application assertions'}
+                for label in evidence:
+                    _capture_evidence(page, label, audit)
             finally:
                 context.close()
                 browser.close()
@@ -106,16 +156,15 @@ def mod_browser(tmp_path, request):
 def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_browser):
     from playwright.sync_api import expect
 
-    page,service,writer,origin = mod_browser
-    assert page.goto(origin+'/mod-resulting').status==200
+    page, service, writer, origin, evidence = mod_browser
+    assert page.goto(origin + '/mod-resulting').status == 200
     expect(page.locator('.mod-sheet')).to_have_count(2)
     expect(page.locator('.mod-sheet.surface-ready')).to_have_count(2)
-    assert page.locator('body > header,body > nav,body > footer').count()==0
+    assert page.locator('body > header,body > nav,body > footer').count() == 0
     expect(page.locator('#nameSearch')).to_be_visible()
     first = page.locator('.mod-sheet').first
-    expect(first.locator('[data-key=numbers]')).to_be_visible()
-    expect(first.locator('[data-key=notes]')).to_be_visible()
-    expect(first.locator('[data-key=redlines]')).to_be_visible()
+    for key in ('numbers', 'notes', 'redlines'):
+        expect(first.locator('[data-key=' + key + ']')).to_be_visible()
 
     page.locator('#nameSearch').fill('alex')
     expect(page.locator('.mod-sheet:visible')).to_have_count(1)
@@ -134,41 +183,31 @@ def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_br
     expect(page.locator('.mod-sheet:visible')).to_have_count(1)
     page.locator('#hideCompleted').uncheck()
 
-    # Refresh flushes the changed draft to disk, then reloads Salesforce-owned data.
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(page.locator('.mod-sheet')).to_have_count(2)
     expect(page.locator('.mod-sheet').first.locator('[data-key=notes]')).to_have_value('Black comment')
     row = service.repository.sheets(service.day())[0]
-    assert row['draft']['dispo']=='cxl'
+    assert row['draft']['dispo'] == 'cxl'
     assert row['draft']['cxl_at_lead'] is True
 
     page.locator('#dailyMod').select_option(MOD)
     expect(page.locator('#notice')).to_contain_text('Sample MOD')
-    assert service.repository.day(service.day())['mod_user_id']==MOD
+    assert service.repository.day(service.day())['mod_user_id'] == MOD
     page.locator('#submitDay').click()
     expect(page.locator('#endConfirm')).to_be_visible()
     expect(page.locator('#reviewCount')).to_contain_text('1 resulted sheet(s)')
+    expect(page.locator('#confirmEnd')).to_be_disabled()
     page.locator('#cancelEnd').click()
     assert not writer.applied
-
-
-def _evidence(page, label):
-    directory = os.environ.get('MOD_RESULTING_QA_DIR')
-    if directory:
-        target = Path(directory)
-        target.mkdir(parents=True, exist_ok=True)
-        browser = page.context.browser.browser_type.name
-        # Do not inject caret-hiding inline styles while verifying the real CSP.
-        page.screenshot(path=target / (browser + '-' + label + '.png'),
-                        full_page=False, caret='initial')
+    evidence('search-and-refresh')
 
 
 @pytest.mark.parametrize('viewport', [(1500, 1000), (1200, 820), (390, 844)])
 def test_original_renderer_image_and_controls_align_under_real_csp(mod_browser, viewport):
     from playwright.sync_api import expect
-    page,service,writer,origin = mod_browser
-    page.set_viewport_size({'width':viewport[0],'height':viewport[1]})
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width': viewport[0], 'height': viewport[1]})
     response = page.goto(origin + '/mod-resulting')
     assert response.status == 200
     assert "style-src 'self'" in response.headers['content-security-policy']
@@ -183,7 +222,6 @@ def test_original_renderer_image_and_controls_align_under_real_csp(mod_browser, 
     assert page.locator('[style]').count() == 0
     paper = first.bounding_box()
     assert abs(paper['width'] / paper['height'] - WIDTH / HEIGHT) < .002
-    # Test every overlay, rather than only whether fields happen to exist.
     for name, original in BOXES.items():
         control = first.locator('.field-' + name)
         if not control.count():
@@ -191,23 +229,34 @@ def test_original_renderer_image_and_controls_align_under_real_csp(mod_browser, 
         box = original.inset()
         actual = control.bounding_box()
         expected = {
-            'x':paper['x'] + box.x / WIDTH * paper['width'],
-            'y':paper['y'] + box.y / HEIGHT * paper['height'],
-            'width':box.width / WIDTH * paper['width'],
-            'height':box.height / HEIGHT * paper['height'],
+            'x': paper['x'] + box.x / WIDTH * paper['width'],
+            'y': paper['y'] + box.y / HEIGHT * paper['height'],
+            'width': box.width / WIDTH * paper['width'],
+            'height': box.height / HEIGHT * paper['height'],
         }
         for axis, value in expected.items():
             assert abs(actual[axis] - value) < 1.2, (name, axis, actual, expected)
     notes = first.locator('.field-notes').bounding_box()
     assert notes['width'] > paper['width'] * .59
     assert notes['height'] > paper['height'] * .54
+    checklist = first.locator('.field-bids')
+    expect(checklist).to_have_count(1)
+    parent = checklist.bounding_box()
+    for key in ('bid_sheets', 'promotion', 'review'):
+        checkbox = checklist.locator('[data-key=' + key + ']')
+        expect(checkbox).to_be_visible()
+        box = checkbox.bounding_box()
+        assert box['x'] >= parent['x'] - 1
+        assert box['y'] >= parent['y'] - 1
+        assert box['x'] + box['width'] <= parent['x'] + parent['width'] + 1
+        assert box['y'] + box['height'] <= parent['y'] + parent['height'] + 1
     assert page.evaluate('window.modCspViolations') == []
-    _evidence(page, 'layout-' + str(viewport[0]))
+    evidence('layout-' + str(viewport[0]))
 
 
 def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     from playwright.sync_api import expect
-    page,service,writer,origin = mod_browser
+    page, service, writer, origin, evidence = mod_browser
     page.goto(origin + '/mod-resulting')
     first = page.locator('.mod-sheet').first
     expect(first).to_have_class('mod-sheet surface-ready')
@@ -216,14 +265,12 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     first.locator('[data-key=notes]').fill('Black comment above redlines.')
     first.locator('[data-key=redlines]').fill('REPLACE TRIM WITH FULL SCOPE.')
     first.locator('[data-key=numbers]').fill('25,000\n17,850')
-    for key in ('power_questions','t_close','ninety_min','docs','bid_sheets',
-                'promotion','one_leg','free_lead'):
+    for key in ('power_questions', 't_close', 'ninety_min', 'docs', 'bid_sheets',
+                'promotion', 'review', 'one_leg', 'free_lead'):
         first.locator('[data-key=' + key + ']').check()
     first.locator('[data-key=dnr]').check()
     expect(first.locator('.dnr-panel')).to_be_visible()
-    # The DNR picker must not be clipped inside the tiny checkbox cell.
-    reason = first.locator('[data-key=dnr_reason]')
-    reason.select_option('Roofing')
+    first.locator('[data-key=dnr_reason]').select_option('Roofing')
     expect(first.locator('.dnr-in-redline')).to_have_text('DNR - Roofing')
     first.locator('.dnr-panel .close-popover').click()
     first.locator('[data-key=additional_products]').check()
@@ -239,10 +286,94 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     assert int(red.evaluate('(el) => getComputedStyle(el).fontWeight')) >= 700
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
-    expect(page.locator('.mod-sheet').first).to_have_class('mod-sheet surface-ready')
+    expect(first).to_have_class('mod-sheet surface-ready')
     draft = service.repository.sheets(service.day())[0]['draft']
     assert draft['notes'] == 'Black comment above redlines.'
+    assert draft['redlines'] == 'REPLACE TRIM WITH FULL SCOPE.'
     assert draft['dnr_reason'] == 'Roofing'
     assert draft['call_1'] == '10:15 AM'
-    _evidence(page, 'filled-sheet')
+    assert draft['call_2'] == '10:27 AM'
+    assert draft['review'] is True
+    first.locator('[data-key=review]').uncheck()
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    expect(first).to_have_class('mod-sheet surface-ready')
+    updated = service.repository.sheets(service.day())[0]['draft']
+    assert updated == dict(draft, review=False)
+    evidence('filled-sheet')
     assert service.allow_salesforce_writes is False and not writer.applied
+
+
+def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
+    from playwright.sync_api import expect
+    page, service, writer, origin, evidence = mod_browser
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+    expect(first).to_have_class('mod-sheet surface-ready')
+    held = []
+
+    def hold_first_save(route):
+        if not held:
+            held.append(route)
+            # request events precede route dispatch. A DOM assertion waits for
+            # the actual interception without eval-based polling under CSP.
+            page.evaluate("() => { document.body.dataset.testSaveHeld = 'yes'; }")
+        else:
+            route.continue_()
+
+    page.route('**/mod-resulting/api/save', hold_first_save)
+    first.locator('[data-key=review]').check()
+    first.locator('[data-key=numbers]').fill('0')
+    expect(page.locator('body')).to_have_attribute('data-test-save-held', 'yes')
+    assert held
+    # The first snapshot is still in flight while the user finishes the sheet.
+    first.locator('[data-key=review]').uncheck()
+    first.locator('[data-key=numbers]').fill('')
+    first.locator('[data-key=notes]').fill('Final black comment')
+    first.locator('[data-key=redlines]').fill('FINAL REDLINE')
+    first.locator('[data-key=call_1]').fill('10:15 AM')
+    first.locator('[data-key=call_2]').fill('1:27 PM')
+    first.locator('[data-key=dispo]').select_option('cxl')
+    first.locator('[data-key=cxl_at_lead]').check()
+    held[0].continue_()
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    expect(first).to_have_class('mod-sheet surface-ready')
+    saved = service.repository.sheets(service.day())[0]['draft']
+    expected = {'review': False, 'numbers': '', 'notes': 'Final black comment',
+                'redlines': 'FINAL REDLINE', 'call_1': '10:15 AM',
+                'call_2': '1:27 PM', 'dispo': 'cxl', 'cxl_at_lead': True}
+    for key, value in expected.items():
+        assert saved[key] == value, (key, saved[key])
+        control = first.locator('[data-key=' + key + ']')
+        if isinstance(value, bool):
+            assert control.is_checked() is value
+        else:
+            expect(control).to_have_value(value)
+    evidence('inflight-save-refresh')
+
+
+def test_real_policy_rejects_an_inline_style_in_a_separate_probe_page(mod_browser):
+    """A canary proves the zero-violation checks are not passing with CSP bypassed."""
+    from playwright.sync_api import expect
+    page, service, writer, origin, evidence = mod_browser
+    probe = page.context.new_page()
+    try:
+        response = probe.goto(origin + '/mod-resulting')
+        assert "style-src 'self'" in response.headers['content-security-policy']
+        expect(probe.locator('.mod-sheet').first).to_have_class('mod-sheet surface-ready')
+        probe.evaluate("""() => {
+            window.probeViolations = [];
+            document.addEventListener('securitypolicyviolation', event => {
+                window.probeViolations.push(event.violatedDirective);
+                document.body.dataset.probeViolation = event.violatedDirective;
+            });
+            const forbidden = document.createElement('style');
+            forbidden.textContent = '.mod-sheet { display: none !important; }';
+            document.head.appendChild(forbidden);
+        }""")
+        expect(probe.locator('body')).to_have_attribute('data-probe-violation', 'style-src-elem')
+        assert probe.evaluate('window.probeViolations') == ['style-src-elem']
+        expect(probe.locator('.mod-sheet').first).to_be_visible()
+    finally:
+        probe.close()
