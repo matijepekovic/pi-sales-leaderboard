@@ -10,6 +10,15 @@ class ResultingRepository:
     def __init__(self, db):
         self.db = db
 
+    def auto_attempt(self, day):
+        value = self.db.get('mod_result_auto_pull:' + day, {})
+        return value if isinstance(value, dict) else {}
+
+    def record_auto_attempt(self, day, at, error=''):
+        # One durable retry cursor, owned by this repository.
+        self.db.set('mod_result_auto_pull:' + day,
+                    {'at': float(at), 'error': str(error)[:250]})
+
     def day(self, day):
         return self.db.one('SELECT * FROM mod_result_days WHERE day=?', (day,))
 
