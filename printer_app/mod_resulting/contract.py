@@ -24,7 +24,8 @@ TEXT_FIELDS = (
 MAX_LENGTHS = {
     'numbers': 1800, 'notes': 4500, 'redlines': 4500,
     'call_1': 8, 'call_2': 8, 'need': 1000, 'want': 1000,
-    'result_detail': 120, 'dnr_reason': 160, 'dispo': 8,\n    'primary_product': 60,
+    'result_detail': 120, 'dnr_reason': 160, 'dispo': 8,
+    'primary_product': 60,
 }
 TIME_RE = re.compile(r'^(?:0?[1-9]|1[0-2]):[0-5][0-9] (?:AM|PM)$')
 _NUMBER_RE = re.compile(r'^\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?$')
