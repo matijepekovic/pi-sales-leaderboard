@@ -30,6 +30,7 @@ body{font-family:"Times New Roman",Times,serif;color:#0a0a0a}
 .mod-sheet .result-detail b{display:block;font-size:1.13cqw;white-space:nowrap}
 .mod-sheet .result-detail select{display:block;width:100%;font-size:1.17cqw;padding:0}
 .mod-sheet .product-cell{overflow:visible;font-size:1.45cqw}
+.mod-sheet .product-cell>select{font-size:1.24cqw;max-width:70%;margin-left:.2cqw}
 .mod-sheet .product-cell .small-checkbox{
  height:auto;display:flex;flex-direction:row;align-items:center;gap:.22cqw;
  white-space:nowrap;font-size:1.0cqw;margin-top:.4cqw
