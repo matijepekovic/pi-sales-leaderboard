@@ -112,7 +112,7 @@ class ResultingService:
             raise ValueError('The Work Order status for NRA requires verification.')
         redlines = draft['redlines'].strip()
         if draft['dnr'] and draft['dnr_reason']:
-            reason = 'DNR - ' + draft['dnr_reason'].strip()
+            reason = dnr_redline(draft['dnr_reason'])
             if reason.casefold() not in redlines.casefold():
                 redlines = (redlines + '\n' + reason).strip()
         return dict(
