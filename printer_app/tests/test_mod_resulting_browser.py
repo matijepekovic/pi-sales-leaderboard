@@ -19,7 +19,7 @@ pytestmark = pytest.mark.skipif(
 MOD = '005000000000001AAA'
 
 
-class TestSource:
+class FakeModSource:
     def __init__(self, records):
         self.records_data = records
 
@@ -27,7 +27,7 @@ class TestSource:
         return tuple(self.records_data)
 
 
-class TestWriter:
+class FakeModWriter:
     def __init__(self):
         self.applied = []
 
@@ -51,13 +51,13 @@ def mod_browser(tmp_path, request):
     app = create_app(Config(data_dir=tmp_path/'data', env_file=env,
                             secret_key='s'*64, email_enabled=False))
     app.testing = True
-    source = TestSource([
+    source = FakeModSource([
         ModSheetRecord(source_id='0WO000000000001AAA',
             lead_name='Alex Example',work_order_number='00011111',product_interest='Roofing;Siding'),
         ModSheetRecord(source_id='0WO000000000002AAA',
             lead_name='Blair Sample',work_order_number='00022222',product_interest='Bath'),
     ])
-    writer = TestWriter()
+    writer = FakeModWriter()
     service = app.extensions['mod_resulting']
     service.source = source
     service.writer = writer
@@ -120,7 +120,8 @@ def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_br
     page.locator('#hideCompleted').uncheck()
 
     # Refresh flushes the changed draft to disk, then reloads Salesforce-owned data.
-    page.locator('#refresh').click()
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
     expect(page.locator('.mod-sheet')).to_have_count(2)
     expect(page.locator('.mod-sheet').first.locator('[data-key=notes]')).to_have_value('Black comment')
     row = service.repository.sheets(service.day())[0]
@@ -132,6 +133,6 @@ def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_br
     assert service.repository.day(service.day())['mod_user_id']==MOD
     page.locator('#submitDay').click()
     expect(page.locator('#endConfirm')).to_be_visible()
-    expect(page.locator('#reviewCount')).to_contain_text('1 sheet(s)')
+    expect(page.locator('#reviewCount')).to_contain_text('1 resulted sheet(s)')
     page.locator('#cancelEnd').click()
     assert not writer.applied
