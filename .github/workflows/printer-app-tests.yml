@@ -53,11 +53,12 @@ jobs:
             printer_app/tests/test_gallery_search_fields.py \
             printer_app/tests/test_gallery_search_offline.py \
             printer_app/tests/test_gallery_search_browser.py \
+            printer_app/tests/test_gallery_search_browser.py \
             printer_app/tests/test_core.py::test_printer_one_sided_uses_verified_konica_print_type \
             printer_app/tests/test_core.py::test_printer_does_not_invent_konica_binding_for_two_sided_modes \
             printer_app/tests/test_core.py::test_printer_high_priority_maps_to_cups_priority_100 \
             printer_app/tests/test_core.py::test_immediate_generated_job_uses_high_printer_priority \
-            -v
+            -v --junitxml=/tmp/mod-resulting-qa/source-tests.xml
 
       - name: Gallery template fast-path regressions
         run: |
@@ -78,7 +79,7 @@ jobs:
             printer_app/tests/test_gallery_pdf_date.py::test_invalid_month_first_dates_are_not_readings \
             printer_app/tests/test_gallery_pdf_date.py::test_template_date_still_requires_two_independent_agreeing_boxes \
             printer_app/tests/test_gallery_pdf_date.py::test_processor_reuses_first_reliable_day_and_backfills_earlier_card \
-            -v -rs
+            -v -rs --junitxml=/tmp/mod-resulting-qa/gallery-tests.xml
       - name: Isolated CI-only CUPS sink (never a physical printer)
         run: |
           echo 'FileDevice Yes' | sudo tee -a /etc/cups/cups-files.conf
@@ -91,8 +92,8 @@ jobs:
         run: |
           python -m compileall -q printer_app
           bash -n printer_app/install.sh printer_app/launch.sh scripts/update-printer-app.sh
-          python -m pytest printer_app/tests -v
-          /usr/bin/python3 -m pytest printer_app/tests/test_gallery_borders.py printer_app/tests/test_gallery_recognition.py printer_app/tests/test_gallery_render_size.py -v
+          python -m pytest printer_app/tests -v --junitxml=/tmp/mod-resulting-qa/printer-tests.xml
+          /usr/bin/python3 -m pytest printer_app/tests/test_gallery_borders.py printer_app/tests/test_gallery_recognition.py printer_app/tests/test_gallery_render_size.py -v --junitxml=/tmp/mod-resulting-qa/system-tests.xml
       - name: Standalone systemd deployment smoke test (no Stats service)
         run: |
           sudo useradd --create-home --shell /bin/bash scoreboard
@@ -114,7 +115,7 @@ jobs:
           sudo systemctl is-active --quiet printer-app-web.service
           for i in $(seq 1 10); do curl -s http://127.0.0.1:5055/health >/tmp/printer-health.json && break || sleep 1; done
           python -c 'import json; assert json.load(open("/tmp/printer-health.json"))["worker_running"] is False'
-      - name: MOD sheet visual evidence
+      - name: MOD sheet visual evidence and structured test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
