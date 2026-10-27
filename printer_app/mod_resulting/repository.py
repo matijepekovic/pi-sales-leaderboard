@@ -25,8 +25,7 @@ class ResultingRepository:
     def sheets(self, day):
         rows = self.db.rows('''SELECT work_order_id,snapshot,draft,revision,current,
                 submitted_at,submit_error FROM mod_result_sheets
-                WHERE day=? ORDER BY json_extract(snapshot,'$.scheduled_start'),
-                  json_extract(snapshot,'$.lead_name')''', (day,))
+                WHERE day=? ORDER BY display_order,work_order_id''', (day,))
         for row in rows:
             row['snapshot'] = json.loads(row['snapshot'])
             row['draft'] = json.loads(row['draft'])
@@ -42,13 +41,15 @@ class ResultingRepository:
             if state['submitting']:
                 raise ValueError('Cannot refresh while end-of-day submission is running.')
             conn.execute('UPDATE mod_result_sheets SET current=0 WHERE day=?', (day,))
-            for record in records:
+            for position, record in enumerate(records):
                 snapshot = asdict(record)
-                conn.execute('''INSERT INTO mod_result_sheets(day,work_order_id,snapshot,current)
-                        VALUES(?,?,?,1)
+                conn.execute('''INSERT INTO mod_result_sheets
+                            (day,work_order_id,snapshot,current,display_order)
+                        VALUES(?,?,?,1,?)
                         ON CONFLICT(day,work_order_id) DO UPDATE SET
-                        snapshot=excluded.snapshot,current=1''',
-                             (day, record.source_id, json.dumps(snapshot)))
+                        snapshot=excluded.snapshot,current=1,
+                        display_order=excluded.display_order''',
+                             (day, record.source_id, json.dumps(snapshot), position))
             conn.execute('UPDATE mod_result_days SET refreshed_at=? WHERE day=?', (now, day))
 
     def save_draft(self, day, work_order_id, draft, revision):
