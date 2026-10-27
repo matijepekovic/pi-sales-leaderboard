@@ -1,7 +1,8 @@
 """Digital MOD resulting workflow. Vendor operations stay behind source/writer contracts."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time as wall_time
+import time
 from pathlib import Path
 import os
 from zoneinfo import ZoneInfo
@@ -164,3 +165,33 @@ class ResultingService:
             return {'submitted': sent, 'day': day, 'pdf': bool(pdf_payload)}
         finally:
             self.repository.finish_submit(day, complete)
+
+
+class ResultingDailyPull:
+    """Single 8 AM snapshot with a 10-minute failure backoff; never touches printing."""
+
+    def __init__(self, service):
+        self.service = service
+
+    def due(self, stamp):
+        local = datetime.fromtimestamp(stamp, self.service.zone)
+        if local.time() < wall_time(8, 0):
+            return False
+        day = local.date().isoformat()
+        state = self.service.repository.day(day)
+        target = local.replace(hour=8, minute=0, second=0, microsecond=0).timestamp()
+        if state and (state['submitting'] or state['submitted_at'] or
+                      state['refreshed_at'] >= target):
+            return False
+        last = self.service.repository.auto_attempt(day)
+        return float(last.get('at') or 0) + 600 <= stamp
+
+    def run_due(self, stamp=None):
+        stamp = time.time() if stamp is None else float(stamp)
+        day = datetime.fromtimestamp(stamp,self.service.zone).date().isoformat()
+        self.service.repository.record_auto_attempt(day,stamp)
+        try:
+            return {'ok':True,'count':self.service.refresh(day)}
+        except Exception as exc:
+            self.service.repository.record_auto_attempt(day,stamp,str(exc))
+            return {'ok':False,'error':str(exc)[:250]}
