@@ -215,6 +215,16 @@ class ResultingSalesforceAdapter:
             f = self._field(schema, label, required=False)
             if f:
                 extra[f['name']] = payload['draft'][key]
+            elif payload['draft'][key]:
+                raise ResultingSalesforceError(
+                    'Checked Salesforce field is not mapped: ' + label)
+        if payload['draft']['notes'] and not comment_field:
+            raise ResultingSalesforceError('Cannot map Product Result Comment.')
+        if any(entry['result'] == 'sale' for entry in payload['product_results']):
+            if not price_field:
+                raise ResultingSalesforceError('Cannot map Product Result Price Given.')
+            if not payload['fields']['price']['lowest']:
+                raise ResultingSalesforceError('Sale requires a numeric Price Given.')
         existing = self._query('SELECT Id,'+product['name']+' FROM '+schema['name']+
             ' WHERE '+relation+' = '+_soql(payload['work_order_id'])+' LIMIT 2000')
         by_product = {}
@@ -234,7 +244,7 @@ class ResultingSalesforceAdapter:
                 fields[detail_field['name']] = self._picklist(detail_field,entry['detail'])
             if entry['detail'] and not detail_field:
                 raise ResultingSalesforceError('Result Detail cannot be mapped to Product Result.')
-            if price_field and payload['fields']['price']['lowest']:
+            if price_field and entry['result'] == 'sale':
                 fields[price_field['name']] = payload['fields']['price']['lowest']
             if comment_field and payload['draft']['notes']:
                 fields[comment_field['name']] = payload['draft']['notes']
@@ -278,14 +288,23 @@ class ResultingSalesforceAdapter:
             work_order_fields = self._mapped(wo, {
                 'Status':payload['fields']['work_order_status'],
                 'MOD':user_id,
-                'MOD Notes': (payload['draft']['notes']+'\n'+payload['final_redlines']).strip(),
+                'MOD Notes': ('\n'.join(part for part in (
+                    payload['draft']['numbers'], payload['draft']['notes'],
+                    payload['final_redlines']) if part)).strip(),
             })
             # Additional MOD fields remain mapped by their exact Salesforce labels.
-            for label,key in [('Need','need'),('Want','want'),('Review','redlines')]:
+            for label,key in [('Need','need'),('Want','want')]:
                 if payload['draft'][key]:
                     work_order_fields.update(self._mapped(wo,{label:payload['draft'][key]}))
+            if payload['final_redlines']:
+                review = self._field(wo, 'Review', required=False)
+                if review:
+                    work_order_fields.update(self._mapped(
+                        wo, {'Review':payload['final_redlines']}))
             for label,key in [('Docs','docs'),('Promotion','promotion'),
-                              ('Bid Sheet Submitted','bid_sheets')]:
+                              ('Bid Sheet Submitted','bid_sheets'),
+                              ('Pictures','pictures'),('Power Questions','power_questions'),
+                              ('T Close','t_close'),('90 Min','ninety_min')]:
                 field = self._field(wo,label,required=False)
                 if field:
                     work_order_fields.update(self._mapped(wo,{label:payload['draft'][key]}))
