@@ -45,6 +45,7 @@ from .mod_sheets.service import (
 )
 from .mod_sheets.web import blueprint as mod_sheets_blueprint
 from .mod_resulting.repository import ResultingRepository
+from .mod_resulting.pdf_export import render_resulting_pdf
 from .mod_resulting.service import ResultingService
 from .mod_resulting.salesforce_adapter import ResultingSalesforceAdapter
 from .mod_resulting.web import blueprint as mod_resulting_blueprint
@@ -158,6 +159,8 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         ResultingSalesforceAdapter(
             executable='/usr/bin/sf', target_org='work', timezone_name=cfg.timezone),
         mod_sheet_repository, cfg.timezone,
+        pdf_exporter=render_resulting_pdf,
+        output_directory=cfg.data_dir / 'mod-resulting',
     )
     app.extensions['mod_resulting'] = mod_resulting
     app.register_blueprint(mod_resulting_blueprint(mod_resulting))
