@@ -200,7 +200,11 @@
       const count = sheets.filter(s => s.dataset.dispo && s.dataset.submitted !== 'yes').length;
       if (!count) throw new Error('No new MOD sheets have a disposition.');
       document.getElementById('reviewCount').textContent =
-        count + ' sheet(s) will be submitted. Sheets without a disposition will not be sent. MOD: ' + dayMod.selectedOptions[0].textContent;
+        count + ' resulted sheet(s). Sheets without a disposition are excluded. MOD: '
+        + dayMod.selectedOptions[0].textContent
+        + (submitButton.dataset.liveWrites === 'yes'
+          ? ' — Ready to submit to Salesforce.'
+          : ' — PREVIEW ONLY. Salesforce submission is disabled until the mappings are verified.');
       confirmation.hidden = false;
     } catch (error) { message(error.message); }
   });
