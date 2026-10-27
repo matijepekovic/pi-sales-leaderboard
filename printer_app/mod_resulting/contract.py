@@ -73,6 +73,11 @@ def clean_draft(raw):
     return data
 
 
+def dnr_redline(reason):
+    value = str(reason or '').strip()
+    return value if value.casefold().startswith('dnr -') else 'DNR - ' + value
+
+
 def prices(numbers):
     """Only full numeric lines count; text and fragments are never guessed."""
     result = []
