@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MOD Sheets</title>
+<link rel="stylesheet" href="{{ url_for('static',filename='mod_resulting/sheet.css') }}">
+<script defer src="{{ url_for('static',filename='mod_resulting/sheet.js') }}"></script>
+</head><body data-csrf="{{ session.csrf }}"
+ data-refresh="{{ url_for('mod_resulting.refresh') }}"
+ data-save="{{ url_for('mod_resulting.save') }}"
+ data-mod="{{ url_for('mod_resulting.choose_mod') }}"
+ data-submit="{{ url_for('mod_resulting.submit') }}">
+<div class="floating-controls" aria-label="MOD sheet controls">
+ <input id="nameSearch" type="search" placeholder="Search names" aria-label="Search names only">
+ <label class="mod-choice">MOD
+ <select id="dailyMod" aria-label="Select daily MOD">
+  <option value="">Select MOD</option>
+  {% for mod in users %}
+  <option value="{{ mod.id }}" {% if data.state and data.state.mod_user_id==mod.id %}selected{% endif %}>{{ mod.name }}</option>
+  {% endfor %}
+ </select></label>
+ <label class="toggle-hide"><input type="checkbox" id="hideCompleted"> Hide completed</label>
+ <button type="button" id="refresh">Refresh</button>
+ <button type="button" id="submitDay">End of day</button>
+</div>
+<div id="notice" role="status" aria-live="polite" class="notification" {% if not notice %}hidden{% endif %}>{{ notice }}</div>
+<div class="sheets" id="sheets">
+{% for item in data.sheets %}
+{% set sheet=item.snapshot %}{% set d=item.draft %}{% set xs=sheet.product_interest.split(';') %}
+<section class="mod-sheet{% if item.submitted_at %} submitted{% endif %}" aria-label="MOD sheet for {{ sheet.lead_name }}"
+ data-id="{{ item.work_order_id }}" data-revision="{{ item.revision }}"
+ data-name="{{ sheet.lead_name|lower }}" data-dispo="{{ d.dispo }}"
+ data-submitted="{{ 'yes' if item.submitted_at else 'no' }}"
+ data-initial='{{ d|tojson|forceescape }}'>
+ <div class="cell" style="grid-column:1/span 3;grid-row:1">
+  <b>Work Order Number:</b> {{ sheet.work_order_number }}
+ </div>
+ <div class="cell" style="grid-column:4/span 4;grid-row:1">
+  <b>Local Scheduled Start Time:</b> {{ sheet.local_scheduled_start_time }}
+ </div>
+ <div class="cell" style="grid-column:8/span 3;grid-row:1">
+  <b>Canvass Set By:</b> {{ sheet.canvass_set_by }}
+ </div>
+ <div class="cell" style="grid-column:1/span 3;grid-row:2">
+  <b>Lead Name:</b> {{ sheet.lead_name }}
+ </div>
+ <div class="cell" style="grid-column:4/span 4;grid-row:2">
+  <b>Address:</b> {{ sheet.address }}
+ </div>
+ <div class="cell" style="grid-column:8/span 2;grid-row:2">
+  <b>Phone:</b> {{ sheet.phone }}
+ </div>
+ <div class="cell" style="grid-column:10;grid-row:2">
+  <label><b>Power Questions</b>
+   <input class="check" type="checkbox" data-key="power_questions" {% if d.power_questions %}checked{% endif %}>
+  </label>
+ </div>
+ <div class="cell" style="grid-column:1/span 2;grid-row:3">
+  <b>Scheduled Start:</b> {{ sheet.scheduled_start }}
+ </div>
+ <div class="cell" style="grid-column:3/span 5;grid-row:3">
+  <b>Assigned Service Resource:</b> {{ sheet.assigned_service_resources|join(', ') }}
+ </div>
+ <div class="cell" style="grid-column:8/span 2;grid-row:3">
+  <b>Set By:</b> {{ sheet.set_by }}
+ </div>
+ <div class="cell" style="grid-column:10;grid-row:3">
+  <label><b>T Close:</b><input class="check" type="checkbox" data-key="t_close" {% if d.t_close %}checked{% endif %}></label>
+ </div>
+ <div class="cell" style="grid-column:1/span 2;grid-row:4">
+  <b>Work Type:</b> {{ sheet.work_type }}
+ </div>
+ <div class="cell product-cell" style="grid-column:3/span 3;grid-row:4">
+  <b>Product Interest:</b> {{ sheet.product_interest }}
+  {% if xs|length > 1 %}
+  <label class="small-checkbox"><input type="checkbox" data-key="additional_products" {% if d.additional_products %}checked{% endif %}> Result individually</label>
+  <div class="product-panel" hidden>
+   <button class="close-popover" type="button">×</button>
+   {% for product in xs %}{% if product.strip() %}
+   <div class="product-result-row" data-product="{{ product.strip() }}">
+    <strong>{{ product.strip() }}</strong>
+    <label>Result <select data-product-result>
+      <option value="">Choose</option>
+      <option value="sale">Sale</option><option value="pns">Pitch No Sale</option>
+      <option value="np">No Pitch</option><option value="cxl">Canceled</option>
+      <option value="nra">No Rep Available</option><option value="oos">Out of Scope</option>
+    </select></label>
+    <label>Result Detail <select data-product-detail>
+      <option value="">None</option>
+      {% for option in result_details %}<option value="{{ option }}">{{ option }}</option>{% endfor %}
+    </select></label>
+   </div>
+   {% endif %}{% endfor %}
+  </div>
+  {% endif %}
+ </div>
+ <div class="cell" style="grid-column:6/span 2;grid-row:4">
+  <b>Source:</b> {{ sheet.source }}
+ </div>
+ <div class="cell" style="grid-column:8/span 2;grid-row:4">
+  <b>Sub Source:</b> {{ sheet.sub_source }}
+ </div>
+ <div class="cell result-detail" style="grid-column:10;grid-row:4">
+  <b>Result Detail:</b>
+  <select data-key="result_detail" aria-label="Result Detail">
+   <option value="">—</option>
+   {% for option in result_details %}<option value="{{ option }}" {% if d.result_detail==option %}selected{% endif %}>{{ option }}</option>{% endfor %}
+  </select>
+ </div>
+ <div class="cell" style="grid-column:1/span 4;grid-row:5/span 2">
+  <b>Lead Description:</b> {{ sheet.lead_description }}
+ </div>
+ <div class="cell" style="grid-column:5/span 2;grid-row:5"><b>Start Price:</b></div>
+ <div class="cell" style="grid-column:7/span 2;grid-row:5"><b>Final Price:</b></div>
+ <div class="cell" style="grid-column:9/span 2;grid-row:5"><b>Deposit/Payment:</b></div>
+ <div class="cell notes" style="grid-column:5/span 6;grid-row:6/span 6">
+  <b>MOD Notes:</b>
+  <div class="notes-content">
+   <textarea data-key="numbers" aria-label="MOD Notes numbers" spellcheck="false">{{ d.numbers }}</textarea>
+   <div class="notes-text">
+    <textarea data-key="notes" aria-label="MOD Notes black comment">{{ d.notes }}</textarea>
+    <textarea data-key="redlines" class="redlines" aria-label="MOD Notes redlines">{{ d.redlines }}</textarea>
+    <div class="dnr-in-redline" {% if not d.dnr or not d.dnr_reason %}hidden{% endif %}>DNR - {{ d.dnr_reason }}</div>
+   </div>
+  </div>
+ </div>
+ <div class="cell" style="grid-column:1;grid-row:7">
+  <label><b>Docs</b><input class="check" type="checkbox" data-key="docs" {% if d.docs %}checked{% endif %}></label>
+ </div>
+ <div class="cell bid-promo" style="grid-column:2/span 2;grid-row:7">
+  <label><b>Bid Sheets</b><input class="check" type="checkbox" data-key="bid_sheets" {% if d.bid_sheets %}checked{% endif %}></label>
+  <label><b>Promo</b><input class="check" type="checkbox" data-key="promotion" {% if d.promotion %}checked{% endif %}></label>
+ </div>
+ <div class="cell" style="grid-column:4;grid-row:7">
+  <label><b>Pictures</b><input class="check" type="checkbox" data-key="pictures" {% if d.pictures %}checked{% endif %}></label>
+ </div>
+ <div class="cell dispo" style="grid-column:1/span 2;grid-row:8">
+  <b>Dispo:</b><select data-key="dispo" aria-label="Dispo">
+   <option value=""></option>
+   <option value="sale" {% if d.dispo=='sale' %}selected{% endif %}>Sale</option>
+   <option value="pns" {% if d.dispo=='pns' %}selected{% endif %}>Pitch No Sale</option>
+   <option value="np" {% if d.dispo=='np' %}selected{% endif %}>No Pitch</option>
+   <option value="cxl" {% if d.dispo=='cxl' %}selected{% endif %}>CXL</option>
+   <option value="nra" {% if d.dispo=='nra' %}selected{% endif %}>NRA</option>
+   <option value="oos" {% if d.dispo=='oos' %}selected{% endif %}>OOS</option>
+  </select>
+ </div>
+ <div class="cell extra-checks" style="grid-column:3/span 2;grid-row:8">
+  <label><input type="checkbox" data-key="one_leg" {% if d.one_leg %}checked{% endif %}>1 Leg</label>
+  <label><input type="checkbox" data-key="free_lead" {% if d.free_lead %}checked{% endif %}>Free Lead</label>
+ </div>
+ <div class="cell" style="grid-column:1;grid-row:9">
+  <b>Call 1:</b><input class="time-entry" data-key="call_1" placeholder="10:15 AM" aria-label="Call 1 time AM/PM" value="{{ d.call_1 }}">
+ </div>
+ <div class="cell" style="grid-column:1;grid-row:10">
+  <b>Call 2:</b><input class="time-entry" data-key="call_2" placeholder="10:27 AM" aria-label="Call 2 time AM/PM" value="{{ d.call_2 }}">
+ </div>
+ <div class="cell" style="grid-column:2/span 3;grid-row:9/span 2">
+  <b>Need:</b><textarea data-key="need" class="box-text">{{ d.need }}</textarea>
+ </div>
+ <div class="cell ninety-dnr" style="grid-column:1;grid-row:11">
+  <label><b>90 Min</b><input type="checkbox" data-key="ninety_min" {% if d.ninety_min %}checked{% endif %}></label>
+  <label><b>DNR</b><input type="checkbox" data-key="dnr" {% if d.dnr %}checked{% endif %}></label>
+  <div class="dnr-panel" hidden>
+   <label>DNR Reason
+    <select data-key="dnr_reason">
+     <option value="">Choose</option>
+     {% for reason in ['Roofing','Bath','Siding','Windows','Behavior','Finance'] %}
+     <option value="{{ reason }}" {% if d.dnr_reason==reason %}selected{% endif %}>{{ reason }}</option>
+     {% endfor %}
+    </select>
+   </label>
+  </div>
+ </div>
+ <div class="cell" style="grid-column:2/span 3;grid-row:11">
+  <b>Want:</b><textarea data-key="want" class="box-text">{{ d.want }}</textarea>
+ </div>
+ <div class="cxl-panel" hidden>
+  <label><input type="checkbox" data-key="cxl_at_lead" {% if d.cxl_at_lead %}checked{% endif %}> CXL At Lead</label>
+  <button type="button" class="close-popover">Done</button>
+ </div>
+ <div class="sheet-message" role="status" aria-live="polite" hidden></div>
+</section>
+{% else %}
+<p class="no-sheets">No MOD sheets loaded for today. Use Refresh to pull from Salesforce.</p>
+{% endfor %}
+</div>
+<div class="confirm-backdrop" id="endConfirm" hidden>
+ <div class="confirm-box">
+  <p>Submit all resulted MOD sheets to Salesforce?</p>
+  <p id="reviewCount"></p>
+  <button type="button" id="cancelEnd">Cancel</button>
+  <button type="button" id="confirmEnd">Submit</button>
+ </div>
+</div>
+</body></html>
