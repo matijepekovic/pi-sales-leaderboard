@@ -110,7 +110,7 @@ def test_daily_mod_selection_refresh_and_end_of_day_idempotence(tmp_path):
                        'product_results':{'Roofing':{'result':'sale','detail':''},
                                           'Siding':{'result':'pns','detail':'Price Objection'}}})
     service.save(DAY,WORK,draft,0)
-    assert service.submit(DAY)=={'submitted':1,'day':DAY}
+    assert service.submit(DAY)=={'submitted':1,'day':DAY,'pdf':False}
     assert len(writer.applied)==1
     payload=writer.plans[0]
     assert payload['fields']['price']['lowest']=='17000'
