@@ -176,7 +176,7 @@ def test_original_renderer_image_and_controls_align_under_real_csp(mod_browser, 
     expect(first).to_have_class('mod-sheet surface-ready')
     image = first.locator('.printer-sheet')
     assert image.evaluate('(img) => img.complete && img.naturalWidth > 0')
-    image_response = page.request.get(image.get_attribute('src'))
+    image_response = page.request.get(origin + image.get_attribute('src'))
     assert image_response.ok and image_response.headers['content-type'].startswith('image/png')
     assert page.locator('[style]').count() == 0
     paper = first.bounding_box()
