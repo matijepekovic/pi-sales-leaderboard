@@ -103,8 +103,6 @@ def outcome_fields(draft):
         'nra': 'Nurturing', 'oos': 'Out of Scope',
     }[dispo]
     if draft['dnr']:
-        if not draft['dnr_reason'].strip():
-            raise ValueError('Choose a DNR Reason.')
         lead = 'Do Not Call'
     return {
         'lead_status': lead,
