@@ -239,3 +239,48 @@ def test_app_does_not_enable_live_salesforce_writes():
         app=create_app(Config(data_dir=root/'data',env_file=env,
                               secret_key='s'*64,email_enabled=False))
         assert app.extensions['mod_resulting'].allow_salesforce_writes is False
+
+
+
+def test_sandbox_is_reachable_from_printer_and_never_writes_salesforce(tmp_path):
+    from printer_app.app import create_app
+    from printer_app.config import Config
+    from printer_app.tests.auth_helpers import login_admin
+    root=tmp_path
+    env=root/'env'
+    env.write_text('EMAIL_ENABLED=0\\n')
+    app=create_app(Config(data_dir=root/'data',env_file=env,
+                          secret_key='s'*64,email_enabled=False))
+    app.testing=True
+    service=app.extensions['mod_resulting']
+    service.source=Source()
+    service.writer=Writer()
+    client=app.test_client()
+
+    unauthenticated=client.get('/mod-resulting')
+    assert unauthenticated.status_code in (302,303)
+    assert '/login?' in unauthenticated.headers['Location']
+
+    csrf=login_admin(client)
+    control=client.get('/system/print-control')
+    assert control.status_code==200
+    assert b'MOD Resulting Sandbox' in control.data
+    assert b'/mod-resulting' in control.data
+    sandbox=client.get('/mod-resulting')
+    assert sandbox.status_code==200
+    assert b'Search names only' in sandbox.data or b'Search names' in sandbox.data
+    assert b'Hide completed' in sandbox.data
+    assert b'End of day' in sandbox.data
+    assert b'MOD Notes:' in sandbox.data
+    assert b'Sample MOD' in sandbox.data
+    assert b'<header>' not in sandbox.data
+    assert service.allow_salesforce_writes is False
+
+    result=client.post('/mod-resulting/api/submit',
+                       data={'csrf':csrf},headers={'Origin':'http://localhost'})
+    assert result.status_code==422
+    assert b'Live Salesforce submission is disabled' in result.data
+    assert service.writer.applied==[]
+    db=app.extensions['printer_db']
+    for table in ('jobs','print_attempts','commands','print_queue_releases'):
+        assert db.rows('SELECT * FROM '+table)==[]
