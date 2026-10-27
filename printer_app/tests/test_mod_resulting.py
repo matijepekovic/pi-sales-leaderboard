@@ -94,7 +94,8 @@ def _service(tmp_path):
     repo=ResultingRepository(Database(tmp_path/'printer.sqlite'))
     source,writer=Source(),Writer()
     settings=SimpleNamespace(settings=lambda:None)
-    service=ResultingService(repo,source,writer,settings,'America/Los_Angeles')
+    service=ResultingService(repo,source,writer,settings,'America/Los_Angeles',
+                             allow_salesforce_writes=True)
     return service,repo,source,writer
 
 
@@ -208,3 +209,33 @@ def test_pdf_uses_existing_print_renderer_with_redlines_and_fixed_sheets():
     assert 'Customer comment' in text
     # Print generator's original label must remain; never redraw all boxes.
     assert 'Local Scheduled Start Time:' in text
+
+
+def test_printer_sandbox_is_read_only_for_salesforce_by_default(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    service.refresh(DAY)
+    service.set_mod(DAY,USER)
+    repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns','notes':'Review only'}),0)
+    # The real application never opts into live writes. Only explicit test
+    # fixtures with a fake Salesforce writer can exercise submission.
+    service.allow_salesforce_writes=False
+    with pytest.raises(ValueError, match='Live Salesforce submission is disabled'):
+        service.submit(DAY)
+    assert writer.plans == []
+    assert writer.applied == []
+    assert repo.day(DAY)['submitting'] == 0
+    assert repo.sheets(DAY)[0]['submitted_at'] is None
+
+
+def test_app_does_not_enable_live_salesforce_writes():
+    from printer_app.app import create_app
+    from printer_app.config import Config
+    from tempfile import TemporaryDirectory
+    with TemporaryDirectory() as directory:
+        from pathlib import Path
+        root=Path(directory)
+        env=root/'env'
+        env.write_text('EMAIL_ENABLED=0\n')
+        app=create_app(Config(data_dir=root/'data',env_file=env,
+                              secret_key='s'*64,email_enabled=False))
+        assert app.extensions['mod_resulting'].allow_salesforce_writes is False
