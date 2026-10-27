@@ -65,12 +65,20 @@
     if (sheet.dataset.submitted === 'yes') return Promise.resolve();
     const ident = sheet.dataset.id;
     const before = pending.get(ident) || Promise.resolve();
+    // Sequence saves per work order. Keep a draft marked dirty if its fields
+    // changed while a previous request was still in flight.
     const update = before.catch(() => {}).then(async () => {
-      const data = await post(root.dataset.save, formFields(sheet));
+      if (sheet.dataset.dirty !== 'yes') return;
+      const snapshot = JSON.stringify(serialize(sheet));
+      const data = await post(root.dataset.save, {
+        work_order_id:ident, revision:sheet.dataset.revision, draft:snapshot
+      });
       sheet.dataset.revision = String(data.revision);
-      sheet.dataset.initial = JSON.stringify(serialize(sheet));
+      sheet.dataset.initial = snapshot;
+      sheet.dataset.dirty = JSON.stringify(serialize(sheet)) === snapshot ? 'no' : 'yes';
       message('', sheet);
     }).catch(error => {
+      sheet.dataset.dirty = 'yes';
       message('Not saved: ' + error.message, sheet);
       throw error;
     });
@@ -79,6 +87,7 @@
   }
   function scheduleSave(sheet) {
     const ident = sheet.dataset.id;
+    sheet.dataset.dirty = 'yes';
     clearTimeout(timers.get(ident));
     const handle = setTimeout(() => {
       timers.delete(ident);
@@ -87,13 +96,19 @@
     timers.set(ident, handle);
   }
   async function flushAll() {
-    const saves = [];
     for (const sheet of sheets) {
       clearTimeout(timers.get(sheet.dataset.id));
       timers.delete(sheet.dataset.id);
-      if (sheet.dataset.submitted !== 'yes') saves.push(queueSave(sheet));
     }
-    await Promise.all(saves);
+    // Wait for existing saves and then persist only fields that changed;
+    // avoid rewriting hundreds of untouched sheets on every Refresh.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await Promise.all(sheets.map(sheet =>
+        sheet.dataset.dirty === 'yes' ? queueSave(sheet) :
+        pending.get(sheet.dataset.id) || Promise.resolve()));
+      if (sheets.every(sheet => sheet.dataset.dirty !== 'yes')) return;
+    }
+    throw new Error('An unsaved sheet is still changing; retry after editing.');
   }
   function setup(sheet) {
     const init = JSON.parse(sheet.dataset.initial || '{}');
@@ -104,6 +119,7 @@
         row.querySelector('[data-product-detail]').value = selected.detail || '';
       }
     }
+    sheet.dataset.dirty = 'no';
     dnrPreview(sheet, init);
     if (sheet.dataset.submitted === 'yes') {
       for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
