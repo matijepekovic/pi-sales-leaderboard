@@ -15,7 +15,7 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 
 from ..mod_sheet_contract import ModSheetRecord
 from ..mod_sheets.pdf_renderer import MOD_TABLE_WIDTH, MOD_ROW_HEIGHTS, render_mod_pdf
-from .contract import clean_draft
+from .contract import clean_draft, dnr_redline
 
 
 COL_WIDTH = MOD_TABLE_WIDTH / 10
