@@ -50,8 +50,8 @@ def clean_draft(raw):
         raise ValueError('Choose a valid disposition.')
     if data['result_detail'] and data['result_detail'] not in RESULT_DETAILS:
         raise ValueError('Choose a valid Result Detail.')
-    if data['dnr_reason'] and not data['dnr']:
-        raise ValueError('DNR Reason requires DNR.')
+    if not data['dnr']:
+        data['dnr_reason'] = ''
     for key in ('call_1', 'call_2'):
         if data[key] and not TIME_RE.fullmatch(data[key]):
             raise ValueError(key + ' must be entered with AM or PM.')
