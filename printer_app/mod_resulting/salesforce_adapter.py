@@ -131,6 +131,9 @@ class ResultingSalesforceAdapter:
             if field is None:
                 continue
             kind = field.get('type')
+            if type(value) is bool and kind != 'boolean':
+                raise ResultingSalesforceError(
+                    'Salesforce field '+ label +' is not a checkbox; refusing an unsafe update.')
             if kind == 'boolean':
                 if type(value) is not bool:
                     raise ResultingSalesforceError(label + ' must be a checkbox.')
@@ -214,6 +217,8 @@ class ResultingSalesforceAdapter:
                           ('CXL At Lead','cxl_at_lead')):
             f = self._field(schema, label, required=False)
             if f:
+                if f.get('type') != 'boolean':
+                    raise ResultingSalesforceError(label + ' is not a Salesforce checkbox.')
                 extra[f['name']] = payload['draft'][key]
             elif payload['draft'][key]:
                 raise ResultingSalesforceError(
@@ -297,10 +302,9 @@ class ResultingSalesforceAdapter:
                 if payload['draft'][key]:
                     work_order_fields.update(self._mapped(wo,{label:payload['draft'][key]}))
             if payload['final_redlines']:
-                review = self._field(wo, 'Review', required=False)
-                if review:
-                    work_order_fields.update(self._mapped(
-                        wo, {'Review':payload['final_redlines']}))
+                review = self._field(wo, 'Review')
+                work_order_fields.update(self._mapped(
+                    wo, {'Review':payload['final_redlines']}))
             for label,key in [('Docs','docs'),('Promotion','promotion'),
                               ('Bid Sheet Submitted','bid_sheets'),
                               ('Pictures','pictures'),('Power Questions','power_questions'),
