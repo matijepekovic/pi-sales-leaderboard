@@ -248,7 +248,7 @@ class ResultingSalesforceAdapter:
             raise ResultingSalesforceError('The imported MOD market is missing or invalid.')
 
         rows = self._query(
-            'SELECT Id,Name,Home_Branch__c,UserRole.Name FROM User '
+            'SELECT Id,Name,IsActive,Home_Branch__c,UserRole.Name FROM User '
             'WHERE IsActive = true '
             "AND UserRole.Name = 'Sales Manager' "
             'AND Home_Branch__c = ' + _soql(market)
@@ -261,7 +261,7 @@ class ResultingSalesforceAdapter:
             name = str(item.get('Name') or '').strip()
             home_branch = str(item.get('Home_Branch__c') or '').strip()
             role = str((item.get('UserRole') or {}).get('Name') or '').strip()
-            if (ID_RE.fullmatch(ident) and name
+            if (ID_RE.fullmatch(ident) and name and item.get('IsActive') is True
                     and home_branch.casefold() == market.casefold()
                     and role.casefold() == 'sales manager'
                     and ident not in seen):
