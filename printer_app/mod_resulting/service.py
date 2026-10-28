@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from ..mod_sheet_contract import ModSheetRecord
 from .contract import (
     clean_draft, final_redline_text, outcome_fields, sold_products,
+    individual_product_sales,
 )
 
 
@@ -128,34 +129,39 @@ class ResultingService:
         else:
             if not original_products:
                 raise ValueError('Product Interest is required for resulting.')
-            if draft['additional_products']:
-                per_product = draft['product_results']
-                if set(per_product) != set(original_products):
-                    raise ValueError(
-                        'Result every original product or uncheck Result individually.'
+            overrides = draft['product_results'] if draft['additional_products'] else {}
+            # An individual result overrides only that product. All others
+            # retain the default main Dispo/result.
+            results = []
+            for product in original_products:
+                chosen = overrides.get(product)
+                if chosen and chosen['result'] == 'sale':
+                    # Price 0 means not sold; keep the product result blank.
+                    priced_sale = next(
+                        (item for item in individual_product_sales(draft)
+                         if item['product'] == product), None
                     )
-                if any(item['result'] == 'sale' for item in per_product.values()):
-                    raise ValueError(
-                        'A Sale product result requires main Dispo Sale and the Sale product workflow.'
-                    )
-                results = [{
-                    'product': product,
-                    'result': per_product[product]['result'],
-                    'detail': per_product[product]['detail'],
-                    'price': '',
-                    'deposit': '',
-                } for product in original_products]
-            else:
-                # Default behavior: every original product receives the
-                # authoritative main Dispo/result and the main Result Detail.
-                results = [{
-                    'product': product,
-                    'result': draft['dispo'],
-                    'detail': draft['result_detail'],
-                    'price': '',
-                    'deposit': '',
-                } for product in original_products]
-            deposit_total = ''
+                    if priced_sale is None:
+                        continue
+                    results.append({
+                        'product': product, 'result': 'sale',
+                        'detail': chosen['detail'],
+                        'price': priced_sale['price'],
+                        'deposit': priced_sale['deposit'],
+                    })
+                else:
+                    results.append({
+                        'product': product,
+                        'result': chosen['result'] if chosen else draft['dispo'],
+                        'detail': chosen['detail'] if chosen else draft['result_detail'],
+                        'price': '',
+                        'deposit': '',
+                    })
+            individual_sales = individual_product_sales(draft)
+            deposit_total = (
+                str(sum((Decimal(item['deposit']) for item in individual_sales),
+                        Decimal('0'))) if individual_sales else ''
+            )
 
         return dict(
             day=sheet['day'], work_order_id=sheet['work_order_id'],
