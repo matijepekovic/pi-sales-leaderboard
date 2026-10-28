@@ -322,3 +322,61 @@ def test_sandbox_is_reachable_from_printer_and_never_writes_salesforce(tmp_path)
     db=app.extensions['printer_db']
     for table in ('jobs','print_attempts','commands','print_queue_releases'):
         assert db.rows('SELECT * FROM '+table)==[]
+
+def test_select_mod_inherits_market_from_the_imported_daily_batch(tmp_path):
+    service, repository, source, writer = _service(tmp_path)
+    settings = SimpleNamespace(market_segment='Olympia')
+    service.settings_repository = SimpleNamespace(settings=lambda:settings)
+    chosen_markets = []
+    def managers(market):
+        chosen_markets.append(market)
+        return [{'id':USER,'name':market + ' Sales Manager'}]
+    writer.mod_users = managers
+
+    service.refresh(DAY)
+    assert repository.imported_market(DAY) == 'Olympia'
+    assert service.users(DAY)[0]['name'] == 'Olympia Sales Manager'
+    service.set_mod(DAY, USER)
+    assert repository.day(DAY)['mod_user_name'] == 'Olympia Sales Manager'
+    # Editing MOD Settings alone does not silently change the loaded batch.
+    settings.market_segment = 'Seattle'
+    assert service.users(DAY)[0]['name'] == 'Olympia Sales Manager'
+    assert repository.day(DAY)['mod_user_id'] == USER
+    # A deliberate Refresh imports the new market and clears the old MOD.
+    service.refresh(DAY)
+    assert repository.imported_market(DAY) == 'Seattle'
+    assert repository.day(DAY)['mod_user_id'] == ''
+    assert service.users(DAY)[0]['name'] == 'Seattle Sales Manager'
+    assert source.queries[-1]['market_segment'] == 'Seattle'
+    assert chosen_markets == ['Olympia', 'Olympia', 'Seattle']
+
+
+def test_preexisting_import_without_market_automatically_reimports_its_scope(tmp_path):
+    service, repository, source, writer = _service(tmp_path)
+    repository.refresh(DAY, [RECORD])  # Old version, no market metadata.
+    assert repository.imported_market(DAY) == ''
+    assert service.users(DAY) == [{'id':USER,'name':'MOD Example'}]
+    assert repository.imported_market(DAY) == 'Olympia'
+    assert source.queries[-1]['market_segment'] == 'Olympia'
+
+
+def test_notes_keep_separate_ink_and_result_detail_is_always_red():
+    from printer_app.mod_resulting.contract import (
+        final_redline_text, note_runs_for_display)
+    draft = clean_draft({
+        'dispo':'pns', 'notes':'Before disposition\nAfter disposition',
+        'note_runs':[
+            {'text':'Before disposition','red':False},
+            {'text':'\nAfter disposition','red':True},
+        ],
+        'result_detail':'Price Objection',
+    })
+    assert note_runs_for_display(draft) == [
+        {'text':'Before disposition','red':False},
+        {'text':'\nAfter disposition','red':True},
+    ]
+    assert final_redline_text(draft) == 'RESULT DETAIL: Price Objection'
+    with pytest.raises(ValueError,match='does not match'):
+        clean_draft({
+            'notes':'Actual', 'note_runs':[{'text':'Different','red':True}]
+        })
