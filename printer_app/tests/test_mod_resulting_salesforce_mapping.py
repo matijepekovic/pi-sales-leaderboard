@@ -110,11 +110,16 @@ def _adapter(*, existing_results=(), lead_interest='Roofing;Siding', schemas=Non
     calls = []
     # The current Work Order is unresulted on Salesforce at preflight.
     # Historical candidates are separate records with the same Lead__c.
-    historical_works = list(history) if history is not None else [{
-        'Id':WORK, 'Lead__c':LEAD,
-        'Appointment_Date_Time__c':'2026-10-27T19:00:00Z',
-        'Appointment_Date__c':'2026-10-27', 'Dispo__c':None,
-    }]
+    historical_works = list(history) if history is not None else [
+        {'Id':WORK, 'Lead__c':LEAD,
+         'Appointment_Date_Time__c':'2026-10-27T19:00:00Z',
+         'Appointment_Date__c':'2026-10-27', 'Dispo__c':None},
+        # The second same-lead Work Order is available to batch tests, but
+        # cannot be a previous result unless its disposition is actually set.
+        {'Id':'0WO000000000002AAA', 'Lead__c':LEAD,
+         'Appointment_Date_Time__c':'2026-10-27T20:00:00Z',
+         'Appointment_Date__c':'2026-10-27', 'Dispo__c':None},
+    ]
 
     def runner(command, **kwargs):
         calls.append(command)
