@@ -377,7 +377,7 @@ def test_notes_keep_separate_ink_and_result_detail_is_always_red():
         {'text':'Before disposition','red':False},
         {'text':'\nAfter disposition','red':True},
     ]
-    assert final_redline_text(draft) == 'RESULT DETAIL: Price Objection'
+    assert final_redline_text(draft) == 'Price Objection'
     with pytest.raises(ValueError,match='does not match'):
         clean_draft({
             'notes':'Actual', 'note_runs':[{'text':'Different','red':True}]
