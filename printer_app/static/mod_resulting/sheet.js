@@ -28,22 +28,35 @@
   function serialize(sheet) {
     const draft = JSON.parse(sheet.dataset.initial || '{}');
     for (const input of sheet.querySelectorAll('[data-key]')) {
-      draft[input.dataset.key] = input.type === 'checkbox' ? input.checked : input.value;
+      if (input instanceof HTMLSelectElement && input.multiple) {
+        draft[input.dataset.key] = [...input.selectedOptions].map(option => option.value).join(';');
+      } else {
+        draft[input.dataset.key] = input.type === 'checkbox' ? input.checked : input.value;
+      }
     }
     draft.product_results = {};
-    if (draft.additional_products) {
+    if (draft.additional_products && draft.dispo !== 'sale') {
       for (const row of sheet.querySelectorAll('[data-product]')) {
         const result = row.querySelector('[data-product-result]').value;
         const detail = row.querySelector('[data-product-detail]').value;
         if (result) draft.product_results[row.dataset.product] = {result, detail};
       }
     }
+    draft.sale_products = {};
+    for (const row of sheet.querySelectorAll('[data-sale-product]')) {
+      const selected = row.querySelector('[data-sale-selected]');
+      if (!selected?.checked) continue;
+      draft.sale_products[row.dataset.saleProduct] = {
+        price: row.querySelector('[data-sale-price]').value,
+        deposit: row.querySelector('[data-sale-deposit]').value
+      };
+    }
     return draft;
   }
   function dnrPreview(sheet, draft) {
     const text = sheet.querySelector('.dnr-in-redline');
     if (!text) return;
-    const reason = String(draft.dnr_reason || '').trim();
+    const reason = String(draft.dnr_reason || '').trim().replaceAll(';', '; ');
     text.textContent = draft.dnr && reason ? (/^dnr\s*-/i.test(reason) ? reason : 'DNR - ' + reason) : '';
     text.hidden = !text.textContent;
   }
@@ -132,6 +145,8 @@
     }
     sheet.dataset.dirty = 'no';
     dnrPreview(sheet, init);
+    syncSaleRows();
+    if (separate) separate.hidden = init.dispo === 'sale';
     if (sheet.dataset.submitted === 'yes') {
       for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
       return;
@@ -139,6 +154,17 @@
     const product = sheet.querySelector('.product-panel');
     const dnr = sheet.querySelector('.dnr-panel');
     const cxl = sheet.querySelector('.cxl-panel');
+    const sale = sheet.querySelector('.sale-panel');
+    const separate = sheet.querySelector('.separate-products');
+    function syncSaleRows() {
+      for (const row of sheet.querySelectorAll('[data-sale-product]')) {
+        const selected = row.querySelector('[data-sale-selected]');
+        const enabled = !!selected?.checked;
+        for (const field of row.querySelectorAll('[data-sale-price],[data-sale-deposit]')) {
+          field.disabled = !enabled;
+        }
+      }
+    }
     function redraw() {
       const draft = serialize(sheet);
       sheet.dataset.dispo = draft.dispo;
@@ -148,32 +174,39 @@
     }
     function showRelated(input) {
       const draft = serialize(sheet);
+      if (separate) separate.hidden = draft.dispo === 'sale';
       if (input.dataset.key === 'dispo') {
         cxl.hidden = draft.dispo !== 'cxl';
         if (draft.dispo === 'cxl') cxl.querySelector('input').focus();
+        if (sale) {
+          sale.hidden = draft.dispo !== 'sale';
+          if (draft.dispo === 'sale') sale.querySelector('[data-sale-selected]')?.focus();
+        }
+        if (product && draft.dispo === 'sale') product.hidden = true;
       }
       if (input.dataset.key === 'dnr') {
         dnr.hidden = !draft.dnr;
         if (draft.dnr) dnr.querySelector('select').focus();
       }
-      if (input.dataset.key === 'additional_products' && product) {
+      if (input.dataset.key === 'additional_products' && product && draft.dispo !== 'sale') {
         product.hidden = !draft.additional_products;
         if (draft.additional_products) product.querySelector('select')?.focus();
       }
+      if (input.matches?.('[data-sale-selected]')) syncSaleRows();
     }
     sheet.addEventListener('change', event => {
       const input = event.target;
-      if (input instanceof HTMLElement && input.matches('[data-key],[data-product-result],[data-product-detail]')) {
+      if (input instanceof HTMLElement && input.matches('[data-key],[data-product-result],[data-product-detail],[data-sale-selected]')) {
         showRelated(input);
         redraw();
       }
     });
     sheet.addEventListener('input', event => {
       const input = event.target;
-      if (input instanceof HTMLElement && input.matches('textarea[data-key],input[data-key]:not([type=checkbox])')) redraw();
+      if (input instanceof HTMLElement && input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit]')) redraw();
     });
     sheet.querySelectorAll('.close-popover').forEach(button => button.addEventListener('click', () => {
-      const panel = button.closest('.product-panel,.cxl-panel,.dnr-panel');
+      const panel = button.closest('.product-panel,.cxl-panel,.dnr-panel,.sale-panel');
       if (panel) panel.hidden = true;
     }));
   }
