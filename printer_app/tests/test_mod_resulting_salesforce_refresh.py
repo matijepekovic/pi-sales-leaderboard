@@ -33,9 +33,10 @@ def test_refresh_imports_remote_results_and_preserves_local_draft(tmp_path):
     assert sheet['draft']['notes'] == ''
     assert sheet['draft']['dnr_reason'] == 'Roofing'
     assert sheet['submitted_at'] is not None  # Never re-submit an existing result.
-    repo.refresh(DAY, [RECORD], external_drafts={WORK:clean_draft({'notes':'new'})})
-    assert repo.sheets(DAY)[0]['draft'] == remote
-    assert repo.sheets(DAY)[0]['submitted_at'] is not None
+    remote_updated = clean_draft({'dispo':'pns', 'redlines':'New remote redline'})
+    repo.refresh(DAY, [RECORD], external_drafts={WORK:remote_updated})
+    assert repo.sheets(DAY)[0]['draft'] == remote_updated
+    assert repo.sheets(DAY)[0]['submitted_at'] == -1.0
 
     different = '0WO000000000002AAA'
     record_two = ModSheetRecord(source_id=different,lead_name='Second Customer')
@@ -48,6 +49,11 @@ def test_refresh_imports_remote_results_and_preserves_local_draft(tmp_path):
                  external_drafts={different:clean_draft({'dispo':'pns','redlines':'Remote changed'})})
     assert repo.sheets(DAY)[1]['draft'] == local
     assert repo.sheets(DAY)[1]['submitted_at'] is None
+    # Positive local write receipts must not be overwritten by Salesforce.
+    repo.finish_item(DAY, different)
+    repo.refresh(DAY, [RECORD,record_two],
+                 external_drafts={different:clean_draft({'dispo':'cxl'})})
+    assert repo.sheets(DAY)[1]['draft'] == local
 
 
 def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
