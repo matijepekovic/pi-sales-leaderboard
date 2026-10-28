@@ -114,8 +114,8 @@ class ResultingService:
         ]
         if draft['dispo'] == 'sale':
             sales = sold_products(draft)
-            if not sales:
-                raise ValueError('Select at least one sold product with a price greater than 0.')
+            # Price zero is not a sale. Never invent a required minimum count
+            # of sold products or create product records from zero-price rows.
             results = [{
                 'product': item['product'],
                 'result': 'sale',
@@ -123,9 +123,10 @@ class ResultingService:
                 'price': item['price'],
                 'deposit': item['deposit'],
             } for item in sales]
-            deposit_total = str(sum(
-                (Decimal(item['deposit']) for item in sales), Decimal('0')
-            ))
+            deposit_total = (
+                str(sum((Decimal(item['deposit']) for item in sales), Decimal('0')))
+                if sales else ''
+            )
         else:
             if not original_products:
                 raise ValueError('Product Interest is required for resulting.')
