@@ -5,6 +5,7 @@ Never changes the existing renderer or its three-sheets-per-page layout.
 from __future__ import annotations
 
 from io import BytesIO
+from decimal import Decimal
 from xml.sax.saxutils import escape
 
 from pypdf import PdfReader, PdfWriter
@@ -18,7 +19,10 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 
 from ..mod_sheet_contract import ModSheetRecord
 from ..mod_sheets.pdf_renderer import MOD_TABLE_WIDTH, MOD_ROW_HEIGHTS, render_mod_pdf
-from .contract import clean_draft, final_redline_text, note_runs_for_display
+from .contract import (
+    clean_draft, final_redline_text, note_runs_for_display,
+    prices, format_money, sold_products, individual_product_sales,
+)
 
 
 COL_WIDTH = MOD_TABLE_WIDTH / 10
@@ -191,6 +195,23 @@ def _overlay_one(c,index,draft):
         x,t=_location(index,col,row)
         _fit_lines(c,d[key],x+3,t+12,COL_WIDTH*cols-6,
                    sum(MOD_ROW_HEIGHTS[row:row+rows])-14,start=8.5)
+
+    # Keep the original price row. Explicit cell overrides take precedence;
+    # otherwise show the values derived from Numbers or sold-product deposits.
+    automatic=prices(d['numbers'])
+    start=d['start_price_override'] or automatic['highest']
+    final=d['final_price_override'] or automatic['lowest']
+    sold=(sold_products(d) if d['dispo']=='sale' else individual_product_sales(d))
+    total=str(sum((Decimal(item['deposit']) for item in sold), Decimal('0'))) if sold else ''
+    deposit=d['deposit_override'] or total
+    for column, amount in ((4,start),(6,final),(8,deposit)):
+        if not amount:
+            continue
+        x,t=_location(index,column,4)
+        value=format_money(amount)
+        width=stringWidth(value,'Times-Roman',6.5)
+        # Preserve printed field labels and existing box borders.
+        _write(c,x+COL_WIDTH*2-width-3,t+2,value,6.5)
 
     # Ink is placed inside the renderer's one and only MOD Notes area.
     x,t=_location(index,4,5)
