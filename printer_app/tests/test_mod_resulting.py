@@ -293,6 +293,8 @@ def test_sandbox_is_reachable_from_printer_and_never_writes_salesforce(tmp_path)
     service=app.extensions['mod_resulting']
     service.source=Source()
     service.writer=Writer()
+    service.settings_repository=SimpleNamespace(
+        settings=lambda: SimpleNamespace(market_segment='Olympia'))
     client=app.test_client()
 
     unauthenticated=client.get('/mod-resulting')
@@ -348,7 +350,7 @@ def test_select_mod_inherits_market_from_the_imported_daily_batch(tmp_path):
     assert repository.day(DAY)['mod_user_id'] == ''
     assert service.users(DAY)[0]['name'] == 'Seattle Sales Manager'
     assert source.queries[-1]['market_segment'] == 'Seattle'
-    assert chosen_markets == ['Olympia', 'Olympia', 'Seattle']
+    assert chosen_markets == ['Olympia', 'Olympia', 'Olympia', 'Seattle']
 
 
 def test_preexisting_import_without_market_automatically_reimports_its_scope(tmp_path):
