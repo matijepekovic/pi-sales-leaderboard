@@ -45,12 +45,14 @@ def test_review_checkbox_persists_independently_in_checklist_row(mod_browser, vi
     assert first.locator('.notes-text textarea').count() == 1
     notes.fill(note_text)
     regular_size = notes.evaluate('(el) => parseFloat(getComputedStyle(el).fontSize)')
+    regular_weight = notes.evaluate('(el) => getComputedStyle(el).fontWeight')
     assert notes.evaluate('(el) => getComputedStyle(el).color') == 'rgb(0, 0, 0)'
     # Dispo changes only the same textbox's font size and color.
     first.locator('[data-key=dispo]').select_option('pns')
     expect(notes).to_have_value(note_text)
     assert notes.evaluate('(el) => getComputedStyle(el).color') == 'rgb(176, 0, 0)'
     assert notes.evaluate('(el) => parseFloat(getComputedStyle(el).fontSize)') > regular_size
+    assert notes.evaluate('(el) => getComputedStyle(el).fontWeight') == regular_weight
     for selected in (True, False):
         review.set_checked(selected)
         assert notes_geometry() == pytest.approx(notes_bounds, abs=1)
@@ -72,6 +74,7 @@ def test_review_checkbox_persists_independently_in_checklist_row(mod_browser, vi
     expect(notes).to_have_value(note_text)
     assert notes.evaluate('(el) => getComputedStyle(el).color') == 'rgb(0, 0, 0)'
     assert notes.evaluate('(el) => parseFloat(getComputedStyle(el).fontSize)') == pytest.approx(regular_size)
+    assert notes.evaluate('(el) => getComputedStyle(el).fontWeight') == regular_weight
     assert page.evaluate('window.modCspViolations') == []
     assert service.allow_salesforce_writes is False and not writer.applied
     evidence('review-roundtrip-' + str(viewport[0]))
