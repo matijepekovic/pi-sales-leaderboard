@@ -38,6 +38,9 @@ def blueprint(service, surface):
                 'dnr_reasons':[{'value':value,'label':value}
                                for value in ('Roofing','Bath','Siding','Windows',
                                              'Behavior','Finance')],
+                # Sale/pivot product selection requires the live Salesforce
+                # product picklist. Never invent product values offline.
+                'products':[],
             }
             # Setup diagnostics belong in the log, not over the user's sheets.
             current_app.logger.warning('MOD resulting picklists unavailable; using draft choices.')
@@ -46,6 +49,7 @@ def blueprint(service, surface):
             data=data, users=users,
             result_details=choices['result_details'],
             dnr_reasons=choices['dnr_reasons'],
+            products=choices.get('products', []),
             live_writes_enabled=service.allow_salesforce_writes,
             notice=notice,
         )
