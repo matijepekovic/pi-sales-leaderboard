@@ -107,7 +107,11 @@
   <div class="notes-content">
    <textarea data-key="numbers" aria-label="MOD Notes numbers" spellcheck="false">{{ d.numbers }}</textarea>
    <div class="notes-text" data-notes-mode="{{ 'red' if d.dispo else 'black' }}" aria-label="MOD Notes">
-    <textarea data-key="notes" class="mod-notes-input" aria-label="MOD Notes" spellcheck="false">{{ d.notes ~ ('\n' if d.notes and d.redlines else '') ~ d.redlines }}</textarea>
+    <div class="mod-notes-editor">
+     <div class="mod-notes-display" aria-hidden="true"></div>
+     <textarea data-key="notes" class="mod-notes-input" aria-label="MOD Notes" spellcheck="false">{{ d.notes ~ ('\n' if d.notes and d.redlines else '') ~ d.redlines }}</textarea>
+    </div>
+    <div class="result-detail-in-redline" hidden></div>
     <div class="dnr-in-redline" {% if not d.dnr or not d.dnr_reason %}hidden{% endif %}>DNR - {{ d.dnr_reason }}</div>
    </div>
   </div>
