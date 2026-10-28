@@ -314,11 +314,16 @@ def outcome_fields(draft):
     if not dispo:
         return None
     return {
+        # DNR always requires Do Not Call (per the training workflow), even
+        # if an earlier manual Lead Status was selected. Do not mutate the
+        # manual field: unchecking DNR restores that choice or the Dispo default.
         'lead_status': (
-            draft['lead_status']
-            or {'sale':'Sale Pending', 'pns':'Nurturing',
-                'np':'Nurturing', 'cxl':'Canceled',
-                'nra':'Nurturing', 'oos':'Out of Scope'}[dispo]
+            'Do Not Call' if draft['dnr'] else (
+                draft['lead_status']
+                or {'sale':'Sale Pending', 'pns':'Nurturing',
+                    'np':'Nurturing', 'cxl':'Canceled',
+                    'nra':'Nurturing', 'oos':'Out of Scope'}[dispo]
+            )
         ),
         'appointment_status': 'No Rep Available' if dispo == 'nra' else (
             'Canceled' if dispo in ('cxl', 'oos') else 'Completed'
