@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hmac
+import os
 import secrets
 import time
 from datetime import datetime
@@ -162,6 +163,9 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         mod_sheet_repository, cfg.timezone,
         pdf_exporter=render_resulting_pdf,
         output_directory=cfg.data_dir / 'mod-resulting',
+        # Explicit deployment switch only, never enabled by a web request.
+        # The writer independently preflights every Salesforce field.
+        allow_salesforce_writes=os.environ.get('MOD_RESULTING_ALLOW_LIVE_WRITES') == '1',
     )
     app.extensions['mod_resulting'] = mod_resulting
     app.register_blueprint(mod_resulting_blueprint(mod_resulting, ModSheetSurface(render_mod_pdf)))
