@@ -441,7 +441,13 @@
       }
     }
     syncPricePreviews();
-    priceDialog?.addEventListener('close', syncPricePreviews);
+    // Native dialogs own their input interactions even while in the top layer.
+    // Refresh the worksheet cell directly as values change and when the
+    // dialog closes; the sheet-level listener still owns draft persistence.
+    for (const dialog of (priceDialog, sale, product)) {
+      dialog?.addEventListener('input', syncPricePreviews);
+      dialog?.addEventListener('close', syncPricePreviews);
+    }
     syncSaleRows();
     if (sheet.dataset.submitted === 'yes') {
       for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
