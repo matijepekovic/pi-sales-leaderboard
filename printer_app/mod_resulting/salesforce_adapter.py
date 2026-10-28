@@ -548,8 +548,9 @@ class ResultingSalesforceAdapter:
                 wo_values[WO['final_price']] = self._value(
                     wo_fields['final_price'], payload['fields']['price']['lowest']
                 )
-            if payload['dispo'] == 'sale':
-                # Zero is a valid total when each sold product has a zero deposit.
+            if payload['deposit_total'] != '':
+                # The total is from actual sold products, never a Work Order
+                # price. Zero is a valid deposit total.
                 wo_values[WO['deposit']] = self._value(
                     wo_fields['deposit'], payload['deposit_total']
                 )
@@ -584,8 +585,11 @@ class ResultingSalesforceAdapter:
                     else previous
                 )
 
-            if payload['dispo'] == 'sale':
-                sold = [entry['product'] for entry in payload['product_results']]
+            sold = [
+                entry['product'] for entry in payload['product_results']
+                if entry['result'] == 'sale'
+            ]
+            if sold:
                 current = self._lead_product_interest(lead_id)
                 merged, changed = self._merge_products(current, sold)
                 if changed:
