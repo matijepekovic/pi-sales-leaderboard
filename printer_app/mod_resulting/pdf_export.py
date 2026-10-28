@@ -224,8 +224,8 @@ def _overlay_one(c,index,draft):
     text_x=x+numbers_width+2
     text_width=full_width-numbers_width-7
     notes_height=sum(MOD_ROW_HEIGHTS[5:])-15
-    # Redlines are entries typed after Dispo in the same user Notes field.
-    # A selected Dispo never recolors earlier black notes.
+    # User redlines are characters typed while the redline pen is active.
+    # Disposition never changes the color of user-entered MOD Notes.
     runs = note_runs_for_display(d)
     user_notes = ''.join(part['text'] for part in runs)
     generated = final_redline_text(dict(d, redlines=''))
