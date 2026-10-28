@@ -39,6 +39,8 @@ def test_redline_pen_is_the_only_user_red_ink_switch():
     assert "setNoteMode(noteArea.dataset.notesMode !== 'red')" in js
     assert "sheet.querySelector('[data-key="dispo"]').value ? 'red' : 'black'" not in js
     assert 'function syncNoteMode' not in js
+    assert 'after-dispo' not in js
+    assert 'redline-run' in js
 
 
 def test_pending_setup_notice_is_not_presented_as_a_page_banner():
