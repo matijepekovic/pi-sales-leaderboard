@@ -359,3 +359,32 @@ def test_synthetic_runner_never_allows_live_salesforce_writes():
     assert calls and all(command[1:3] in (
         ['data','query'],['sobject','describe']
     ) for command in calls)
+
+
+def test_sales_with_only_zero_priced_selections_produces_no_product_writes():
+    payload=_payload('sale',sale_products={
+        'Roofing':{'price':'0','deposit':'100'},
+    })
+    adapter,_=_adapter()
+    plan=_operations(adapter,payload)
+    assert [row for row in plan if row[1]==PRODUCT_RESULT]==[]
+    assert _single(plan,'WorkOrder')[3]['Dispo__c']=='Sale'
+    assert 'Deposit_Payment__c' not in _single(plan,'WorkOrder')[3]
+    assert 'Product_Interest_lead__c' not in _single(plan,'Lead')[3]
+    assert 'SALE Roofing' not in _single(plan,'WorkOrder')[3]['MOD_Notes__c']
+
+
+def test_two_sales_to_same_lead_accumulate_both_pivots_without_overwriting():
+    first=_payload('sale',interest='Roofing',sale_products={
+        'Windows':{'price':'18000','deposit':'0'},
+    })
+    second=_payload('sale',interest='Siding',sale_products={
+        'Doors':{'price':'12000','deposit':'0'},
+    })
+    second['work_order_id']='0WO000000000002AAA'
+    adapter,_=_adapter()
+    first_plan,second_plan=adapter.prepare([first,second])
+    first_lead=_single(first_plan,'Lead')[3]
+    second_lead=_single(second_plan,'Lead')[3]
+    assert first_lead['Product_Interest_lead__c']=='Roofing;Siding;Windows'
+    assert second_lead['Product_Interest_lead__c']=='Roofing;Siding;Windows;Doors'
