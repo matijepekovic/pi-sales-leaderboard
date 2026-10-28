@@ -112,10 +112,21 @@ def clean_draft(raw):
             raise ValueError('Invalid product selection.')
         outcome = info.get('result', '')
         detail = info.get('detail', '')
+        price = info.get('price', '')
+        deposit = info.get('deposit', '')
         if (outcome not in PRODUCT_RESULTS or not isinstance(detail, str)
-                or len(detail) > 120):
+                or len(detail) > 120 or not isinstance(price, str)
+                or not isinstance(deposit, str) or len(price) > 30
+                or len(deposit) > 30):
             raise ValueError('Invalid product result.')
-        normalized[product.strip()] = {'result': outcome, 'detail': detail.strip()}
+        if price.strip():
+            _money(price)
+        if deposit.strip():
+            _money(deposit)
+        normalized[product.strip()] = {
+            'result': outcome, 'detail': detail.strip(),
+            'price': price.strip(), 'deposit': deposit.strip(),
+        }
     data['product_results'] = normalized
 
     sale_products = raw.get('sale_products', {})
@@ -165,14 +176,35 @@ def sold_products(draft):
     return tuple(result)
 
 
+def individual_product_sales(draft):
+    """Explicit individual Sale results never change the main disposition."""
+    sold = []
+    if draft.get('additional_products') and draft.get('dispo') != 'sale':
+        for product, entry in draft.get('product_results', {}).items():
+            if entry['result'] != 'sale':
+                continue
+            price = _money(entry.get('price', ''))
+            if price is None or price == 0:
+                continue
+            deposit = _money(entry.get('deposit', ''))
+            if deposit is None:
+                raise ValueError('Enter a deposit for sold product ' + product + ' (0 is valid).')
+            sold.append({
+                'product': product,
+                'price': money_text(entry['price']),
+                'deposit': money_text(entry['deposit']),
+            })
+    return tuple(sold)
+
+
 def sale_redlines(draft):
-    lines = []
-    for item in sold_products(draft):
-        lines.append(
-            'SALE ' + item['product'] + ': ' + format_money(item['price'])
-            + ' | Deposit: ' + format_money(item['deposit'])
-        )
-    return tuple(lines)
+    sales = (sold_products(draft) if draft.get('dispo') == 'sale'
+             else individual_product_sales(draft))
+    return tuple(
+        'SALE ' + item['product'] + ': ' + format_money(item['price'])
+        + ' | Deposit: ' + format_money(item['deposit'])
+        for item in sales
+    )
 
 
 def final_redline_text(draft):
