@@ -208,14 +208,76 @@
     text.textContent = draft.dnr && reason ? (/^dnr\s*-/i.test(reason) ? reason : 'DNR - ' + reason) : '';
     text.hidden = !text.textContent;
   }
-  function formattedMoney(input) {
-    const value = String(input || '').trim();
-    const match = /^\$?\s*(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?$/.exec(value);
+  function amountCents(input) {
+    const text = String(input ?? '').trim();
+    const match = /^\$?\s*(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?$/.exec(text);
     if (!match) return null;
-    const whole = match[1].replace(/,/g, '').replace(/^0+(?=\d)/, '');
-    const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    const cents = (match[2] || '').padEnd(2, '0');
-    return '$' + grouped + (cents && cents !== '00' ? '.' + cents : '');
+    return BigInt(match[1].replaceAll(',', '')) * 100n +
+      BigInt((match[2] || '').padEnd(2, '0'));
+  }
+  function centsText(value) {
+    if (value === null) return '';
+    const whole = (value / 100n).toString();
+    const fraction = (value % 100n).toString().padStart(2, '0');
+    return whole + (fraction === '00' ? '' : '.' + fraction.replace(/0$/, ''));
+  }
+  function formattedMoney(input) {
+    const cents = amountCents(input);
+    if (cents === null) return null;
+    const text = centsText(cents);
+    const [whole, fraction] = text.split('.');
+    return '$' + whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',') +
+      (fraction ? '.' + fraction : '');
+  }
+  function saleTotals(draft) {
+    const products = draft.dispo === 'sale' ? draft.sale_products :
+      draft.additional_products ? draft.product_results : {};
+    let deposit = 0n;
+    let payment = 0n;
+    let hasSale = false;
+    let hasPayment = false;
+    for (const info of Object.values(products || {})) {
+      if (draft.dispo !== 'sale' && info.result !== 'sale') continue;
+      const price = amountCents(info.price);
+      const paid = amountCents(info.deposit);
+      if (price === null || price <= 0n || paid === null) continue;
+      hasSale = true;
+      deposit += paid;
+      if (info.payment !== undefined && String(info.payment).trim() !== '') {
+        const monthly = amountCents(info.payment);
+        if (monthly !== null) {
+          payment += monthly;
+          hasPayment = true;
+        }
+      }
+    }
+    return {
+      deposit: hasSale ? centsText(deposit) : '',
+      payment: hasPayment ? centsText(payment) : ''
+    };
+  }
+  function combinedAmounts(draft) {
+    const totals = saleTotals(draft);
+    const deposit = draft.deposit_override && amountCents(draft.deposit_override) !== null ?
+      centsText(amountCents(draft.deposit_override)) : totals.deposit;
+    const payment = draft.payment_override && amountCents(draft.payment_override) !== null ?
+      centsText(amountCents(draft.payment_override)) : totals.payment;
+    return {
+      deposit, payment,
+      display: deposit + (payment !== '' ? ' / ' + payment : '')
+    };
+  }
+  function parseCombinedInput(value) {
+    const text = String(value || '').trim();
+    if (!text) return {deposit:'', payment:null};
+    const parts = text.split('/');
+    if (parts.length > 2 || !parts[0].trim()) return null;
+    const deposit = amountCents(parts[0]);
+    if (deposit === null) return null;
+    if (parts.length === 1) return {deposit:centsText(deposit), payment:null};
+    const payment = amountCents(parts[1]);
+    if (payment === null) return null;
+    return {deposit:centsText(deposit), payment:centsText(payment)};
   }
   function salePreview(sheet, draft) {
     const display = sheet.querySelector('.sale-in-redline');
@@ -343,6 +405,8 @@
     const noteArea = sheet.querySelector('.notes-text');
     const noteInput = sheet.querySelector('.mod-notes-input');
     const noteMirror = sheet.querySelector('.mod-notes-display');
+    const redPen = sheet.querySelector('.redline-pen');
+    sheet._redPenActive = false;
     let noteRuns;
     if (Array.isArray(init.note_runs) && init.note_runs.length) {
       noteRuns = init.note_runs.map(run => ({text:run.text,red:run.red}));
@@ -366,13 +430,17 @@
       noteMirror.scrollTop = noteInput.scrollTop;
     }
     function syncNoteMode() {
-      // A disposition changes the ink used by FUTURE input only.
-      // Existing black/red characters never get recolored.
-      noteArea.dataset.notesMode =
-        sheet.querySelector('[data-key="dispo"]').value ? 'red' : 'black';
+      // Red ink is explicitly selected, never inferred from disposition.
+      noteArea.dataset.notesMode = sheet._redPenActive ? 'red' : 'black';
+      redPen?.setAttribute('aria-pressed', String(sheet._redPenActive));
     }
     renderNoteRuns();
     syncNoteMode();
+    redPen?.addEventListener('click', () => {
+      sheet._redPenActive = !sheet._redPenActive;
+      syncNoteMode();
+      noteInput.focus({preventScroll:true});
+    });
     noteInput.addEventListener('scroll', () => {
       noteMirror.scrollTop = noteInput.scrollTop;
     });
@@ -390,24 +458,44 @@
     if (productButton) productButton.hidden = init.dispo === 'sale' || !init.additional_products;
     if (cxlButton) cxlButton.hidden = init.dispo !== 'cxl';
     if (dnrButton) dnrButton.hidden = !init.dnr;
+    const combinedInput = priceDialog?.querySelector('[data-combined-amount]');
+    const depositOverride = priceDialog?.querySelector('[data-key="deposit_override"]');
+    const paymentOverride = priceDialog?.querySelector('[data-key="payment_override"]');
     function syncPricePreviews() {
-      for (const key of ('start_price_override', 'final_price_override', 'deposit_override')) {
+      const draft = serialize(sheet);
+      for (const key of ['start_price_override', 'final_price_override']) {
         const input = priceDialog?.querySelector('[data-key="' + key + '"]');
         const preview = sheet.querySelector('[data-price-display="' + key + '"]');
         if (preview && input) preview.textContent = input.value ? '$' + input.value : '';
       }
+      const text = combinedAmounts(draft).display;
+      const amountDisplay = sheet.querySelector('[data-price-display="deposit_override"]');
+      if (amountDisplay) amountDisplay.textContent = text;
+      if (combinedInput && document.activeElement !== combinedInput) combinedInput.value = text;
     }
     syncPricePreviews();
-    priceDialog?.querySelectorAll('input[data-key$="_override"]').forEach(input => {
-      input.addEventListener('input', () => {
-        const preview = sheet.querySelector(
-          '[data-price-display="' + input.dataset.key + '"]'
-        );
-        if (preview) preview.textContent = input.value ? '$' + input.value : '';
-        redraw();
-      });
+    combinedInput?.addEventListener('input', () => {
+      const parsed = parseCombinedInput(combinedInput.value);
+      if (parsed === null) {
+        combinedInput.setAttribute('aria-invalid', 'true');
+        return;
+      }
+      combinedInput.removeAttribute('aria-invalid');
+      const derived = saleTotals(serialize(sheet));
+      depositOverride.value = parsed.deposit && parsed.deposit !== derived.deposit ?
+        parsed.deposit : '';
+      paymentOverride.value = parsed.payment !== null && parsed.payment !== derived.payment ?
+        parsed.payment : '';
+      redraw();
     });
-    priceDialog?.addEventListener('close', syncPricePreviews);
+    combinedInput?.addEventListener('blur', () => {
+      // Do not save a partially typed or invalid aggregate.
+      if (combinedInput.getAttribute('aria-invalid') === 'true') {
+        combinedInput.removeAttribute('aria-invalid');
+        combinedInput.value = combinedAmounts(serialize(sheet)).display;
+      }
+    });
+    priceDialog?.addEventListener('close', () => syncPricePreviews());
     syncSaleRows();
     if (sheet.dataset.submitted === 'yes') {
       for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
@@ -508,7 +596,7 @@
       if (!(input instanceof HTMLElement)) return;
       if (input.dataset.key === 'notes') {
         sheet._noteRuns = changedNoteRuns(
-          sheet._noteRuns, input.value, !!sheet.querySelector('[data-key="dispo"]').value
+          sheet._noteRuns, input.value, sheet._redPenActive
         );
         renderNoteRuns();
       }
@@ -517,7 +605,9 @@
     saleButton?.addEventListener('click', openSale);
     for (const button of sheet.querySelectorAll('[data-price-trigger]')) {
       button.addEventListener('click', () => {
-        openDialog(priceDialog, '[data-key="' + button.dataset.priceTrigger + '"]');
+        const selector = button.dataset.priceTrigger === 'deposit_override' ?
+          '[data-combined-amount]' : '[data-key="' + button.dataset.priceTrigger + '"]';
+        openDialog(priceDialog, selector);
       });
     }
     cxlButton?.addEventListener('click', () => openDialog(cxl, '[data-key="cxl_at_lead"]'));

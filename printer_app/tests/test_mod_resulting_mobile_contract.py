@@ -45,3 +45,18 @@ def test_phone_scaling_does_not_override_print_layout():
     assert '@media screen and (max-width:900px)' in css
     assert '@media print{.floating-controls,' in css
     assert '.sheet-zoom' not in css and '[data-zoom' not in css
+
+def test_popup_footer_and_red_pen_have_one_ui_owner():
+    root=Path(__file__).parents[1]
+    css=(root/'static/mod_resulting/sheet.css').read_text()
+    js=(root/'static/mod_resulting/sheet.js').read_text()
+    html=(root/'templates/mod_resulting.html').read_text()
+    assert '.editor-dialog[open]{display:flex;flex-direction:column;overflow:hidden}' in css
+    assert '.editor-dialog .editor-body{min-height:0;flex:0 1 auto;overflow-y:auto;' in css
+    assert '.editor-dialog .editor-footer{position:relative;' in css
+    assert 'data-combined-amount' in html and 'Deposit/Payment' in html
+    assert 'Total Deposit' not in html
+    assert 'class="redline-pen"' in html
+    assert 'sheet._redPenActive = !sheet._redPenActive' in js
+    assert 'sheet._noteRuns, input.value, sheet._redPenActive' in js
+    assert js.count('function syncNoteMode()') == 1

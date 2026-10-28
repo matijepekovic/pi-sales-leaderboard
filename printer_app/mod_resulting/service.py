@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import datetime, time as wall_time
-from decimal import Decimal
 import time
 from pathlib import Path
 import os
@@ -10,8 +9,8 @@ from zoneinfo import ZoneInfo
 
 from ..mod_sheet_contract import ModSheetRecord
 from .contract import (
-    clean_draft, final_redline_text, outcome_fields, sold_products,
-    individual_product_sales,
+    clean_draft, deposit_payment_amounts, final_redline_text,
+    outcome_fields, sold_products, individual_product_sales,
 )
 
 
@@ -150,10 +149,6 @@ class ResultingService:
                 'price': item['price'],
                 'deposit': item['deposit'],
             } for item in sales]
-            deposit_total = (
-                str(sum((Decimal(item['deposit']) for item in sales), Decimal('0')))
-                if sales else ''
-            )
         else:
             if not original_products:
                 raise ValueError('Product Interest is required for resulting.')
@@ -185,17 +180,9 @@ class ResultingService:
                         'price': '',
                         'deposit': '',
                     })
-            individual_sales = individual_product_sales(draft)
-            deposit_total = (
-                str(sum((Decimal(item['deposit']) for item in individual_sales),
-                        Decimal('0'))) if individual_sales else ''
-            )
-
-        # The training flow provides an independently editable Work Order
-        # Deposit / Payment value. Without an override, preserve the existing
-        # sum of actual sold-product deposits.
-        if draft['deposit_override']:
-            deposit_total = draft['deposit_override']
+        # One normalized calculation for the on-sheet / PDF deposit and
+        # monthly payment totals. Only the deposit goes to the numeric writer.
+        deposit_total = deposit_payment_amounts(draft)['deposit']
 
         return dict(
             day=sheet['day'], work_order_id=sheet['work_order_id'],

@@ -300,6 +300,7 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     roof.locator('[data-sale-price]').fill('17850')
     roof.locator('[data-sale-deposit]').fill('0')
     roof.locator('[data-sale-payment]').fill('159')
+    expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('0 / 159')
     expect(first.locator('.sale-in-redline')).to_have_text(
         'SALE Roofing: $17,850 | Deposit: $0 | Payment: $159')
     # Zero-priced selected products are not treated as sold.
@@ -308,6 +309,10 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     siding.locator('[data-sale-price]').fill('0')
     first.locator('.sale-panel .sale-done').click()
     expect(first.locator('[data-key=notes]')).to_have_value('Black comment above redlines.')
+    red_pen=first.locator('.redline-pen')
+    expect(red_pen).to_have_attribute('aria-pressed','false')
+    red_pen.click()
+    expect(red_pen).to_have_attribute('aria-pressed','true')
     first.locator('[data-key=notes]').fill('Black comment above redlines.\nREPLACE TRIM WITH FULL SCOPE.')
     first.locator('[data-key=numbers]').fill('25,000\n17,850')
     for key in ('power_questions', 't_close', 'ninety_min', 'docs', 'bid_sheets',
@@ -527,10 +532,10 @@ def test_price_overrides_stay_in_original_sheet_cells(mod_browser, viewport):
         expect(popup).to_be_visible()
         popup.locator('[data-key="start_price_override"]').fill('27000')
         popup.locator('[data-key="final_price_override"]').fill('16000')
-        popup.locator('[data-key="deposit_override"]').fill('2500')
+        popup.locator('[data-combined-amount]').fill('2500 / 120')
         expect(first.locator('[data-price-display="start_price_override"]')).to_have_text('$27000')
         expect(first.locator('[data-price-display="final_price_override"]')).to_have_text('$16000')
-        expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('$2500')
+        expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('2500 / 120')
         popup.locator('.editor-primary').click()
         expect(popup).to_be_hidden()
 
@@ -542,6 +547,7 @@ def test_price_overrides_stay_in_original_sheet_cells(mod_browser, viewport):
     assert saved['start_price_override'] == '27000'
     assert saved['final_price_override'] == '16000'
     assert saved['deposit_override'] == '2500'
+    assert saved['payment_override'] == '120'
     assert outcome_fields(saved)['lead_status'] == 'Nurturing'
     assert all(saved[key] for key in ('docs','review','ninety_min'))
     assert not writer.applied
@@ -689,40 +695,96 @@ def test_real_policy_rejects_an_inline_style_in_a_separate_probe_page(mod_browse
     finally:
         probe.close()
 
-def test_result_detail_is_always_red_and_new_notes_only_turn_red_after_dispo(mod_browser):
-    from playwright.sync_api import expect
 
+def test_red_pen_controls_manual_ink_independently_of_dispo(mod_browser):
+    from playwright.sync_api import expect
     page, service, writer, origin, evidence = mod_browser
     page.goto(origin + '/mod-resulting')
-    first = page.locator('.mod-sheet').first
-    notes = first.locator('[data-key=notes]')
+    first=page.locator('.mod-sheet').first
+    notes=first.locator('[data-key=notes]')
+    pen=first.locator('.redline-pen')
+    expect(pen).to_have_attribute('aria-pressed','false')
     notes.fill('Before disposition')
     first.locator('[data-key=result_detail]').select_option('Price Objection')
-    expect(first.locator('.result-detail-in-redline')).to_have_text(
-        'Price Objection')
-    expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
+    expect(first.locator('.result-detail-in-redline')).to_have_text('Price Objection')
     first.locator('[data-key=dispo]').select_option('pns')
-    notes.fill('Before disposition\nAfter disposition')
-    expect(first.locator('.mod-notes-display span').first).to_have_text(
-        'Before disposition')
+    expect(pen).to_have_attribute('aria-pressed','false')
+    notes.fill('Before disposition\nStill a black note')
+    expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
+    pen.click()
+    expect(pen).to_have_attribute('aria-pressed','true')
+    notes.fill('Before disposition\nStill a black note\nMANUAL REDLINE')
     expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(
-        '\nAfter disposition')
+        '\nMANUAL REDLINE')
     first.locator('[data-key=dispo]').select_option('')
-    # Removing Dispo changes only the ink for future typing.
+    expect(pen).to_have_attribute('aria-pressed','true')
+    pen.click()
+    notes.fill('Before disposition\nStill a black note\nMANUAL REDLINE\nBack to black')
     expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(
-        '\nAfter disposition')
+        '\nMANUAL REDLINE')
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
+    expect(page.locator('.redline-pen').first).to_have_attribute('aria-pressed','false')
     expect(page.locator('.mod-notes-display .after-dispo').first).to_have_text(
-        '\nAfter disposition')
-    expect(page.locator('.result-detail-in-redline').first).to_have_text(
-        'Price Objection')
-    stored = service.repository.sheets(service.day())[0]['draft']
-    assert stored['note_runs'] == [
-        {'text':'Before disposition','red':False},
-        {'text':'\nAfter disposition','red':True},
+        '\nMANUAL REDLINE')
+    stored=service.repository.sheets(service.day())[0]['draft']
+    assert stored['note_runs']==[
+        {'text':'Before disposition\nStill a black note','red':False},
+        {'text':'\nMANUAL REDLINE','red':True},
+        {'text':'\nBack to black','red':False},
     ]
-    assert stored['dispo'] == ''
+    assert stored['dispo']==''
     assert not writer.applied
 
 
+def test_sale_combined_amounts_and_popup_footer_do_not_overlap(mod_browser):
+    from playwright.sync_api import expect
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width':390,'height':760})
+    page.goto(origin + '/mod-resulting')
+    sheet=page.locator('.mod-sheet').first
+    sheet.locator('[data-key=dispo]').select_option('sale')
+    popup=sheet.locator('.sale-panel[open]')
+    expect(popup).to_be_visible()
+
+    def verify_layout(dialog):
+        header=dialog.locator('.editor-heading').bounding_box()
+        body=dialog.locator('.editor-body').bounding_box()
+        footer=dialog.locator('.editor-footer').bounding_box()
+        frame=dialog.bounding_box()
+        assert header and body and footer and frame
+        assert body['y']>=header['y']+header['height']-2
+        assert footer['y']>=body['y']+body['height']-2
+        assert footer['y']+footer['height']<=frame['y']+frame['height']+2
+
+    verify_layout(popup)
+    for product,price,deposit,payment in (
+        ('Roofing','17000','500','200'),
+        ('Windows','23000','300','100'),
+    ):
+        row=popup.locator('[data-sale-product="'+product+'"]')
+        row.locator('[data-sale-selected]').check()
+        row.locator('[data-sale-price]').fill(price)
+        row.locator('[data-sale-deposit]').fill(deposit)
+        row.locator('[data-sale-payment]').fill(payment)
+    expect(sheet.locator('[data-price-display="deposit_override"]')).to_have_text('800 / 300')
+    popup.locator('.editor-body').evaluate('(el) => el.scrollTop = el.scrollHeight')
+    verify_layout(popup)
+    popup.locator('.sale-done').click()
+    sheet.locator('[data-price-trigger="deposit_override"]').click()
+    amounts=sheet.locator('.price-panel[open]')
+    expect(amounts.locator('[data-combined-amount]')).to_have_value('800 / 300')
+    verify_layout(amounts)
+    amounts.locator('[data-combined-amount]').fill('1000 / 375')
+    expect(sheet.locator('[data-price-display="deposit_override"]')).to_have_text('1000 / 375')
+    amounts.locator('.editor-primary').click()
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    draft=service.repository.sheets(service.day())[0]['draft']
+    assert draft['deposit_override']=='1000'
+    assert draft['payment_override']=='375'
+    assert draft['sale_products']['Roofing']['deposit']=='500'
+    assert draft['sale_products']['Windows']['deposit']=='300'
+    assert draft['sale_products']['Roofing']['payment']=='200'
+    assert draft['sale_products']['Windows']['payment']=='100'
+    assert not service.allow_salesforce_writes and not writer.applied
