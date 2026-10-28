@@ -368,6 +368,9 @@ def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(
 
                 # Reconnecting uses the normal pending-note outbox and real
                 # endpoint, preserving the original note and sending exactly once.
+                # Arm BEFORE restarting the HTTP server: the old service-worker
+                # tab might otherwise sync before the replacement tab opens.
+                injected['enabled'] = True
                 server = make_server('127.0.0.1', port, app, threaded=True)
                 thread = threading.Thread(target=server.serve_forever, daemon=True)
                 thread.start()
@@ -375,10 +378,8 @@ def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(
                 page = context.new_page()
                 page.on('pageerror', lambda error: errors.append(str(error)))
 
-                # Simulate one expired-CSRF response on the real Flask server.
-                # Both WebKit and Chromium must retry the SAME queued note once
-                # and finish the normal offline-to-online sync.
-                injected['enabled'] = True
+                # The real HTTP server rejected the first queued note POST,
+                # regardless of which service-worker-controlled tab sent it.
                 assert page.goto(origin + '/gallery/').status == 200
                 expect(page.locator('#galleryOfflineStatus')).to_contain_text(
                     'Offline ready · 2 cards', timeout=20000)
