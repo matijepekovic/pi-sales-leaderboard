@@ -204,7 +204,7 @@ def test_ghost_fields_and_comment_are_never_written(review,redlines):
         assert 'Review__c' not in wo
     assert wo['Need__c']=='Need' and wo['Want__c']=='Want'
     lead=_single(plan,'Lead')[3]
-    assert lead['Status']=='Nurturing'  # DNR never forces Do Not Call.
+    assert lead['Status']=='Do Not Call'  # Checked DNR forces Do Not Call.
     assert lead['Previous_Result__c']=='Pitch No Sale'
     assert lead['DNR_Do_Not_Reset__c'] is True
     assert lead['DNR_Reason__c']=='Roofing;Windows'
@@ -275,6 +275,24 @@ def test_manual_lead_choices_price_and_deposit_override_dispo_defaults():
     assert wo['Deposit_Payment__c']=='2500'
     cleared=_operations(adapter,_payload('pns',previous_result='__clear__'))
     assert _single(cleared,'Lead')[3]['Previous_Result__c'] is None
+
+
+@pytest.mark.parametrize('dispo', ['sale','pns','np','cxl','nra','oos'])
+def test_dnr_forces_do_not_call_regardless_of_dispo_or_manual_override(dispo):
+    kwargs = {
+        'dnr':True, 'dnr_reason':'Roofing',
+        'lead_status':'Nurturing',
+    }
+    if dispo == 'sale':
+        kwargs['sale_products'] = {'Roofing':{'price':'17000','deposit':'0'}}
+    payload = _payload(dispo, **kwargs)
+    assert payload['fields']['lead_status'] == 'Do Not Call'
+    adapter,_ = _adapter()
+    lead = _single(_operations(adapter, payload), 'Lead')[3]
+    assert lead['Status'] == 'Do Not Call'
+    assert lead['DNR_Do_Not_Reset__c'] is True
+    assert lead['DNR_Reason__c'] == 'Roofing'
+    assert payload['draft']['lead_status'] == 'Nurturing'
 
 
 def test_review_write_refuses_missing_sf_api_field_and_off_does_not_require_it():
@@ -410,19 +428,19 @@ def test_mismatched_api_field_never_falls_back_to_a_guessed_label():
         _operations(adapter,_payload('pns'))
 
 
-def test_dnr_is_separate_from_lead_status_and_multiselect():
+def test_dnr_forces_do_not_call_and_keeps_reason_multiselect():
     draft=clean_draft({
         'dispo':'nra','dnr':True,'dnr_reason':'Roofing;Bath;Roofing',
     })
     assert draft['dnr_reason']=='Roofing;Bath'
-    assert outcome_fields(draft)['lead_status']=='Nurturing'
+    assert outcome_fields(draft)['lead_status']=='Do Not Call'
     assert outcome_fields(draft)['work_order_status']=='Completed'
     adapter,_=_adapter()
     plan=_operations(adapter,_payload('nra',dnr=True,dnr_reason='Roofing;Bath'))
     lead=_single(plan,'Lead')[3]
     assert lead['DNR_Do_Not_Reset__c'] is True
     assert lead['DNR_Reason__c']=='Roofing;Bath'
-    assert lead['Status']=='Nurturing'
+    assert lead['Status']=='Do Not Call'
 
 
 def test_synthetic_runner_never_allows_live_salesforce_writes():
