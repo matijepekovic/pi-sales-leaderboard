@@ -225,11 +225,6 @@
     syncIndividualSaleRows();
     sheet.dataset.dirty = 'no';
     dnrPreview(sheet, init);
-    syncSaleRows();
-    if (sheet.dataset.submitted === 'yes') {
-      for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
-      return;
-    }
     const product = sheet.querySelector('.product-panel');
     const dnr = sheet.querySelector('.dnr-panel');
     const cxl = sheet.querySelector('.cxl-panel');
@@ -237,6 +232,11 @@
     const saleButton = sheet.querySelector('.edit-sale-products');
     const separate = sheet.querySelector('.separate-products');
     if (separate) separate.hidden = init.dispo === 'sale';
+    syncSaleRows();
+    if (sheet.dataset.submitted === 'yes') {
+      for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
+      return;
+    }
     const reasonSelect = sheet.querySelector('[data-key="dnr_reason"]');
     const reasonChoices = [...sheet.querySelectorAll('[data-reason-choice]')];
     function syncReasonSelect() {
