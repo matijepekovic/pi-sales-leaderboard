@@ -191,6 +191,12 @@ class ResultingService:
                         Decimal('0'))) if individual_sales else ''
             )
 
+        # The training flow provides an independently editable Work Order
+        # Deposit / Payment value. Without an override, preserve the existing
+        # sum of actual sold-product deposits.
+        if draft['deposit_override']:
+            deposit_total = draft['deposit_override']
+
         return dict(
             day=sheet['day'], work_order_id=sheet['work_order_id'],
             work_order_number=sheet['snapshot']['work_order_number'],
