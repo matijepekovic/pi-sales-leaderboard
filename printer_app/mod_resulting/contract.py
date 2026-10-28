@@ -247,6 +247,25 @@ def sale_redlines(draft):
     )
 
 
+def deposit_payment_text(draft):
+    """Display deposit/payment from actual sold products; no currency symbols.
+
+    Keep the Salesforce Work Order amount numeric (deposit only). An empty
+    payment means no payment was entered, not a fabricated zero.
+    """
+    sales = (sold_products(draft) if draft.get('dispo') == 'sale'
+             else individual_product_sales(draft))
+    override = draft.get('deposit_override', '')
+    if not sales:
+        return money_text(override)
+    deposit = (money_text(override) if override else
+               money_text(sum((_money(item['deposit']) for item in sales), Decimal('0'))))
+    payments = [item['payment'] for item in sales if item['payment']]
+    payment = (money_text(sum((_money(value) for value in payments), Decimal('0')))
+               if payments else '')
+    return deposit + '/' + payment
+
+
 def note_runs_for_display(draft):
     """One MOD Notes editor with per-entry ink; keep old split drafts readable."""
     stored = draft.get('note_runs') or []

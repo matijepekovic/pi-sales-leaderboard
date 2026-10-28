@@ -307,7 +307,9 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     siding.locator('[data-sale-selected]').check()
     siding.locator('[data-sale-price]').fill('0')
     first.locator('.sale-panel .sale-done').click()
+    expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('0/159')
     expect(first.locator('[data-key=notes]')).to_have_value('Black comment above redlines.')
+    first.locator('.red-pen').click()
     first.locator('[data-key=notes]').fill('Black comment above redlines.\nREPLACE TRIM WITH FULL SCOPE.')
     first.locator('[data-key=numbers]').fill('25,000\n17,850')
     for key in ('power_questions', 't_close', 'ninety_min', 'docs', 'bid_sheets',
@@ -321,7 +323,7 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     first.locator('[data-key=call_1]').fill('10:15 AM')
     first.locator('[data-key=call_2]').fill('10:27 AM')
     assert first.locator('.field-notes').bounding_box() == bounds
-    red = first.locator('.mod-notes-display .after-dispo')
+    red = first.locator('.mod-notes-display .redline-ink')
     expect(red).to_have_text('\nREPLACE TRIM WITH FULL SCOPE.')
     expect(first.locator('.mod-notes-display span').first).to_have_text(
         'Black comment above redlines.')
@@ -530,7 +532,7 @@ def test_price_overrides_stay_in_original_sheet_cells(mod_browser, viewport):
         popup.locator('[data-key="deposit_override"]').fill('2500')
         expect(first.locator('[data-price-display="start_price_override"]')).to_have_text('$27000')
         expect(first.locator('[data-price-display="final_price_override"]')).to_have_text('$16000')
-        expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('$2500')
+        expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('2500')
         popup.locator('.editor-primary').click()
         expect(popup).to_be_hidden()
 
@@ -689,40 +691,37 @@ def test_real_policy_rejects_an_inline_style_in_a_separate_probe_page(mod_browse
     finally:
         probe.close()
 
-def test_result_detail_is_always_red_and_new_notes_only_turn_red_after_dispo(mod_browser):
+def test_result_detail_and_explicit_red_pen_independent_of_disposition(mod_browser):
     from playwright.sync_api import expect
 
     page, service, writer, origin, evidence = mod_browser
     page.goto(origin + '/mod-resulting')
     first = page.locator('.mod-sheet').first
     notes = first.locator('[data-key=notes]')
-    notes.fill('Before disposition')
+    pen = first.locator('.red-pen')
+    notes.fill('Black')
     first.locator('[data-key=result_detail]').select_option('Price Objection')
-    expect(first.locator('.result-detail-in-redline')).to_have_text(
-        'Price Objection')
-    expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
+    expect(first.locator('.result-detail-in-redline')).to_have_text('Price Objection')
     first.locator('[data-key=dispo]').select_option('pns')
-    notes.fill('Before disposition\nAfter disposition')
-    expect(first.locator('.mod-notes-display span').first).to_have_text(
-        'Before disposition')
-    expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(
-        '\nAfter disposition')
+    notes.fill('Black\nStill black')
+    expect(first.locator('.mod-notes-display .redline-ink')).to_have_count(0)
+    expect(pen).to_have_attribute('aria-pressed', 'false')
+    pen.click()
+    notes.fill('Black\nStill black\nRedline')
+    expect(first.locator('.mod-notes-display .redline-ink')).to_have_text('\nRedline')
     first.locator('[data-key=dispo]').select_option('')
-    # Removing Dispo changes only the ink for future typing.
-    expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(
-        '\nAfter disposition')
+    expect(pen).to_have_attribute('aria-pressed', 'true')
+    pen.click()
+    notes.fill('Black\nStill black\nRedline\nBlack again')
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
-    expect(page.locator('.mod-notes-display .after-dispo').first).to_have_text(
-        '\nAfter disposition')
-    expect(page.locator('.result-detail-in-redline').first).to_have_text(
-        'Price Objection')
     stored = service.repository.sheets(service.day())[0]['draft']
-    assert stored['note_runs'] == [
-        {'text':'Before disposition','red':False},
-        {'text':'\nAfter disposition','red':True},
-    ]
     assert stored['dispo'] == ''
+    assert stored['note_runs'] == [
+        {'text':'Black\nStill black','red':False},
+        {'text':'\nRedline','red':True},
+        {'text':'\nBlack again','red':False},
+    ]
     assert not writer.applied
 
 

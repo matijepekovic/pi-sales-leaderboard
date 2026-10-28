@@ -5,7 +5,6 @@ Never changes the existing renderer or its three-sheets-per-page layout.
 from __future__ import annotations
 
 from io import BytesIO
-from decimal import Decimal
 from xml.sax.saxutils import escape
 
 from pypdf import PdfReader, PdfWriter
@@ -21,7 +20,7 @@ from ..mod_sheet_contract import ModSheetRecord
 from ..mod_sheets.pdf_renderer import MOD_TABLE_WIDTH, MOD_ROW_HEIGHTS, render_mod_pdf
 from .contract import (
     clean_draft, final_redline_text, note_runs_for_display,
-    prices, format_money, sold_products, individual_product_sales,
+    prices, format_money, deposit_payment_text,
 )
 
 
@@ -196,22 +195,23 @@ def _overlay_one(c,index,draft):
         _fit_lines(c,d[key],x+3,t+12,COL_WIDTH*cols-6,
                    sum(MOD_ROW_HEIGHTS[row:row+rows])-14,start=8.5)
 
-    # Keep the original price row. Explicit cell overrides take precedence;
-    # otherwise show the values derived from Numbers or sold-product deposits.
+    # Work Order deposit stays numeric in Salesforce. The printed
+    # Deposit/Payment cell combines sold-product totals without dollar signs.
     automatic=prices(d['numbers'])
     start=d['start_price_override'] or automatic['highest']
     final=d['final_price_override'] or automatic['lowest']
-    sold=(sold_products(d) if d['dispo']=='sale' else individual_product_sales(d))
-    total=str(sum((Decimal(item['deposit']) for item in sold), Decimal('0'))) if sold else ''
-    deposit=d['deposit_override'] or total
-    for column, amount in ((4,start),(6,final),(8,deposit)):
+    deposit_payment=deposit_payment_text(d)
+    for column, amount, combined in ((4,start,False),(6,final,False),
+                                     (8,deposit_payment,True)):
         if not amount:
             continue
         x,t=_location(index,column,4)
-        value=format_money(amount)
-        width=stringWidth(value,'Times-Roman',6.5)
-        # Preserve printed field labels and existing box borders.
-        _write(c,x+COL_WIDTH*2-width-3,t+2,value,6.5)
+        value=amount if combined else format_money(amount)
+        max_width=COL_WIDTH*2-6
+        size=min(6.5,6.5*max_width/max(1,stringWidth(value,'Times-Roman',6.5)))
+        width=stringWidth(value,'Times-Roman',size)
+        # Preserve printed field labels, borders and the full combined value.
+        _write(c,x+COL_WIDTH*2-width-3,t+2,value,size)
 
     # Ink is placed inside the renderer's one and only MOD Notes area.
     x,t=_location(index,4,5)
@@ -223,8 +223,8 @@ def _overlay_one(c,index,draft):
     text_x=x+numbers_width+2
     text_width=full_width-numbers_width-7
     notes_height=sum(MOD_ROW_HEIGHTS[5:])-15
-    # Redlines are entries typed after Dispo in the same user Notes field.
-    # A selected Dispo never recolors earlier black notes.
+    # Redline characters are explicitly entered with the red pen.
+    # Selecting a Dispo never changes ink or recolors existing notes.
     runs = note_runs_for_display(d)
     user_notes = ''.join(part['text'] for part in runs)
     generated = final_redline_text(dict(d, redlines=''))

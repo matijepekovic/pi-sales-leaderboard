@@ -8,7 +8,7 @@ from pypdf import PdfReader
 from printer_app.mod_sheet_contract import ModSheetRecord
 from printer_app.mod_resulting.contract import (
     clean_draft, final_redline_text, outcome_fields,
-    sale_redlines, sold_products, individual_product_sales,
+    sale_redlines, sold_products, individual_product_sales, deposit_payment_text,
 )
 from printer_app.mod_resulting.pdf_export import render_resulting_pdf
 from printer_app.mod_resulting.service import ResultingService
@@ -52,6 +52,7 @@ def test_monthly_payment_is_optional_per_product_and_never_part_of_deposit_total
     assert final_redline_text(draft) == '\n'.join(expected)
     payload = _payload(draft)
     assert payload['deposit_total'] == '5000'
+    assert deposit_payment_text(draft) == '5000/159.50'
     assert payload['fields']['price'] == {'highest': '25000', 'lowest': '17000'}
     assert [item['product'] for item in payload['product_results']] == [
         'Roofing', 'Windows'
@@ -79,6 +80,7 @@ def test_independent_product_sale_payment_never_changes_main_disposition():
     assert payload['dispo'] == 'pns'
     assert payload['fields']['lead_status'] == 'Nurturing'
     assert payload['deposit_total'] == '500'
+    assert deposit_payment_text(draft) == '500/138'
     assert payload['product_results'][0]['result'] == 'sale'
     assert payload['product_results'][0]['price'] == '14500'
     assert 'Payment: $138' in payload['final_redlines']
@@ -92,6 +94,22 @@ def test_old_sale_drafts_without_payment_remain_compatible():
     assert draft['sale_products'] == original
     assert sale_redlines(draft) == ('SALE Roofing: $17,000 | Deposit: $0',)
     assert _payload(draft)['deposit_total'] == '0'
+    assert deposit_payment_text(draft) == '0/'
+
+
+def test_combined_display_uses_actual_sales_and_preserves_numeric_deposit():
+    draft = clean_draft({'dispo': 'sale', 'sale_products': {
+        'Roofing': {'price': '17000', 'deposit': '0'},
+        'Windows': {'price': '25000', 'deposit': '300', 'payment': '120.50'},
+        'Siding': {'price': '18500', 'deposit': '200', 'payment': '80'},
+        'Bath': {'price': '0', 'deposit': '999', 'payment': '900'},
+    }})
+    assert deposit_payment_text(draft) == '500/200.50'
+    overridden = clean_draft(dict(draft, deposit_override='750'))
+    assert deposit_payment_text(overridden) == '750/200.50'
+    assert _payload(overridden)['deposit_total'] == '750'
+    assert deposit_payment_text(clean_draft({'deposit_override': '2500'})) == '2500'
+    assert deposit_payment_text(clean_draft({'dispo': 'sale'})) == ''
 
 
 @pytest.mark.parametrize('payment', ['not a price', '-20', '12.345', '1,0,0'])
@@ -140,3 +158,4 @@ def test_payment_printed_in_red_generated_notes_without_recoloring_old_notes():
     assert 'SALE Roofing:' in text
     assert 'Deposit: $0' in text
     assert 'Payment: $159.50' in text.replace('\n', ' ')
+    assert '0/159.50' in text.replace('\n', ' ')

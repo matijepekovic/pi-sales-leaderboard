@@ -46,13 +46,15 @@ def test_review_checkbox_persists_independently_in_checklist_row(mod_browser, vi
     note_text = black_note + red_note
     assert first.locator('.notes-text textarea').count() == 1
     notes.fill(black_note)
-    expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
+    expect(first.locator('.mod-notes-display .redline-ink')).to_have_count(0)
     first.locator('[data-key=dispo]').select_option('pns')
-    # Dispo never recolors the existing black characters.
+    # Only the red pen changes note ink.
+    expect(first.locator('.red-pen')).to_have_attribute('aria-pressed', 'false')
+    first.locator('.red-pen').click()
     expect(first.locator('.mod-notes-display span').first).to_have_text(black_note)
     notes.fill(note_text)
-    expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(red_note)
-    assert first.locator('.mod-notes-display .after-dispo').evaluate(
+    expect(first.locator('.mod-notes-display .redline-ink')).to_have_text(red_note)
+    assert first.locator('.mod-notes-display .redline-ink').evaluate(
         '(el) => getComputedStyle(el).color') == 'rgb(176, 0, 0)'
     for selected in (True, False):
         review.set_checked(selected)
@@ -67,7 +69,7 @@ def test_review_checkbox_persists_independently_in_checklist_row(mod_browser, vi
         expect(notes).to_have_value(note_text)
         assert first.locator('.notes-text textarea').count() == 1
         expect(first.locator('.mod-notes-display span').first).to_have_text(black_note)
-        expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(red_note)
+        expect(first.locator('.mod-notes-display .redline-ink')).to_have_text(red_note)
         draft = service.repository.sheets(service.day())[0]['draft']
         assert draft['review'] is selected
         assert draft['notes'] == note_text
@@ -76,7 +78,7 @@ def test_review_checkbox_persists_independently_in_checklist_row(mod_browser, vi
             {'text':black_note,'red':False},{'text':red_note,'red':True}]
     first.locator('[data-key=dispo]').select_option('')
     expect(notes).to_have_value(note_text)
-    expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(red_note)
+    expect(first.locator('.mod-notes-display .redline-ink')).to_have_text(red_note)
     assert page.evaluate('window.modCspViolations') == []
     assert service.allow_salesforce_writes is False and not writer.applied
     evidence('review-roundtrip-' + str(viewport[0]))

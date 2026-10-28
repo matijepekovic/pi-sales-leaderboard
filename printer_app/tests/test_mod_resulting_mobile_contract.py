@@ -27,6 +27,13 @@ def test_dialog_viewport_owns_only_presentation_and_keeps_native_pinch():
         assert forbidden not in html
     assert 'style=' not in html and '<style' not in html
     assert 'disabled title="Salesforce writes disabled for sandbox testing"' in html
+    sheet_js = (root / 'static/mod_resulting/sheet.js').read_text()
+    assert 'class="red-pen"' in html and 'aria-pressed="false"' in html
+    assert 'redInk = !redInk' in sheet_js
+    assert 'sheet._noteRuns, input.value, redInk' in sheet_js
+    assert 'syncNoteMode' not in sheet_js
+    assert 'Total Deposit' not in html
+    assert '<label>Deposit/Payment' in html
 
 
 def test_pending_setup_notice_is_not_presented_as_a_page_banner():

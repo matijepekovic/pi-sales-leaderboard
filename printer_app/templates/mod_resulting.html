@@ -113,8 +113,11 @@
   <b class="sr-only">MOD Notes:</b>
   <div class="notes-content">
    <textarea data-key="numbers" aria-label="MOD Notes numbers" spellcheck="false">{{ d.numbers }}</textarea>
-   <div class="notes-text" data-notes-mode="{{ 'red' if d.dispo else 'black' }}" aria-label="MOD Notes">
+   <div class="notes-text" data-notes-mode="black" aria-label="MOD Notes">
     <div class="mod-notes-editor">
+     <button type="button" class="red-pen" aria-label="Red pen" aria-pressed="false" title="Turn on redline ink">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m12 19 7-7 3 3-7 7-4 1 1-4ZM4 16l-2 6 6-2L20 8l-4-4L4 16Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+     </button>
      <div class="mod-notes-display" aria-hidden="true"></div>
      <textarea data-key="notes" class="mod-notes-input" aria-label="MOD Notes" spellcheck="false">{{ d.notes ~ ('\n' if d.notes and d.redlines else '') ~ d.redlines }}</textarea>
     </div>
@@ -245,9 +248,10 @@
    <label>Final Price
     <input type="text" inputmode="decimal" data-key="final_price_override" aria-label="Override Final Price" value="{{ d.final_price_override }}">
    </label>
-   <label>Total Deposit
-    <input type="text" inputmode="decimal" data-key="deposit_override" aria-label="Override Total Deposit" value="{{ d.deposit_override }}">
+   <label>Deposit/Payment
+    <input type="text" inputmode="decimal" data-key="deposit_override" aria-label="Override Deposit total" value="{{ d.deposit_override }}">
    </label>
+   <p class="editor-hint">Optional deposit override. Payment is combined automatically from sold products.</p>
   </div>
   <div class="editor-footer"><button type="button" class="close-popover editor-primary">Done</button></div>
  </dialog>

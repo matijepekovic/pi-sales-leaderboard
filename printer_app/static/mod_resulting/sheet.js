@@ -217,6 +217,44 @@
     const cents = (match[2] || '').padEnd(2, '0');
     return '$' + grouped + (cents && cents !== '00' ? '.' + cents : '');
   }
+  function moneyCents(input) {
+    const value = String(input ?? '').trim();
+    const match = /^\$?\s*(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?$/.exec(value);
+    if (!match) return null;
+    const cents = Number(match[1].replace(/,/g, '')) * 100 +
+      Number((match[2] || '').padEnd(2, '0'));
+    return Number.isSafeInteger(cents) ? cents : null;
+  }
+  function centsText(cents) {
+    if (!Number.isSafeInteger(cents)) return '';
+    const fraction = cents % 100;
+    return String(Math.floor(cents / 100)) +
+      (fraction ? '.' + String(fraction).padStart(2, '0') : '');
+  }
+  function depositPaymentPreview(draft) {
+    const products = draft.dispo === 'sale' ? draft.sale_products :
+      draft.additional_products ? draft.product_results : {};
+    let deposits = 0, payments = 0, sold = false, hasPayment = false;
+    for (const info of Object.values(products || {})) {
+      if (draft.dispo !== 'sale' && info.result !== 'sale') continue;
+      const price = moneyCents(info.price);
+      if (price === null || price <= 0) continue;
+      const deposit = moneyCents(info.deposit);
+      if (deposit === null) return draft.deposit_override || '';
+      sold = true;
+      deposits += deposit;
+      if (String(info.payment || '').trim()) {
+        const payment = moneyCents(info.payment);
+        if (payment === null) return draft.deposit_override || '';
+        hasPayment = true;
+        payments += payment;
+      }
+    }
+    if (!sold) return draft.deposit_override ? centsText(moneyCents(draft.deposit_override)) : '';
+    const override = draft.deposit_override ? moneyCents(draft.deposit_override) : null;
+    const deposit = draft.deposit_override ? override : deposits;
+    return centsText(deposit) + '/' + (hasPayment ? centsText(payments) : '');
+  }
   function salePreview(sheet, draft) {
     const display = sheet.querySelector('.sale-in-redline');
     if (!display) return;
@@ -357,7 +395,7 @@
     function renderNoteRuns() {
       const elements = sheet._noteRuns.map(run => {
         const part = document.createElement('span');
-        if (run.red) part.className = 'after-dispo';
+        if (run.red) part.className = 'redline-ink';
         part.textContent = run.text;
         return part;
       });
@@ -365,14 +403,16 @@
       noteArea.classList.add('mixed-notes-ready');
       noteMirror.scrollTop = noteInput.scrollTop;
     }
-    function syncNoteMode() {
-      // A disposition changes the ink used by FUTURE input only.
-      // Existing black/red characters never get recolored.
-      noteArea.dataset.notesMode =
-        sheet.querySelector('[data-key="dispo"]').value ? 'red' : 'black';
-    }
+    const redPen = sheet.querySelector('.red-pen');
+    let redInk = false;
+    redPen?.addEventListener('click', () => {
+      redInk = !redInk;
+      redPen.setAttribute('aria-pressed', String(redInk));
+      redPen.title = redInk ? 'Turn off redline ink' : 'Turn on redline ink';
+      noteArea.dataset.notesMode = redInk ? 'red' : 'black';
+      noteInput.focus({preventScroll:true});
+    });
     renderNoteRuns();
-    syncNoteMode();
     noteInput.addEventListener('scroll', () => {
       noteMirror.scrollTop = noteInput.scrollTop;
     });
@@ -391,22 +431,16 @@
     if (cxlButton) cxlButton.hidden = init.dispo !== 'cxl';
     if (dnrButton) dnrButton.hidden = !init.dnr;
     function syncPricePreviews() {
+      const draft = serialize(sheet);
       for (const key of ('start_price_override', 'final_price_override', 'deposit_override')) {
         const input = priceDialog?.querySelector('[data-key="' + key + '"]');
         const preview = sheet.querySelector('[data-price-display="' + key + '"]');
-        if (preview && input) preview.textContent = input.value ? '$' + input.value : '';
+        if (!preview || !input) continue;
+        preview.textContent = key === 'deposit_override' ? depositPaymentPreview(draft) :
+          (input.value ? '$' + input.value : '');
       }
     }
     syncPricePreviews();
-    priceDialog?.querySelectorAll('input[data-key$="_override"]').forEach(input => {
-      input.addEventListener('input', () => {
-        const preview = sheet.querySelector(
-          '[data-price-display="' + input.dataset.key + '"]'
-        );
-        if (preview) preview.textContent = input.value ? '$' + input.value : '';
-        redraw();
-      });
-    });
     priceDialog?.addEventListener('close', syncPricePreviews);
     syncSaleRows();
     if (sheet.dataset.submitted === 'yes') {
@@ -451,7 +485,6 @@
     function redraw() {
       const draft = serialize(sheet);
       sheet.dataset.dispo = draft.dispo;
-      syncNoteMode();
       dnrPreview(sheet,draft);
       resultDetailPreview(sheet,draft);
       salePreview(sheet,draft);
@@ -508,7 +541,7 @@
       if (!(input instanceof HTMLElement)) return;
       if (input.dataset.key === 'notes') {
         sheet._noteRuns = changedNoteRuns(
-          sheet._noteRuns, input.value, !!sheet.querySelector('[data-key="dispo"]').value
+          sheet._noteRuns, input.value, redInk
         );
         renderNoteRuns();
       }

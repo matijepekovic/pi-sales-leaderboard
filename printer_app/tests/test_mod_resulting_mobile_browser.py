@@ -165,6 +165,15 @@ def test_popup_tracks_visible_viewport_when_zoomed_or_keyboard_opens(mod_browser
     first.locator('[data-key=dispo]').select_option('sale')
     dialog = first.locator('.sale-panel[open]')
     expect(dialog).to_be_visible()
+    assert dialog.evaluate('(el) => getComputedStyle(el).display') == 'flex'
+    assert dialog.locator('.editor-body').evaluate(
+        '(el) => getComputedStyle(el).overflowY') == 'auto'
+    def footer_inside():
+        outer = dialog.bounding_box()
+        footer = dialog.locator('.editor-footer').bounding_box()
+        assert footer['y'] >= outer['y'] - 1
+        assert footer['y'] + footer['height'] <= outer['y'] + outer['height'] + 1
+    footer_inside()
 
     # Simulate the coordinates mobile Safari/Chromium report after a 2x pinch.
     # The viewport is read-only in production, so override the page's getter
@@ -192,6 +201,7 @@ def test_popup_tracks_visible_viewport_when_zoomed_or_keyboard_opens(mod_browser
       window.dispatchEvent(new Event('resize'));
     }""")
     expect(dialog).to_have_css('max-height', '224px')
+    footer_inside()
     bounds=dialog.bounding_box()
     assert bounds['y'] >= 60-2 and bounds['y']+bounds['height'] <= 180+2
 
@@ -203,6 +213,7 @@ def test_popup_tracks_visible_viewport_when_zoomed_or_keyboard_opens(mod_browser
       window.dispatchEvent(new Event('resize'));
     }""")
     expect(dialog).to_have_css('transform', 'matrix(0.2, 0, 0, 0.2, 0, 0)')
+    footer_inside()
     bounds=dialog.bounding_box()
     assert bounds['x'] >= 50-2 and bounds['x']+bounds['width'] <= 125+2
     assert bounds['y'] >= 60-2 and bounds['y']+bounds['height'] <= 180+2
