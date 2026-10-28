@@ -33,8 +33,10 @@ def read_result_drafts(adapter, records):
         if any(key not in works for key in batch):
             raise ResultingSalesforceError('Salesforce Work Order is missing during Refresh.')
 
+        # Different Work Orders may share a Lead. Fetch each Lead exactly
+        # once across every SOQL page rather than treating repeats as invalid.
         lead_ids = sorted({_require_id(identities[key])
-                           for key in batch if identities[key]})
+                           for key in batch if identities[key]} - set(leads))
         if lead_ids:
             filter_ids = ','.join(_soql(key) for key in lead_ids)
             fields = (LEAD_FIELDS['dnr'], LEAD_FIELDS['dnr_reason'],
