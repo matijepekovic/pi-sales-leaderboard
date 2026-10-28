@@ -21,6 +21,9 @@
   // One modal can be open across ALL sheets, never one per work order.
   function openDialog(dialog, focusSelector) {
     if (!dialog || dialog.open) return;
+    // Keep the edited sheet visible while a pinch reset completes.
+    const ownerSheet = dialog.closest('.mod-sheet');
+    if (ownerSheet) ownerSheet.dataset.dialogPending = 'yes';
     let shown = false;
     const show = () => {
       if (shown || !dialog.isConnected) return;
@@ -29,6 +32,7 @@
         if (open !== dialog) open.close();
       }
       dialog.showModal();
+      if (ownerSheet) ownerSheet.removeAttribute('data-dialog-pending');
       document.body.classList.add('dialog-open');
       dialog.dispatchEvent(new Event('mod-dialog-open'));
       if (focusSelector) dialog.querySelector(focusSelector)?.focus({preventScroll:true});
@@ -241,7 +245,8 @@
       const complete = !!sheet.dataset.dispo;
       // Keep the edited sheet visible until its dialog is closed, even if
       // "Hide completed" is enabled and selecting a dispo completes the sheet.
-      const editorOpen = !!sheet.querySelector('.editor-dialog[open]');
+      const editorOpen = sheet.dataset.dialogPending === 'yes' ||
+        !!sheet.querySelector('.editor-dialog[open]');
       sheet.hidden = !editorOpen && (!nameMatches || (hideCompleted.checked && complete));
     }
   }

@@ -236,6 +236,7 @@ def test_popup_fits_native_zoom_before_opening_and_allows_zoom_again(mod_browser
     })
     cdp.send('Emulation.setPageScaleFactor', {'pageScaleFactor':2.5})
     assert page.evaluate('window.visualViewport.scale') > 2.4
+    page.locator('#hideCompleted').check()
 
     # Trigger the same user-driven disposition change without Playwright
     # scrolling/focusing the field and interfering with the pinch simulation.
@@ -246,6 +247,7 @@ def test_popup_fits_native_zoom_before_opening_and_allows_zoom_again(mod_browser
     }""")
     popup = page.locator('.sale-panel[open]').first
     expect(popup).to_be_visible()
+    expect(page.locator('.mod-sheet').first).to_be_visible()
     assert page.evaluate('window.modalScaleAtOpen') == pytest.approx(1, abs=.02)
     assert page.evaluate('window.visualViewport.scale') == pytest.approx(1, abs=.02)
     assert page.locator('meta[name=viewport]').get_attribute('content') == (
@@ -256,6 +258,7 @@ def test_popup_fits_native_zoom_before_opening_and_allows_zoom_again(mod_browser
     assert page.evaluate('window.modCspViolations') == []
     popup.locator('.sale-done').click()
     expect(popup).to_be_hidden()
+    expect(page.locator('.mod-sheet').first).to_be_hidden()
 
     # The fit is automatic for popups, but pinch remains available afterward.
     cdp.send('Emulation.setPageScaleFactor', {'pageScaleFactor':2.5})
