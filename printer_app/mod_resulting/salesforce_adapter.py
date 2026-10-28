@@ -446,12 +446,36 @@ class ResultingSalesforceAdapter:
             )
 
         # Validate all writable fields once by exact API name.
+        wo_types = {
+            'dispo': ('picklist', 'string'),
+            'status': ('picklist', 'string'),
+            'mod': ('reference',),
+            'notes': ('textarea', 'string'),
+            'call_1': ('datetime', 'time', 'string', 'textarea'),
+            'call_2': ('datetime', 'time', 'string', 'textarea'),
+            'docs': ('boolean',),
+            'ninety_min': ('boolean',),
+            'promotion': ('boolean',),
+            'start_price': ('currency', 'double', 'int', 'long'),
+            'final_price': ('currency', 'double', 'int', 'long'),
+            'deposit': ('currency', 'double', 'int', 'long'),
+            'need': ('textarea', 'string'),
+            'want': ('textarea', 'string'),
+        }
         wo_fields = {
-            key: self._field(wo_schema, api_name)
+            key: self._field(wo_schema, api_name, types=wo_types[key])
             for key, api_name in WO.items()
         }
+        lead_types = {
+            'status': ('picklist', 'string'),
+            'previous_result': ('picklist', 'string'),
+            'dnr': ('boolean',),
+            'dnr_reason': ('multipicklist',),
+            'one_leg': ('boolean',),
+            'product_interest': ('multipicklist',),
+        }
         lead_fields = {
-            key: self._field(lead_schema, api_name)
+            key: self._field(lead_schema, api_name, types=lead_types[key])
             for key, api_name in LEAD_FIELDS.items()
         }
         if lead_fields['dnr_reason'].get('type') != 'multipicklist':
