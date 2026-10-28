@@ -330,17 +330,48 @@ export class GalleryOffline {
     await transactionDone(tx);
   }
 
+  async postPendingNote(note) {
+    // Build the form for EACH attempt so a changed cookie/session can use the
+    // latest CSRF token. note_id is stable: the server deduplicates retries.
+    const send = () => {
+      const body = new FormData();
+      body.set('csrf', this.csrf);
+      body.set('note_id', note.id);
+      body.set('author', note.author);
+      body.set('body', note.body);
+      return this.json('/gallery/api/items/' + note.item_id + '/notes',
+        {method:'POST', body});
+    };
+    try {
+      return await send();
+    } catch (error) {
+      // When reconnecting after a tab was offline, the Gallery access cookie
+      // may persist while the separate Flask session/CSRF cookie has rotated.
+      // A global CSRF rejection is HTTP 400 with an HTML body, whereas domain
+      // validation 400s contain JSON. Refresh the *same account's* token once;
+      // never bypass the server's CSRF or same-origin requirements.
+      const csrfRejection = error?.status === 400 &&
+        (error.message === 'Request failed. Reopen the gallery and try again.' ||
+         /csrf/i.test(error.message || ''));
+      if (!csrfRejection) throw error;
+      const access = await this.json('/gallery/api/access');
+      if (access?.role !== 'full' || access.subject !== this.subject ||
+          !access.capabilities?.includes('notes') || !access.csrf) {
+        const denied = new Error('Gallery access changed. Reopen Gallery to sync notes.');
+        denied.status = 403;
+        throw denied;
+      }
+      this.csrf = access.csrf;
+      return send(); // One retry only; keep the queued note on any failure.
+    }
+  }
+
   async flushPending() {
     if (!this.csrf || !this.network.isReachable()) return;
     const notes = await this.pendingNotes();
     for (const note of notes) {
-      const form = new FormData();
-      form.set('csrf', this.csrf);
-      form.set('note_id', note.id);
-      form.set('author', note.author);
-      form.set('body', note.body);
       try {
-        await this.json('/gallery/api/items/' + note.item_id + '/notes', {method:'POST', body:form});
+        await this.postPendingNote(note);
         const tx = this.db.transaction('pendingNotes', 'readwrite');
         tx.objectStore('pendingNotes').delete(note.id);
         await transactionDone(tx);
