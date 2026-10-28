@@ -48,8 +48,12 @@ def test_review_checkbox_persists_independently_in_checklist_row(mod_browser, vi
     notes.fill(black_note)
     expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
     first.locator('[data-key=dispo]').select_option('pns')
-    # Dispo never recolors the existing black characters.
+    # Dispo does not switch ink; explicitly activate the manual red pen.
     expect(first.locator('.mod-notes-display span').first).to_have_text(black_note)
+    pen=first.locator('.redline-pen')
+    expect(pen).to_have_attribute('aria-pressed','false')
+    pen.click()
+    expect(pen).to_have_attribute('aria-pressed','true')
     notes.fill(note_text)
     expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(red_note)
     assert first.locator('.mod-notes-display .after-dispo').evaluate(
@@ -68,6 +72,7 @@ def test_review_checkbox_persists_independently_in_checklist_row(mod_browser, vi
         assert first.locator('.notes-text textarea').count() == 1
         expect(first.locator('.mod-notes-display span').first).to_have_text(black_note)
         expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(red_note)
+        expect(pen).to_have_attribute('aria-pressed','false')
         draft = service.repository.sheets(service.day())[0]['draft']
         assert draft['review'] is selected
         assert draft['notes'] == note_text
