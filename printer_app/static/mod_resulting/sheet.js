@@ -225,6 +225,19 @@
     syncIndividualSaleRows();
     sheet.dataset.dirty = 'no';
     dnrPreview(sheet, init);
+    const noteArea = sheet.querySelector('.notes-text');
+    const beforeDispoNotes = noteArea.querySelector('[data-key="notes"]');
+    const afterDispoNotes = noteArea.querySelector('[data-key="redlines"]');
+    const blackHistory = noteArea.querySelector('.notes-black-history');
+    function syncNoteMode() {
+      const resulted = !!sheet.querySelector('[data-key="dispo"]').value;
+      noteArea.dataset.notesMode = resulted ? 'red' : 'black';
+      beforeDispoNotes.hidden = resulted;
+      blackHistory.textContent = beforeDispoNotes.value;
+      blackHistory.hidden = !resulted || !beforeDispoNotes.value;
+      afterDispoNotes.hidden = !resulted;
+    }
+    syncNoteMode();
     const product = sheet.querySelector('.product-panel');
     const dnr = sheet.querySelector('.dnr-panel');
     const cxl = sheet.querySelector('.cxl-panel');
@@ -286,6 +299,7 @@
     function redraw() {
       const draft = serialize(sheet);
       sheet.dataset.dispo = draft.dispo;
+      syncNoteMode();
       dnrPreview(sheet,draft);
       applyVisibility();
       scheduleSave(sheet);
