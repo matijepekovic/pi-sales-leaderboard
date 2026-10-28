@@ -260,7 +260,9 @@ def test_manual_lead_choices_price_and_deposit_override_dispo_defaults():
     assert fields['previous_result']=='No Pitch'
     assert fields['price']=={'highest':'27000','lowest':'16000'}
     adapter,_=_adapter()
-    plan=_operations(adapter,_payload('pns',**draft))
+    plan=_operations(adapter,_payload('pns',**{
+        key:value for key,value in draft.items() if key!='dispo'
+    }))
     lead=_single(plan,'Lead')[3]
     wo=_single(plan,'WorkOrder')[3]
     assert lead['Status']=='Do Not Call' and lead['Previous_Result__c']=='No Pitch'
