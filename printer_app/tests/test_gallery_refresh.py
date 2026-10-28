@@ -259,8 +259,30 @@ def test_menu_refresh_updates_rep_search_and_keeps_failure_visible_without_losin
 def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(web, engine, tmp_path):
     from playwright.sync_api import sync_playwright, expect
     from werkzeug.serving import make_server
+    from werkzeug.wrappers import Response
 
     app, gallery, _, source, ids = web
+
+    # WebKit service-worker-controlled requests can bypass page.route().
+    # Inject the one-shot HTML 400 at the real local WSGI boundary BEFORE
+    # auth middleware, then allow retries through all normal CSRF/origin
+    # checks. This avoids a second, artificial rejection when the browser
+    # itself happens to have a stale CSRF cookie on first reconnect.
+    injected = {'enabled':False, 'posts':0}
+    real_wsgi = app.wsgi_app
+    def reject_first_note_post_after_reconnect(environ, start_response):
+        path = environ.get('PATH_INFO', '')
+        if (injected['enabled'] and environ.get('REQUEST_METHOD') == 'POST'
+                and path.startswith('/gallery/api/items/') and path.endswith('/notes')):
+            injected['posts'] += 1
+            if injected['posts'] == 1:
+                return Response(
+                    '<html><body>Invalid CSRF token</body></html>',
+                    status=400, content_type='text/html',
+                )(environ, start_response)
+        return real_wsgi(environ, start_response)
+    app.wsgi_app = reject_first_note_post_after_reconnect
+
     before = gallery.item(ids['today'])
     server = make_server('127.0.0.1', 0, app, threaded=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -346,15 +368,25 @@ def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(
 
                 # Reconnecting uses the normal pending-note outbox and real
                 # endpoint, preserving the original note and sending exactly once.
+                # Arm BEFORE restarting the HTTP server: the old service-worker
+                # tab might otherwise sync before the replacement tab opens.
+                injected['enabled'] = True
                 server = make_server('127.0.0.1', port, app, threaded=True)
                 thread = threading.Thread(target=server.serve_forever, daemon=True)
                 thread.start()
                 page.close()
                 page = context.new_page()
                 page.on('pageerror', lambda error: errors.append(str(error)))
+
+                # The real HTTP server rejected the first queued note POST,
+                # regardless of which service-worker-controlled tab sent it.
                 assert page.goto(origin + '/gallery/').status == 200
                 expect(page.locator('#galleryOfflineStatus')).to_contain_text(
                     'Offline ready · 2 cards', timeout=20000)
+                assert injected['posts'] == 2, (
+                    'Expected one server-side HTML 400 and one retried note POST.',
+                    injected['posts'],
+                )
                 notes = gallery.item(ids['today'])['notes']
                 assert [note['body'] for note in notes].count('Saved during the offline visit') == 1
                 assert [note['body'] for note in notes].count('Keep the existing shared note') == 1
