@@ -259,20 +259,29 @@ def test_menu_refresh_updates_rep_search_and_keeps_failure_visible_without_losin
 def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(web, engine, tmp_path):
     from playwright.sync_api import sync_playwright, expect
     from werkzeug.serving import make_server
-    from flask import abort, request
+    from werkzeug.wrappers import Response
 
     app, gallery, _, source, ids = web
 
-    # Browser request interception does not reliably see service-worker
-    # controlled requests in WebKit. Inject the one-shot CSRF-style HTML 400
-    # at Flask's real HTTP boundary instead, before the test sends requests.
+    # WebKit service-worker-controlled requests can bypass page.route().
+    # Inject the one-shot HTML 400 at the real local WSGI boundary BEFORE
+    # auth middleware, then allow retries through all normal CSRF/origin
+    # checks. This avoids a second, artificial rejection when the browser
+    # itself happens to have a stale CSRF cookie on first reconnect.
     injected = {'enabled':False, 'posts':0}
-    @app.before_request
-    def reject_first_note_post_after_reconnect():
-        if injected['enabled'] and request.endpoint == 'gallery.note':
+    real_wsgi = app.wsgi_app
+    def reject_first_note_post_after_reconnect(environ, start_response):
+        path = environ.get('PATH_INFO', '')
+        if (injected['enabled'] and environ.get('REQUEST_METHOD') == 'POST'
+                and path.startswith('/gallery/api/items/') and path.endswith('/notes')):
             injected['posts'] += 1
             if injected['posts'] == 1:
-                abort(400, 'Invalid CSRF token')
+                return Response(
+                    '<html><body>Invalid CSRF token</body></html>',
+                    status=400, content_type='text/html',
+                )(environ, start_response)
+        return real_wsgi(environ, start_response)
+    app.wsgi_app = reject_first_note_post_after_reconnect
 
     before = gallery.item(ids['today'])
     server = make_server('127.0.0.1', 0, app, threaded=True)
