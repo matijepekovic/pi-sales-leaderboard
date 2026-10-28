@@ -31,7 +31,7 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
    before: regular black; after: larger bold red. Numbers remain separate. */
 .notes-text{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
 .notes-text textarea[data-key=notes]{display:block;flex:1;min-height:0;width:100%;color:#000;font-size:1.57cqw;font-weight:400;line-height:1.15;resize:none}
-.notes-text[data-notes-mode=red] textarea[data-key=notes]{font-size:2.18cqw;font-weight:700;color:#b00000}
+.notes-text[data-notes-mode=red] textarea[data-key=notes]{font-size:2.18cqw;color:#b00000}
 .notes-text .dnr-in-redline{font-size:2.18cqw;font-weight:700;color:#b00000;line-height:1.1;flex:none}
 .checklist{display:flex;gap:.1cqw}
 .checklist label{display:flex;flex:1;flex-direction:column;gap:.6cqw;align-items:flex-start}
