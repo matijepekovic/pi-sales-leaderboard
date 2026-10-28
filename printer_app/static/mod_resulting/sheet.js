@@ -217,6 +217,46 @@
     const cents = (match[2] || '').padEnd(2, '0');
     return '$' + grouped + (cents && cents !== '00' ? '.' + cents : '');
   }
+  function moneyCents(input) {
+    const value = String(input || '').trim();
+    const match = /^\$?\s*(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?$/.exec(value);
+    if (!match) return null;
+    const whole = BigInt(match[1].replace(/,/g, ''));
+    const cents = BigInt((match[2] || '').padEnd(2, '0'));
+    return whole * 100n + cents;
+  }
+  function plainMoney(cents) {
+    const whole = cents / 100n;
+    const fraction = String(cents % 100n).padStart(2, '0').replace(/0+$/, '');
+    return String(whole) + (fraction ? '.' + fraction : '');
+  }
+  function depositPaymentPreview(draft) {
+    const products = draft.dispo === 'sale' ? draft.sale_products :
+      draft.additional_products ? draft.product_results : {};
+    let sold = 0;
+    let deposit = 0n;
+    let payment = 0n;
+    let hasPayment = false;
+    for (const info of Object.values(products || {})) {
+      if (draft.dispo !== 'sale' && info.result !== 'sale') continue;
+      const price = moneyCents(info.price);
+      const productDeposit = moneyCents(info.deposit);
+      if (price === null || price === 0n || productDeposit === null) continue;
+      sold++;
+      deposit += productDeposit;
+      if (String(info.payment || '').trim()) {
+        const productPayment = moneyCents(info.payment);
+        if (productPayment !== null) {
+          payment += productPayment;
+          hasPayment = true;
+        }
+      }
+    }
+    const override = moneyCents(draft.deposit_override);
+    if (!sold) return override === null ? '' : plainMoney(override);
+    return plainMoney(override === null ? deposit : override) + '/' +
+      (hasPayment ? plainMoney(payment) : '');
+  }
   function salePreview(sheet, draft) {
     const display = sheet.querySelector('.sale-in-redline');
     if (!display) return;
@@ -343,6 +383,7 @@
     const noteArea = sheet.querySelector('.notes-text');
     const noteInput = sheet.querySelector('.mod-notes-input');
     const noteMirror = sheet.querySelector('.mod-notes-display');
+    const redlinePen = sheet.querySelector('.redline-pen');
     let noteRuns;
     if (Array.isArray(init.note_runs) && init.note_runs.length) {
       noteRuns = init.note_runs.map(run => ({text:run.text,red:run.red}));
@@ -365,14 +406,19 @@
       noteArea.classList.add('mixed-notes-ready');
       noteMirror.scrollTop = noteInput.scrollTop;
     }
-    function syncNoteMode() {
-      // A disposition changes the ink used by FUTURE input only.
-      // Existing black/red characters never get recolored.
-      noteArea.dataset.notesMode =
-        sheet.querySelector('[data-key="dispo"]').value ? 'red' : 'black';
+    function setNoteMode(red) {
+      noteArea.dataset.notesMode = red ? 'red' : 'black';
+      if (redlinePen) {
+        redlinePen.setAttribute('aria-pressed', red ? 'true' : 'false');
+        redlinePen.classList.toggle('active', red);
+      }
     }
     renderNoteRuns();
-    syncNoteMode();
+    setNoteMode(false);
+    redlinePen?.addEventListener('click', () => {
+      setNoteMode(noteArea.dataset.notesMode !== 'red');
+      noteInput.focus({preventScroll:true});
+    });
     noteInput.addEventListener('scroll', () => {
       noteMirror.scrollTop = noteInput.scrollTop;
     });
@@ -390,24 +436,25 @@
     if (productButton) productButton.hidden = init.dispo === 'sale' || !init.additional_products;
     if (cxlButton) cxlButton.hidden = init.dispo !== 'cxl';
     if (dnrButton) dnrButton.hidden = !init.dnr;
-    function syncPricePreviews() {
-      for (const key of ('start_price_override', 'final_price_override', 'deposit_override')) {
-        const input = priceDialog?.querySelector('[data-key="' + key + '"]');
+    function syncPricePreviews(draft) {
+      for (const key of ('start_price_override', 'final_price_override')) {
         const preview = sheet.querySelector('[data-price-display="' + key + '"]');
-        if (preview && input) preview.textContent = input.value ? '$' + input.value : '';
+        if (preview) preview.textContent = draft[key] ? '$' + draft[key] : '';
+      }
+      const depositPayment = depositPaymentPreview(draft);
+      const preview = sheet.querySelector('[data-price-display="deposit_override"]');
+      if (preview) preview.textContent = depositPayment;
+      const summary = priceDialog?.querySelector('[data-deposit-payment-summary]');
+      if (summary) {
+        summary.textContent = depositPayment;
+        summary.hidden = !depositPayment;
       }
     }
-    syncPricePreviews();
+    syncPricePreviews(init);
     priceDialog?.querySelectorAll('input[data-key$="_override"]').forEach(input => {
-      input.addEventListener('input', () => {
-        const preview = sheet.querySelector(
-          '[data-price-display="' + input.dataset.key + '"]'
-        );
-        if (preview) preview.textContent = input.value ? '$' + input.value : '';
-        redraw();
-      });
+      input.addEventListener('input', redraw);
     });
-    priceDialog?.addEventListener('close', syncPricePreviews);
+    priceDialog?.addEventListener('close', () => syncPricePreviews(serialize(sheet)));
     syncSaleRows();
     if (sheet.dataset.submitted === 'yes') {
       for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
@@ -451,11 +498,10 @@
     function redraw() {
       const draft = serialize(sheet);
       sheet.dataset.dispo = draft.dispo;
-      syncNoteMode();
       dnrPreview(sheet,draft);
       resultDetailPreview(sheet,draft);
       salePreview(sheet,draft);
-      syncPricePreviews();
+      syncPricePreviews(draft);
       applyVisibility();
       scheduleSave(sheet);
     }
@@ -508,7 +554,7 @@
       if (!(input instanceof HTMLElement)) return;
       if (input.dataset.key === 'notes') {
         sheet._noteRuns = changedNoteRuns(
-          sheet._noteRuns, input.value, !!sheet.querySelector('[data-key="dispo"]').value
+          sheet._noteRuns, input.value, noteArea.dataset.notesMode === 'red'
         );
         renderNoteRuns();
       }
