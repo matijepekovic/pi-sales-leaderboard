@@ -259,8 +259,21 @@ def test_menu_refresh_updates_rep_search_and_keeps_failure_visible_without_losin
 def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(web, engine, tmp_path):
     from playwright.sync_api import sync_playwright, expect
     from werkzeug.serving import make_server
+    from flask import abort, request
 
     app, gallery, _, source, ids = web
+
+    # Browser request interception does not reliably see service-worker
+    # controlled requests in WebKit. Inject the one-shot CSRF-style HTML 400
+    # at Flask's real HTTP boundary instead, before the test sends requests.
+    injected = {'enabled':False, 'posts':0}
+    @app.before_request
+    def reject_first_note_post_after_reconnect():
+        if injected['enabled'] and request.endpoint == 'gallery.note':
+            injected['posts'] += 1
+            if injected['posts'] == 1:
+                abort(400, 'Invalid CSRF token')
+
     before = gallery.item(ids['today'])
     server = make_server('127.0.0.1', 0, app, threaded=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -353,28 +366,16 @@ def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(
                 page = context.new_page()
                 page.on('pageerror', lambda error: errors.append(str(error)))
 
-                # A stale CSRF session may reject the FIRST queued-note POST
-                # after a phone comes back online (observed in WebKit). Force
-                # that exact one-shot HTML 400 and require an authenticated
-                # token refresh and successful retry; no error is suppressed.
-                note_posts = []
-                def reject_first_stale_csrf(route):
-                    note_posts.append(route.request.url)
-                    if len(note_posts) == 1:
-                        route.fulfill(
-                            status=400, content_type='text/html',
-                            body='<html><body>Invalid CSRF token</body></html>',
-                        )
-                    else:
-                        route.continue_()
-                page.route('**/gallery/api/items/*/notes', reject_first_stale_csrf)
-
+                # Simulate one expired-CSRF response on the real Flask server.
+                # Both WebKit and Chromium must retry the SAME queued note once
+                # and finish the normal offline-to-online sync.
+                injected['enabled'] = True
                 assert page.goto(origin + '/gallery/').status == 200
                 expect(page.locator('#galleryOfflineStatus')).to_contain_text(
                     'Offline ready · 2 cards', timeout=20000)
-                assert len(note_posts) == 2, (
-                    'Expected one stale-CSRF rejection and one retried note POST.',
-                    len(note_posts),
+                assert injected['posts'] == 2, (
+                    'Expected one server-side HTML 400 and one retried note POST.',
+                    injected['posts'],
                 )
                 notes = gallery.item(ids['today'])['notes']
                 assert [note['body'] for note in notes].count('Saved during the offline visit') == 1
