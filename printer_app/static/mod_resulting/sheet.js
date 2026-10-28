@@ -327,6 +327,16 @@
     const priceDialog = sheet.querySelector('.price-panel');
     const leadDialog = sheet.querySelector('.lead-panel');
     const leadButton = sheet.querySelector('.edit-lead-status');
+    function syncDnrLeadStatus() {
+      const dnrChecked = !!sheet.querySelector('[data-key="dnr"]')?.checked;
+      const leadSelect = leadDialog?.querySelector('[data-key="lead_status"]');
+      const hint = leadDialog?.querySelector('.dnr-lead-status-hint');
+      // DNR overrides the *effective* Lead Status, not the saved manual
+      // choice. When unchecked, the manual choice is editable again.
+      if (leadSelect) leadSelect.disabled = dnrChecked;
+      if (hint) hint.hidden = !dnrChecked;
+    }
+    syncDnrLeadStatus();
     const saleButton = sheet.querySelector('.edit-sale-products');
     const cxlButton = sheet.querySelector('.edit-cxl-details');
     const productButton = sheet.querySelector('.edit-product-results');
@@ -396,6 +406,7 @@
       dnrPreview(sheet,draft);
       resultDetailPreview(sheet,draft);
       syncPricePreviews();
+      syncDnrLeadStatus();
       applyVisibility();
       scheduleSave(sheet);
     }
