@@ -72,5 +72,41 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
 [hidden]{display:none!important}
 @media(max-width:1100px){.sheets{align-items:flex-start;overflow-x:auto}.floating-controls{top:0;right:0;border-radius:0}}
-@media(max-width:650px){.sheets{padding-top:135px}}
-@media print{.floating-controls,.notification,.confirm-backdrop,.cxl-panel,.dnr-panel,.product-panel,.sheet-message{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}}
+/* Phone view is an overview of the SAME sheet, not a rearranged mobile form.
+   Zoom changes only its width; renderer coordinates and cqw controls scale together. */
+.sheet-zoom{display:none}
+@media(max-width:900px){
+ html,body{width:100%;min-width:0}
+ .floating-controls{position:sticky;top:0;right:auto;max-width:none;width:100%;
+  justify-content:flex-start;gap:6px;padding:6px 8px;border-radius:0;
+  padding-top:max(6px,env(safe-area-inset-top));font-size:13px}
+ .floating-controls input[type=search]{width:calc(50% - 3px);min-width:0;height:44px;font-size:16px}
+ .floating-controls .mod-choice{width:calc(50% - 3px);min-width:0}
+ .floating-controls select{flex:1;min-width:0;width:0;height:44px;font-size:16px}
+ .floating-controls .toggle-hide{flex:1;min-height:44px;gap:4px;font-size:12px}
+ .floating-controls .toggle-hide input{width:18px;height:18px;margin:0}
+ .floating-controls button,.floating-controls .completed-pdf{min-height:44px;padding:8px;font-size:12px}
+ .sheets{width:100%;padding:12px 8px calc(76px + env(safe-area-inset-bottom));
+  gap:20px;align-items:flex-start;overflow-x:auto;overscroll-behavior-x:contain}
+ .mod-sheet{width:calc(100vw - 16px);-webkit-text-size-adjust:100%;text-size-adjust:100%}
+ .sheets[data-zoom="1.5"] .mod-sheet{width:calc(150vw - 24px)}
+ .sheets[data-zoom="2"] .mod-sheet{width:calc(200vw - 32px)}
+ .sheets[data-zoom="3"] .mod-sheet{width:calc(300vw - 48px)}
+ .sheets[data-zoom="4"] .mod-sheet{width:calc(400vw - 64px)}
+ .sheet-zoom{position:fixed;z-index:30;display:flex;gap:2px;right:8px;
+  bottom:max(8px,env(safe-area-inset-bottom));background:#fff;border:1px solid #aaa;
+  border-radius:8px;padding:2px;box-shadow:0 2px 8px #0002;font:16px system-ui,sans-serif}
+ .sheet-zoom button{min-width:44px;min-height:44px;border:0;background:white;
+  color:#111;font:inherit;border-radius:5px;cursor:pointer}
+ .sheet-zoom button:disabled{color:#888;cursor:default}
+ .notification{top:auto;bottom:68px;left:8px;right:8px;max-width:none}
+ .product-panel,.dnr-panel,.cxl-panel{min-width:min(290px,calc(100vw - 32px));
+  max-width:calc(100vw - 32px);font-size:16px;max-height:60dvh;overflow:auto}
+ .product-result-row label{font-size:16px;flex-wrap:wrap}
+ .mod-sheet .product-panel select,.mod-sheet .dnr-panel select{font-size:16px;min-height:44px;max-width:100%}
+ .close-popover{min-width:44px;min-height:44px;font-size:16px}
+ .confirm-box{min-width:0;width:calc(100vw - 24px);max-height:80dvh;overflow:auto}
+ .confirm-box button{min-height:44px}
+}
+
+@media print{.sheet-zoom,.floating-controls,.notification,.confirm-backdrop,.cxl-panel,.dnr-panel,.product-panel,.sheet-message{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}}

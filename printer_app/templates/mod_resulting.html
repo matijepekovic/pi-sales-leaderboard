@@ -5,6 +5,7 @@
 <link rel="stylesheet" href="{{ url_for('static',filename='mod_resulting/sheet.css') }}">
 <link rel="stylesheet" href="{{ url_for('mod_resulting.surface_styles') }}">
 <script defer src="{{ url_for('static',filename='mod_resulting/sheet.js') }}"></script>
+<script defer src="{{ url_for('static',filename='mod_resulting/viewport.js') }}"></script>
 </head><body data-csrf="{{ session.csrf }}"
  data-refresh="{{ url_for('mod_resulting.refresh') }}"
  data-save="{{ url_for('mod_resulting.save') }}"
@@ -30,7 +31,7 @@
 {% macro checkbox(key, label, value, cls='') -%}
 <label class="{{ cls }}"><span>{{ label }}</span><input type="checkbox" data-key="{{ key }}" {% if value %}checked{% endif %}></label>
 {%- endmacro %}
-<div class="sheets" id="sheets">
+<div class="sheets" id="sheets" data-zoom="1">
 {% for item in data.sheets %}
 {% set sheet=item.snapshot %}{% set d=item.draft %}{% set xs=sheet.product_interest.split(';') %}
 <section class="mod-sheet{% if item.submitted_at %} submitted{% endif %}" aria-label="MOD sheet for {{ sheet.lead_name }}"
@@ -164,6 +165,11 @@
 {% else %}
 <p class="no-sheets">No MOD sheets loaded for today. Use Refresh to pull from Salesforce.</p>
 {% endfor %}
+</div>
+<div class="sheet-zoom" id="sheetZoom" role="group" aria-label="Sheet zoom">
+ <button type="button" id="zoomOut" aria-label="Zoom sheets out" disabled>−</button>
+ <button type="button" id="zoomFit" aria-label="Fit sheets to screen">Fit</button>
+ <button type="button" id="zoomIn" aria-label="Zoom sheets in">+</button>
 </div>
 <div class="confirm-backdrop" id="endConfirm" hidden>
  <div class="confirm-box">
