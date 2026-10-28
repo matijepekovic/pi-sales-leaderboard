@@ -390,7 +390,7 @@ def test_two_sales_to_same_lead_accumulate_both_pivots_without_overwriting():
     assert second_lead['Product_Interest_lead__c']=='Roofing;Siding;Windows;Doors'
 
 
-def test_mod_dropdown_queries_only_active_market_sales_leaders():
+def test_mod_dropdown_queries_exact_sales_manager_role_in_market():
     user_fields = [
         _field('Home_Branch__c', 'picklist', ['Olympia', 'Federal Way'], update=False),
     ]
@@ -403,29 +403,18 @@ def test_mod_dropdown_queries_only_active_market_sales_leaders():
         elif command[1:3] == ['data', 'query']:
             query = command[command.index('--query') + 1]
             assert "WHERE IsActive = true AND Home_Branch__c = 'Olympia'" in query
+            assert "AND UserRole.Name = 'Sales Manager'" in query
+            assert 'Title_Picklist__c' not in query and 'Profile.Name' not in query
             assert 'LIMIT 2000' not in query
+            # Salesforce already filters by UserRole.Name; a user with an
+            # unrelated job title is still eligible if their *role* matches.
             result = {'done':True, 'records':[
                 {'Id':MOD, 'Name':'Olympia Manager',
-                 'Home_Branch__c':'Olympia', 'Title_Picklist__c':'Sales Manager',
-                 'UserRole':{'Name':'Sales Manager'}, 'Profile':{'Name':'Sales Manager'}},
-                {'Id':'005000000000002AAA', 'Name':'Olympia Team Lead',
-                 'Home_Branch__c':'Olympia', 'Title_Picklist__c':'Team Lead',
-                 'UserRole':{'Name':'SFS Mobile'}, 'Profile':{'Name':'SFS Mobile Rep'}},
-                {'Id':'005000000000003AAA', 'Name':'Olympia Rep',
-                 'Home_Branch__c':'Olympia', 'Title_Picklist__c':'Sales Rep',
-                 'UserRole':{'Name':'SFS Mobile'}, 'Profile':{'Name':'SFS Mobile Rep'}},
-                {'Id':'005000000000006AAA', 'Name':'Olympia Manager (standard title)',
-                 'Home_Branch__c':'Olympia', 'Title':'Sales Manager',
-                 'Title_Picklist__c':None, 'UserRole':{'Name':'SFS Mobile'},
-                 'Profile':{'Name':'SFS Mobile Rep'}},
-                {'Id':'005000000000004AAA', 'Name':'Olympia Installer',
-                 'Home_Branch__c':'Olympia', 'Title_Picklist__c':None,
-                 'UserRole':{'Name':'Customer Person Account'},
-                 'Profile':{'Name':'Installer - Customer Community'}},
-                {'Id':'005000000000005AAA', 'Name':'Olympia Call Center Supervisor',
-                 'Home_Branch__c':'Olympia', 'Title_Picklist__c':'Call Center Supervisor',
-                 'UserRole':{'Name':'Call Center Advanced'},
-                 'Profile':{'Name':'Call Center Advanced'}},
+                 'Home_Branch__c':'Olympia', 'UserRole':{'Name':'Sales Manager'}},
+                {'Id':'005000000000002AAA', 'Name':'Olympia Sales Manager',
+                 'Home_Branch__c':'Olympia', 'Title':'Sales Rep',
+                 'Title_Picklist__c':'Team Lead',
+                 'UserRole':{'Name':'Sales Manager'}},
             ]}
         else:
             raise AssertionError('A MOD lookup must not write to Salesforce.')
@@ -437,8 +426,7 @@ def test_mod_dropdown_queries_only_active_market_sales_leaders():
     adapter = ResultingSalesforceAdapter(runner=runner)
     assert adapter.mod_users('Olympia') == [
         {'id':MOD, 'name':'Olympia Manager'},
-        {'id':'005000000000002AAA', 'name':'Olympia Team Lead'},
-        {'id':'005000000000006AAA', 'name':'Olympia Manager (standard title)'},
+        {'id':'005000000000002AAA', 'name':'Olympia Sales Manager'},
     ]
     assert [c[1:3] for c in commands] == [
         ['sobject', 'describe'], ['data', 'query'],
@@ -446,6 +434,31 @@ def test_mod_dropdown_queries_only_active_market_sales_leaders():
     for market in ('', 'All'):
         with pytest.raises(ResultingSalesforceError, match='market|MOD Sheet'):
             adapter.mod_users(market)
+
+
+def test_mod_dropdown_rejects_non_sales_manager_role_even_if_title_matches():
+    def runner(command, **kwargs):
+        if command[1:3] == ['sobject', 'describe']:
+            result = {'name':'User', 'fields':[
+                _field('Home_Branch__c', 'picklist', ['Olympia'], update=False),
+            ]}
+        elif command[1:3] == ['data', 'query']:
+            query = command[command.index('--query') + 1]
+            assert "UserRole.Name = 'Sales Manager'" in query
+            # Simulates an inconsistent Salesforce response; fail closed.
+            result = {'done':True, 'records':[{
+                'Id':MOD, 'Name':'Olympia Team Lead',
+                'Home_Branch__c':'Olympia', 'Title_Picklist__c':'Sales Manager',
+                'UserRole':{'Name':'SFS Mobile'},
+            }]}
+        else:
+            raise AssertionError('Unexpected Salesforce CLI operation.')
+        return SimpleNamespace(stdout=json.dumps({'status':0,'result':result}),
+                               stderr='',returncode=0)
+
+    adapter = ResultingSalesforceAdapter(runner=runner)
+    with pytest.raises(ResultingSalesforceError, match='required Sales Manager role'):
+        adapter.mod_users('Olympia')
 
 
 def test_mod_dropdown_rejects_market_mismatch_in_salesforce_response():
