@@ -289,7 +289,7 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     expect(first.locator('.dnr-panel')).to_be_visible()
     first.locator('.dnr-panel [data-reason-choice][value="Roofing"]').check()
     expect(first.locator('.dnr-in-redline')).to_have_text('DNR - Roofing')
-    first.locator('.dnr-panel .close-popover').click()
+    first.locator('.dnr-panel .editor-primary').click()
     first.locator('[data-key=call_1]').fill('10:15 AM')
     first.locator('[data-key=call_2]').fill('10:27 AM')
     assert first.locator('.field-notes').bounding_box() == bounds
@@ -374,7 +374,11 @@ def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, vi
     popup.locator('.editor-primary').click()
     expect(page.locator('.editor-dialog[open]')).to_have_count(0)
 
-    first.locator('[data-time-trigger="call_1"]').click()
+    call_controls = ('.mobile-call-actions' if viewport[0] <= 900 else '.field-call1')
+    call_one = first.locator(call_controls + ' [data-time-trigger="call_1"]')
+    if viewport[0] <= 900:
+        assert call_one.bounding_box()['height'] >= 44
+    call_one.click()
     popup = visible_popup('#timeDialog[open]')
     expect(popup.locator('#timeTitle')).to_have_text('Call 1 time')
     popup.locator('#timeHour').select_option('10')
@@ -384,7 +388,12 @@ def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, vi
     expect(first.locator('[data-key="call_1"]')).to_have_value('10:15 AM')
     expect(page.locator('.editor-dialog[open]')).to_have_count(0)
 
-    first.locator('[data-time-trigger="call_2"]').click()
+    call_two = first.locator(('.mobile-call-actions' if viewport[0] <= 900 else '.field-call2')
+                             + ' [data-time-trigger="call_2"]')
+    if viewport[0] <= 900:
+        assert call_two.bounding_box()['height'] >= 44
+        expect(first.locator('.mobile-call-actions [data-time-trigger="call_1"]')).to_contain_text('10:15 AM')
+    call_two.click()
     popup = visible_popup('#timeDialog[open]')
     popup.locator('#timeHour').select_option('1')
     popup.locator('#timeMinute').select_option('27')
