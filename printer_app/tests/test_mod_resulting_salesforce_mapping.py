@@ -574,3 +574,21 @@ def test_all_adapter_api_names_are_exactly_the_supplied_mapping():
         'cxl_at_lead':'CXL_Per_Redline__c',
     }
     assert PRODUCT_RESULT == 'Product_Interest_Result__c'
+
+
+def test_financing_payment_only_enters_mod_notes_and_preserves_checked_review():
+    payload=_payload('sale',review=True,sale_products={
+        'Roofing':{'price':'17000','deposit':'0','payment':'159.50'},
+    })
+    adapter,_=_adapter()
+    plan=_operations(adapter,payload)
+    wo=_single(plan,'WorkOrder')[3]
+    assert wo['Dispo__c']=='Sale'
+    assert wo['Review__c'] is True
+    assert wo['Deposit_Payment__c']=='0'
+    assert 'SALE Roofing: $17,000 | Deposit: $0 | Payment: $159.50' in wo['MOD_Notes__c']
+    assert all('Payment' not in field for field in wo if field != 'MOD_Notes__c')
+    product=_single(plan,'Product_Interest_Result__c')[3]
+    assert product['Price_Given__c']=='17000'
+    assert all('Payment' not in field for field in product)
+    _assert_no_protected_fields(plan)
