@@ -587,7 +587,9 @@ def test_financing_payment_only_enters_mod_notes_and_preserves_checked_review():
     assert wo['Review__c'] is True
     assert wo['Deposit_Payment__c']=='0'
     assert 'SALE Roofing: $17,000 | Deposit: $0 | Payment: $159.50' in wo['MOD_Notes__c']
-    assert all('Payment' not in field for field in wo if field != 'MOD_Notes__c')
+    assert {field for field in wo if 'Payment' in field} == {
+        'Deposit_Payment__c',
+    }
     product=_single(plan,'Product_Interest_Result__c')[3]
     assert product['Price_Given__c']=='17000'
     assert all('Payment' not in field for field in product)
