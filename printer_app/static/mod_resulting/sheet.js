@@ -437,7 +437,7 @@
     if (cxlButton) cxlButton.hidden = init.dispo !== 'cxl';
     if (dnrButton) dnrButton.hidden = !init.dnr;
     function syncPricePreviews(draft) {
-      for (const key of ('start_price_override', 'final_price_override')) {
+      for (const key of ['start_price_override', 'final_price_override']) {
         const preview = sheet.querySelector('[data-price-display="' + key + '"]');
         if (preview) preview.textContent = draft[key] ? '$' + draft[key] : '';
       }
