@@ -160,7 +160,6 @@
     sheet.dataset.dirty = 'no';
     dnrPreview(sheet, init);
     syncSaleRows();
-    if (separate) separate.hidden = init.dispo === 'sale';
     if (sheet.dataset.submitted === 'yes') {
       for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
       return;
@@ -171,6 +170,7 @@
     const sale = sheet.querySelector('.sale-panel');
     const saleButton = sheet.querySelector('.edit-sale-products');
     const separate = sheet.querySelector('.separate-products');
+    if (separate) separate.hidden = init.dispo === 'sale';
     function syncSaleRows() {
       for (const row of sheet.querySelectorAll('[data-sale-product]')) {
         const selected = row.querySelector('[data-sale-selected]');
