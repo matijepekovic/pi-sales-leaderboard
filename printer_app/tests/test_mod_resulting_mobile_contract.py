@@ -29,6 +29,18 @@ def test_dialog_viewport_owns_only_presentation_and_keeps_native_pinch():
     assert 'disabled title="Salesforce writes disabled for sandbox testing"' in html
 
 
+def test_redline_pen_is_the_only_user_red_ink_switch():
+    root = Path(__file__).parents[1]
+    js = (root / 'static/mod_resulting/sheet.js').read_text()
+    html = (root / 'templates/mod_resulting.html').read_text()
+    assert 'class="redline-pen"' in html
+    assert 'data-notes-mode="black"' in html
+    assert "noteArea.dataset.notesMode === 'red'" in js
+    assert "setNoteMode(noteArea.dataset.notesMode !== 'red')" in js
+    assert "sheet.querySelector('[data-key="dispo"]').value ? 'red' : 'black'" not in js
+    assert 'function syncNoteMode' not in js
+
+
 def test_pending_setup_notice_is_not_presented_as_a_page_banner():
     root = Path(__file__).parents[1]
     web = (root / 'mod_resulting/web.py').read_text()
