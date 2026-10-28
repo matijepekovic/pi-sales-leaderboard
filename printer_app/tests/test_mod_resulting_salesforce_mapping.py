@@ -197,7 +197,11 @@ def test_ghost_fields_and_comment_are_never_written(review,redlines):
     assert wo['Call_1__c']=='10:15:00.000Z'
     assert wo['Call_2__c']=='13:27:00.000Z'
     assert wo['Docs__c'] is True and wo['Promotion__c'] is True
-    assert wo['X90_Min__c'] is True and wo['Review__c'] is True
+    assert wo['X90_Min__c'] is True
+    if review:
+        assert wo['Review__c'] is True
+    else:
+        assert 'Review__c' not in wo
     assert wo['Need__c']=='Need' and wo['Want__c']=='Want'
     lead=_single(plan,'Lead')[3]
     assert lead['Status']=='Nurturing'  # DNR never forces Do Not Call.
