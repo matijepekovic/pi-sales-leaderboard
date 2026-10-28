@@ -266,7 +266,7 @@ class ResultingSalesforceAdapter:
             )
         branch = matching[0]
         rows = self._query(
-            "SELECT Id,Name,Home_Branch__c,Title_Picklist__c,"
+            "SELECT Id,Name,Title,Home_Branch__c,Title_Picklist__c,"
             "UserRole.Name,Profile.Name FROM User WHERE IsActive = true"
             " AND Home_Branch__c = " + _soql(branch) + " ORDER BY Name"
         )
@@ -282,6 +282,7 @@ class ResultingSalesforceAdapter:
             profile = item.get('Profile') or {}
             titles = [
                 str(item.get('Title_Picklist__c') or ''),
+                str(item.get('Title') or ''),
                 str(role.get('Name') or '') if isinstance(role, dict) else '',
                 str(profile.get('Name') or '') if isinstance(profile, dict) else '',
             ]
