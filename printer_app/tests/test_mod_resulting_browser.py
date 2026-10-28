@@ -182,6 +182,7 @@ def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_br
     first.locator('[data-key=dispo]').select_option('cxl')
     expect(first.locator('.cxl-panel')).to_be_visible()
     first.locator('[data-key=cxl_at_lead]').check()
+    first.locator('.cxl-panel .editor-primary').click()
     first.locator('[data-key=notes]').fill('Black comment')
     first.locator('[data-key=redlines]').fill('REDLINE')
     first.locator('[data-key=numbers]').fill('20000\n17000')
@@ -454,6 +455,7 @@ def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
     first.locator('[data-key=call_2]').fill('1:27 PM')
     first.locator('[data-key=dispo]').select_option('cxl')
     first.locator('[data-key=cxl_at_lead]').check()
+    first.locator('.cxl-panel .editor-primary').click()
     held[0].continue_()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
