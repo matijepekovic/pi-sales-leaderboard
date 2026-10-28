@@ -316,7 +316,7 @@ def test_sandbox_is_reachable_from_printer_and_never_writes_salesforce(tmp_path)
     assert b'/mod-resulting' in control.data
     sandbox=client.get('/mod-resulting')
     assert sandbox.status_code==200
-    assert b'Search names only' in sandbox.data or b'Search names' in sandbox.data
+    assert b'Search customer or assigned service resource' in sandbox.data
     assert b'Hide completed' in sandbox.data
     assert b'End of day' in sandbox.data
     assert b'MOD Notes:' in sandbox.data
