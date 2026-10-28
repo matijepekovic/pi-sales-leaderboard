@@ -24,17 +24,63 @@ TEXT_FIELDS = (
 MAX_LENGTHS = {
     'numbers': 1800, 'notes': 4500, 'redlines': 4500,
     'call_1': 8, 'call_2': 8, 'need': 1000, 'want': 1000,
-    'result_detail': 120, 'dnr_reason': 160, 'dispo': 8,
+    'result_detail': 120, 'dnr_reason': 500, 'dispo': 8,
     'primary_product': 60,
 }
 TIME_RE = re.compile(r'^(?:0?[1-9]|1[0-2]):[0-5][0-9] (?:AM|PM)$')
 _NUMBER_RE = re.compile(r'^\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?$')
 
 
+def _money(value, *, allow_blank=True):
+    value = str(value or '').strip()
+    if not value:
+        if allow_blank:
+            return None
+        raise ValueError('A money value is required.')
+    if not _NUMBER_RE.fullmatch(value):
+        raise ValueError('Money values must be non-negative numbers with at most two decimals.')
+    try:
+        number = Decimal(value.replace('$', '').replace(',', '').strip())
+    except InvalidOperation as exc:
+        raise ValueError('Invalid money value.') from exc
+    if not number.is_finite() or number < 0:
+        raise ValueError('Money values must be non-negative.')
+    return number
+
+
+def money_text(value):
+    number = _money(value)
+    if number is None:
+        return ''
+    text = format(number, 'f')
+    return text.rstrip('0').rstrip('.') if '.' in text else text
+
+
+def format_money(value):
+    number = _money(value, allow_blank=False)
+    whole, dot, fraction = f'{number:.2f}'.partition('.')
+    grouped = f'{int(whole):,}'
+    if fraction == '00':
+        return '$' + grouped
+    return '$' + grouped + '.' + fraction
+
+
+def dnr_reasons(value):
+    seen = set()
+    result = []
+    for part in str(value or '').split(';'):
+        clean = part.strip()
+        key = clean.casefold()
+        if clean and key not in seen:
+            result.append(clean)
+            seen.add(key)
+    return tuple(result)
+
+
 def clean_draft(raw):
     if not isinstance(raw, dict):
         raise ValueError('Invalid MOD draft.')
-    if set(raw) - set(TEXT_FIELDS) - set(CHECKBOXES) - {'product_results'}:
+    if set(raw) - set(TEXT_FIELDS) - set(CHECKBOXES) - {'product_results', 'sale_products'}:
         raise ValueError('Unknown MOD draft fields.')
     data = {}
     for key in TEXT_FIELDS:
@@ -49,33 +95,99 @@ def clean_draft(raw):
         data[key] = value
     if data['dispo'] not in DISPOSITIONS:
         raise ValueError('Choose a valid disposition.')
-    # The selectable Result Details come from Salesforce metadata, not a
-    # baked-in training list. The writer validates actual picklist values.
     if not data['dnr']:
         data['dnr_reason'] = ''
+    else:
+        data['dnr_reason'] = ';'.join(dnr_reasons(data['dnr_reason']))
     for key in ('call_1', 'call_2'):
         if data[key] and not TIME_RE.fullmatch(data[key]):
             raise ValueError(key + ' must be entered with AM or PM.')
+
     product_results = raw.get('product_results', {})
-    if not isinstance(product_results, dict) or len(product_results) > 12:
+    if not isinstance(product_results, dict) or len(product_results) > 24:
         raise ValueError('Invalid additional product results.')
     normalized = {}
     for product, info in product_results.items():
-        if not isinstance(product, str) or not 0 < len(product) <= 60 or not isinstance(info, dict):
+        if not isinstance(product, str) or not 0 < len(product.strip()) <= 80 or not isinstance(info, dict):
             raise ValueError('Invalid product selection.')
         outcome = info.get('result', '')
         detail = info.get('detail', '')
         if (outcome not in PRODUCT_RESULTS or not isinstance(detail, str)
                 or len(detail) > 120):
             raise ValueError('Invalid product result.')
-        normalized[product] = {'result': outcome, 'detail': detail}
+        normalized[product.strip()] = {'result': outcome, 'detail': detail.strip()}
     data['product_results'] = normalized
+
+    sale_products = raw.get('sale_products', {})
+    if not isinstance(sale_products, dict) or len(sale_products) > 40:
+        raise ValueError('Invalid sold product selection.')
+    sales = {}
+    for product, info in sale_products.items():
+        if not isinstance(product, str) or not 0 < len(product.strip()) <= 80 or not isinstance(info, dict):
+            raise ValueError('Invalid sold product selection.')
+        price = info.get('price', '')
+        deposit = info.get('deposit', '')
+        if not isinstance(price, str) or not isinstance(deposit, str):
+            raise ValueError('Sale price and deposit must be entered as text values.')
+        if len(price) > 30 or len(deposit) > 30:
+            raise ValueError('Sale price or deposit is too long.')
+        # Validate entered values now; selection with price zero is retained in
+        # the draft but later treated as not sold by the workflow.
+        if price.strip():
+            _money(price)
+        if deposit.strip():
+            _money(deposit)
+        sales[product.strip()] = {'price': price.strip(), 'deposit': deposit.strip()}
+    data['sale_products'] = sales
     return data
 
 
 def dnr_redline(reason):
-    value = str(reason or '').strip()
-    return value if value.casefold().startswith('dnr -') else 'DNR - ' + value
+    values = dnr_reasons(reason)
+    return 'DNR - ' + '; '.join(values) if values else ''
+
+
+def sold_products(draft):
+    """Return only selected sale products with a strictly positive price."""
+    result = []
+    for product, info in draft.get('sale_products', {}).items():
+        price = _money(info.get('price', ''))
+        if price is None or price == 0:
+            continue
+        deposit = _money(info.get('deposit', ''))
+        if deposit is None:
+            raise ValueError('Enter a deposit for sold product ' + product + ' (0 is valid).')
+        result.append({
+            'product': product,
+            'price': money_text(info['price']),
+            'deposit': money_text(info['deposit']),
+        })
+    return tuple(result)
+
+
+def sale_redlines(draft):
+    lines = []
+    for item in sold_products(draft):
+        lines.append(
+            'SALE ' + item['product'] + ': ' + format_money(item['price'])
+            + ' | Deposit: ' + format_money(item['deposit'])
+        )
+    return tuple(lines)
+
+
+def final_redline_text(draft):
+    lines = [line for line in str(draft.get('redlines') or '').splitlines() if line.strip()]
+    if draft.get('dnr') and draft.get('dnr_reason'):
+        lines.append(dnr_redline(draft['dnr_reason']))
+    lines.extend(sale_redlines(draft))
+    result = []
+    seen = set()
+    for line in lines:
+        key = line.strip().casefold()
+        if key and key not in seen:
+            result.append(line.strip())
+            seen.add(key)
+    return '\n'.join(result)
 
 
 def prices(numbers):
@@ -83,9 +195,7 @@ def prices(numbers):
     result = []
     for line in str(numbers or '').splitlines():
         value = line.strip()
-        if not value:
-            continue
-        if not _NUMBER_RE.fullmatch(value):
+        if not value or not _NUMBER_RE.fullmatch(value):
             continue
         try:
             number = Decimal(value.replace('$', '').replace(',', '').strip())
@@ -94,32 +204,29 @@ def prices(numbers):
         if number.is_finite() and number >= 0:
             result.append(number)
     return {
-        'highest': str(max(result)) if result else '',
-        'lowest': str(min(result)) if result else '',
+        'highest': money_text(str(max(result))) if result else '',
+        'lowest': money_text(str(min(result))) if result else '',
     }
 
 
 def outcome_fields(draft):
-    """Lead result is derived, never requested as another UI dropdown."""
+    """Derive the normalized result fields from the authoritative main Dispo."""
     dispo = draft['dispo']
     if not dispo:
         return None
-    lead = {
-        'sale': 'Sale Pending', 'pns': 'Nurturing',
-        'np': 'Nurturing', 'cxl': 'Canceled',
-        'nra': 'Nurturing', 'oos': 'Out of Scope',
-    }[dispo]
-    if draft['dnr']:
-        lead = 'Do Not Call'
     return {
-        'lead_status': lead,
+        'lead_status': {
+            'sale': 'Sale Pending', 'pns': 'Nurturing',
+            'np': 'Nurturing', 'cxl': 'Canceled',
+            'nra': 'Nurturing', 'oos': 'Out of Scope',
+        }[dispo],
         'appointment_status': 'No Rep Available' if dispo == 'nra' else (
             'Canceled' if dispo in ('cxl', 'oos') else 'Completed'
         ),
-        # Work Order Status is deliberately not guessed for NRA/OOS.
-        'work_order_status': 'Canceled' if dispo in ('cxl', 'oos') else 'Completed'
-        if dispo in ('sale', 'pns', 'np') else '',
-        'previous_result': {'pns': 'Pitch No Sale', 'np': 'No Pitch',
-                            'nra': 'No Rep Available'}.get(dispo, ''),
+        'work_order_status': 'Canceled' if dispo in ('cxl', 'oos') else 'Completed',
+        'previous_result': {
+            'pns': 'Pitch No Sale', 'np': 'No Pitch',
+            'nra': 'No Rep Available',
+        }.get(dispo, ''),
         'price': prices(draft['numbers']),
     }
