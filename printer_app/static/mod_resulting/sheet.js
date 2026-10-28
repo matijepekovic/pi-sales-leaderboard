@@ -230,8 +230,14 @@
     const cxl = sheet.querySelector('.cxl-panel');
     const sale = sheet.querySelector('.sale-panel');
     const saleButton = sheet.querySelector('.edit-sale-products');
+    const cxlButton = sheet.querySelector('.edit-cxl-details');
+    const productButton = sheet.querySelector('.edit-product-results');
+    const dnrButton = sheet.querySelector('.edit-dnr-reasons');
     const separate = sheet.querySelector('.separate-products');
     if (separate) separate.hidden = init.dispo === 'sale';
+    if (productButton) productButton.hidden = init.dispo === 'sale' || !init.additional_products;
+    if (cxlButton) cxlButton.hidden = init.dispo !== 'cxl';
+    if (dnrButton) dnrButton.hidden = !init.dnr;
     syncSaleRows();
     if (sheet.dataset.submitted === 'yes') {
       for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
@@ -287,6 +293,9 @@
     function showRelated(input) {
       const draft = serialize(sheet);
       if (separate) separate.hidden = draft.dispo === 'sale';
+      if (productButton) productButton.hidden = draft.dispo === 'sale' || !draft.additional_products;
+      if (cxlButton) cxlButton.hidden = draft.dispo !== 'cxl';
+      if (dnrButton) dnrButton.hidden = !draft.dnr;
       if (input.dataset.key === 'dispo') {
         if (saleButton) saleButton.hidden = draft.dispo !== 'sale';
         if (draft.dispo === 'cxl') openDialog(cxl, '[data-key="cxl_at_lead"]');
@@ -330,6 +339,9 @@
       if (input instanceof HTMLElement && input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-product-price],[data-product-deposit]')) redraw();
     });
     saleButton?.addEventListener('click', openSale);
+    cxlButton?.addEventListener('click', () => openDialog(cxl, '[data-key="cxl_at_lead"]'));
+    productButton?.addEventListener('click', () => openDialog(product, '[data-product-result]'));
+    dnrButton?.addEventListener('click', () => openDialog(dnr, '[data-reason-choice]'));
     sale?.querySelector('.sale-product-filter')?.addEventListener('input', filterSaleRows);
     for (const button of sheet.querySelectorAll('[data-time-trigger]')) {
       button.addEventListener('click', () => openTimePicker(sheet, button.dataset.timeTrigger));
