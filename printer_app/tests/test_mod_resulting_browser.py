@@ -513,6 +513,11 @@ def test_lead_status_and_manual_price_cells_are_editable_and_persist(mod_browser
     prices.locator('[data-key="start_price_override"]').fill('27000')
     prices.locator('[data-key="final_price_override"]').fill('16000')
     prices.locator('[data-key="deposit_override"]').fill('2500')
+    # Must update the actual printed row while the native modal is open, and
+    # remain updated after closing, before any draft save or navigation.
+    expect(first.locator('[data-price-display="start_price_override"]')).to_have_text('$27000')
+    expect(first.locator('[data-price-display="final_price_override"]')).to_have_text('$16000')
+    expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('$2500')
     prices.locator('.editor-primary').click()
     expect(prices).to_be_hidden()
     expect(first.locator('[data-price-display="start_price_override"]')).to_have_text('$27000')
@@ -556,8 +561,13 @@ def test_dnr_locks_lead_status_to_do_not_call_and_preserves_manual_choice(mod_br
         'Lead Status will be set to Do Not Call automatically'
     )
     lead.locator('.editor-primary').click()
+    # Draft saves are debounced; Refresh explicitly flushes all outstanding
+    # edits before checking the persisted Salesforce submission payload.
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
     draft=service.repository.sheets(service.day())[0]['draft']
     assert outcome_fields(draft)['lead_status']=='Do Not Call'
+    assert draft['lead_status']=='Sale Pending'
 
     first.locator('[data-key=dnr]').uncheck()
     first.locator('.edit-lead-status').click()
@@ -565,8 +575,11 @@ def test_dnr_locks_lead_status_to_do_not_call_and_preserves_manual_choice(mod_br
     expect(manual).to_have_value('Sale Pending')
     expect(lead.locator('.dnr-lead-status-hint')).to_be_hidden()
     lead.locator('.editor-primary').click()
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
     draft=service.repository.sheets(service.day())[0]['draft']
     assert outcome_fields(draft)['lead_status']=='Sale Pending'
+    assert draft['dnr'] is False
     assert not writer.applied
 
 
