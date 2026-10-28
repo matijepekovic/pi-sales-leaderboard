@@ -41,6 +41,8 @@ def test_redline_pen_is_the_only_user_red_ink_switch():
     assert 'function syncNoteMode' not in js
     assert 'after-dispo' not in js
     assert 'redline-run' in js
+    assert 'Deposit/Payment' in html
+    assert 'Total Deposit' not in html
 
 
 def test_pending_setup_notice_is_not_presented_as_a_page_banner():
