@@ -702,7 +702,7 @@ def test_real_policy_rejects_an_inline_style_in_a_separate_probe_page(mod_browse
     finally:
         probe.close()
 
-def test_result_detail_is_always_red_and_new_notes_only_turn_red_after_dispo(mod_browser):
+def test_result_detail_is_always_red_and_user_red_notes_require_pen(mod_browser):
     from playwright.sync_api import expect
 
     page, service, writer, origin, evidence = mod_browser
@@ -714,26 +714,41 @@ def test_result_detail_is_always_red_and_new_notes_only_turn_red_after_dispo(mod
     expect(first.locator('.result-detail-in-redline')).to_have_text(
         'Price Objection')
     expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
+
+    # Disposition is no longer an ink-mode switch.
     first.locator('[data-key=dispo]').select_option('pns')
-    notes.fill('Before disposition\nAfter disposition')
+    notes.fill('Before disposition\nStill black after disposition')
+    expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
     expect(first.locator('.mod-notes-display span').first).to_have_text(
-        'Before disposition')
+        'Before disposition\nStill black after disposition')
+
+    # The red pen alone controls future user-entered redline characters.
+    pen = first.locator('.redline-pen')
+    pen.click()
+    expect(pen).to_have_attribute('aria-pressed', 'true')
+    notes.fill(
+        'Before disposition\nStill black after disposition\nManual redline')
     expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(
-        '\nAfter disposition')
+        '\nManual redline')
+
     first.locator('[data-key=dispo]').select_option('')
-    # Removing Dispo changes only the ink for future typing.
+    expect(pen).to_have_attribute('aria-pressed', 'true')
     expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(
-        '\nAfter disposition')
+        '\nManual redline')
+    pen.click()
+    expect(pen).to_have_attribute('aria-pressed', 'false')
+
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
+    expect(page.locator('.redline-pen').first).to_have_attribute('aria-pressed', 'false')
     expect(page.locator('.mod-notes-display .after-dispo').first).to_have_text(
-        '\nAfter disposition')
+        '\nManual redline')
     expect(page.locator('.result-detail-in-redline').first).to_have_text(
         'Price Objection')
     stored = service.repository.sheets(service.day())[0]['draft']
     assert stored['note_runs'] == [
-        {'text':'Before disposition','red':False},
-        {'text':'\nAfter disposition','red':True},
+        {'text':'Before disposition\nStill black after disposition','red':False},
+        {'text':'\nManual redline','red':True},
     ]
     assert stored['dispo'] == ''
     assert not writer.applied
