@@ -453,13 +453,13 @@ def test_existing_split_notes_are_preserved_when_migrated_to_one_textbox(mod_bro
     }), 0)
     page.goto(origin + '/mod-resulting')
     note = page.locator('.mod-sheet').first.locator('[data-key=notes]')
-    expect(note).to_have_value('Legacy first note\\nLegacy second note')
+    expect(note).to_have_value('Legacy first note\nLegacy second note')
     assert page.locator('.mod-sheet').first.locator('.notes-text textarea').count() == 1
-    note.fill('Legacy first note\\nLegacy second note\\nAdditional note')
+    note.fill('Legacy first note\nLegacy second note\nAdditional note')
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     saved = service.repository.sheets(day)[0]['draft']
-    assert saved['notes'] == 'Legacy first note\\nLegacy second note\\nAdditional note'
+    assert saved['notes'] == 'Legacy first note\nLegacy second note\nAdditional note'
     assert saved['redlines'] == ''
     assert saved['dispo'] == 'pns'
     assert not writer.applied
