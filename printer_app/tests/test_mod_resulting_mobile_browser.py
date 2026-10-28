@@ -145,7 +145,8 @@ def test_saved_sale_and_dnr_choices_survive_missing_salesforce_metadata(mod_brow
     )
     assert values == ['Roofing']
 
-    first.locator('[data-key=notes]').fill('Edited during metadata outage')
+    expect(first.locator('[data-key=notes]')).to_be_hidden()
+    first.locator('[data-key=redlines]').fill('Edited redline during metadata outage')
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
 
@@ -154,5 +155,6 @@ def test_saved_sale_and_dnr_choices_survive_missing_salesforce_metadata(mod_brow
         'Windows': {'price': '18000', 'deposit': '0'},
     }
     assert draft['dnr_reason'] == 'Roofing'
-    assert draft['notes'] == 'Edited during metadata outage'
+    assert draft['notes'] == 'Saved before metadata outage'
+    assert draft['redlines'] == 'Edited redline during metadata outage'
     assert not service.allow_salesforce_writes and writer.applied == []
