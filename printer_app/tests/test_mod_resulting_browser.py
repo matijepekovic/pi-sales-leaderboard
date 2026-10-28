@@ -357,6 +357,9 @@ def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, vi
     popup.locator('[data-sale-product="Roofing"] [data-sale-deposit]').fill('0')
     popup.locator('.sale-done').click()
     expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+    first.locator('.edit-sale-products').click()
+    expect(page.locator('.editor-dialog[open]')).to_have_count(1)
+    first.locator('.sale-panel .sale-done').click()
 
     first.locator('[data-key="dispo"]').select_option('cxl')
     popup = visible_popup('.cxl-panel[open]')
