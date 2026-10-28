@@ -322,12 +322,6 @@ class ResultingSalesforceAdapter:
             'products': self._options(
                 self._field(product, PR['product'], update=False, types=('picklist',))
             ),
-            'lead_status': self._options(
-                self._field(lead, LEAD_FIELDS['status'], types=('picklist',))
-            ),
-            'previous_results': self._options(
-                self._field(lead, LEAD_FIELDS['previous_result'], types=('picklist',))
-            ),
         }
 
     def _time_value(self, day, entered, field):
