@@ -388,3 +388,32 @@ def test_two_sales_to_same_lead_accumulate_both_pivots_without_overwriting():
     second_lead=_single(second_plan,'Lead')[3]
     assert first_lead['Product_Interest_lead__c']=='Roofing;Siding;Windows'
     assert second_lead['Product_Interest_lead__c']=='Roofing;Siding;Windows;Doors'
+
+
+def test_all_adapter_api_names_are_exactly_the_supplied_mapping():
+    assert WO == {
+        'dispo':'Dispo__c','status':'Status','mod':'MOD__c',
+        'notes':'MOD_Notes__c','call_1':'Call_1__c','call_2':'Call_2__c',
+        'docs':'Docs__c','ninety_min':'X90_Min__c',
+        'promotion':'Promotion__c','start_price':'Start_Price__c',
+        'final_price':'Price__c','deposit':'Deposit_Payment__c',
+        'need':'Need__c','want':'Want__c',
+    }
+    assert LEAD_FIELDS == {
+        'status':'Status','previous_result':'Previous_Result__c',
+        'dnr':'DNR_Do_Not_Reset__c','dnr_reason':'DNR_Reason__c',
+        'one_leg':'X1_Leg_Appointment__c',
+        'product_interest':'Product_Interest_lead__c',
+    }
+    assert SA == {
+        'status':'Status','work_order':'FSSK__FSK_Work_Order__c',
+    }
+    assert PR == {
+        'lead':'Lead__c','work_order':'Work_Order__c',
+        'product':'Product_Interest__c','result':'Result__c',
+        'detail':'Result_Detail__c','price':'Price_Given__c',
+        'one_leg':'PR_1_Leg_Appointment__c',
+        'free_lead':'Free_Product_Lead__c',
+        'cxl_at_lead':'CXL_Per_Redline__c',
+    }
+    assert PRODUCT_RESULT == 'Product_Interest_Result__c'
