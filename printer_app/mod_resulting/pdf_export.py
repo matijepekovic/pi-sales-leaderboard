@@ -5,7 +5,6 @@ Never changes the existing renderer or its three-sheets-per-page layout.
 from __future__ import annotations
 
 from io import BytesIO
-from decimal import Decimal
 from xml.sax.saxutils import escape
 
 from pypdf import PdfReader, PdfWriter
@@ -21,7 +20,7 @@ from ..mod_sheet_contract import ModSheetRecord
 from ..mod_sheets.pdf_renderer import MOD_TABLE_WIDTH, MOD_ROW_HEIGHTS, render_mod_pdf
 from .contract import (
     clean_draft, final_redline_text, note_runs_for_display,
-    prices, format_money, sold_products, individual_product_sales,
+    prices, format_money, deposit_payment_text,
 )
 
 
@@ -201,10 +200,7 @@ def _overlay_one(c,index,draft):
     automatic=prices(d['numbers'])
     start=d['start_price_override'] or automatic['highest']
     final=d['final_price_override'] or automatic['lowest']
-    sold=(sold_products(d) if d['dispo']=='sale' else individual_product_sales(d))
-    total=str(sum((Decimal(item['deposit']) for item in sold), Decimal('0'))) if sold else ''
-    deposit=d['deposit_override'] or total
-    for column, amount in ((4,start),(6,final),(8,deposit)):
+    for column, amount in ((4,start),(6,final)):
         if not amount:
             continue
         x,t=_location(index,column,4)
@@ -212,6 +208,11 @@ def _overlay_one(c,index,draft):
         width=stringWidth(value,'Times-Roman',6.5)
         # Preserve printed field labels and existing box borders.
         _write(c,x+COL_WIDTH*2-width-3,t+2,value,6.5)
+    deposit_payment=deposit_payment_text(d)
+    if deposit_payment:
+        x,t=_location(index,8,4)
+        width=stringWidth(deposit_payment,'Times-Roman',6.5)
+        _write(c,x+COL_WIDTH*2-width-3,t+2,deposit_payment,6.5)
 
     # Ink is placed inside the renderer's one and only MOD Notes area.
     x,t=_location(index,4,5)
