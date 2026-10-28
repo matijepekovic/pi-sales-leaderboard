@@ -2,13 +2,22 @@
 from pathlib import Path
 
 
-def test_viewport_owns_only_display_state_and_keeps_native_zoom_available():
+def test_dialog_viewport_owns_only_presentation_and_keeps_native_pinch():
     root = Path(__file__).parents[1]
-    js = (root / 'static/mod_resulting/viewport.js').read_text()
+    js = (root / 'static/mod_resulting/dialog_viewport.js').read_text()
     html = (root / 'templates/mod_resulting.html').read_text()
-    assert 'viewport.js' in html
-    assert 'data-zoom="1"' in html
-    for forbidden in ('fetch(', 'XMLHttpRequest', '/api/', 'data-key', 'preventDefault(', '.style.'):
+    css = (root / 'static/mod_resulting/dialog_viewport.css').read_text()
+    assert 'dialog_viewport.js' in html
+    assert 'dialog_viewport.css' in html
+    assert 'viewport.js' not in html
+    assert 'id="sheetZoom"' not in html
+    assert 'data-zoom=' not in html
+    assert 'visualViewport' in js and 'resize' in js and 'scroll' in js
+    assert 'mod-dialog-open' in js
+    assert '.editor-dialog[open]' in css
+    for forbidden in ('fetch(', 'XMLHttpRequest', '/api/', 'data-key',
+                      'preventDefault(', 'localStorage', 'sessionStorage',
+                      'document.createElement'):
         assert forbidden not in js
     for forbidden in ('user-scalable=no', 'maximum-scale=1'):
         assert forbidden not in html
@@ -30,4 +39,5 @@ def test_phone_scaling_does_not_override_print_layout():
     root = Path(__file__).parents[1]
     css = (root / 'static/mod_resulting/sheet.css').read_text()
     assert '@media screen and (max-width:900px)' in css
-    assert '@media print{.sheet-zoom,' in css
+    assert '@media print{.floating-controls,' in css
+    assert '.sheet-zoom' not in css and '[data-zoom' not in css
