@@ -59,6 +59,7 @@
  <div class="cell field-product replacement">
   <div class="product-summary"><b>Product Interest:</b> {{ sheet.product_interest }}</div>
   <label class="small-checkbox separate-products"><input type="checkbox" data-key="additional_products" {% if d.additional_products %}checked{% endif %}> Result individually</label>
+  <button type="button" class="edit-product-results" {% if not d.additional_products or d.dispo=='sale' %}hidden{% endif %}>Edit products</button>
   <dialog class="editor-dialog product-panel" aria-label="Individual product results">
    <div class="editor-heading">
     <div><h2>Results by product</h2><p>Set a different outcome for each original product.</p></div>
@@ -130,6 +131,7 @@
    <option value="oos" {% if d.dispo=='oos' %}selected{% endif %}>OOS</option>
   </select>
   <button type="button" class="edit-sale-products" {% if d.dispo!='sale' %}hidden{% endif %}>Products</button>
+  <button type="button" class="edit-cxl-details" {% if d.dispo!='cxl' %}hidden{% endif %}>CXL details</button>
  </div>
  <div class="cell field-extras replacement">
   {{ checkbox('one_leg','1 Leg',d.one_leg) }}
@@ -149,6 +151,7 @@
  <div class="cell field-ninety replacement">
   {{ checkbox('ninety_min','90 Min',d.ninety_min) }}
   {{ checkbox('dnr','DNR',d.dnr) }}
+  <button type="button" class="edit-dnr-reasons" {% if not d.dnr %}hidden{% endif %}>Reasons</button>
   <dialog class="editor-dialog dnr-panel" aria-label="DNR reasons">
    <div class="editor-heading">
     <div><h2>Do Not Reset</h2><p>Select every reason that applies.</p></div>
