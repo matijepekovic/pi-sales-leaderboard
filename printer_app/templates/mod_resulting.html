@@ -57,14 +57,8 @@
  </div>
  {% if xs|length > 1 %}
  <div class="cell field-product replacement">
-  <label class="product-choice"><b>Product Interest:</b>
-   <select data-key="primary_product" aria-label="Primary Product Interest">
-   {% for interest in xs %}{% if interest.strip() %}
-    <option value="{{ interest.strip() }}" {% if d.primary_product==interest.strip() %}selected{% endif %}>{{ interest.strip() }}</option>
-   {% endif %}{% endfor %}
-   </select>
-  </label>
-  <label class="small-checkbox"><input type="checkbox" data-key="additional_products" {% if d.additional_products %}checked{% endif %}> Result individually</label>
+  <div class="product-summary"><b>Product Interest:</b> {{ sheet.product_interest }}</div>
+  <label class="small-checkbox separate-products"><input type="checkbox" data-key="additional_products" {% if d.additional_products %}checked{% endif %}> Result individually</label>
   <div class="product-panel" hidden>
    <button class="close-popover" type="button" aria-label="Close product results">×</button>
    {% for product in xs %}{% if product.strip() %}
@@ -72,7 +66,7 @@
     <strong>{{ product.strip() }}</strong>
     <label>Result <select data-product-result>
       <option value="">Choose</option>
-      <option value="sale">Sale</option><option value="pns">Pitch No Sale</option>
+      <option value="pns">Pitch No Sale</option>
       <option value="np">No Pitch</option><option value="cxl">Canceled</option>
       <option value="nra">No Rep Available</option><option value="oos">Out of Scope</option>
     </select></label>
@@ -144,10 +138,10 @@
   <div class="dnr-panel" hidden>
    <button type="button" class="close-popover" aria-label="Close DNR reason">×</button>
    <label>DNR Reason
-    <select data-key="dnr_reason">
-     <option value="">Choose</option>
+    <select data-key="dnr_reason" multiple aria-label="DNR Reasons">
+     {% set selected_dnr = d.dnr_reason.split(';') %}
      {% for reason in dnr_reasons %}
-     <option value="{{ reason.value }}" {% if d.dnr_reason==reason.value %}selected{% endif %}>{{ reason.label }}</option>
+     <option value="{{ reason.value }}" {% if reason.value in selected_dnr %}selected{% endif %}>{{ reason.label }}</option>
      {% endfor %}
     </select>
    </label>
@@ -155,6 +149,31 @@
  </div>
  <div class="cell field-want">
   <b class="sr-only">Want:</b><textarea data-key="want" aria-label="Want" class="box-text">{{ d.want }}</textarea>
+ </div>
+ <div class="sale-panel" hidden>
+  <button type="button" class="close-popover" aria-label="Close sold products">×</button>
+  <strong>Sold products</strong>
+  {% if products %}
+   {% for product in products %}
+   {% set sold = d.sale_products.get(product.value) %}
+   <div class="sale-product-row" data-sale-product="{{ product.value }}">
+    <label class="sale-product-choice">
+     <input type="checkbox" data-sale-selected {% if sold %}checked{% endif %}>
+     <span>{{ product.label }}</span>
+    </label>
+    <label>Sale price
+     <input type="text" inputmode="decimal" data-sale-price value="{{ sold.price if sold else '' }}" placeholder="0">
+    </label>
+    <label>Deposit
+     <input type="text" inputmode="decimal" data-sale-deposit value="{{ sold.deposit if sold else '' }}" placeholder="0">
+    </label>
+   </div>
+   {% endfor %}
+  {% else %}
+   <p class="sale-products-unavailable">Salesforce product list unavailable.</p>
+  {% endif %}
+  <p class="sale-hint">Price 0 = not sold. Deposit 0 is valid.</p>
+  <button type="button" class="close-popover sale-done">Done</button>
  </div>
  <div class="cxl-panel" hidden>
   <label><input type="checkbox" data-key="cxl_at_lead" {% if d.cxl_at_lead %}checked{% endif %}> CXL At Lead</label>
