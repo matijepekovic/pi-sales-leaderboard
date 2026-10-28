@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 from datetime import datetime, time as wall_time
+from decimal import Decimal
 import time
 from pathlib import Path
 import os
 from zoneinfo import ZoneInfo
 
 from ..mod_sheet_contract import ModSheetRecord
-from .contract import clean_draft, outcome_fields, dnr_redline
+from .contract import (
+    clean_draft, final_redline_text, outcome_fields, sold_products,
+)
 
 
 class ResultingService:
@@ -87,10 +90,11 @@ class ResultingService:
             raise LookupError('This MOD sheet is not part of the selected day.')
         available = {name.strip() for name in
                      row['snapshot']['product_interest'].split(';') if name.strip()}
-        if data['primary_product'] and data['primary_product'] not in available:
-            raise ValueError('Choose a product listed on the MOD sheet.')
         if data['additional_products'] and not set(data['product_results']).issubset(available):
-            raise ValueError('Results must belong to a product on the MOD sheet.')
+            raise ValueError('Separate results must belong to a product on the MOD sheet.')
+        # Sale products deliberately are not limited to the original lead:
+        # pivot products are validated against Salesforce's live product list
+        # by the writer during End of Day preflight.
         return self.repository.save_draft(day, work_order_id, data, revision)
 
     @staticmethod
@@ -100,39 +104,63 @@ class ResultingService:
         if fields is None:
             raise ValueError('A disposition is required.')
         if draft['dnr'] and not draft['dnr_reason']:
-            raise ValueError('Choose a DNR Reason.')
-        if draft['dispo'] == 'sale' and not fields['price']['lowest']:
-            raise ValueError('Sale requires a numeric price in MOD Notes.')
-        available_products = [part.strip() for part in
-                    sheet['snapshot']['product_interest'].split(';') if part.strip()]
-        if not available_products:
-            raise ValueError('Product Interest is required for resulting.')
-        primary = draft['primary_product'] or available_products[0]
-        if primary not in available_products:
-            raise ValueError('Choose a product listed on the MOD sheet.')
-        products = available_products if draft['additional_products'] else [primary]
-        per_product = draft['product_results'] if draft['additional_products'] else {}
-        if draft['additional_products'] and set(per_product) != set(products):
-            raise ValueError('Result each selected product or uncheck additional products.')
-        results = [{
-            'product': product,
-            'result': (per_product[product]['result'] if per_product else draft['dispo']),
-            'detail': (per_product[product]['detail'] if per_product
-                       else draft['result_detail']),
-        } for product in products]
-        if draft['dispo'] == 'nra' and not fields['work_order_status']:
-            raise ValueError('The Work Order status for NRA requires verification.')
-        redlines = draft['redlines'].strip()
-        if draft['dnr'] and draft['dnr_reason']:
-            reason = dnr_redline(draft['dnr_reason'])
-            if reason.casefold() not in redlines.casefold():
-                redlines = (redlines + '\n' + reason).strip()
+            raise ValueError('Choose at least one DNR Reason.')
+
+        original_products = [
+            part.strip() for part in
+            sheet['snapshot'].get('product_interest', '').split(';')
+            if part.strip()
+        ]
+        if draft['dispo'] == 'sale':
+            sales = sold_products(draft)
+            if not sales:
+                raise ValueError('Select at least one sold product with a price greater than 0.')
+            results = [{
+                'product': item['product'],
+                'result': 'sale',
+                'detail': draft['result_detail'],
+                'price': item['price'],
+                'deposit': item['deposit'],
+            } for item in sales]
+            deposit_total = str(sum(
+                (Decimal(item['deposit']) for item in sales), Decimal('0')
+            ))
+        else:
+            if not original_products:
+                raise ValueError('Product Interest is required for resulting.')
+            if draft['additional_products']:
+                per_product = draft['product_results']
+                if set(per_product) != set(original_products):
+                    raise ValueError(
+                        'Result every original product or uncheck Result individually.'
+                    )
+                results = [{
+                    'product': product,
+                    'result': per_product[product]['result'],
+                    'detail': per_product[product]['detail'],
+                    'price': '',
+                    'deposit': '',
+                } for product in original_products]
+            else:
+                # Default behavior: every original product receives the
+                # authoritative main Dispo/result and the main Result Detail.
+                results = [{
+                    'product': product,
+                    'result': draft['dispo'],
+                    'detail': draft['result_detail'],
+                    'price': '',
+                    'deposit': '',
+                } for product in original_products]
+            deposit_total = ''
+
         return dict(
             day=sheet['day'], work_order_id=sheet['work_order_id'],
             work_order_number=sheet['snapshot']['work_order_number'],
             lead_id=sheet['snapshot'].get('lead_source_id', ''),
             mod_id=mod_id, dispo=draft['dispo'], fields=fields,
-            draft=draft, product_results=results, final_redlines=redlines,
+            draft=draft, product_results=results,
+            deposit_total=deposit_total,
+            final_redlines=final_redline_text(draft),
         )
 
     def submit(self, day):
