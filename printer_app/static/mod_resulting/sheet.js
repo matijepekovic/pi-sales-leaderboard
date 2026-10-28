@@ -329,11 +329,9 @@
     const leadButton = sheet.querySelector('.edit-lead-status');
     function syncDnrLeadStatus() {
       const dnrChecked = !!sheet.querySelector('[data-key="dnr"]')?.checked;
-      const leadSelect = leadDialog?.querySelector('[data-key="lead_status"]');
+      const select = leadDialog?.querySelector('[data-key="lead_status"]');
       const hint = leadDialog?.querySelector('.dnr-lead-status-hint');
-      // DNR overrides the *effective* Lead Status, not the saved manual
-      // choice. When unchecked, the manual choice is editable again.
-      if (leadSelect) leadSelect.disabled = dnrChecked;
+      if (select) select.disabled = dnrChecked;
       if (hint) hint.hidden = !dnrChecked;
     }
     syncDnrLeadStatus();
@@ -348,21 +346,22 @@
     if (dnrButton) dnrButton.hidden = !init.dnr;
     function syncPricePreviews() {
       for (const key of ('start_price_override', 'final_price_override', 'deposit_override')) {
-        const input = sheet.querySelector('[data-key="' + key + '"]');
+        const input = priceDialog?.querySelector('[data-key="' + key + '"]');
         const preview = sheet.querySelector('[data-price-display="' + key + '"]');
         if (preview && input) preview.textContent = input.value ? '$' + input.value : '';
       }
     }
     syncPricePreviews();
-    // These controls live in native <dialog> top-layer. Bind the actual
-    // inputs, rather than relying on an event bubbling to the PDF overlay.
-    // Mirror their values immediately and then persist the draft normally.
     priceDialog?.querySelectorAll('input[data-key$="_override"]').forEach(input => {
       input.addEventListener('input', () => {
         const preview = sheet.querySelector(
           '[data-price-display="' + input.dataset.key + '"]'
         );
-        if (preview) preview.textContent = input.value ? '
+        if (preview) preview.textContent = input.value ? '$' + input.value : '';
+        redraw();
+      });
+    });
+    priceDialog?.addEventListener('close', syncPricePreviews);
     syncSaleRows();
     if (sheet.dataset.submitted === 'yes') {
       for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
@@ -486,205 +485,9 @@
     sheet.querySelector('[data-lead-trigger]')?.addEventListener(
       'click', () => openDialog(leadDialog, '[data-key="lead_status"]')
     );
-    for (const price of sheet.querySelectorAll('[data-price-trigger]')) {
-      price.addEventListener('click', () => {
-        openDialog(priceDialog, '[data-key="' + price.dataset.priceTrigger + '"]');
-      });
-    }
-    cxlButton?.addEventListener('click', () => openDialog(cxl, '[data-key="cxl_at_lead"]'));
-    productButton?.addEventListener('click', () => openDialog(product, '[data-product-result]'));
-    dnrButton?.addEventListener('click', () => openDialog(dnr, '[data-reason-choice]'));
-    sale?.querySelector('.sale-product-filter')?.addEventListener('input', filterSaleRows);
-    for (const button of sheet.querySelectorAll('[data-time-trigger]')) {
-      button.addEventListener('click', () => openTimePicker(sheet, button.dataset.timeTrigger));
-    }
-  }
-  for (const sheet of sheets) setup(sheet);
-  search.addEventListener('input', applyVisibility);
-  hideCompleted.addEventListener('change', applyVisibility);
-  applyVisibility();
-
-  dayMod.addEventListener('change', async () => {
-    try {
-      if (!dayMod.value) throw new Error('Choose a MOD from Salesforce.');
-      const result = await post(root.dataset.mod, {mod_user_id:dayMod.value});
-      message('MOD for today: ' + result.mod);
-    } catch (error) { message(error.message); }
-  });
-  document.getElementById('refresh').addEventListener('click', async event => {
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      await flushAll();
-      const result = await post(root.dataset.refresh);
-      message('Pulled ' + result.count + ' MOD sheets. Reloading…');
-      location.reload();
-    } catch (error) { message(error.message); button.disabled = false; }
-  });
-
-  const confirmation = document.getElementById('endConfirm');
-  const submitButton = document.getElementById('submitDay');
-  document.getElementById('cancelEnd').addEventListener('click', () => closeDialog(confirmation));
-  document.getElementById('cancelEndSecondary').addEventListener('click', () => closeDialog(confirmation));
-  submitButton.addEventListener('click', async () => {
-    try {
-      await flushAll();
-      if (!dayMod.value) throw new Error('Select the MOD for this day before submission.');
-      const count = sheets.filter(s => s.dataset.dispo && s.dataset.submitted !== 'yes').length;
-      if (!count) throw new Error('No new MOD sheets have a disposition.');
-      document.getElementById('reviewCount').textContent =
-        count + ' resulted sheet(s). Sheets without a disposition are excluded. MOD: '
-        + dayMod.selectedOptions[0].textContent;
-      openDialog(confirmation, '#cancelEndSecondary');
-    } catch (error) { message(error.message); }
-  });
-  document.getElementById('confirmEnd').addEventListener('click', async event => {
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      await flushAll();
-      const result = await post(root.dataset.submit);
-      closeDialog(confirmation);
-      message('Submitted ' + result.submitted + ' MOD sheet(s) to Salesforce.');
-      location.reload();
-    } catch (error) {
-      closeDialog(confirmation);
-      message('Submission stopped: ' + error.message);
-    } finally { button.disabled = false; }
-  });
-})(); + input.value : '';
-        redraw();
-      });
-    });
-    priceDialog?.addEventListener('close', () => {
-      syncPricePreviews();
-    });
-    syncSaleRows();
-    if (sheet.dataset.submitted === 'yes') {
-      for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
-      return;
-    }
-    const reasonSelect = sheet.querySelector('[data-key="dnr_reason"]');
-    const reasonChoices = [...sheet.querySelectorAll('[data-reason-choice]')];
-    function syncReasonSelect() {
-      if (!reasonSelect) return;
-      const checked = new Set(reasonChoices.filter(input => input.checked).map(input => input.value));
-      for (const option of reasonSelect.options) option.selected = checked.has(option.value);
-    }
-    function syncReasonChoices() {
-      if (!reasonSelect) return;
-      const selected = new Set([...reasonSelect.selectedOptions].map(option => option.value));
-      for (const input of reasonChoices) input.checked = selected.has(input.value);
-    }
-    syncReasonChoices();
-    function filterSaleRows() {
-      if (!sale) return;
-      const needle = sale.querySelector('.sale-product-filter')?.value.trim().toLocaleLowerCase() || '';
-      for (const row of sale.querySelectorAll('[data-sale-product]')) {
-        row.hidden = !row.dataset.saleProduct.toLocaleLowerCase().includes(needle);
-      }
-    }
-    function syncSaleRows() {
-      let count = 0;
-      for (const row of sheet.querySelectorAll('[data-sale-product]')) {
-        const selected = row.querySelector('[data-sale-selected]');
-        const enabled = !!selected?.checked;
-        if (enabled) count++;
-        for (const field of row.querySelectorAll('[data-sale-price],[data-sale-deposit]')) {
-          field.disabled = !enabled;
-        }
-      }
-      const summary = sale?.querySelector('.sale-product-count');
-      if (summary) summary.textContent = count + ' selected';
-    }
-    function openSale() {
-      if (!sale) return;
-      const filter = sale.querySelector('.sale-product-filter');
-      if (filter) filter.value = '';
-      filterSaleRows();
-      openDialog(sale, '.sale-product-filter');
-    }
-    function redraw() {
-      const draft = serialize(sheet);
-      sheet.dataset.dispo = draft.dispo;
-      syncNoteMode();
-      dnrPreview(sheet,draft);
-      resultDetailPreview(sheet,draft);
-      syncPricePreviews();
-      syncDnrLeadStatus();
-      applyVisibility();
-      scheduleSave(sheet);
-    }
-    function showRelated(input) {
-      const draft = serialize(sheet);
-      if (separate) separate.hidden = draft.dispo === 'sale';
-      if (productButton) productButton.hidden = draft.dispo === 'sale' || !draft.additional_products;
-      if (cxlButton) cxlButton.hidden = draft.dispo !== 'cxl';
-      if (dnrButton) dnrButton.hidden = !draft.dnr;
-      if (input.dataset.key === 'dispo') {
-        if (saleButton) saleButton.hidden = draft.dispo !== 'sale';
-        if (draft.dispo === 'cxl') openDialog(cxl, '[data-key="cxl_at_lead"]');
-        else if (draft.dispo === 'sale') openSale();
-        else {
-          closeDialog(cxl);
-          closeDialog(sale);
-        }
-        if (draft.dispo === 'sale') closeDialog(product);
-      }
-      if (input.dataset.key === 'dnr') {
-        if (draft.dnr) {
-          openDialog(dnr, '[data-reason-choice]');
-        } else {
-          reasonChoices.forEach(choice => { choice.checked = false; });
-          syncReasonSelect();
-          closeDialog(dnr);
-        }
-      }
-      if (input.dataset.key === 'additional_products' && product && draft.dispo !== 'sale') {
-        if (draft.additional_products) openDialog(product, '[data-product-result]');
-        else closeDialog(product);
-      }
-      if (input.matches?.('[data-sale-selected]')) syncSaleRows();
-      if (input.matches?.('[data-key="dnr_reason"]')) syncReasonChoices();
-    }
-    sheet.addEventListener('change', event => {
-      const input = event.target;
-      if (!(input instanceof HTMLElement)) return;
-      if (input.matches('[data-reason-choice]')) {
-        syncReasonSelect();
-        redraw();
-      } else if (input.matches('[data-key],[data-product-result],[data-product-detail],[data-sale-selected]')) {
-        showRelated(input);
-        syncIndividualSaleRows();
-        redraw();
-      }
-    });
-    sheet.addEventListener('input', event => {
-      const input = event.target;
-      if (!(input instanceof HTMLElement)) return;
-      if (input.dataset.key === 'notes') {
-        sheet._noteRuns = changedNoteRuns(
-          sheet._noteRuns, input.value, !!sheet.querySelector('[data-key="dispo"]').value
-        );
-        renderNoteRuns();
-      }
-      if (input.dataset.key === 'call_1' || input.dataset.key === 'call_2') {
-        const mobile = sheet.querySelector('.mobile-call-actions [data-time-trigger="' + input.dataset.key + '"]');
-        if (mobile) {
-          const label = input.dataset.key === 'call_1' ? 'Call 1' : 'Call 2';
-          mobile.textContent = label + ': ' + (input.value || 'Set time');
-        }
-      }
-      if (input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-product-price],[data-product-deposit]')) redraw();
-    });
-    saleButton?.addEventListener('click', openSale);
-    leadButton?.addEventListener('click', () => openDialog(leadDialog, '[data-key="lead_status"]'));
-    sheet.querySelector('[data-lead-trigger]')?.addEventListener(
-      'click', () => openDialog(leadDialog, '[data-key="lead_status"]')
-    );
-    for (const price of sheet.querySelectorAll('[data-price-trigger]')) {
-      price.addEventListener('click', () => {
-        openDialog(priceDialog, '[data-key="' + price.dataset.priceTrigger + '"]');
+    for (const button of sheet.querySelectorAll('[data-price-trigger]')) {
+      button.addEventListener('click', () => {
+        openDialog(priceDialog, '[data-key="' + button.dataset.priceTrigger + '"]');
       });
     }
     cxlButton?.addEventListener('click', () => openDialog(cxl, '[data-key="cxl_at_lead"]'));
