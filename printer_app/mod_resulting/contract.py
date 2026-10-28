@@ -255,13 +255,18 @@ def deposit_payment_text(draft):
     """
     sales = (sold_products(draft) if draft.get('dispo') == 'sale'
              else individual_product_sales(draft))
+    def plain_amount(value):
+        # Reuse the established money formatter; remove only the currency
+        # symbol and grouping while retaining two significant cents digits.
+        return format_money(value)[1:].replace(',', '') if str(value).strip() else ''
+
     override = draft.get('deposit_override', '')
     if not sales:
-        return money_text(override)
-    deposit = (money_text(override) if override else
-               money_text(sum((_money(item['deposit']) for item in sales), Decimal('0'))))
+        return plain_amount(override)
+    deposit = (plain_amount(override) if override else
+               plain_amount(sum((_money(item['deposit']) for item in sales), Decimal('0'))))
     payments = [item['payment'] for item in sales if item['payment']]
-    payment = (money_text(sum((_money(value) for value in payments), Decimal('0')))
+    payment = (plain_amount(sum((_money(value) for value in payments), Decimal('0')))
                if payments else '')
     return deposit + '/' + payment
 
