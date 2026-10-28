@@ -239,10 +239,9 @@ def individual_product_sales(draft):
 def deposit_payment_amounts(draft):
     """Combined Work Order display with separate normalized numeric amounts.
 
-    Only positively priced sold products count. Monthly payments remain notes
-    data; the Salesforce WorkOrder.Deposit_Payment__c currency field receives
-    the numeric deposit alone. Optional manual totals override display/writes
-    without altering any individual product sale.
+    Only positively priced sold products count. Monthly payments remain
+    display/notes data; only the numeric deposit goes through the writer's
+    amount contract. Optional manual totals do not change product sales.
     """
     sales = (sold_products(draft) if draft.get('dispo') == 'sale'
              else individual_product_sales(draft))

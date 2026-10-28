@@ -461,7 +461,8 @@
     const combinedInput = priceDialog?.querySelector('[data-combined-amount]');
     const depositOverride = priceDialog?.querySelector('[data-key="deposit_override"]');
     const paymentOverride = priceDialog?.querySelector('[data-key="payment_override"]');
-    function syncPricePreviews(draft = serialize(sheet)) {
+    function syncPricePreviews() {
+      const draft = serialize(sheet);
       for (const key of ('start_price_override', 'final_price_override')) {
         const input = priceDialog?.querySelector('[data-key="' + key + '"]');
         const preview = sheet.querySelector('[data-price-display="' + key + '"]');
@@ -473,9 +474,6 @@
       if (combinedInput && document.activeElement !== combinedInput) combinedInput.value = text;
     }
     syncPricePreviews();
-    priceDialog?.querySelectorAll('[data-key="start_price_override"],[data-key="final_price_override"]').forEach(input => {
-      input.addEventListener('input', () => redraw());
-    });
     combinedInput?.addEventListener('input', () => {
       const parsed = parseCombinedInput(combinedInput.value);
       if (parsed === null) {
@@ -545,7 +543,7 @@
       dnrPreview(sheet,draft);
       resultDetailPreview(sheet,draft);
       salePreview(sheet,draft);
-      syncPricePreviews(draft);
+      syncPricePreviews();
       applyVisibility();
       scheduleSave(sheet);
     }

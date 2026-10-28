@@ -181,7 +181,7 @@ class ResultingService:
                         'deposit': '',
                     })
         # One normalized calculation for the on-sheet / PDF deposit and
-        # monthly payment totals. Only the deposit goes to Salesforce currency.
+        # monthly payment totals. Only the deposit goes to the numeric writer.
         deposit_total = deposit_payment_amounts(draft)['deposit']
 
         return dict(
