@@ -217,6 +217,46 @@
     const cents = (match[2] || '').padEnd(2, '0');
     return '$' + grouped + (cents && cents !== '00' ? '.' + cents : '');
   }
+
+  // Deposit/payment is presentation-only. The Salesforce Work Order deposit
+  // remains numeric and monthly payments remain in the Sale note details.
+  function moneyCents(input) {
+    const value = String(input ?? '').trim();
+    const match = /^\$?\s*(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?$/.exec(value);
+    if (!match) return null;
+    return BigInt(match[1].replaceAll(',', '')) * 100n +
+      BigInt((match[2] || '').padEnd(2, '0'));
+  }
+  function centsText(cents) {
+    const whole = (cents / 100n).toString();
+    const fraction = (cents % 100n).toString().padStart(2, '0');
+    return fraction === '00' ? whole : whole + '.' + fraction;
+  }
+  function depositPaymentSummary(draft) {
+    const mainSale = draft.dispo === 'sale';
+    const entries = mainSale ? draft.sale_products :
+      draft.additional_products ? draft.product_results : {};
+    let hasSale = false, hasPayment = false;
+    let deposit = 0n, payment = 0n;
+    for (const info of Object.values(entries || {})) {
+      if (!mainSale && info.result !== 'sale') continue;
+      const price = moneyCents(info.price);
+      const amount = moneyCents(info.deposit);
+      if (price === null || price === 0n || amount === null) continue;
+      hasSale = true;
+      deposit += amount;
+      const monthly = moneyCents(info.payment);
+      if (monthly !== null) {
+        hasPayment = true;
+        payment += monthly;
+      }
+    }
+    const override = moneyCents(draft.deposit_override);
+    if (!hasSale && override === null) return '';
+    const depositText = centsText(override !== null ? override : deposit);
+    return hasSale ? depositText + '/' + (hasPayment ? centsText(payment) : '') :
+      depositText;
+  }
   function salePreview(sheet, draft) {
     const display = sheet.querySelector('.sale-in-redline');
     if (!display) return;
@@ -343,6 +383,8 @@
     const noteArea = sheet.querySelector('.notes-text');
     const noteInput = sheet.querySelector('.mod-notes-input');
     const noteMirror = sheet.querySelector('.mod-notes-display');
+    const redPen = sheet.querySelector('.redline-pen');
+    sheet._redInk = false;
     let noteRuns;
     if (Array.isArray(init.note_runs) && init.note_runs.length) {
       noteRuns = init.note_runs.map(run => ({text:run.text,red:run.red}));
@@ -357,7 +399,7 @@
     function renderNoteRuns() {
       const elements = sheet._noteRuns.map(run => {
         const part = document.createElement('span');
-        if (run.red) part.className = 'after-dispo';
+        if (run.red) part.className = 'redline-ink';
         part.textContent = run.text;
         return part;
       });
@@ -366,13 +408,23 @@
       noteMirror.scrollTop = noteInput.scrollTop;
     }
     function syncNoteMode() {
-      // A disposition changes the ink used by FUTURE input only.
-      // Existing black/red characters never get recolored.
-      noteArea.dataset.notesMode =
-        sheet.querySelector('[data-key="dispo"]').value ? 'red' : 'black';
+      // Only the pen changes future ink. Dispo never recolors MOD Notes.
+      noteArea.dataset.notesMode = sheet._redInk ? 'red' : 'black';
+      redPen?.setAttribute('aria-pressed', String(sheet._redInk));
+      if (redPen) {
+        const title = sheet._redInk ? 'Return to black MOD Notes' :
+          'Use red pen for MOD Notes';
+        redPen.setAttribute('aria-label', title);
+        redPen.title = title;
+      }
     }
     renderNoteRuns();
     syncNoteMode();
+    redPen?.addEventListener('click', () => {
+      sheet._redInk = !sheet._redInk;
+      syncNoteMode();
+      noteInput.focus({preventScroll:true});
+    });
     noteInput.addEventListener('scroll', () => {
       noteMirror.scrollTop = noteInput.scrollTop;
     });
@@ -391,23 +443,18 @@
     if (cxlButton) cxlButton.hidden = init.dispo !== 'cxl';
     if (dnrButton) dnrButton.hidden = !init.dnr;
     function syncPricePreviews() {
-      for (const key of ('start_price_override', 'final_price_override', 'deposit_override')) {
+      for (const key of ('start_price_override', 'final_price_override')) {
         const input = priceDialog?.querySelector('[data-key="' + key + '"]');
         const preview = sheet.querySelector('[data-price-display="' + key + '"]');
         if (preview && input) preview.textContent = input.value ? '$' + input.value : '';
       }
+      const total = depositPaymentSummary(serialize(sheet));
+      const display = sheet.querySelector('[data-price-display="deposit_override"]');
+      const summary = priceDialog?.querySelector('[data-deposit-payment-summary]');
+      if (display) display.textContent = total;
+      if (summary) summary.textContent = total;
     }
     syncPricePreviews();
-    priceDialog?.querySelectorAll('input[data-key$="_override"]').forEach(input => {
-      input.addEventListener('input', () => {
-        const preview = sheet.querySelector(
-          '[data-price-display="' + input.dataset.key + '"]'
-        );
-        if (preview) preview.textContent = input.value ? '$' + input.value : '';
-        redraw();
-      });
-    });
-    priceDialog?.addEventListener('close', syncPricePreviews);
     syncSaleRows();
     if (sheet.dataset.submitted === 'yes') {
       for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
@@ -508,7 +555,7 @@
       if (!(input instanceof HTMLElement)) return;
       if (input.dataset.key === 'notes') {
         sheet._noteRuns = changedNoteRuns(
-          sheet._noteRuns, input.value, !!sheet.querySelector('[data-key="dispo"]').value
+          sheet._noteRuns, input.value, sheet._redInk
         );
         renderNoteRuns();
       }

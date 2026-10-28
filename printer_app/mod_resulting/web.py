@@ -5,6 +5,7 @@ import json
 
 from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request, send_file
 
+from .contract import deposit_payment_text
 from .surface import SheetSurfaceError, overlay_css
 
 
@@ -67,6 +68,7 @@ def blueprint(service, surface):
             result_details=choices['result_details'],
             dnr_reasons=choices['dnr_reasons'],
             products=choices.get('products', []),
+            deposit_payment_text=deposit_payment_text,
             live_writes_enabled=service.allow_salesforce_writes,
             notice=notice,
         )

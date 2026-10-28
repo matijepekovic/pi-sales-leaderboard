@@ -235,6 +235,47 @@ def individual_product_sales(draft):
     return tuple(sold)
 
 
+def deposit_payment_text(draft):
+    """Human-readable combined sold-product deposit/payment, never a Salesforce field.
+
+    Incomplete edits remain blank until a positive-price sold product has a
+    deposit. A legacy deposit override still affects only the deposit side;
+    payments remain sourced from the individual sold products.
+    """
+    main_sale = draft.get('dispo') == 'sale'
+    entries = (draft.get('sale_products') or {}) if main_sale else (
+        draft.get('product_results') or {} if draft.get('additional_products') else {}
+    )
+    deposits = Decimal('0')
+    payments = Decimal('0')
+    has_sale = False
+    has_payment = False
+    for info in entries.values():
+        if not main_sale and info.get('result') != 'sale':
+            continue
+        price = _money(info.get('price', ''))
+        deposit = _money(info.get('deposit', ''))
+        if price is None or price == 0 or deposit is None:
+            continue
+        has_sale = True
+        deposits += deposit
+        payment = _money(info.get('payment', ''))
+        if payment is not None:
+            has_payment = True
+            payments += payment
+
+    override = _money(draft.get('deposit_override', ''))
+    if not has_sale and override is None:
+        return ''
+
+    def amount_text(value):
+        whole, _, cents = f'{value:.2f}'.partition('.')
+        return whole if cents == '00' else whole + '.' + cents
+
+    result = amount_text(override if override is not None else deposits)
+    return result + '/' + (amount_text(payments) if has_payment else '') if has_sale else result
+
+
 def sale_redlines(draft):
     sales = (sold_products(draft) if draft.get('dispo') == 'sale'
              else individual_product_sales(draft))

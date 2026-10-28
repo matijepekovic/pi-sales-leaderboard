@@ -155,6 +155,45 @@ def test_saved_sale_and_dnr_choices_survive_missing_salesforce_metadata(mod_brow
     assert not service.allow_salesforce_writes and writer.applied == []
 
 
+def test_sale_popup_done_stays_in_dialog_with_and_without_keyboard(mod_browser):
+    from playwright.sync_api import expect
+
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.goto(origin + '/mod-resulting')
+    page.locator('.mod-sheet').first.locator('[data-key=dispo]').select_option('sale')
+    dialog = page.locator('.sale-panel[open]').first
+    expect(dialog).to_be_visible()
+    expect(dialog).to_have_css('transform', 'none')
+
+    def footer_inside_dialog():
+        popup = dialog.bounding_box()
+        footer = dialog.locator('.editor-footer').bounding_box()
+        assert popup is not None and footer is not None
+        assert popup['y'] - 1 <= footer['y']
+        assert footer['y'] + footer['height'] <= popup['y'] + popup['height'] + 1
+
+    footer_inside_dialog()
+
+    # Emulate the keyboard reducing the visual viewport at normal page scale.
+    page.evaluate("""() => {
+      const fake = new EventTarget();
+      Object.assign(fake, {
+        width: 390, height: 300, scale: 1, offsetLeft: 0, offsetTop: 0
+      });
+      Object.defineProperty(window, 'visualViewport', {
+        configurable: true, value: fake
+      });
+      window.dispatchEvent(new Event('resize'));
+    }""")
+    expect(dialog).to_have_css('max-height', '284px')
+    footer_inside_dialog()
+    assert dialog.locator('.editor-body').evaluate(
+        '(element) => element.scrollHeight > element.clientHeight')
+    assert page.locator('[style]').count() == 0
+    assert page.evaluate('window.modCspViolations') == []
+
+
 def test_popup_tracks_visible_viewport_when_zoomed_or_keyboard_opens(mod_browser):
     from playwright.sync_api import expect
 

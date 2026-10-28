@@ -11,6 +11,8 @@ def test_mod_sheet_javascript_syntax_and_single_binding():
         'function redraw()',
         'function setup(sheet)',
         'function syncPricePreviews()',
+        'function depositPaymentSummary(draft)',
+        'function syncNoteMode()',
         'const priceDialog =',
     ):
         assert source.count(anchor) == 1, (anchor, source.count(anchor))

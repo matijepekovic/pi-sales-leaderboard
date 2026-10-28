@@ -17,7 +17,17 @@ def test_dialog_viewport_owns_only_presentation_and_keeps_native_pinch():
     assert 'mod-dialog-opening' in js
     assert 'initial-scale=1.001' in js
     assert "sheets.dataset.zoom = '1'" in js
-    assert 'mod-dialog-opening' in (root / 'static/mod_resulting/sheet.js').read_text()
+    sheet_js = (root / 'static/mod_resulting/sheet.js').read_text()
+    sheet_css = (root / 'static/mod_resulting/sheet.css').read_text()
+    assert 'mod-dialog-opening' in sheet_js
+    assert 'function depositPaymentSummary(draft)' in sheet_js
+    assert "sheet._redInk ? 'red' : 'black'" in sheet_js
+    assert "value ? 'red' : 'black'" not in sheet_js
+    assert 'redline-pen' in html
+    assert 'aria-pressed="false"' in html
+    assert 'Total Deposit' not in html
+    assert '.editor-dialog[open]{display:flex;flex-direction:column;overflow:hidden}' in sheet_css
+    assert '.editor-dialog .editor-body{flex:1 1 auto;min-height:0;overflow-y:auto' in sheet_css
     assert '.editor-dialog[open]' in css
     for forbidden in ('fetch(', 'XMLHttpRequest', '/api/', 'data-key',
                       'preventDefault(', 'localStorage', 'sessionStorage',

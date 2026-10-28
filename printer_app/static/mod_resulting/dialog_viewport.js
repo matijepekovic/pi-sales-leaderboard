@@ -35,6 +35,15 @@
       return;
     }
     const view = viewport();
+    // At normal zoom with no keyboard, use native centered dialog geometry.
+    // A pinch or a keyboard-reduced visual viewport needs manual positioning.
+    if (Math.abs(view.scale - 1) < 0.01 &&
+        Math.abs(view.left) < 1 && Math.abs(view.top) < 1 &&
+        Math.abs(view.width - window.innerWidth) <= 24 &&
+        view.height >= window.innerHeight - 140) {
+      reset();
+      return;
+    }
     const wide = active.classList.contains('sale-panel') ||
       active.classList.contains('product-panel');
     const preferredWidth = wide ? 600 :
