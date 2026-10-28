@@ -59,14 +59,14 @@ def test_phone_fit_zoom_pan_and_refresh_keep_the_actual_sheet(mod_browser, viewp
     assert page.locator('#zoomIn').bounding_box()['x'] + page.locator('#zoomIn').bounding_box()['width'] <= width
     # Only presentation scales: the original controls and normal save path remain.
     first.locator('[data-key=notes]').fill('Phone black notes')
-    first.locator('[data-key=redlines]').fill('PHONE REDLINE')
+    expect(first.locator('[data-key=redlines]')).to_be_hidden()
     first.locator('[data-key=review]').check()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(first).to_have_class('mod-sheet surface-ready')
     expect(page.locator('#sheets')).to_have_attribute('data-zoom', '3')
     expect(first.locator('[data-key=notes]')).to_have_value('Phone black notes')
-    expect(first.locator('[data-key=redlines]')).to_have_value('PHONE REDLINE')
+    expect(first.locator('[data-key=redlines]')).to_be_hidden()
     expect(first.locator('[data-key=review]')).to_be_checked()
     saved = service.repository.sheets(service.day())[0]['draft']
     assert saved['notes'] == 'Phone black notes' and saved['review'] is True
