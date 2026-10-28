@@ -33,6 +33,28 @@ def blueprint(service, surface):
             # other local controls remain available when metadata is offline.
             choices = {'result_details':[], 'dnr_reasons':[], 'products':[]}
             current_app.logger.warning('MOD resulting Salesforce picklists unavailable.')
+        # Existing draft selections are grounded values, not guessed picklist
+        # options. Keep them visible and lossless through offline Refresh.
+        # The Salesforce writer independently validates every option before
+        # any write is permitted.
+        for sheet in data['sheets']:
+            draft = sheet['draft']
+            for value in str(draft.get('dnr_reason') or '').split(';'):
+                value = value.strip()
+                if value and not any(o['value'] == value for o in choices['dnr_reasons']):
+                    choices['dnr_reasons'].append({'value': value, 'label': value})
+            details = [draft.get('result_detail', '')]
+            details.extend(
+                str(item.get('detail') or '')
+                for item in draft.get('product_results', {}).values()
+                if isinstance(item, dict)
+            )
+            for value in details:
+                if value and not any(o['value'] == value for o in choices['result_details']):
+                    choices['result_details'].append({'value': value, 'label': value})
+            for value in draft.get('sale_products', {}):
+                if value and not any(o['value'] == value for o in choices['products']):
+                    choices['products'].append({'value': value, 'label': value})
         return render_template(
             'mod_resulting.html',
             data=data, users=users,
