@@ -34,9 +34,12 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .notes-content{position:absolute;inset:2.05cqw .2cqw .2cqw;display:flex;gap:.4cqw;min-height:0}
 .notes-content textarea{display:block;resize:none;line-height:1.15;width:100%;padding:0;white-space:pre-wrap}
 .notes-content textarea[data-key=numbers]{width:21%;flex:none}
+.mod-sheet .redline-pen{position:absolute;z-index:7;top:.16cqw;right:.24cqw;display:flex;align-items:center;justify-content:center;width:max(22px,1.9cqw);height:max(22px,1.9cqw);min-height:0;padding:0;border:1px solid #b00000;border-radius:50%;background:#fff;color:#b00000;font:max(14px,1.25cqw)/1 system-ui,sans-serif;cursor:pointer}
+.mod-sheet .redline-pen.active{background:#b00000;color:#fff}
+.mod-sheet .redline-pen:focus-visible{outline:2px solid #b00000;outline-offset:1px}
 /* One native MOD Notes input; an accessible, pointer-transparent mirror
-   colors only the characters actually entered after Dispo. The input retains
-   text selection, caret and mobile keyboard behavior. */
+   colors only characters entered while the explicit redline pen is active.
+   The input retains text selection, caret and mobile keyboard behavior. */
 .notes-text{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
 .mod-notes-editor{position:relative;flex:1;min-height:0;min-width:0}
 .notes-text .mod-notes-editor textarea[data-key=notes]{position:relative;z-index:1;display:block;height:100%;width:100%;color:#000;font-size:1.57cqw;font-weight:400;line-height:1.15;resize:none;white-space:pre-wrap;overflow-wrap:break-word}
@@ -119,6 +122,7 @@ body.dialog-open{overflow:hidden}
 .price-fields{display:flex;flex-direction:column;gap:9px}
 .price-fields label{display:flex;flex-direction:column;gap:4px}
 .price-fields input{width:100%}
+.deposit-payment-summary{display:block;width:100%;min-height:44px;padding:8px 10px;border:1px solid #aeb6c2;border-radius:6px;background:#f8fafc;color:#17212d;font:600 16px/1.25 system-ui,-apple-system,sans-serif}
 .end-dialog{width:min(480px,calc(100vw - 28px))}
 .end-dialog #reviewCount{line-height:1.5;color:#344156;font-size:14px}
 .sheet-message{position:absolute;z-index:22;bottom:101%;left:0;font:12px system-ui,sans-serif;color:#8c341b;background:#fff9de;padding:5px 8px;border:1px solid #e8cf86}
@@ -160,4 +164,4 @@ body.dialog-open{overflow:hidden}
  .product-result-row .individual-sale-fields label{flex-basis:85px}
 }
 
-@media print{.floating-controls,.notification,.editor-dialog,.sheet-message,.time-picker-button{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}}
+@media print{.floating-controls,.notification,.editor-dialog,.sheet-message,.time-picker-button,.redline-pen{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}}
