@@ -45,6 +45,7 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .time-entry{position:absolute;left:4.1cqw;top:.1cqw;width:4.2cqw;font-size:1.05cqw!important;line-height:1.2}
 .mod-sheet .time-picker-button{position:absolute;top:0;right:0;min-width:1.9cqw;min-height:2.1cqw;border:0;background:#fff;color:#222;font-size:max(12px,1.4cqw);line-height:1;cursor:pointer}
 .mod-sheet .time-picker-button:focus-visible{outline:2px solid #2563eb;outline-offset:-2px}
+.mobile-call-actions{display:none}
 .box-text{position:absolute;inset:1.85cqw .2cqw .1cqw;width:calc(100% - .4cqw);height:calc(100% - 1.95cqw);resize:none}
 .field-ninety{display:flex;flex-direction:column}
 .field-ninety>label{display:flex;height:50%;align-items:center;justify-content:space-between;padding:0 .3cqw}
@@ -126,7 +127,11 @@ body.dialog-open{overflow:hidden}
  .floating-controls .toggle-hide input{width:18px;height:18px;margin:0}
  .floating-controls button,.floating-controls .completed-pdf{min-height:44px;padding:8px;font-size:12px}
  .sheets{width:100%;padding:12px 8px calc(76px + env(safe-area-inset-bottom));
-  gap:20px;align-items:flex-start;overflow-x:auto;overscroll-behavior-x:contain}
+  gap:70px;align-items:flex-start;overflow-x:auto;overscroll-behavior-x:contain}
+ .mod-sheet .time-picker-button{display:none}
+ .mobile-call-actions{position:absolute;top:100%;left:0;right:0;display:flex;gap:8px;padding-top:6px;font:14px system-ui,-apple-system,sans-serif}
+ .mod-sheet .mobile-call-actions button{flex:1 1 0;min-height:44px;min-width:0;padding:9px 6px;border:1px solid #adb7c2;border-radius:6px;background:#fff;color:#142033;font:600 13px system-ui,-apple-system,sans-serif;text-align:center}
+ .mobile-call-actions button:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
  .mod-sheet{width:calc(100vw - 16px);-webkit-text-size-adjust:100%;text-size-adjust:100%}
  .sheets[data-zoom="1.5"] .mod-sheet{width:calc(150vw - 24px)}
  .sheets[data-zoom="2"] .mod-sheet{width:calc(200vw - 32px)}
@@ -151,4 +156,4 @@ body.dialog-open{overflow:hidden}
  .mod-sheet .time-picker-button{min-width:30px;min-height:30px}
 }
 
-@media print{.sheet-zoom,.floating-controls,.notification,.editor-dialog,.sheet-message,.time-picker-button{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}}
+@media print{.sheet-zoom,.floating-controls,.notification,.editor-dialog,.sheet-message,.time-picker-button,.mobile-call-actions{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}}
