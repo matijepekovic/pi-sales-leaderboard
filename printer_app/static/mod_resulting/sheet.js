@@ -192,10 +192,32 @@
   }
   function formattedMoney(input) {
     const value = String(input || '').trim();
-    if (!/^\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?$/.test(value)) return null;
-    const amount = Number(value.replace(/[$,\s]/g, ''));
-    if (!Number.isFinite(amount) || amount < 0) return null;
-    return '
+    const match = /^\$?\s*(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?$/.exec(value);
+    if (!match) return null;
+    const whole = match[1].replace(/,/g, '').replace(/^0+(?=\d)/, '');
+    const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const decimals = (match[2] || '').padEnd(2, '0');
+    return '$' + grouped + (decimals && decimals !== '00' ? '.' + decimals : '');
+  }
+  function salePreview(sheet, draft) {
+    const display = sheet.querySelector('.sale-in-redline');
+    if (!display) return;
+    const products = draft.dispo === 'sale' ? draft.sale_products :
+      draft.additional_products ? draft.product_results : {};
+    const lines = [];
+    for (const [product, item] of Object.entries(products || {})) {
+      if (draft.dispo !== 'sale' && item.result !== 'sale') continue;
+      const price = formattedMoney(item.price);
+      const deposit = formattedMoney(item.deposit);
+      if (!price || price === '$0' || deposit === null) continue;
+      const payment = item.payment ? formattedMoney(item.payment) : null;
+      lines.push('SALE ' + product + ': ' + price + ' | Deposit: ' + deposit +
+        (payment !== null ? ' | Payment: ' + payment : ''));
+    }
+    display.textContent = lines.join('\n');
+    display.hidden = !display.textContent;
+  }
+  function applyVisibility() {
     const needle = search.value.trim().toLocaleLowerCase();
     for (const sheet of sheets) {
       const nameMatches = (
@@ -298,6 +320,7 @@
     sheet.dataset.dirty = 'no';
     dnrPreview(sheet, init);
     resultDetailPreview(sheet, init);
+    salePreview(sheet, init);
     salePreview(sheet, init);
     const noteArea = sheet.querySelector('.notes-text');
     const noteInput = sheet.querySelector('.mod-notes-input');
@@ -413,6 +436,7 @@
       syncNoteMode();
       dnrPreview(sheet,draft);
       resultDetailPreview(sheet,draft);
+      salePreview(sheet,draft);
       syncPricePreviews();
       applyVisibility();
       scheduleSave(sheet);
