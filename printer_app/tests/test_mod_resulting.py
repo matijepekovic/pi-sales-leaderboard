@@ -83,7 +83,9 @@ class Source:
 
 class Writer:
     def __init__(self): self.plans=[];self.applied=[]
-    def mod_users(self): return [{'id':USER,'name':'MOD Example'}]
+    def mod_users(self, market):
+        assert market == 'Olympia'
+        return [{'id':USER,'name':'MOD Example'}]
     def prepare(self,batch):
         self.plans.extend(batch)
         return [{'work_order_id':item['work_order_id']} for item in batch]
@@ -93,7 +95,8 @@ class Writer:
 def _service(tmp_path):
     repo=ResultingRepository(Database(tmp_path/'printer.sqlite'))
     source,writer=Source(),Writer()
-    settings=SimpleNamespace(settings=lambda:None)
+    settings=SimpleNamespace(
+        settings=lambda:SimpleNamespace(market_segment='Olympia'))
     service=ResultingService(repo,source,writer,settings,'America/Los_Angeles',
                              allow_salesforce_writes=True)
     return service,repo,source,writer
@@ -105,6 +108,7 @@ def test_daily_mod_selection_refresh_and_end_of_day_idempotence(tmp_path):
     assert source.queries[0]['remove_canceled'] is False
     assert source.queries[0]['limit'] is None
     assert service.set_mod(DAY,USER)=='MOD Example'
+    assert writer.applied==[]  # Selecting an MOD never updates Salesforce.
     draft=clean_draft({'dispo':'sale','numbers':'20000\n17000',
                        'notes':'Black comment', 'redlines':'REDLINE',
                        'sale_products':{
@@ -116,6 +120,7 @@ def test_daily_mod_selection_refresh_and_end_of_day_idempotence(tmp_path):
     assert len(writer.applied)==1
     payload=writer.plans[0]
     assert payload['fields']['price']['lowest']=='17000'
+    assert payload['mod_id']==USER
     assert payload['draft']['notes']=='Black comment'
     assert payload['product_results']==[{
         'product':'Roofing','result':'sale','detail':'',
@@ -135,6 +140,25 @@ def test_unresulted_sheet_is_not_submitted_and_no_writes_happen(tmp_path):
     with pytest.raises(ValueError,match='No unsubmitted'):
         service.submit(DAY)
     assert writer.applied==[]
+    assert repo.day(DAY)['submitting']==0
+
+
+def test_mod_selection_requires_market_and_rechecks_before_end_of_day(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    service.refresh(DAY)
+    service.settings_repository=SimpleNamespace(settings=lambda:None)
+    with pytest.raises(ValueError,match='specific Market Segment'):
+        service.users()
+    service.settings_repository=SimpleNamespace(
+        settings=lambda:SimpleNamespace(market_segment='Olympia'))
+    service.set_mod(DAY,USER)
+    repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
+    # Manager has become inactive or moved markets since selection.
+    writer.mod_users=lambda market: []
+    with pytest.raises(ValueError,match='no longer eligible'):
+        service.submit(DAY)
+    assert writer.applied==[]
+    assert writer.plans==[]
     assert repo.day(DAY)['submitting']==0
 
 
@@ -293,6 +317,8 @@ def test_sandbox_is_reachable_from_printer_and_never_writes_salesforce(tmp_path)
     service=app.extensions['mod_resulting']
     service.source=Source()
     service.writer=Writer()
+    service.settings_repository=SimpleNamespace(
+        settings=lambda:SimpleNamespace(market_segment='Olympia'))
     client=app.test_client()
 
     unauthenticated=client.get('/mod-resulting')
