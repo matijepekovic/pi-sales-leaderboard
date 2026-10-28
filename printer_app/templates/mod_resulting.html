@@ -42,6 +42,10 @@
  <img class="printer-sheet" src="{{ url_for('mod_resulting.sheet_image', day=data.day, work_order_id=item.work_order_id) }}"
   alt="Printer MOD sheet for {{ sheet.lead_name }}, work order {{ sheet.work_order_number }}"
   loading="{{ 'eager' if loop.first else 'lazy' }}" decoding="async" draggable="false">
+ <div class="mobile-call-actions" role="group" aria-label="Call time pickers">
+  <button type="button" data-time-trigger="call_1">Call 1: {{ d.call_1 or 'Set time' }}</button>
+  <button type="button" data-time-trigger="call_2">Call 2: {{ d.call_2 or 'Set time' }}</button>
+ </div>
  <dl class="sr-only">
   <dt>Work Order Number:</dt><dd>{{ sheet.work_order_number }}</dd>
   <dt>Lead Name:</dt><dd>{{ sheet.lead_name }}</dd>
