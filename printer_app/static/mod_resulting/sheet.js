@@ -354,6 +354,19 @@
       }
     }
     syncPricePreviews();
+    // A modal's controls must update their displayed sheet values immediately,
+    // independently of event delegation through the zoomable PDF sheet.
+    // Preserve the normal debounced draft save while the modal is open.
+    priceDialog?.addEventListener('input', event => {
+      if (event.target instanceof HTMLInputElement
+          && event.target.matches('[data-key$="_override"]')) {
+        syncPricePreviews();
+        redraw();
+      }
+    });
+    priceDialog?.addEventListener('close', () => {
+      syncPricePreviews();
+    });
     syncSaleRows();
     if (sheet.dataset.submitted === 'yes') {
       for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
