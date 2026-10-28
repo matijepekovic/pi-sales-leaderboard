@@ -180,13 +180,10 @@ class ResultingService:
                         'price': '',
                         'deposit': '',
                     })
-            individual_sales = individual_product_sales(draft)
-
         deposit_total = sale_amount_totals(draft)['deposit']
 
-        # The training flow provides an independently editable Work Order
-        # Deposit / Payment value. Without an override, preserve the existing
-        # sum of actual sold-product deposits.
+        # The legacy Work Order amount override changes only the deposit side.
+        # Payment stays derived from sold products and is recorded in MOD notes.
         if draft['deposit_override']:
             deposit_total = draft['deposit_override']
 
