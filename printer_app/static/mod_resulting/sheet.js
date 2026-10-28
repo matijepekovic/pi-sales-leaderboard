@@ -97,6 +97,10 @@
         draft[input.dataset.key] = input.type === 'checkbox' ? input.checked : input.value;
       }
     }
+    // Historical drafts may contain a separate redlines key. The editor
+    // displays their concatenated text in the single MOD Notes input and
+    // migrates it losslessly into the one notes key on its next save.
+    draft.redlines = '';
     draft.product_results = {};
     if (draft.additional_products && draft.dispo !== 'sale') {
       for (const row of sheet.querySelectorAll('[data-product]')) {
@@ -226,16 +230,11 @@
     sheet.dataset.dirty = 'no';
     dnrPreview(sheet, init);
     const noteArea = sheet.querySelector('.notes-text');
-    const beforeDispoNotes = noteArea.querySelector('[data-key="notes"]');
-    const afterDispoNotes = noteArea.querySelector('[data-key="redlines"]');
-    const blackHistory = noteArea.querySelector('.notes-black-history');
     function syncNoteMode() {
-      const resulted = !!sheet.querySelector('[data-key="dispo"]').value;
-      noteArea.dataset.notesMode = resulted ? 'red' : 'black';
-      beforeDispoNotes.hidden = resulted;
-      blackHistory.textContent = beforeDispoNotes.value;
-      blackHistory.hidden = !resulted || !beforeDispoNotes.value;
-      afterDispoNotes.hidden = !resulted;
+      // This must NEVER replace, split, hide or rewrite the input's content.
+      // The disposition only changes the font size and text color.
+      noteArea.dataset.notesMode =
+        sheet.querySelector('[data-key="dispo"]').value ? 'red' : 'black';
     }
     syncNoteMode();
     const product = sheet.querySelector('.product-panel');
