@@ -60,8 +60,10 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
         content = str(work.get(WO['notes']) or '')
         draft = {
             'dispo': dispo,
-            'notes': content if not dispo else '',
-            'redlines': content if dispo else '',
+            # Salesforce has one MOD_Notes__c text field. Dispo only affects
+            # its visual styling in the digital MOD sheet.
+            'notes': content,
+            'redlines': '',
             'call_1': _clock(work.get(WO['call_1']), zone),
             'call_2': _clock(work.get(WO['call_2']), zone),
             'need': str(work.get(WO['need']) or ''),
