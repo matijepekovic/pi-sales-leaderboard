@@ -24,3 +24,10 @@ def test_pending_setup_notice_is_not_presented_as_a_page_banner():
     assert 'current_app.logger.warning' in web
     assert 'PREVIEW ONLY' not in js
     assert "message('Not saved: ' + error.message, sheet)" in js
+
+
+def test_phone_scaling_does_not_override_print_layout():
+    root = Path(__file__).parents[1]
+    css = (root / 'static/mod_resulting/sheet.css').read_text()
+    assert '@media screen and (max-width:900px)' in css
+    assert '@media print{.sheet-zoom,' in css

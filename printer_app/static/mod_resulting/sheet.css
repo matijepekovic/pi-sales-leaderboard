@@ -75,7 +75,7 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 /* Phone view is an overview of the SAME sheet, not a rearranged mobile form.
    Zoom changes only its width; renderer coordinates and cqw controls scale together. */
 .sheet-zoom{display:none}
-@media(max-width:900px){
+@media screen and (max-width:900px){
  html,body{width:100%;min-width:0}
  .floating-controls{position:sticky;top:0;right:auto;max-width:none;width:100%;
   justify-content:flex-start;gap:6px;padding:6px 8px;border-radius:0;
