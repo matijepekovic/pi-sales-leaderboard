@@ -44,7 +44,7 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .mod-notes-editor{position:relative;flex:1;min-height:0;min-width:0}
 .notes-text .mod-notes-editor textarea[data-key=notes]{position:relative;z-index:1;display:block;height:100%;width:100%;color:#000;font-size:1.57cqw;font-weight:400;line-height:1.15;resize:none;white-space:pre-wrap;overflow-wrap:break-word}
 .mod-notes-display{position:absolute;inset:0;overflow:hidden;pointer-events:none;white-space:pre-wrap;overflow-wrap:break-word;word-break:normal;font-size:1.57cqw;font-weight:400;line-height:1.15;color:#000}
-.mod-notes-display .after-dispo{color:#b00000;font-weight:700}
+.mod-notes-display .redline-run{color:#b00000;font-weight:700}
 .notes-text.mixed-notes-ready textarea[data-key=notes]{color:transparent!important;-webkit-text-fill-color:transparent;caret-color:#000}
 .notes-text.mixed-notes-ready[data-notes-mode=red] textarea[data-key=notes]{caret-color:#b00000}
 .notes-text .result-detail-in-redline,.notes-text .dnr-in-redline,.notes-text .sale-in-redline{font-size:1.85cqw;font-weight:700;color:#b00000;line-height:1.1;flex:none;white-space:pre-wrap}
