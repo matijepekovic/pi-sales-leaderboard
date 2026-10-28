@@ -149,22 +149,26 @@
       for (const row of sheet.querySelectorAll('[data-product]')) {
         const result = row.querySelector('[data-product-result]').value;
         const detail = row.querySelector('[data-product-detail]').value;
-        if (result) draft.product_results[row.dataset.product] = {
-          result, detail,
-          price: row.querySelector('[data-product-price]')?.value || '',
-          deposit: row.querySelector('[data-product-deposit]')?.value || '',
-          payment: row.querySelector('[data-product-payment]')?.value || ''
-        };
+        if (result) {
+          const payment = row.querySelector('[data-product-payment]')?.value || '';
+          draft.product_results[row.dataset.product] = {
+            result, detail,
+            price: row.querySelector('[data-product-price]')?.value || '',
+            deposit: row.querySelector('[data-product-deposit]')?.value || '',
+            ...(payment ? {payment} : {})
+          };
+        }
       }
     }
     draft.sale_products = {};
     for (const row of sheet.querySelectorAll('[data-sale-product]')) {
       const selected = row.querySelector('[data-sale-selected]');
       if (!selected?.checked) continue;
+      const payment = row.querySelector('[data-sale-payment]').value;
       draft.sale_products[row.dataset.saleProduct] = {
         price: row.querySelector('[data-sale-price]').value,
         deposit: row.querySelector('[data-sale-deposit]').value,
-        payment: row.querySelector('[data-sale-payment]').value
+        ...(payment ? {payment} : {})
       };
     }
     return draft;
