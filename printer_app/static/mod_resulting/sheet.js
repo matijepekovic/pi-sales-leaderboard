@@ -39,7 +39,11 @@
       for (const row of sheet.querySelectorAll('[data-product]')) {
         const result = row.querySelector('[data-product-result]').value;
         const detail = row.querySelector('[data-product-detail]').value;
-        if (result) draft.product_results[row.dataset.product] = {result, detail};
+        if (result) draft.product_results[row.dataset.product] = {
+          result, detail,
+          price: row.querySelector('[data-product-price]')?.value || '',
+          deposit: row.querySelector('[data-product-deposit]')?.value || ''
+        };
       }
     }
     draft.sale_products = {};
@@ -141,8 +145,18 @@
       if (selected) {
         row.querySelector('[data-product-result]').value = selected.result || '';
         row.querySelector('[data-product-detail]').value = selected.detail || '';
+        row.querySelector('[data-product-price]').value = selected.price || '';
+        row.querySelector('[data-product-deposit]').value = selected.deposit || '';
       }
     }
+    function syncIndividualSaleRows() {
+      for (const row of sheet.querySelectorAll('[data-product]')) {
+        const sale = row.querySelector('[data-product-result]').value === 'sale';
+        const fields = row.querySelector('.individual-sale-fields');
+        if (fields) fields.hidden = !sale;
+      }
+    }
+    syncIndividualSaleRows();
     sheet.dataset.dirty = 'no';
     dnrPreview(sheet, init);
     syncSaleRows();
@@ -200,12 +214,13 @@
       const input = event.target;
       if (input instanceof HTMLElement && input.matches('[data-key],[data-product-result],[data-product-detail],[data-sale-selected]')) {
         showRelated(input);
+        syncIndividualSaleRows();
         redraw();
       }
     });
     sheet.addEventListener('input', event => {
       const input = event.target;
-      if (input instanceof HTMLElement && input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit]')) redraw();
+      if (input instanceof HTMLElement && input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-product-price],[data-product-deposit]')) redraw();
     });
     saleButton?.addEventListener('click', () => {
       if (!sale) return;
