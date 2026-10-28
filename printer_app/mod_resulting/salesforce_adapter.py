@@ -488,6 +488,10 @@ class ResultingSalesforceAdapter:
             )
 
         operations = []
+        # Different Work Orders can refer to the same Lead. Accumulate pivot
+        # additions across the whole End of Day batch; never overwrite a pivot
+        # added by an earlier Work Order in this same batch.
+        lead_interest_in_batch = {}
         for payload in payloads:
             work_order_id = _require_id(payload['work_order_id'])
             lead_id = _require_id(payload['lead_id'])
@@ -590,8 +594,11 @@ class ResultingSalesforceAdapter:
                 if entry['result'] == 'sale'
             ]
             if sold:
-                current = self._lead_product_interest(lead_id)
+                current = lead_interest_in_batch.get(lead_id)
+                if current is None:
+                    current = self._lead_product_interest(lead_id)
                 merged, changed = self._merge_products(current, sold)
+                lead_interest_in_batch[lead_id] = merged
                 if changed:
                     lead_values[LEAD_FIELDS['product_interest']] = self._choice(
                         lead_fields['product_interest'], merged
