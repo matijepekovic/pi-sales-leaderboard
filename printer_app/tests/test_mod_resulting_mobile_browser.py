@@ -165,6 +165,14 @@ def test_popup_tracks_visible_viewport_when_zoomed_or_keyboard_opens(mod_browser
     first.locator('[data-key=dispo]').select_option('sale')
     dialog = first.locator('.sale-panel[open]')
     expect(dialog).to_be_visible()
+    # At ordinary 1x with no keyboard, native dialog layout owns positioning.
+    # The visual-viewport adapter only participates when there is a real
+    # pinch/keyboard viewport to compensate for.
+    expect(dialog).to_have_css('transform', 'none')
+    native_box = dialog.bounding_box()
+    footer_box = dialog.locator('.editor-footer').bounding_box()
+    assert footer_box['y'] >= native_box['y']
+    assert footer_box['y'] + footer_box['height'] <= native_box['y'] + native_box['height'] + 1
 
     # Simulate the coordinates mobile Safari/Chromium report after a 2x pinch.
     # The viewport is read-only in production, so override the page's getter
@@ -254,6 +262,7 @@ def test_popup_fits_native_zoom_before_opening_and_allows_zoom_again(mod_browser
         'width=device-width,initial-scale=1'
     )
     assert page.locator('#sheets').get_attribute('data-zoom') == '1'
+    expect(popup).to_have_css('transform', 'none')
     assert page.locator('#zoomFit,#zoomIn,#zoomOut').count() == 0
     assert page.evaluate('window.modCspViolations') == []
     popup.locator('.sale-done').click()
