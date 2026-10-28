@@ -237,63 +237,36 @@ class ResultingSalesforceAdapter:
         return read_result_drafts(self, records)
 
     def mod_users(self, market_segment):
-        """Only active sales managers positively linked to the selected market.
+        """Read active Sales Managers from the already-imported MOD market.
 
-        Active User records span the entire company. Never treat that list as
-        the MOD roster and never fall back to company-wide users if the market
-        or its Salesforce mapping is unavailable.
+        Salesforce User.Home_Branch__c and UserRole.Name were verified with
+        the existing CLI mapping. Do not infer a market from Title, Division,
+        Department, or unverified guessed fields. Never return all users.
         """
         market = str(market_segment or '').strip()
-        if not market or len(market) > 128 or any(ch in market for ch in '\r\n'):
-            raise ResultingSalesforceError('Select a market in MOD Settings first.')
-        schema = self._describe('User')
-        available = {str(f.get('name')): f for f in schema.get('fields', [])}
-        custom_market_fields = [
-            name for name in ('Market__c', 'Market_Segment__c',
-                              'Office__c', 'Branch__c', 'Territory__c')
-            if name in available and available[name].get('type')
-            in ('string', 'picklist', 'multipicklist')
-        ]
-        columns = [
-            'Id', 'Name', 'Title', 'Department', 'Division',
-            'UserRole.Name', 'Profile.Name', *custom_market_fields,
-        ]
+        if not market or len(market) > 128 or any(not ch.isprintable() for ch in market):
+            raise ResultingSalesforceError('The imported MOD market is missing or invalid.')
+
         rows = self._query(
-            'SELECT ' + ','.join(columns)
-            + ' FROM User WHERE IsActive = true ORDER BY Name LIMIT 2000'
+            'SELECT Id,Name,IsActive,Home_Branch__c,UserRole.Name FROM User '
+            'WHERE IsActive = true '
+            "AND UserRole.Name = 'Sales Manager' "
+            'AND Home_Branch__c = ' + _soql(market)
+            + ' ORDER BY Name LIMIT 2000'
         )
         users = []
-        target = market.casefold()
+        seen = set()
         for item in rows:
             ident = str(item.get('Id') or '')
             name = str(item.get('Name') or '').strip()
-            role = str((item.get('UserRole') or {}).get('Name') or '')
-            profile = str((item.get('Profile') or {}).get('Name') or '')
-            title = str(item.get('Title') or '')
-            leadership = ' '.join((role, profile, title)).casefold()
-            is_manager = bool(re.search(
-                r'\b(?:sales\s+(?:manager|mgr)|(?:manager|mgr)\s+(?:of\s+)?sales'
-                r'|smit|manager\s+on\s+duty)\b', leadership
-            ))
-            market_labels = [
-                str(item.get(field) or '').strip().casefold()
-                for field in ('Department', 'Division', *custom_market_fields)
-            ]
-            direct_market = any(
-                target == label or target in [part.strip() for part in label.split(';')]
-                for label in market_labels
-            )
-            # Some orgs encode the market in the Salesforce role name,
-            # e.g. "Olympia Sales Manager" or "Sales Manager - Olympia".
-            role_market = (
-                role.casefold().startswith(target + ' ')
-                or role.casefold().endswith(' ' + target)
-                or (' - ' + target + ' - ') in role.casefold()
-            )
-            if ID_RE.fullmatch(ident) and name and is_manager and (
-                direct_market or role_market
-            ):
+            home_branch = str(item.get('Home_Branch__c') or '').strip()
+            role = str((item.get('UserRole') or {}).get('Name') or '').strip()
+            if (ID_RE.fullmatch(ident) and name and item.get('IsActive') is True
+                    and home_branch.casefold() == market.casefold()
+                    and role.casefold() == 'sales manager'
+                    and ident not in seen):
                 users.append({'id': ident, 'name': name})
+                seen.add(ident)
         return users
 
     @staticmethod

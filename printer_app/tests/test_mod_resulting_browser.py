@@ -559,7 +559,7 @@ def test_result_detail_is_always_red_and_new_notes_only_turn_red_after_dispo(mod
     notes.fill('Before disposition')
     first.locator('[data-key=result_detail]').select_option('Price Objection')
     expect(first.locator('.result-detail-in-redline')).to_have_text(
-        'RESULT DETAIL: Price Objection')
+        'Price Objection')
     expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
     first.locator('[data-key=dispo]').select_option('pns')
     notes.fill('Before disposition\nAfter disposition')
@@ -576,7 +576,7 @@ def test_result_detail_is_always_red_and_new_notes_only_turn_red_after_dispo(mod
     expect(page.locator('.mod-notes-display .after-dispo').first).to_have_text(
         '\nAfter disposition')
     expect(page.locator('.result-detail-in-redline').first).to_have_text(
-        'RESULT DETAIL: Price Objection')
+        'Price Objection')
     stored = service.repository.sheets(service.day())[0]['draft']
     assert stored['note_runs'] == [
         {'text':'Before disposition','red':False},

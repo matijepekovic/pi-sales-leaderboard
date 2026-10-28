@@ -169,10 +169,10 @@
     const output = sheet.querySelector('.result-detail-in-redline');
     if (!output) return;
     const lines = [];
-    if (draft.result_detail) lines.push('RESULT DETAIL: ' + draft.result_detail);
+    if (draft.result_detail) lines.push(draft.result_detail);
     if (draft.additional_products && draft.dispo !== 'sale') {
-      for (const [product, info] of Object.entries(draft.product_results || {})) {
-        if (info.detail) lines.push(product + ' RESULT DETAIL: ' + info.detail);
+      for (const info of Object.values(draft.product_results || {})) {
+        if (info.detail) lines.push(info.detail);
       }
     }
     output.textContent = [...new Set(lines)].join('\n');
