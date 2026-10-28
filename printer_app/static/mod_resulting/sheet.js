@@ -155,6 +155,7 @@
     const dnr = sheet.querySelector('.dnr-panel');
     const cxl = sheet.querySelector('.cxl-panel');
     const sale = sheet.querySelector('.sale-panel');
+    const saleButton = sheet.querySelector('.edit-sale-products');
     const separate = sheet.querySelector('.separate-products');
     function syncSaleRows() {
       for (const row of sheet.querySelectorAll('[data-sale-product]')) {
@@ -178,6 +179,7 @@
       if (input.dataset.key === 'dispo') {
         cxl.hidden = draft.dispo !== 'cxl';
         if (draft.dispo === 'cxl') cxl.querySelector('input').focus();
+        if (saleButton) saleButton.hidden = draft.dispo !== 'sale';
         if (sale) {
           sale.hidden = draft.dispo !== 'sale';
           if (draft.dispo === 'sale') sale.querySelector('[data-sale-selected]')?.focus();
@@ -204,6 +206,11 @@
     sheet.addEventListener('input', event => {
       const input = event.target;
       if (input instanceof HTMLElement && input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit]')) redraw();
+    });
+    saleButton?.addEventListener('click', () => {
+      if (!sale) return;
+      sale.hidden = false;
+      sale.querySelector('[data-sale-selected]')?.focus();
     });
     sheet.querySelectorAll('.close-popover').forEach(button => button.addEventListener('click', () => {
       const panel = button.closest('.product-panel,.cxl-panel,.dnr-panel,.sale-panel');
