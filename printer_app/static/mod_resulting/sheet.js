@@ -463,7 +463,7 @@
     const paymentOverride = priceDialog?.querySelector('[data-key="payment_override"]');
     function syncPricePreviews() {
       const draft = serialize(sheet);
-      for (const key of ('start_price_override', 'final_price_override')) {
+      for (const key of ['start_price_override', 'final_price_override']) {
         const input = priceDialog?.querySelector('[data-key="' + key + '"]');
         const preview = sheet.querySelector('[data-price-display="' + key + '"]');
         if (preview && input) preview.textContent = input.value ? '$' + input.value : '';
