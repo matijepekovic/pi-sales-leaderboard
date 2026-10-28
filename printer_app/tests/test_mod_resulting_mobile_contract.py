@@ -9,7 +9,7 @@ def test_dialog_viewport_owns_only_presentation_and_keeps_native_pinch():
     css = (root / 'static/mod_resulting/dialog_viewport.css').read_text()
     assert 'dialog_viewport.js' in html
     assert 'dialog_viewport.css' in html
-    assert 'viewport.js' not in html
+    assert "'mod_resulting/viewport.js'" not in html
     assert 'id="sheetZoom"' not in html
     assert 'data-zoom=' not in html
     assert 'visualViewport' in js and 'resize' in js and 'scroll' in js
