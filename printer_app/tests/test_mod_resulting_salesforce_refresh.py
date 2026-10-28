@@ -127,3 +127,33 @@ def test_remote_unresulted_notes_stay_black():
     assert draft['dispo'] == ''
     assert draft['notes'] == 'Pre-disposition black notes'
     assert draft['redlines'] == ''
+
+
+def test_salesforce_refresh_handles_shared_leads_across_pages():
+    """Multiple jobs sharing one lead must never cause duplicate Lead errors."""
+    import re
+    from zoneinfo import ZoneInfo
+    from printer_app.mod_resulting.salesforce_refresh import read_result_drafts
+
+    records = tuple(ModSheetRecord(
+        source_id='0WO' + f'{index:012d}' + 'AAA',
+        lead_source_id=LEAD, product_interest='Roofing',
+    ) for index in range(41))
+    lead_queries = []
+
+    def query(text):
+        if ' FROM WorkOrder ' in text:
+            ids = re.findall(r'0WO[0-9]{12}AAA', text)
+            return [{'Id':ident} for ident in ids]
+        if ' FROM Lead ' in text:
+            lead_queries.append(text)
+            return [{'Id':LEAD}]
+        if ' FROM Product_Interest_Result__c ' in text:
+            return []
+        raise AssertionError('Unexpected Salesforce object')
+
+    fake = SimpleNamespace(zone=ZoneInfo('America/Los_Angeles'), _query=query)
+    hydrated = read_result_drafts(fake, records)
+    assert len(hydrated) == 41
+    assert len(lead_queries) == 1
+    assert all(row['dispo'] == '' for row in hydrated.values())
