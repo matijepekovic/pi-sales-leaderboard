@@ -40,6 +40,9 @@ def _schemas():
     wo = [
         _field('Dispo__c','picklist',['Sale','PNS','No Pitch','CXL','NRA','OOS']),
         _field('Status','picklist',['Completed','Canceled']),
+        _field('Lead__c','reference',refs=['Lead']),
+        _field('Appointment_Date_Time__c','datetime'),
+        _field('Appointment_Date__c','date'),
         _field('MOD__c','reference',refs=['User']),
         _field('MOD_Notes__c','textarea'),
         _field('Call_1__c','time'), _field('Call_2__c','time'),
@@ -101,9 +104,17 @@ def _schemas():
     }
 
 
-def _adapter(*, existing_results=(), lead_interest='Roofing;Siding', schemas=None):
+def _adapter(*, existing_results=(), lead_interest='Roofing;Siding', schemas=None,
+             history=None):
     schemas = schemas or _schemas()
     calls = []
+    # The current Work Order is unresulted on Salesforce at preflight.
+    # Historical candidates are separate records with the same Lead__c.
+    historical_works = list(history) if history is not None else [{
+        'Id':WORK, 'Lead__c':LEAD,
+        'Appointment_Date_Time__c':'2026-10-27T19:00:00Z',
+        'Appointment_Date__c':'2026-10-27', 'Dispo__c':None,
+    }]
 
     def runner(command, **kwargs):
         calls.append(command)
@@ -113,6 +124,10 @@ def _adapter(*, existing_results=(), lead_interest='Roofing;Siding', schemas=Non
             query = command[command.index('--query')+1]
             if ' FROM ServiceAppointment ' in query:
                 result = {'records':[{'Id':SA1},{'Id':SA2}], 'done':True}
+            elif ' FROM WorkOrder ' in query:
+                assert 'WHERE Lead__c = ' in query
+                assert 'Appointment_Date_Time__c' in query
+                result = {'records':historical_works, 'done':True}
             elif ' FROM Product_Interest_Result__c ' in query:
                 result = {'records':list(existing_results),'done':True}
             elif ' FROM Lead ' in query:
@@ -205,7 +220,7 @@ def test_ghost_fields_and_comment_are_never_written(review,redlines):
     assert wo['Need__c']=='Need' and wo['Want__c']=='Want'
     lead=_single(plan,'Lead')[3]
     assert lead['Status']=='Do Not Call'  # Checked DNR forces Do Not Call.
-    assert lead['Previous_Result__c']=='Pitch No Sale'
+    assert lead['Previous_Result__c'] is None
     assert lead['DNR_Do_Not_Reset__c'] is True
     assert lead['DNR_Reason__c']=='Roofing;Windows'
     assert lead['X1_Leg_Appointment__c'] is True
@@ -261,7 +276,6 @@ def test_manual_lead_choices_price_and_deposit_override_dispo_defaults():
     })
     fields=outcome_fields(draft)
     assert fields['lead_status']=='Do Not Call'
-    assert fields['previous_result']=='No Pitch'
     assert fields['price']=={'highest':'27000','lowest':'16000'}
     adapter,_=_adapter()
     plan=_operations(adapter,_payload('pns',**{
@@ -269,12 +283,16 @@ def test_manual_lead_choices_price_and_deposit_override_dispo_defaults():
     }))
     lead=_single(plan,'Lead')[3]
     wo=_single(plan,'WorkOrder')[3]
-    assert lead['Status']=='Do Not Call' and lead['Previous_Result__c']=='No Pitch'
+    assert lead['Status']=='Do Not Call' and lead['Previous_Result__c'] is None
     assert wo['Start_Price__c']=='27000'
     assert wo['Price__c']=='16000'
     assert wo['Deposit_Payment__c']=='2500'
-    cleared=_operations(adapter,_payload('pns',previous_result='__clear__'))
-    assert _single(cleared,'Lead')[3]['Previous_Result__c'] is None
+    # Old local manual fields remain backward-compatible draft inputs, but
+    # cannot replace a lookup of the previous Salesforce Work Order.
+    overridden=_operations(adapter,_payload(
+        'pns', lead_status='Sale Pending', previous_result='No Pitch'))
+    assert _single(overridden,'Lead')[3]['Status']=='Nurturing'
+    assert _single(overridden,'Lead')[3]['Previous_Result__c'] is None
 
 
 @pytest.mark.parametrize('dispo', ['sale','pns','np','cxl','nra','oos'])
@@ -310,10 +328,10 @@ def test_review_write_refuses_missing_sf_api_field_and_off_does_not_require_it()
 
 @pytest.mark.parametrize('dispo,lead_status,wo_status,sa_status,pr_result,previous',[
     ('sale','Sale Pending','Completed','Completed','Sale',None),
-    ('pns','Nurturing','Completed','Completed','Pitch No Sale','Pitch No Sale'),
-    ('np','Nurturing','Completed','Completed','No Pitch','No Pitch'),
+    ('pns','Nurturing','Completed','Completed','Pitch No Sale',None),
+    ('np','Nurturing','Completed','Completed','No Pitch',None),
     ('cxl','Canceled','Canceled','Canceled','Canceled',None),
-    ('nra','Nurturing','Completed','No Rep Available','No Rep Available','No Rep Available'),
+    ('nra','Nurturing','Completed','No Rep Available','No Rep Available',None),
     ('oos','Out of Scope','Canceled','Canceled','Canceled',None),
 ])
 def test_main_disposition_governs_all_three_statuses(
