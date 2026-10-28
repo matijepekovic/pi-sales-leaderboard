@@ -81,7 +81,7 @@ def dnr_reasons(value):
 def clean_draft(raw):
     if not isinstance(raw, dict):
         raise ValueError('Invalid MOD draft.')
-    if set(raw) - set(TEXT_FIELDS) - set(CHECKBOXES) - {'product_results', 'sale_products'}:
+    if set(raw) - set(TEXT_FIELDS) - set(CHECKBOXES) - {'product_results', 'sale_products', 'note_runs'}:
         raise ValueError('Unknown MOD draft fields.')
     data = {}
     for key in TEXT_FIELDS:
@@ -94,6 +94,23 @@ def clean_draft(raw):
         if type(value) is not bool:
             raise ValueError(key + ' must be a checkbox.')
         data[key] = value
+    runs = raw.get('note_runs', [])
+    if not isinstance(runs, list) or len(runs) > 256:
+        raise ValueError('Invalid MOD Notes formatting.')
+    normalized_runs = []
+    for run in runs:
+        if (not isinstance(run, dict) or set(run) != {'text', 'red'}
+                or not isinstance(run['text'], str) or type(run['red']) is not bool):
+            raise ValueError('Invalid MOD Notes formatting.')
+        if not run['text']:
+            continue
+        if normalized_runs and normalized_runs[-1]['red'] == run['red']:
+            normalized_runs[-1]['text'] += run['text']
+        else:
+            normalized_runs.append({'text': run['text'], 'red': run['red']})
+    if normalized_runs and ''.join(item['text'] for item in normalized_runs) != data['notes']:
+        raise ValueError('MOD Notes formatting does not match its text.')
+    data['note_runs'] = normalized_runs
     if data['dispo'] not in DISPOSITIONS:
         raise ValueError('Choose a valid disposition.')
     if not data['dnr']:
@@ -208,8 +225,46 @@ def sale_redlines(draft):
     )
 
 
+def note_runs_for_display(draft):
+    """One MOD Notes editor with per-entry ink; keep old split drafts readable."""
+    stored = draft.get('note_runs') or []
+    if stored:
+        runs = [dict(text=part['text'], red=part['red']) for part in stored]
+    else:
+        notes = str(draft.get('notes') or '')
+        runs = [{'text': notes, 'red': False}] if notes else []
+    legacy = str(draft.get('redlines') or '')
+    if legacy:
+        if runs:
+            runs.append({'text': '\n', 'red': False})
+        runs.append({'text': legacy, 'red': True})
+    return runs
+
+
+def user_redline_text(draft):
+    """Only user characters entered as red ink, not the earlier black notes."""
+    return '\n'.join(part['text'].strip() for part in note_runs_for_display(draft)
+                     if part['red'] and part['text'].strip())
+
+
+def result_detail_redlines(draft):
+    result = []
+    detail = str(draft.get('result_detail') or '').strip()
+    if detail:
+        result.append('RESULT DETAIL: ' + detail)
+    if draft.get('additional_products') and draft.get('dispo') != 'sale':
+        for product, info in (draft.get('product_results') or {}).items():
+            choice = str(info.get('detail') or '').strip()
+            if choice:
+                result.append(str(product) + ' RESULT DETAIL: ' + choice)
+    return tuple(result)
+
+
 def final_redline_text(draft):
+    # Historical drafts have a separate redlines key. New red characters
+    # already belong to notes and must not be appended a second time.
     lines = [line for line in str(draft.get('redlines') or '').splitlines() if line.strip()]
+    lines.extend(result_detail_redlines(draft))
     if draft.get('dnr') and draft.get('dnr_reason'):
         lines.append(dnr_redline(draft['dnr_reason']))
     lines.extend(sale_redlines(draft))
