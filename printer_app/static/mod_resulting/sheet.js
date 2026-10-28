@@ -432,7 +432,7 @@
     if (dnrButton) dnrButton.hidden = !init.dnr;
     function syncPricePreviews() {
       const draft = serialize(sheet);
-      for (const key of ('start_price_override', 'final_price_override', 'deposit_override')) {
+      for (const key of ['start_price_override', 'final_price_override', 'deposit_override']) {
         const input = priceDialog?.querySelector('[data-key="' + key + '"]');
         const preview = sheet.querySelector('[data-price-display="' + key + '"]');
         if (!preview || !input) continue;
