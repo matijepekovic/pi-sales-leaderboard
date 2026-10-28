@@ -12,10 +12,11 @@ def test_mod_sheet_javascript_syntax_and_single_binding():
         'function setup(sheet)',
         'function syncPricePreviews()',
         'const priceDialog =',
-        'const leadDialog =',
-        'function syncDnrLeadStatus()',
     ):
         assert source.count(anchor) == 1, (anchor, source.count(anchor))
+    for removed in ('const leadDialog =', 'function syncDnrLeadStatus()',
+                    'mobile-call-actions', 'data-lead-trigger'):
+        assert removed not in source, removed
     assert source.rstrip().endswith('})();')
     node = shutil.which('node')
     if node:
