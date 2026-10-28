@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from flask import Blueprint, Response, abort, jsonify, render_template, request, send_file
+from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request, send_file
 
 from .surface import SheetSurfaceError, overlay_css
 from .contract import RESULT_DETAILS
@@ -39,7 +39,8 @@ def blueprint(service, surface):
                                for value in ('Roofing','Bath','Siding','Windows',
                                              'Behavior','Finance')],
             }
-            notice = notice or 'Salesforce picklists unavailable; draft choices are unverified.'
+            # Setup diagnostics belong in the log, not over the user's sheets.
+            current_app.logger.warning('MOD resulting picklists unavailable; using draft choices.')
         return render_template(
             'mod_resulting.html',
             data=data, users=users,
