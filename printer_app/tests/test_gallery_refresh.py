@@ -352,9 +352,30 @@ def test_fresh_full_device_automatically_caches_resumes_and_syncs_offline_notes(
                 page.close()
                 page = context.new_page()
                 page.on('pageerror', lambda error: errors.append(str(error)))
+
+                # A stale CSRF session may reject the FIRST queued-note POST
+                # after a phone comes back online (observed in WebKit). Force
+                # that exact one-shot HTML 400 and require an authenticated
+                # token refresh and successful retry; no error is suppressed.
+                note_posts = []
+                def reject_first_stale_csrf(route):
+                    note_posts.append(route.request.url)
+                    if len(note_posts) == 1:
+                        route.fulfill(
+                            status=400, content_type='text/html',
+                            body='<html><body>Invalid CSRF token</body></html>',
+                        )
+                    else:
+                        route.continue_()
+                page.route('**/gallery/api/items/*/notes', reject_first_stale_csrf)
+
                 assert page.goto(origin + '/gallery/').status == 200
                 expect(page.locator('#galleryOfflineStatus')).to_contain_text(
                     'Offline ready · 2 cards', timeout=20000)
+                assert len(note_posts) == 2, (
+                    'Expected one stale-CSRF rejection and one retried note POST.',
+                    len(note_posts),
+                )
                 notes = gallery.item(ids['today'])['notes']
                 assert [note['body'] for note in notes].count('Saved during the offline visit') == 1
                 assert [note['body'] for note in notes].count('Keep the existing shared note') == 1
