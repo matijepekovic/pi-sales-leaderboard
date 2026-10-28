@@ -134,6 +134,10 @@ class ResultingService:
                     raise ValueError(
                         'Result every original product or uncheck Result individually.'
                     )
+                if any(item['result'] == 'sale' for item in per_product.values()):
+                    raise ValueError(
+                        'A Sale product result requires main Dispo Sale and the Sale product workflow.'
+                    )
                 results = [{
                     'product': product,
                     'result': per_product[product]['result'],
