@@ -188,7 +188,10 @@
   function applyVisibility() {
     const needle = search.value.trim().toLocaleLowerCase();
     for (const sheet of sheets) {
-      const nameMatches = sheet.dataset.name.includes(needle);
+      const nameMatches = (
+        sheet.dataset.name.includes(needle) ||
+        (sheet.dataset.reps || '').includes(needle)
+      );
       const complete = !!sheet.dataset.dispo;
       // Keep the edited sheet visible until its dialog is closed, even if
       // "Hide completed" is enabled and selecting a dispo completes the sheet.
@@ -325,16 +328,6 @@
     const cxl = sheet.querySelector('.cxl-panel');
     const sale = sheet.querySelector('.sale-panel');
     const priceDialog = sheet.querySelector('.price-panel');
-    const leadDialog = sheet.querySelector('.lead-panel');
-    const leadButton = sheet.querySelector('.edit-lead-status');
-    function syncDnrLeadStatus() {
-      const dnrChecked = !!sheet.querySelector('[data-key="dnr"]')?.checked;
-      const select = leadDialog?.querySelector('[data-key="lead_status"]');
-      const hint = leadDialog?.querySelector('.dnr-lead-status-hint');
-      if (select) select.disabled = dnrChecked;
-      if (hint) hint.hidden = !dnrChecked;
-    }
-    syncDnrLeadStatus();
     const saleButton = sheet.querySelector('.edit-sale-products');
     const cxlButton = sheet.querySelector('.edit-cxl-details');
     const productButton = sheet.querySelector('.edit-product-results');
@@ -414,7 +407,6 @@
       dnrPreview(sheet,draft);
       resultDetailPreview(sheet,draft);
       syncPricePreviews();
-      syncDnrLeadStatus();
       applyVisibility();
       scheduleSave(sheet);
     }
@@ -471,20 +463,9 @@
         );
         renderNoteRuns();
       }
-      if (input.dataset.key === 'call_1' || input.dataset.key === 'call_2') {
-        const mobile = sheet.querySelector('.mobile-call-actions [data-time-trigger="' + input.dataset.key + '"]');
-        if (mobile) {
-          const label = input.dataset.key === 'call_1' ? 'Call 1' : 'Call 2';
-          mobile.textContent = label + ': ' + (input.value || 'Set time');
-        }
-      }
       if (input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-product-price],[data-product-deposit]')) redraw();
     });
     saleButton?.addEventListener('click', openSale);
-    leadButton?.addEventListener('click', () => openDialog(leadDialog, '[data-key="lead_status"]'));
-    sheet.querySelector('[data-lead-trigger]')?.addEventListener(
-      'click', () => openDialog(leadDialog, '[data-key="lead_status"]')
-    );
     for (const button of sheet.querySelectorAll('[data-price-trigger]')) {
       button.addEventListener('click', () => {
         openDialog(priceDialog, '[data-key="' + button.dataset.priceTrigger + '"]');
