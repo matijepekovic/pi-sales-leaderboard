@@ -171,7 +171,7 @@ def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_br
     first = page.locator('.mod-sheet').first
     for key in ('numbers', 'notes'):
         expect(first.locator('[data-key=' + key + ']')).to_be_visible()
-    expect(first.locator('[data-key=redlines]')).to_be_hidden()
+    expect(first.locator('[data-key=redlines]')).to_have_count(0)
 
     page.locator('#nameSearch').fill('alex')
     expect(page.locator('.mod-sheet:visible')).to_have_count(1)
@@ -185,9 +185,9 @@ def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_br
     expect(first.locator('.cxl-panel')).to_be_visible()
     first.locator('[data-key=cxl_at_lead]').check()
     first.locator('.cxl-panel .editor-primary').click()
-    expect(first.locator('[data-key=notes]')).to_be_hidden()
-    expect(first.locator('.notes-black-history')).to_have_text('Black comment')
-    first.locator('[data-key=redlines]').fill('REDLINE')
+    expect(first.locator('[data-key=notes]')).to_be_visible()
+    expect(first.locator('[data-key=notes]')).to_have_value('Black comment')
+    first.locator('[data-key=notes]').fill('Black comment\nREDLINE')
     first.locator('[data-key=numbers]').fill('20000\n17000')
     page.locator('#hideCompleted').check()
     expect(page.locator('.mod-sheet:visible')).to_have_count(1)
@@ -196,7 +196,7 @@ def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_br
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(page.locator('.mod-sheet')).to_have_count(2)
-    expect(page.locator('.mod-sheet').first.locator('[data-key=notes]')).to_have_value('Black comment')
+    expect(page.locator('.mod-sheet').first.locator('[data-key=notes]')).to_have_value('Black comment\nREDLINE')
     row = service.repository.sheets(service.day())[0]
     assert row['draft']['dispo'] == 'cxl'
     assert row['draft']['cxl_at_lead'] is True
@@ -283,8 +283,8 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     siding.locator('[data-sale-selected]').check()
     siding.locator('[data-sale-price]').fill('0')
     first.locator('.sale-panel .sale-done').click()
-    expect(first.locator('.notes-black-history')).to_have_text('Black comment above redlines.')
-    first.locator('[data-key=redlines]').fill('REPLACE TRIM WITH FULL SCOPE.')
+    expect(first.locator('[data-key=notes]')).to_have_value('Black comment above redlines.')
+    first.locator('[data-key=notes]').fill('Black comment above redlines.\nREPLACE TRIM WITH FULL SCOPE.')
     first.locator('[data-key=numbers]').fill('25,000\n17,850')
     for key in ('power_questions', 't_close', 'ninety_min', 'docs', 'bid_sheets',
                 'promotion', 'review', 'one_leg', 'free_lead'):
@@ -297,15 +297,15 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     first.locator('[data-key=call_1]').fill('10:15 AM')
     first.locator('[data-key=call_2]').fill('10:27 AM')
     assert first.locator('.field-notes').bounding_box() == bounds
-    red = first.locator('[data-key=redlines]')
+    red = first.locator('[data-key=notes]')
     assert red.evaluate('(el) => getComputedStyle(el).color') == 'rgb(176, 0, 0)'
-    assert int(red.evaluate('(el) => getComputedStyle(el).fontWeight')) >= 700
+    assert red.evaluate('(el) => parseFloat(getComputedStyle(el).fontSize)') > 0
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(first).to_have_class('mod-sheet surface-ready')
     draft = service.repository.sheets(service.day())[0]['draft']
-    assert draft['notes'] == 'Black comment above redlines.'
-    assert draft['redlines'] == 'REPLACE TRIM WITH FULL SCOPE.'
+    assert draft['notes'] == 'Black comment above redlines.\nREPLACE TRIM WITH FULL SCOPE.'
+    assert draft['redlines'] == ''
     assert draft['dnr_reason'] == 'Roofing'
     assert draft['sale_products'] == {
         'Roofing':{'price':'17850','deposit':'0'},
@@ -471,14 +471,14 @@ def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
     first.locator('[data-key=dispo]').select_option('cxl')
     first.locator('[data-key=cxl_at_lead]').check()
     first.locator('.cxl-panel .editor-primary').click()
-    first.locator('[data-key=redlines]').fill('FINAL REDLINE')
+    first.locator('[data-key=notes]').fill('Final black comment\nFINAL REDLINE')
     held[0].continue_()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(first).to_have_class('mod-sheet surface-ready')
     saved = service.repository.sheets(service.day())[0]['draft']
-    expected = {'review': False, 'numbers': '', 'notes': 'Final black comment',
-                'redlines': 'FINAL REDLINE', 'call_1': '10:15 AM',
+    expected = {'review': False, 'numbers': '', 'notes': 'Final black comment\nFINAL REDLINE',
+                'call_1': '10:15 AM',
                 'call_2': '1:27 PM', 'dispo': 'cxl', 'cxl_at_lead': True}
     for key, value in expected.items():
         assert saved[key] == value, (key, saved[key])
