@@ -1,0 +1,3 @@
+/* Mutable rule in a same-origin stylesheet. The viewport owner updates its
+   declarations through CSSOM; neither HTML nor inline styles are needed. */
+.editor-dialog[open] {}

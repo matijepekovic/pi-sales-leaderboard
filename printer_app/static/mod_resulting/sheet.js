@@ -20,13 +20,30 @@
   // focus, and positions every editor in the viewport on desktop and mobile.
   // One modal can be open across ALL sheets, never one per work order.
   function openDialog(dialog, focusSelector) {
-    if (!dialog) return;
-    for (const open of document.querySelectorAll('.editor-dialog[open]')) {
-      if (open !== dialog) open.close();
-    }
-    if (!dialog.open) dialog.showModal();
-    document.body.classList.add('dialog-open');
-    if (focusSelector) dialog.querySelector(focusSelector)?.focus({preventScroll:true});
+    if (!dialog || dialog.open) return;
+    // Keep the edited sheet visible while a pinch reset completes.
+    const ownerSheet = dialog.closest('.mod-sheet');
+    if (ownerSheet) ownerSheet.dataset.dialogPending = 'yes';
+    let shown = false;
+    const show = () => {
+      if (shown || !dialog.isConnected) return;
+      shown = true;
+      for (const open of document.querySelectorAll('.editor-dialog[open]')) {
+        if (open !== dialog) open.close();
+      }
+      dialog.showModal();
+      if (ownerSheet) ownerSheet.removeAttribute('data-dialog-pending');
+      document.body.classList.add('dialog-open');
+      dialog.dispatchEvent(new Event('mod-dialog-open'));
+      if (focusSelector) dialog.querySelector(focusSelector)?.focus({preventScroll:true});
+    };
+    // Presentation-only boundary: reset the zoom before the dialog exists in
+    // the top layer. If the viewport owner is unavailable, the dialog still opens.
+    const opening = {handled:false, show};
+    dialog.dispatchEvent(new CustomEvent('mod-dialog-opening', {
+      bubbles:true, detail:opening
+    }));
+    if (!opening.handled) show();
   }
   function closeDialog(dialog) {
     if (dialog?.open) dialog.close();
@@ -147,20 +164,26 @@
       for (const row of sheet.querySelectorAll('[data-product]')) {
         const result = row.querySelector('[data-product-result]').value;
         const detail = row.querySelector('[data-product-detail]').value;
-        if (result) draft.product_results[row.dataset.product] = {
-          result, detail,
-          price: row.querySelector('[data-product-price]')?.value || '',
-          deposit: row.querySelector('[data-product-deposit]')?.value || ''
-        };
+        if (result) {
+          const payment = row.querySelector('[data-product-payment]')?.value || '';
+          draft.product_results[row.dataset.product] = {
+            result, detail,
+            price: row.querySelector('[data-product-price]')?.value || '',
+            deposit: row.querySelector('[data-product-deposit]')?.value || '',
+            ...(payment ? {payment} : {})
+          };
+        }
       }
     }
     draft.sale_products = {};
     for (const row of sheet.querySelectorAll('[data-sale-product]')) {
       const selected = row.querySelector('[data-sale-selected]');
       if (!selected?.checked) continue;
+      const payment = row.querySelector('[data-sale-payment]').value;
       draft.sale_products[row.dataset.saleProduct] = {
         price: row.querySelector('[data-sale-price]').value,
-        deposit: row.querySelector('[data-sale-deposit]').value
+        deposit: row.querySelector('[data-sale-deposit]').value,
+        ...(payment ? {payment} : {})
       };
     }
     return draft;
@@ -185,6 +208,33 @@
     text.textContent = draft.dnr && reason ? (/^dnr\s*-/i.test(reason) ? reason : 'DNR - ' + reason) : '';
     text.hidden = !text.textContent;
   }
+  function formattedMoney(input) {
+    const value = String(input || '').trim();
+    const match = /^\$?\s*(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?$/.exec(value);
+    if (!match) return null;
+    const whole = match[1].replace(/,/g, '').replace(/^0+(?=\d)/, '');
+    const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const cents = (match[2] || '').padEnd(2, '0');
+    return '$' + grouped + (cents && cents !== '00' ? '.' + cents : '');
+  }
+  function salePreview(sheet, draft) {
+    const display = sheet.querySelector('.sale-in-redline');
+    if (!display) return;
+    const products = draft.dispo === 'sale' ? draft.sale_products :
+      draft.additional_products ? draft.product_results : {};
+    const lines = [];
+    for (const [product, info] of Object.entries(products || {})) {
+      if (draft.dispo !== 'sale' && info.result !== 'sale') continue;
+      const price = formattedMoney(info.price);
+      const deposit = formattedMoney(info.deposit);
+      if (!price || price === '$0' || deposit === null) continue;
+      const payment = info.payment ? formattedMoney(info.payment) : null;
+      lines.push('SALE ' + product + ': ' + price + ' | Deposit: ' + deposit +
+        (payment !== null ? ' | Payment: ' + payment : ''));
+    }
+    display.textContent = lines.join('\n');
+    display.hidden = !display.textContent;
+  }
   function applyVisibility() {
     const needle = search.value.trim().toLocaleLowerCase();
     for (const sheet of sheets) {
@@ -195,7 +245,8 @@
       const complete = !!sheet.dataset.dispo;
       // Keep the edited sheet visible until its dialog is closed, even if
       // "Hide completed" is enabled and selecting a dispo completes the sheet.
-      const editorOpen = !!sheet.querySelector('.editor-dialog[open]');
+      const editorOpen = sheet.dataset.dialogPending === 'yes' ||
+        !!sheet.querySelector('.editor-dialog[open]');
       sheet.hidden = !editorOpen && (!nameMatches || (hideCompleted.checked && complete));
     }
   }
@@ -274,6 +325,7 @@
         row.querySelector('[data-product-detail]').value = selected.detail || '';
         row.querySelector('[data-product-price]').value = selected.price || '';
         row.querySelector('[data-product-deposit]').value = selected.deposit || '';
+        row.querySelector('[data-product-payment]').value = selected.payment || '';
       }
     }
     function syncIndividualSaleRows() {
@@ -287,6 +339,7 @@
     sheet.dataset.dirty = 'no';
     dnrPreview(sheet, init);
     resultDetailPreview(sheet, init);
+    salePreview(sheet, init);
     const noteArea = sheet.querySelector('.notes-text');
     const noteInput = sheet.querySelector('.mod-notes-input');
     const noteMirror = sheet.querySelector('.mod-notes-display');
@@ -373,32 +426,27 @@
       for (const input of reasonChoices) input.checked = selected.has(input.value);
     }
     syncReasonChoices();
-    function filterSaleRows() {
-      if (!sale) return;
-      const needle = sale.querySelector('.sale-product-filter')?.value.trim().toLocaleLowerCase() || '';
-      for (const row of sale.querySelectorAll('[data-sale-product]')) {
-        row.hidden = !row.dataset.saleProduct.toLocaleLowerCase().includes(needle);
+    dnr?.addEventListener('close', () => {
+      const checkbox = sheet.querySelector('[data-key="dnr"]');
+      // With no selected reason DNR is unchecked, not Do Not Call.
+      if (checkbox.checked && !reasonChoices.some(choice => choice.checked)) {
+        checkbox.checked = false;
+        if (dnrButton) dnrButton.hidden = true;
+        redraw();
       }
-    }
+    });
     function syncSaleRows() {
-      let count = 0;
       for (const row of sheet.querySelectorAll('[data-sale-product]')) {
         const selected = row.querySelector('[data-sale-selected]');
         const enabled = !!selected?.checked;
-        if (enabled) count++;
-        for (const field of row.querySelectorAll('[data-sale-price],[data-sale-deposit]')) {
+        for (const field of row.querySelectorAll('[data-sale-price],[data-sale-deposit],[data-sale-payment]')) {
           field.disabled = !enabled;
         }
       }
-      const summary = sale?.querySelector('.sale-product-count');
-      if (summary) summary.textContent = count + ' selected';
     }
     function openSale() {
       if (!sale) return;
-      const filter = sale.querySelector('.sale-product-filter');
-      if (filter) filter.value = '';
-      filterSaleRows();
-      openDialog(sale, '.sale-product-filter');
+      openDialog(sale, '[data-sale-selected]');
     }
     function redraw() {
       const draft = serialize(sheet);
@@ -406,6 +454,7 @@
       syncNoteMode();
       dnrPreview(sheet,draft);
       resultDetailPreview(sheet,draft);
+      salePreview(sheet,draft);
       syncPricePreviews();
       applyVisibility();
       scheduleSave(sheet);
@@ -463,7 +512,7 @@
         );
         renderNoteRuns();
       }
-      if (input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-product-price],[data-product-deposit]')) redraw();
+      if (input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-sale-payment],[data-product-price],[data-product-deposit],[data-product-payment]')) redraw();
     });
     saleButton?.addEventListener('click', openSale);
     for (const button of sheet.querySelectorAll('[data-price-trigger]')) {
@@ -474,7 +523,6 @@
     cxlButton?.addEventListener('click', () => openDialog(cxl, '[data-key="cxl_at_lead"]'));
     productButton?.addEventListener('click', () => openDialog(product, '[data-product-result]'));
     dnrButton?.addEventListener('click', () => openDialog(dnr, '[data-reason-choice]'));
-    sale?.querySelector('.sale-product-filter')?.addEventListener('input', filterSaleRows);
     for (const button of sheet.querySelectorAll('[data-time-trigger]')) {
       button.addEventListener('click', () => openTimePicker(sheet, button.dataset.timeTrigger));
     }

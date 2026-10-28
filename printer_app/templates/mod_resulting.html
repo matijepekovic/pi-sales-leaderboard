@@ -4,8 +4,9 @@
 <title>MOD Sheets</title>
 <link rel="stylesheet" href="{{ url_for('static',filename='mod_resulting/sheet.css') }}">
 <link rel="stylesheet" href="{{ url_for('mod_resulting.surface_styles') }}">
+<link rel="stylesheet" href="{{ url_for('static',filename='mod_resulting/dialog_viewport.css') }}" data-dialog-viewport>
+<script defer src="{{ url_for('static',filename='mod_resulting/dialog_viewport.js') }}"></script>
 <script defer src="{{ url_for('static',filename='mod_resulting/sheet.js') }}"></script>
-<script defer src="{{ url_for('static',filename='mod_resulting/viewport.js') }}"></script>
 </head><body data-csrf="{{ session.csrf }}"
  data-refresh="{{ url_for('mod_resulting.refresh') }}"
  data-save="{{ url_for('mod_resulting.save') }}"
@@ -31,7 +32,7 @@
 {% macro checkbox(key, label, value, cls='') -%}
 <label class="{{ cls }}"><span>{{ label }}</span><input type="checkbox" data-key="{{ key }}" {% if value %}checked{% endif %}></label>
 {%- endmacro %}
-<div class="sheets" id="sheets" data-zoom="1">
+<div class="sheets" id="sheets">
 {% for item in data.sheets %}
 {% set sheet=item.snapshot %}{% set d=item.draft %}{% set xs=sheet.product_interest.split(';') %}
 <section class="mod-sheet{% if item.submitted_at %} submitted{% endif %}" aria-label="MOD sheet for {{ sheet.lead_name }}"
@@ -83,6 +84,7 @@
     <div class="individual-sale-fields" hidden>
       <label>Sold price <input type="text" inputmode="decimal" data-product-price placeholder="0"></label>
       <label>Deposit <input type="text" inputmode="decimal" data-product-deposit placeholder="0"></label>
+      <label>Payment <input type="text" inputmode="decimal" data-product-payment></label>
     </div>
    </div>
    {% endif %}{% endfor %}
@@ -118,6 +120,7 @@
     </div>
     <div class="result-detail-in-redline" hidden></div>
     <div class="dnr-in-redline" {% if not d.dnr or not d.dnr_reason %}hidden{% endif %}>DNR - {{ d.dnr_reason }}</div>
+    <div class="sale-in-redline" hidden></div>
    </div>
   </div>
  </div>
@@ -191,13 +194,11 @@
  </div>
  <dialog class="editor-dialog sale-panel" aria-label="Sold products">
   <div class="editor-heading">
-   <div><h2>Sold products</h2><p>Select products and enter a price and deposit for each.</p></div>
+   <div><h2>Sold products</h2></div>
    <button type="button" class="close-popover editor-close" aria-label="Close sold products">×</button>
   </div>
   <div class="editor-body">
-   <input class="sale-product-filter" type="search" placeholder="Find product…" aria-label="Search sold products" autocomplete="off">
-   <p class="sale-product-count" aria-live="polite"></p>
-  {% if products %}
+   {% if products %}
    {% for product in products %}
    {% set sold = d.sale_products.get(product.value) %}
    <div class="sale-product-row" data-sale-product="{{ product.value }}">
@@ -206,17 +207,19 @@
      <span>{{ product.label }}</span>
     </label>
     <label>Sale price
-     <input type="text" inputmode="decimal" data-sale-price value="{{ sold.price if sold else '' }}" placeholder="0">
+     <input type="text" inputmode="decimal" data-sale-price value="{{ sold.price if sold else '' }}">
     </label>
     <label>Deposit
-     <input type="text" inputmode="decimal" data-sale-deposit value="{{ sold.deposit if sold else '' }}" placeholder="0">
+     <input type="text" inputmode="decimal" data-sale-deposit value="{{ sold.deposit if sold else '' }}">
+    </label>
+    <label>Payment
+     <input type="text" inputmode="decimal" data-sale-payment value="{{ sold.payment if sold and sold.payment is defined else '' }}">
     </label>
    </div>
    {% endfor %}
   {% else %}
    <p class="sale-products-unavailable">Salesforce product list unavailable.</p>
   {% endif %}
-   <p class="sale-hint">Price 0 = not sold. A deposit of 0 is valid.</p>
   </div>
   <div class="editor-footer"><button type="button" class="close-popover editor-primary sale-done">Done</button></div>
  </dialog>
@@ -232,18 +235,18 @@
  </dialog>
  <dialog class="editor-dialog price-panel" aria-label="Work Order price overrides">
   <div class="editor-heading">
-   <div><h2>Work Order amounts</h2><p>Leave a field blank to keep the automatically calculated value.</p></div>
+   <div><h2>Work Order amounts</h2></div>
    <button type="button" class="close-popover editor-close" aria-label="Close Work Order amounts">×</button>
   </div>
   <div class="editor-body price-fields">
    <label>Start Price
-    <input type="text" inputmode="decimal" data-key="start_price_override" aria-label="Override Start Price" value="{{ d.start_price_override }}" placeholder="Automatic from Numbers">
+    <input type="text" inputmode="decimal" data-key="start_price_override" aria-label="Override Start Price" value="{{ d.start_price_override }}">
    </label>
    <label>Final Price
-    <input type="text" inputmode="decimal" data-key="final_price_override" aria-label="Override Final Price" value="{{ d.final_price_override }}" placeholder="Automatic from Numbers">
+    <input type="text" inputmode="decimal" data-key="final_price_override" aria-label="Override Final Price" value="{{ d.final_price_override }}">
    </label>
-   <label>Deposit / Payment
-    <input type="text" inputmode="decimal" data-key="deposit_override" aria-label="Override Deposit Payment" value="{{ d.deposit_override }}" placeholder="Automatic from sold products">
+   <label>Total Deposit
+    <input type="text" inputmode="decimal" data-key="deposit_override" aria-label="Override Total Deposit" value="{{ d.deposit_override }}">
    </label>
   </div>
   <div class="editor-footer"><button type="button" class="close-popover editor-primary">Done</button></div>
@@ -253,11 +256,6 @@
 {% else %}
 <p class="no-sheets">No MOD sheets loaded for today. Use Refresh to pull from Salesforce.</p>
 {% endfor %}
-</div>
-<div class="sheet-zoom" id="sheetZoom" role="group" aria-label="Sheet zoom">
- <button type="button" id="zoomOut" aria-label="Zoom sheets out" disabled>−</button>
- <button type="button" id="zoomFit" aria-label="Fit sheets to screen">Fit</button>
- <button type="button" id="zoomIn" aria-label="Zoom sheets in">+</button>
 </div>
 <dialog class="editor-dialog time-dialog" id="timeDialog" aria-label="Choose call time">
  <div class="editor-heading">

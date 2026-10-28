@@ -299,6 +299,9 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     roof.locator('[data-sale-selected]').check()
     roof.locator('[data-sale-price]').fill('17850')
     roof.locator('[data-sale-deposit]').fill('0')
+    roof.locator('[data-sale-payment]').fill('159')
+    expect(first.locator('.sale-in-redline')).to_have_text(
+        'SALE Roofing: $17,850 | Deposit: $0 | Payment: $159')
     # Zero-priced selected products are not treated as sold.
     siding = first.locator('[data-sale-product="Siding"]')
     siding.locator('[data-sale-selected]').check()
@@ -334,7 +337,7 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     ]
     assert draft['dnr_reason'] == 'Roofing'
     assert draft['sale_products'] == {
-        'Roofing':{'price':'17850','deposit':'0'},
+        'Roofing':{'price':'17850','deposit':'0','payment':'159'},
         'Siding':{'price':'0','deposit':''},
     }
     assert draft['call_1'] == '10:15 AM'
@@ -379,12 +382,15 @@ def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, vi
 
     first.locator('[data-key="dispo"]').select_option('sale')
     popup = visible_popup('.sale-panel[open]')
-    popup.locator('.sale-product-filter').fill('Roofing')
+    expect(popup.locator('.sale-product-filter')).to_have_count(0)
     expect(popup.locator('[data-sale-product="Roofing"]')).to_be_visible()
-    expect(popup.locator('[data-sale-product="Windows"]')).to_be_hidden()
+    expect(popup.locator('[data-sale-product="Windows"]')).to_be_visible()
     popup.locator('[data-sale-product="Roofing"] [data-sale-selected]').check()
     popup.locator('[data-sale-product="Roofing"] [data-sale-price]').fill('17000')
     popup.locator('[data-sale-product="Roofing"] [data-sale-deposit]').fill('0')
+    popup.locator('[data-sale-product="Roofing"] [data-sale-payment]').fill('135')
+    expect(first.locator('.sale-in-redline')).to_have_text(
+        'SALE Roofing: $17,000 | Deposit: $0 | Payment: $135')
     popup.locator('.sale-done').click()
     expect(page.locator('.editor-dialog[open]')).to_have_count(0)
     first.locator('.edit-sale-products').click()
@@ -443,7 +449,9 @@ def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, vi
         page.locator('#refresh').click()
     saved = service.repository.sheets(service.day())[0]['draft']
     assert saved['dnr_reason'] == 'Roofing'
-    assert saved['sale_products'] == {'Roofing': {'price':'17000', 'deposit':'0'}}
+    assert saved['sale_products'] == {
+        'Roofing': {'price':'17000', 'deposit':'0', 'payment':'135'},
+    }
     assert saved['cxl_at_lead'] is True
     assert saved['call_1'] == '10:15 AM'
     assert saved['call_2'] == '1:27 PM'
@@ -567,6 +575,44 @@ def test_dnr_automatically_overrides_dispo_status_without_lead_editor(mod_browse
     assert draft['dnr'] is False
     assert not writer.applied
 
+
+
+def test_dnr_unchecks_when_dialog_closes_without_a_reason(mod_browser):
+    from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import outcome_fields
+
+    page, service, writer, origin, evidence = mod_browser
+    page.goto(origin + '/mod-resulting')
+    sheet = page.locator('.mod-sheet').first
+    sheet.locator('[data-key=dispo]').select_option('pns')
+    sheet.locator('[data-key=dnr]').check()
+    popup = sheet.locator('.dnr-panel[open]')
+    expect(popup).to_be_visible()
+    popup.locator('.editor-primary').click()
+    expect(sheet.locator('[data-key=dnr]')).not_to_be_checked()
+    expect(sheet.locator('.dnr-in-redline')).to_be_hidden()
+
+    sheet.locator('[data-key=dnr]').check()
+    popup = sheet.locator('.dnr-panel[open]')
+    popup.locator('[data-reason-choice][value="Roofing"]').check()
+    popup.locator('.editor-primary').click()
+    expect(sheet.locator('[data-key=dnr]')).to_be_checked()
+    expect(sheet.locator('.dnr-in-redline')).to_have_text('DNR - Roofing')
+
+    sheet.locator('.edit-dnr-reasons').click()
+    popup = sheet.locator('.dnr-panel[open]')
+    popup.locator('[data-reason-choice][value="Roofing"]').uncheck()
+    page.keyboard.press('Escape')
+    expect(sheet.locator('[data-key=dnr]')).not_to_be_checked()
+    expect(sheet.locator('.dnr-in-redline')).to_be_hidden()
+
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    saved = service.repository.sheets(service.day())[0]['draft']
+    assert saved['dispo'] == 'pns'
+    assert saved['dnr'] is False and saved['dnr_reason'] == ''
+    assert outcome_fields(saved)['lead_status'] == 'Nurturing'
+    assert not writer.applied
 
 def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
     from playwright.sync_api import expect
