@@ -281,7 +281,7 @@
    {% if not lead_status_choices or not previous_result_choices %}
    <p class="editor-hint">Salesforce lead picklist choices are unavailable. Current saved values are preserved.</p>
    {% endif %}
-   <p class="editor-hint">DNR and the lead's future status are separate decisions. Select Do Not Call when required by the training workflow.</p>
+   <p class="editor-hint dnr-lead-status-hint" {% if not d.dnr %}hidden{% endif %}>DNR is checked. Lead Status will be set to Do Not Call automatically. Uncheck DNR to edit Lead Status.</p>
   </div>
   <div class="editor-footer"><button type="button" class="close-popover editor-primary">Done</button></div>
  </dialog>
