@@ -286,7 +286,7 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
         first.locator('[data-key=' + key + ']').check()
     first.locator('[data-key=dnr]').check()
     expect(first.locator('.dnr-panel')).to_be_visible()
-    first.locator('[data-key=dnr_reason]').select_option('Roofing')
+    first.locator('.dnr-panel [data-reason-choice][value="Roofing"]').check()
     expect(first.locator('.dnr-in-redline')).to_have_text('DNR - Roofing')
     first.locator('.dnr-panel .close-popover').click()
     first.locator('[data-key=call_1]').fill('10:15 AM')
@@ -317,6 +317,110 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     assert updated == dict(draft, review=False)
     evidence('filled-sheet')
     assert service.allow_salesforce_writes is False and not writer.applied
+
+
+@pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
+def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, viewport):
+    """All editors must use the viewport top layer, even in the zoomable PDF."""
+    from playwright.sync_api import expect
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width':viewport[0], 'height':viewport[1]})
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+
+    def visible_popup(selector):
+        dialog = page.locator(selector)
+        expect(dialog).to_be_visible()
+        expect(page.locator('.editor-dialog[open]')).to_have_count(1)
+        box = dialog.bounding_box()
+        assert box is not None
+        assert box['x'] >= 0 and box['y'] >= 0, box
+        assert box['x'] + box['width'] <= viewport[0] + 1, box
+        assert box['y'] + box['height'] <= viewport[1] + 1, box
+        return dialog
+
+    first.locator('[data-key="dnr"]').check()
+    popup = visible_popup('.dnr-panel[open]')
+    popup.locator('[data-reason-choice][value="Roofing"]').check()
+    expect(first.locator('.dnr-in-redline')).to_have_text('DNR - Roofing')
+    popup.locator('.editor-primary').click()
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+
+    first.locator('[data-key="dispo"]').select_option('sale')
+    popup = visible_popup('.sale-panel[open]')
+    popup.locator('.sale-product-filter').fill('Roofing')
+    expect(popup.locator('[data-sale-product="Roofing"]')).to_be_visible()
+    expect(popup.locator('[data-sale-product="Windows"]')).to_be_hidden()
+    popup.locator('[data-sale-product="Roofing"] [data-sale-selected]').check()
+    popup.locator('[data-sale-product="Roofing"] [data-sale-price]').fill('17000')
+    popup.locator('[data-sale-product="Roofing"] [data-sale-deposit]').fill('0')
+    popup.locator('.sale-done').click()
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+
+    first.locator('[data-key="dispo"]').select_option('cxl')
+    popup = visible_popup('.cxl-panel[open]')
+    popup.locator('[data-key="cxl_at_lead"]').check()
+    page.keyboard.press('Escape')
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+
+    first.locator('[data-key="dispo"]').select_option('pns')
+    first.locator('[data-key="additional_products"]').check()
+    popup = visible_popup('.product-panel[open]')
+    popup.locator('[data-product="Roofing"] [data-product-result]').select_option('np')
+    popup.locator('.editor-primary').click()
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+
+    first.locator('[data-time-trigger="call_1"]').click()
+    popup = visible_popup('#timeDialog[open]')
+    expect(popup.locator('#timeTitle')).to_have_text('Call 1 time')
+    popup.locator('#timeHour').select_option('10')
+    popup.locator('#timeMinute').select_option('15')
+    popup.locator('#timePeriod').select_option('AM')
+    popup.locator('#timeApply').click()
+    expect(first.locator('[data-key="call_1"]')).to_have_value('10:15 AM')
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+
+    first.locator('[data-time-trigger="call_2"]').click()
+    popup = visible_popup('#timeDialog[open]')
+    popup.locator('#timeHour').select_option('1')
+    popup.locator('#timeMinute').select_option('27')
+    popup.locator('#timePeriod').select_option('PM')
+    popup.locator('#timeApply').click()
+    expect(first.locator('[data-key="call_2"]')).to_have_value('1:27 PM')
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    saved = service.repository.sheets(service.day())[0]['draft']
+    assert saved['dnr_reason'] == 'Roofing'
+    assert saved['sale_products'] == {'Roofing': {'price':'17000', 'deposit':'0'}}
+    assert saved['cxl_at_lead'] is True
+    assert saved['call_1'] == '10:15 AM'
+    assert saved['call_2'] == '1:27 PM'
+    assert saved['product_results']['Roofing']['result'] == 'np'
+    assert not writer.applied
+    evidence('editor-dialogs-' + str(viewport[0]))
+
+
+def test_opening_another_sheet_dialog_closes_the_previous(mod_browser):
+    from playwright.sync_api import expect
+    page, service, writer, origin, evidence = mod_browser
+    page.goto(origin + '/mod-resulting')
+    first, second = page.locator('.mod-sheet').all()
+    first.locator('[data-key="dnr"]').check()
+    expect(first.locator('.dnr-panel')).to_be_visible()
+    # Background sheets cannot be clicked while a modal is open. Simulate a
+    # second change event to assert that even programmatic open paths cannot
+    # stack dialogs across multiple appointments.
+    second.locator('[data-key="dnr"]').evaluate("""el => {
+        el.checked = true;
+        el.dispatchEvent(new Event('change', {bubbles:true}));
+    }""")
+    expect(page.locator('.editor-dialog[open]')).to_have_count(1)
+    expect(first.locator('.dnr-panel')).to_be_hidden()
+    expect(second.locator('.dnr-panel')).to_be_visible()
+    page.keyboard.press('Escape')
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
 
 
 def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
