@@ -78,30 +78,30 @@ body.dialog-open{overflow:hidden}
 .editor-dialog label{font:500 14px/1.4 system-ui,-apple-system,sans-serif;color:#293340}
 .product-panel,.sale-panel{width:min(660px,calc(100vw - 28px))}
 .product-summary{font-size:1.25cqw;white-space:normal}
-.product-result-row{padding:16px 0;border-bottom:1px solid #e3e7ec;display:grid;gap:12px;grid-template-columns:repeat(2,minmax(0,1fr))}
-.product-result-row strong{grid-column:1/-1;font-size:15px}
-.product-result-row label{display:flex;flex-direction:column;gap:5px;min-width:0}
+.product-result-row{padding:16px 0;border-bottom:1px solid #e3e7ec;display:flex;flex-wrap:wrap;gap:12px}
+.product-result-row strong{flex:1 1 100%;font-size:15px}
+.product-result-row>label{display:flex;flex:1 1 calc(50% - 6px);flex-direction:column;gap:5px;min-width:0}
 .mod-sheet .product-result-row select{width:100%;max-width:none}
-.product-result-row .individual-sale-fields{display:grid;grid-column:1/-1;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.individual-sale-fields label{display:flex;flex-direction:column;gap:5px}
+.product-result-row .individual-sale-fields{display:flex;flex:1 1 100%;flex-wrap:wrap;gap:12px}
+.individual-sale-fields label{display:flex;flex:1 1 calc(50% - 6px);flex-direction:column;gap:5px;min-width:0}
 .mod-sheet .individual-sale-fields input{width:100%;max-width:none}
 .sale-product-filter{width:100%;margin:0 0 6px}
 .sale-product-count{margin:5px 0 12px;color:#526071;font-size:13px}
-.sale-product-row{display:grid;grid-template-columns:minmax(140px,1fr) minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:center;padding:14px 0;border-bottom:1px solid #e3e7ec}
-.sale-product-row label{display:flex;flex-direction:column;gap:5px;min-width:0}
-.sale-product-row .sale-product-choice{flex-direction:row;align-items:center;gap:10px;font-weight:600}
+.sale-product-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:14px 0;border-bottom:1px solid #e3e7ec}
+.sale-product-row label{display:flex;flex:1 1 110px;flex-direction:column;gap:5px;min-width:0}
+.sale-product-row .sale-product-choice{flex:1 1 140px;flex-direction:row;align-items:center;gap:10px;font-weight:600}
 .sale-product-row input[type=text]{width:100%}
 .sale-product-row input:disabled{background:#f1f3f6!important;color:#87919e!important}
 .sale-hint,.sale-products-unavailable,.editor-hint{margin:12px 0 2px;font-size:13px;color:#56616f}
 .dnr-panel{width:min(500px,calc(100vw - 28px))}
-.dnr-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.dnr-option{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid #e3e7ec;border-radius:8px;min-height:52px;cursor:pointer}
+.dnr-options{display:flex;flex-wrap:wrap;gap:8px}
+.dnr-option{display:flex;flex:1 1 calc(50% - 4px);align-items:center;gap:12px;padding:12px;border:1px solid #e3e7ec;border-radius:8px;min-height:52px;cursor:pointer}
 .dnr-option:has(input:checked){background:#eaf1ff;border-color:#749de8}
 .cxl-panel{width:min(450px,calc(100vw - 28px))}
 .cxl-panel .dnr-option{max-width:100%}
 .time-dialog{width:min(440px,calc(100vw - 28px))}
-.time-options{display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:10px}
-.time-options label{display:flex;flex-direction:column;gap:6px;white-space:nowrap}
+.time-options{display:flex;gap:10px}
+.time-options label{display:flex;flex:1 1 0;min-width:0;flex-direction:column;gap:6px;white-space:nowrap}
 .time-options select{width:100%}
 .end-dialog{width:min(480px,calc(100vw - 28px))}
 .end-dialog #reviewCount{line-height:1.5;color:#344156;font-size:14px}
@@ -143,11 +143,11 @@ body.dialog-open{overflow:hidden}
  .editor-dialog .editor-heading{padding:14px 16px}
  .editor-dialog .editor-body{padding:14px 16px 18px}
  .editor-dialog .editor-footer{padding:12px 16px}
- .dnr-options{grid-template-columns:1fr}
- .sale-product-row{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
- .sale-product-choice{grid-column:1/-1}
- .product-result-row{grid-template-columns:1fr}
- .product-result-row .individual-sale-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .dnr-option{flex-basis:100%}
+ .sale-product-row{gap:9px}
+ .sale-product-row .sale-product-choice{flex-basis:100%}
+ .product-result-row>label{flex-basis:100%}
+ .product-result-row .individual-sale-fields label{flex-basis:calc(50% - 6px)}
  .mod-sheet .time-picker-button{min-width:30px;min-height:30px}
 }
 
