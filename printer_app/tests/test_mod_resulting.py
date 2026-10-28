@@ -210,20 +210,20 @@ def test_sale_zero_price_is_not_sold_and_zero_deposit_is_valid(tmp_path):
     assert 'SALE Roofing: $18,000 | Deposit: $0' in payload['final_redlines']
 
 
-def test_dnr_forces_do_not_call_and_restores_manual_status_when_unchecked():
+def test_dnr_sets_do_not_call_and_unchecking_restores_dispo_status():
     draft=clean_draft({
         'dispo':'pns','dnr':True,'dnr_reason':'Roofing;Bath',
-        'lead_status':'Sale Pending',
+        # Historic local manual values must never override current resulting.
+        'lead_status':'Sale Pending', 'previous_result':'No Pitch',
     })
     fields=outcome_fields(draft)
     assert fields['lead_status']=='Do Not Call'
+    assert 'previous_result' not in fields
     assert fields['work_order_status']=='Completed'
-    assert draft['lead_status']=='Sale Pending'
-    assert draft['dnr_reason']=='Roofing;Bath'
     draft['dnr']=False
-    assert outcome_fields(draft)['lead_status']=='Sale Pending'
-    draft['lead_status']=''
     assert outcome_fields(draft)['lead_status']=='Nurturing'
+    draft['dispo']='sale'
+    assert outcome_fields(draft)['lead_status']=='Sale Pending'
 
 
 def test_eight_am_pull_keeps_the_existing_printer_schedule_untouched(tmp_path):
