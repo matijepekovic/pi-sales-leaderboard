@@ -66,6 +66,7 @@
     <strong>{{ product.strip() }}</strong>
     <label>Result <select data-product-result>
       <option value="">Choose</option>
+      <option value="sale">Sale</option>
       <option value="pns">Pitch No Sale</option>
       <option value="np">No Pitch</option><option value="cxl">Canceled</option>
       <option value="nra">No Rep Available</option><option value="oos">Out of Scope</option>
@@ -74,6 +75,10 @@
       <option value="">None</option>
       {% for option in result_details %}<option value="{{ option.value }}">{{ option.label }}</option>{% endfor %}
     </select></label>
+    <div class="individual-sale-fields" hidden>
+      <label>Sold price <input type="text" inputmode="decimal" data-product-price placeholder="0"></label>
+      <label>Deposit <input type="text" inputmode="decimal" data-product-deposit placeholder="0"></label>
+    </div>
    </div>
    {% endif %}{% endfor %}
   </div>
