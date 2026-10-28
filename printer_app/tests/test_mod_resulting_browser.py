@@ -489,6 +489,8 @@ def test_lead_status_and_manual_price_cells_are_editable_and_persist(mod_browser
     page.set_viewport_size({'width':viewport[0], 'height':viewport[1]})
     page.goto(origin + '/mod-resulting')
     first = page.locator('.mod-sheet').first
+    browser_errors = []
+    page.on('pageerror', lambda exc: browser_errors.append(str(exc)))
     first.locator('[data-key="numbers"]').fill('25000\n17000')
     first.locator('[data-key="dispo"]').select_option('pns')
     lead_trigger = (first.locator('[data-lead-trigger]') if viewport[0] <= 900
@@ -515,6 +517,22 @@ def test_lead_status_and_manual_price_cells_are_editable_and_persist(mod_browser
     prices.locator('[data-key="deposit_override"]').fill('2500')
     # Must update the actual printed row while the native modal is open, and
     # remain updated after closing, before any draft save or navigation.
+    state = first.evaluate("""sheet => {
+      const key = 'start_price_override';
+      const input = sheet.querySelector('[data-key="' + key + '"]');
+      const preview = sheet.querySelector('[data-price-display="' + key + '"]');
+      return {
+        input: input?.value, preview: preview?.textContent,
+        fields: sheet.querySelectorAll('[data-key="' + key + '"]').length,
+        previews: sheet.querySelectorAll('[data-price-display="' + key + '"]').length,
+        popupOpen: sheet.querySelector('.price-panel')?.open,
+      };
+    }""")
+    assert not browser_errors, browser_errors
+    assert state == {
+        'input':'27000', 'preview':'$27000',
+        'fields':1, 'previews':1, 'popupOpen':True,
+    }, state
     expect(first.locator('[data-price-display="start_price_override"]')).to_have_text('$27000')
     expect(first.locator('[data-price-display="final_price_override"]')).to_have_text('$16000')
     expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('$2500')
