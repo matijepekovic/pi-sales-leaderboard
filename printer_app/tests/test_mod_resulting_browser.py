@@ -440,6 +440,31 @@ def test_opening_another_sheet_dialog_closes_the_previous(mod_browser):
     expect(page.locator('.editor-dialog[open]')).to_have_count(0)
 
 
+def test_existing_split_notes_are_preserved_when_migrated_to_one_textbox(mod_browser):
+    from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import clean_draft
+
+    page, service, writer, origin, evidence = mod_browser
+    day = service.day()
+    ident = service.repository.sheets(day)[0]['work_order_id']
+    service.save(day, ident, clean_draft({
+        'dispo':'pns', 'notes':'Legacy first note',
+        'redlines':'Legacy second note',
+    }), 0)
+    page.goto(origin + '/mod-resulting')
+    note = page.locator('.mod-sheet').first.locator('[data-key=notes]')
+    expect(note).to_have_value('Legacy first note\\nLegacy second note')
+    assert page.locator('.mod-sheet').first.locator('.notes-text textarea').count() == 1
+    note.fill('Legacy first note\\nLegacy second note\\nAdditional note')
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    saved = service.repository.sheets(day)[0]['draft']
+    assert saved['notes'] == 'Legacy first note\\nLegacy second note\\nAdditional note'
+    assert saved['redlines'] == ''
+    assert saved['dispo'] == 'pns'
+    assert not writer.applied
+
+
 def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
     from playwright.sync_api import expect
     page, service, writer, origin, evidence = mod_browser
