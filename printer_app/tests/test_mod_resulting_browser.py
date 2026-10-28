@@ -301,15 +301,20 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     first.locator('[data-key=call_1]').fill('10:15 AM')
     first.locator('[data-key=call_2]').fill('10:27 AM')
     assert first.locator('.field-notes').bounding_box() == bounds
-    red = first.locator('[data-key=notes]')
-    assert red.evaluate('(el) => getComputedStyle(el).color') == 'rgb(176, 0, 0)'
-    assert red.evaluate('(el) => parseFloat(getComputedStyle(el).fontSize)') > 0
+    red = first.locator('.mod-notes-display .after-dispo')
+    expect(red).to_have_text('\nREPLACE TRIM WITH FULL SCOPE.')
+    expect(first.locator('.mod-notes-display span').first).to_have_text(
+        'Black comment above redlines.')
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(first).to_have_class('mod-sheet surface-ready')
     draft = service.repository.sheets(service.day())[0]['draft']
     assert draft['notes'] == 'Black comment above redlines.\nREPLACE TRIM WITH FULL SCOPE.'
     assert draft['redlines'] == ''
+    assert draft['note_runs'] == [
+        {'text':'Black comment above redlines.', 'red':False},
+        {'text':'\nREPLACE TRIM WITH FULL SCOPE.', 'red':True},
+    ]
     assert draft['dnr_reason'] == 'Roofing'
     assert draft['sale_products'] == {
         'Roofing':{'price':'17850','deposit':'0'},
@@ -543,3 +548,41 @@ def test_real_policy_rejects_an_inline_style_in_a_separate_probe_page(mod_browse
         expect(probe.locator('.mod-sheet').first).to_be_visible()
     finally:
         probe.close()
+
+def test_result_detail_is_always_red_and_new_notes_only_turn_red_after_dispo(mod_browser):
+    from playwright.sync_api import expect
+
+    page, service, writer, origin, evidence = mod_browser
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+    notes = first.locator('[data-key=notes]')
+    notes.fill('Before disposition')
+    first.locator('[data-key=result_detail]').select_option('Price Objection')
+    expect(first.locator('.result-detail-in-redline')).to_have_text(
+        'RESULT DETAIL: Price Objection')
+    expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
+    first.locator('[data-key=dispo]').select_option('pns')
+    notes.fill('Before disposition\nAfter disposition')
+    expect(first.locator('.mod-notes-display span').first).to_have_text(
+        'Before disposition')
+    expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(
+        '\nAfter disposition')
+    first.locator('[data-key=dispo]').select_option('')
+    # Removing Dispo changes only the ink for future typing.
+    expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(
+        '\nAfter disposition')
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    expect(page.locator('.mod-notes-display .after-dispo').first).to_have_text(
+        '\nAfter disposition')
+    expect(page.locator('.result-detail-in-redline').first).to_have_text(
+        'RESULT DETAIL: Price Objection')
+    stored = service.repository.sheets(service.day())[0]['draft']
+    assert stored['note_runs'] == [
+        {'text':'Before disposition','red':False},
+        {'text':'\nAfter disposition','red':True},
+    ]
+    assert stored['dispo'] == ''
+    assert not writer.applied
+
+
