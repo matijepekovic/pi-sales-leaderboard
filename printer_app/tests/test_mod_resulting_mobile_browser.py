@@ -166,6 +166,10 @@ def test_popup_tracks_visible_viewport_when_zoomed_or_keyboard_opens(mod_browser
     dialog = first.locator('.sale-panel[open]')
     expect(dialog).to_be_visible()
     assert dialog.evaluate('(el) => getComputedStyle(el).display') == 'flex'
+    # Before any keyboard opens, ordinary 1x uses the browser's native dialog
+    # geometry rather than a JS transform. This prevents the footer/Done row
+    # from floating in a second synthetic viewport.
+    expect(dialog).to_have_css('transform', 'none')
     assert dialog.locator('.editor-body').evaluate(
         '(el) => getComputedStyle(el).overflowY') == 'auto'
     def footer_inside():
@@ -261,6 +265,7 @@ def test_popup_fits_native_zoom_before_opening_and_allows_zoom_again(mod_browser
     expect(page.locator('.mod-sheet').first).to_be_visible()
     assert page.evaluate('window.modalScaleAtOpen') == pytest.approx(1, abs=.02)
     assert page.evaluate('window.visualViewport.scale') == pytest.approx(1, abs=.02)
+    expect(popup).to_have_css('transform', 'none')
     assert page.locator('meta[name=viewport]').get_attribute('content') == (
         'width=device-width,initial-scale=1'
     )
