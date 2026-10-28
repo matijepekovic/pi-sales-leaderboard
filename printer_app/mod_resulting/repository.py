@@ -22,6 +22,11 @@ class ResultingRepository:
     def day(self, day):
         return self.db.one('SELECT * FROM mod_result_days WHERE day=?', (day,))
 
+    def imported_market(self, day):
+        """Market used for this day's imported sheets, not current Settings."""
+        value = self.db.get('mod_result_market:' + day, '')
+        return value if isinstance(value, str) else ''
+
     def sheets(self, day):
         rows = self.db.rows('''SELECT work_order_id,snapshot,draft,revision,current,
                 submitted_at,submit_error FROM mod_result_sheets
@@ -39,7 +44,7 @@ class ResultingRepository:
             raise LookupError('This MOD sheet is not part of the selected day.')
         return json.loads(row['snapshot'])
 
-    def refresh(self, day, records, external_drafts=None):
+    def refresh(self, day, records, external_drafts=None, market_segment=None):
         """Refresh source and verified Salesforce result data without erasing edits.
 
         Only untouched revision-zero drafts receive server values. A disposition
@@ -49,6 +54,11 @@ class ResultingRepository:
         receipt (positive Unix timestamp), so later Refresh updates still work.
         """
         external_drafts = external_drafts or {}
+        if market_segment is not None and (
+            not isinstance(market_segment, str) or len(market_segment) > 128
+            or any(not char.isprintable() for char in market_segment)
+        ):
+            raise ValueError('Invalid imported MOD market.')
         now = time.time()
         with self.db.connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
@@ -56,6 +66,21 @@ class ResultingRepository:
             state = conn.execute('SELECT submitting FROM mod_result_days WHERE day=?', (day,)).fetchone()
             if state['submitting']:
                 raise ValueError('Cannot refresh while end-of-day submission is running.')
+            # Persist the actual import scope transactionally with the sheets.
+            # Changing Settings later must not silently change Select MOD.
+            if market_segment is not None:
+                market_key = 'mod_result_market:' + day
+                previous = conn.execute(
+                    'SELECT value FROM meta WHERE key=?', (market_key,)).fetchone()
+                old_market = json.loads(previous['value']) if previous else ''
+                if old_market and old_market != market_segment:
+                    conn.execute(
+                        "UPDATE mod_result_days SET mod_user_id='',mod_user_name='' WHERE day=? "
+                        "AND submitted_at IS NULL", (day,))
+                conn.execute(
+                    'INSERT INTO meta(key,value) VALUES(?,?) '
+                    'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                    (market_key, json.dumps(market_segment)))
             conn.execute('UPDATE mod_result_sheets SET current=0 WHERE day=?', (day,))
             for position, record in enumerate(records):
                 snapshot = asdict(record)
