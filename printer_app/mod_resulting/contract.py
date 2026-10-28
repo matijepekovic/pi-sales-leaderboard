@@ -124,10 +124,12 @@ def clean_draft(raw):
             _money(data[field])
     # Lead-status selections are validated against actual Salesforce picklists
     # in the adapter before any write; empty means use the Dispo default.
-    if not data['dnr']:
+    # DNR only applies when at least one reason is actually selected.
+    # A checked box with no reasons is an unchecked DNR, not Do Not Call.
+    data['dnr_reason'] = ';'.join(dnr_reasons(data['dnr_reason']))
+    if not data['dnr'] or not data['dnr_reason']:
+        data['dnr'] = False
         data['dnr_reason'] = ''
-    else:
-        data['dnr_reason'] = ';'.join(dnr_reasons(data['dnr_reason']))
     for key in ('call_1', 'call_2'):
         if data[key] and not TIME_RE.fullmatch(data[key]):
             raise ValueError(key + ' must be entered with AM or PM.')
@@ -143,18 +145,20 @@ def clean_draft(raw):
         detail = info.get('detail', '')
         price = info.get('price', '')
         deposit = info.get('deposit', '')
+        payment = info.get('payment', '')
         if (outcome not in PRODUCT_RESULTS or not isinstance(detail, str)
                 or len(detail) > 120 or not isinstance(price, str)
-                or not isinstance(deposit, str) or len(price) > 30
-                or len(deposit) > 30):
+                or not isinstance(deposit, str) or not isinstance(payment, str)
+                or len(price) > 30 or len(deposit) > 30
+                or len(payment) > 30):
             raise ValueError('Invalid product result.')
-        if price.strip():
-            _money(price)
-        if deposit.strip():
-            _money(deposit)
+        for amount in (price, deposit, payment):
+            if amount.strip():
+                _money(amount)
         normalized[product.strip()] = {
             'result': outcome, 'detail': detail.strip(),
             'price': price.strip(), 'deposit': deposit.strip(),
+            **({'payment': payment.strip()} if 'payment' in info else {}),
         }
     data['product_results'] = normalized
 
@@ -167,17 +171,20 @@ def clean_draft(raw):
             raise ValueError('Invalid sold product selection.')
         price = info.get('price', '')
         deposit = info.get('deposit', '')
-        if not isinstance(price, str) or not isinstance(deposit, str):
-            raise ValueError('Sale price and deposit must be entered as text values.')
-        if len(price) > 30 or len(deposit) > 30:
-            raise ValueError('Sale price or deposit is too long.')
-        # Validate entered values now; selection with price zero is retained in
-        # the draft but later treated as not sold by the workflow.
-        if price.strip():
-            _money(price)
-        if deposit.strip():
-            _money(deposit)
-        sales[product.strip()] = {'price': price.strip(), 'deposit': deposit.strip()}
+        payment = info.get('payment', '')
+        if not all(isinstance(amount, str) for amount in (price, deposit, payment)):
+            raise ValueError('Sale price, deposit and payment must be entered as text values.')
+        if any(len(amount) > 30 for amount in (price, deposit, payment)):
+            raise ValueError('Sale amount exceeds the allowed length.')
+        # Zero-priced selected products stay unresulted. Payment is optional,
+        # including for cash sales, and never becomes a Salesforce amount field.
+        for amount in (price, deposit, payment):
+            if amount.strip():
+                _money(amount)
+        sales[product.strip()] = {
+            'price': price.strip(), 'deposit': deposit.strip(),
+            **({'payment': payment.strip()} if 'payment' in info else {}),
+        }
     data['sale_products'] = sales
     return data
 
@@ -201,6 +208,7 @@ def sold_products(draft):
             'product': product,
             'price': money_text(info['price']),
             'deposit': money_text(info['deposit']),
+            'payment': money_text(info.get('payment', '')),
         })
     return tuple(result)
 
@@ -222,6 +230,7 @@ def individual_product_sales(draft):
                 'product': product,
                 'price': money_text(entry['price']),
                 'deposit': money_text(entry['deposit']),
+                'payment': money_text(entry.get('payment', '')),
             })
     return tuple(sold)
 
@@ -232,6 +241,8 @@ def sale_redlines(draft):
     return tuple(
         'SALE ' + item['product'] + ': ' + format_money(item['price'])
         + ' | Deposit: ' + format_money(item['deposit'])
+        + (' | Payment: ' + format_money(item['payment'])
+           if item['payment'] else '')
         for item in sales
     )
 
@@ -318,7 +329,7 @@ def outcome_fields(draft):
         # DNR. Old manually edited draft fields remain accepted for backward
         # compatibility, but can never override the authoritative outcome.
         'lead_status': (
-            'Do Not Call' if draft['dnr'] else
+            'Do Not Call' if draft['dnr'] and draft['dnr_reason'] else
             {'sale':'Sale Pending', 'pns':'Nurturing',
              'np':'Nurturing', 'cxl':'Canceled',
              'nra':'Nurturing', 'oos':'Out of Scope'}[dispo]
