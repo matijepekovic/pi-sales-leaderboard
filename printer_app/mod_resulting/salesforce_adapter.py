@@ -273,7 +273,7 @@ class ResultingSalesforceAdapter:
                 self._field(lead, LEAD_FIELDS['dnr_reason'], types=('multipicklist',))
             ),
             'products': self._options(
-                self._field(product, PR['product'], types=('picklist', 'multipicklist'))
+                self._field(product, PR['product'], update=False, types=('picklist',))
             ),
         }
 
@@ -356,10 +356,14 @@ class ResultingSalesforceAdapter:
         return ';'.join(result), added
 
     def _product_operations(self, payload, schema):
-        lead_field = self._field(schema, PR['lead'], create=True, types=('reference',))
-        wo_field = self._field(schema, PR['work_order'], create=True, types=('reference',))
+        lead_field = self._field(
+            schema, PR['lead'], update=False, create=True, types=('reference',)
+        )
+        wo_field = self._field(
+            schema, PR['work_order'], update=False, create=True, types=('reference',)
+        )
         product_field = self._field(
-            schema, PR['product'], create=True, types=('picklist', 'multipicklist')
+            schema, PR['product'], update=False, create=True, types=('picklist',)
         )
         result_field = self._field(
             schema, PR['result'], create=True, types=('picklist',)
