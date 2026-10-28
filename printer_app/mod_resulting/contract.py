@@ -22,7 +22,8 @@ TEXT_FIELDS = (
     'result_detail', 'dnr_reason', 'dispo', 'primary_product',
 )
 MAX_LENGTHS = {
-    'numbers': 1800, 'notes': 4500, 'redlines': 4500,
+    # One MOD Notes text can contain both halves of a legacy split draft.
+    'numbers': 1800, 'notes': 9000, 'redlines': 4500,
     'call_1': 8, 'call_2': 8, 'need': 1000, 'want': 1000,
     'result_detail': 120, 'dnr_reason': 500, 'dispo': 8,
     'primary_product': 60,
