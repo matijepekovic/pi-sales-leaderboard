@@ -247,7 +247,7 @@ def test_checked_training_flags_send_yes_and_unchecked_flags_do_not_overwrite():
 
 def test_manual_lead_choices_price_and_deposit_override_dispo_defaults():
     draft = clean_draft({
-        'dispo':'pns','numbers':'25000\\n17000',
+        'dispo':'pns','numbers':'25000\n17000',
         'start_price_override':'27000',
         'final_price_override':'16000',
         'deposit_override':'2500',
