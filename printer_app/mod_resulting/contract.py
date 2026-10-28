@@ -20,13 +20,17 @@ CHECKBOXES = (
 TEXT_FIELDS = (
     'numbers', 'notes', 'redlines', 'call_1', 'call_2', 'need', 'want',
     'result_detail', 'dnr_reason', 'dispo', 'primary_product',
+    'lead_status', 'previous_result', 'start_price_override',
+    'final_price_override', 'deposit_override',
 )
 MAX_LENGTHS = {
     # One MOD Notes text can contain both halves of a legacy split draft.
     'numbers': 1800, 'notes': 9000, 'redlines': 4500,
     'call_1': 8, 'call_2': 8, 'need': 1000, 'want': 1000,
     'result_detail': 120, 'dnr_reason': 500, 'dispo': 8,
-    'primary_product': 60,
+    'primary_product': 60, 'lead_status': 120, 'previous_result': 120,
+    'start_price_override': 30, 'final_price_override': 30,
+    'deposit_override': 30,
 }
 TIME_RE = re.compile(r'^(?:0?[1-9]|1[0-2]):[0-5][0-9] (?:AM|PM)$')
 _NUMBER_RE = re.compile(r'^\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?$')
@@ -113,6 +117,13 @@ def clean_draft(raw):
     data['note_runs'] = normalized_runs
     if data['dispo'] not in DISPOSITIONS:
         raise ValueError('Choose a valid disposition.')
+    # Explicit amount overrides are optional. Without one, the numeric notes
+    # column (or sold-product deposit sum) retains the current behavior.
+    for field in ('start_price_override', 'final_price_override', 'deposit_override'):
+        if data[field]:
+            _money(data[field])
+    # Lead-status selections are validated against actual Salesforce picklists
+    # in the adapter before any write; empty means use the Dispo default.
     if not data['dnr']:
         data['dnr_reason'] = ''
     else:
@@ -303,18 +314,28 @@ def outcome_fields(draft):
     if not dispo:
         return None
     return {
-        'lead_status': {
-            'sale': 'Sale Pending', 'pns': 'Nurturing',
-            'np': 'Nurturing', 'cxl': 'Canceled',
-            'nra': 'Nurturing', 'oos': 'Out of Scope',
-        }[dispo],
+        # DNR always requires Do Not Call (per the training workflow), even
+        # if an earlier manual Lead Status was selected. Do not mutate the
+        # manual field: unchecking DNR restores that choice or the Dispo default.
+        'lead_status': (
+            'Do Not Call' if draft['dnr'] else (
+                draft['lead_status']
+                or {'sale':'Sale Pending', 'pns':'Nurturing',
+                    'np':'Nurturing', 'cxl':'Canceled',
+                    'nra':'Nurturing', 'oos':'Out of Scope'}[dispo]
+            )
+        ),
         'appointment_status': 'No Rep Available' if dispo == 'nra' else (
             'Canceled' if dispo in ('cxl', 'oos') else 'Completed'
         ),
         'work_order_status': 'Canceled' if dispo in ('cxl', 'oos') else 'Completed',
-        'previous_result': {
-            'pns': 'Pitch No Sale', 'np': 'No Pitch',
-            'nra': 'No Rep Available',
-        }.get(dispo, ''),
-        'price': prices(draft['numbers']),
+        'previous_result': (
+            draft['previous_result']
+            or {'pns':'Pitch No Sale', 'np':'No Pitch',
+                'nra':'No Rep Available'}.get(dispo, '')
+        ),
+        'price': {
+            'highest': draft['start_price_override'] or prices(draft['numbers'])['highest'],
+            'lowest': draft['final_price_override'] or prices(draft['numbers'])['lowest'],
+        },
     }

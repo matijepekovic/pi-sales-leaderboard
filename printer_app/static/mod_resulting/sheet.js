@@ -324,6 +324,17 @@
     const dnr = sheet.querySelector('.dnr-panel');
     const cxl = sheet.querySelector('.cxl-panel');
     const sale = sheet.querySelector('.sale-panel');
+    const priceDialog = sheet.querySelector('.price-panel');
+    const leadDialog = sheet.querySelector('.lead-panel');
+    const leadButton = sheet.querySelector('.edit-lead-status');
+    function syncDnrLeadStatus() {
+      const dnrChecked = !!sheet.querySelector('[data-key="dnr"]')?.checked;
+      const select = leadDialog?.querySelector('[data-key="lead_status"]');
+      const hint = leadDialog?.querySelector('.dnr-lead-status-hint');
+      if (select) select.disabled = dnrChecked;
+      if (hint) hint.hidden = !dnrChecked;
+    }
+    syncDnrLeadStatus();
     const saleButton = sheet.querySelector('.edit-sale-products');
     const cxlButton = sheet.querySelector('.edit-cxl-details');
     const productButton = sheet.querySelector('.edit-product-results');
@@ -333,6 +344,24 @@
     if (productButton) productButton.hidden = init.dispo === 'sale' || !init.additional_products;
     if (cxlButton) cxlButton.hidden = init.dispo !== 'cxl';
     if (dnrButton) dnrButton.hidden = !init.dnr;
+    function syncPricePreviews() {
+      for (const key of ('start_price_override', 'final_price_override', 'deposit_override')) {
+        const input = priceDialog?.querySelector('[data-key="' + key + '"]');
+        const preview = sheet.querySelector('[data-price-display="' + key + '"]');
+        if (preview && input) preview.textContent = input.value ? '$' + input.value : '';
+      }
+    }
+    syncPricePreviews();
+    priceDialog?.querySelectorAll('input[data-key$="_override"]').forEach(input => {
+      input.addEventListener('input', () => {
+        const preview = sheet.querySelector(
+          '[data-price-display="' + input.dataset.key + '"]'
+        );
+        if (preview) preview.textContent = input.value ? '$' + input.value : '';
+        redraw();
+      });
+    });
+    priceDialog?.addEventListener('close', syncPricePreviews);
     syncSaleRows();
     if (sheet.dataset.submitted === 'yes') {
       for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
@@ -384,6 +413,8 @@
       syncNoteMode();
       dnrPreview(sheet,draft);
       resultDetailPreview(sheet,draft);
+      syncPricePreviews();
+      syncDnrLeadStatus();
       applyVisibility();
       scheduleSave(sheet);
     }
@@ -450,6 +481,15 @@
       if (input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-product-price],[data-product-deposit]')) redraw();
     });
     saleButton?.addEventListener('click', openSale);
+    leadButton?.addEventListener('click', () => openDialog(leadDialog, '[data-key="lead_status"]'));
+    sheet.querySelector('[data-lead-trigger]')?.addEventListener(
+      'click', () => openDialog(leadDialog, '[data-key="lead_status"]')
+    );
+    for (const button of sheet.querySelectorAll('[data-price-trigger]')) {
+      button.addEventListener('click', () => {
+        openDialog(priceDialog, '[data-key="' + button.dataset.priceTrigger + '"]');
+      });
+    }
     cxlButton?.addEventListener('click', () => openDialog(cxl, '[data-key="cxl_at_lead"]'));
     productButton?.addEventListener('click', () => openDialog(product, '[data-product-result]'));
     dnrButton?.addEventListener('click', () => openDialog(dnr, '[data-reason-choice]'));

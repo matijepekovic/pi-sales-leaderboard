@@ -20,6 +20,9 @@ WORK_ORDER = 'WorkOrder'
 LEAD = 'Lead'
 SERVICE_APPOINTMENT = 'ServiceAppointment'
 PRODUCT_RESULT = 'Product_Interest_Result__c'
+# Review exists as a training field, but its live API metadata must be
+# verified on checked submissions; do not require it for unrelated jobs.
+REVIEW_FIELD = 'Review__c'
 
 WO = {
     'dispo': 'Dispo__c',
@@ -236,6 +239,20 @@ class ResultingSalesforceAdapter:
         from .salesforce_refresh import read_result_drafts
         return read_result_drafts(self, records)
 
+    @classmethod
+    def _checked_yes(cls, field):
+        """Only checked training fields are written; unchecked are omitted."""
+        kind = field.get('type')
+        if kind == 'boolean':
+            return True
+        if kind in ('string', 'textarea'):
+            return 'Yes'
+        if kind == 'picklist':
+            return cls._choice(field, 'Yes')
+        raise ResultingSalesforceError(
+            field.get('name', 'Field') + ' cannot store a checked Yes value.'
+        )
+
     def mod_users(self, market_segment):
         """Read active Sales Managers from the already-imported MOD market.
 
@@ -300,6 +317,12 @@ class ResultingSalesforceAdapter:
             ),
             'products': self._options(
                 self._field(product, PR['product'], update=False, types=('picklist',))
+            ),
+            'lead_status': self._options(
+                self._field(lead, LEAD_FIELDS['status'], types=('picklist',))
+            ),
+            'previous_results': self._options(
+                self._field(lead, LEAD_FIELDS['previous_result'], types=('picklist',))
             ),
         }
 
@@ -483,8 +506,8 @@ class ResultingSalesforceAdapter:
             'notes': ('textarea', 'string'),
             'call_1': ('datetime', 'time', 'string', 'textarea'),
             'call_2': ('datetime', 'time', 'string', 'textarea'),
-            'docs': ('boolean',),
-            'ninety_min': ('boolean',),
+            'docs': ('boolean', 'string', 'textarea', 'picklist'),
+            'ninety_min': ('boolean', 'string', 'textarea', 'picklist'),
             'promotion': ('boolean',),
             'start_price': ('currency', 'double', 'int', 'long'),
             'final_price': ('currency', 'double', 'int', 'long'),
@@ -556,16 +579,21 @@ class ResultingSalesforceAdapter:
                         payload['final_redlines'],
                     ) if part).strip(),
                 ),
-                WO['docs']: self._value(wo_fields['docs'], payload['draft']['docs']),
-                WO['ninety_min']: self._value(
-                    wo_fields['ninety_min'], payload['draft']['ninety_min']
-                ),
                 WO['promotion']: self._value(
                     wo_fields['promotion'], payload['draft']['promotion']
                 ),
                 WO['need']: self._value(wo_fields['need'], payload['draft']['need']),
                 WO['want']: self._value(wo_fields['want'], payload['draft']['want']),
             }
+            for key in ('docs', 'ninety_min'):
+                if payload['draft'][key]:
+                    wo_values[WO[key]] = self._checked_yes(wo_fields[key])
+            if payload['draft']['review']:
+                review = self._field(
+                    wo_schema, REVIEW_FIELD,
+                    types=('boolean', 'string', 'textarea', 'picklist')
+                )
+                wo_values[REVIEW_FIELD] = self._checked_yes(review)
             for key in ('call_1', 'call_2'):
                 if payload['draft'][key]:
                     wo_values[WO[key]] = self._time_value(
@@ -609,11 +637,14 @@ class ResultingSalesforceAdapter:
                 lead_values[LEAD_FIELDS['dnr_reason']] = None
             if payload['fields']['previous_result']:
                 previous = payload['fields']['previous_result']
-                lead_values[LEAD_FIELDS['previous_result']] = (
-                    self._choice(lead_fields['previous_result'], previous)
-                    if lead_fields['previous_result'].get('type') in ('picklist', 'multipicklist')
-                    else previous
-                )
+                if previous == '__clear__':
+                    lead_values[LEAD_FIELDS['previous_result']] = None
+                else:
+                    lead_values[LEAD_FIELDS['previous_result']] = (
+                        self._choice(lead_fields['previous_result'], previous)
+                        if lead_fields['previous_result'].get('type') in ('picklist', 'multipicklist')
+                        else previous
+                    )
 
             sold = [
                 entry['product'] for entry in payload['product_results']

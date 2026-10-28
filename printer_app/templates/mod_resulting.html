@@ -45,6 +45,8 @@
  <div class="mobile-call-actions" role="group" aria-label="Call time pickers">
   <button type="button" data-time-trigger="call_1">Call 1: {{ d.call_1 or 'Set time' }}</button>
   <button type="button" data-time-trigger="call_2">Call 2: {{ d.call_2 or 'Set time' }}</button>
+  <button type="button" data-price-trigger="start_price_override" aria-label="Edit Work Order prices and deposit">Prices</button>
+  <button type="button" data-lead-trigger aria-label="Edit Lead Status and Previous Result">Lead Status</button>
  </div>
  <dl class="sr-only">
   <dt>Work Order Number:</dt><dd>{{ sheet.work_order_number }}</dd>
@@ -102,6 +104,15 @@
    {% for option in result_details %}<option value="{{ option.value }}" {% if d.result_detail==option.value %}selected{% endif %}>{{ option.label }}</option>{% endfor %}
   </select>
  </div>
+ <div class="cell field-startprice price-click">
+  <button type="button" data-price-trigger="start_price_override" aria-label="Edit Start Price" title="Click to override Start Price"><span data-price-display="start_price_override">{{ d.start_price_override }}</span></button>
+ </div>
+ <div class="cell field-finalprice price-click">
+  <button type="button" data-price-trigger="final_price_override" aria-label="Edit Final Price" title="Click to override Final Price"><span data-price-display="final_price_override">{{ d.final_price_override }}</span></button>
+ </div>
+ <div class="cell field-depositpayment price-click">
+  <button type="button" data-price-trigger="deposit_override" aria-label="Edit Deposit Payment" title="Click to override Deposit/Payment"><span data-price-display="deposit_override">{{ d.deposit_override }}</span></button>
+ </div>
  <div class="cell field-notes">
   <b class="sr-only">MOD Notes:</b>
   <div class="notes-content">
@@ -139,6 +150,7 @@
   </select>
   <button type="button" class="edit-sale-products" {% if d.dispo!='sale' %}hidden{% endif %}>Products</button>
   <button type="button" class="edit-cxl-details" {% if d.dispo!='cxl' %}hidden{% endif %}>CXL details</button>
+  <button type="button" class="edit-lead-status" aria-label="Edit Lead Status and Previous Result" title="Lead Status and Previous Result">Lead</button>
  </div>
  <div class="cell field-extras replacement">
   {{ checkbox('one_leg','1 Leg',d.one_leg) }}
@@ -222,6 +234,54 @@
   </div>
   <div class="editor-body">
    <label class="dnr-option"><input type="checkbox" data-key="cxl_at_lead" {% if d.cxl_at_lead %}checked{% endif %}> CXL At Lead</label>
+  </div>
+  <div class="editor-footer"><button type="button" class="close-popover editor-primary">Done</button></div>
+ </dialog>
+ <dialog class="editor-dialog price-panel" aria-label="Work Order price overrides">
+  <div class="editor-heading">
+   <div><h2>Work Order amounts</h2><p>Leave a field blank to keep the automatically calculated value.</p></div>
+   <button type="button" class="close-popover editor-close" aria-label="Close Work Order amounts">×</button>
+  </div>
+  <div class="editor-body price-fields">
+   <label>Start Price
+    <input type="text" inputmode="decimal" data-key="start_price_override" aria-label="Override Start Price" value="{{ d.start_price_override }}" placeholder="Automatic from Numbers">
+   </label>
+   <label>Final Price
+    <input type="text" inputmode="decimal" data-key="final_price_override" aria-label="Override Final Price" value="{{ d.final_price_override }}" placeholder="Automatic from Numbers">
+   </label>
+   <label>Deposit / Payment
+    <input type="text" inputmode="decimal" data-key="deposit_override" aria-label="Override Deposit Payment" value="{{ d.deposit_override }}" placeholder="Automatic from sold products">
+   </label>
+  </div>
+  <div class="editor-footer"><button type="button" class="close-popover editor-primary">Done</button></div>
+ </dialog>
+ <dialog class="editor-dialog lead-panel" aria-label="Lead Status and Previous Result">
+  <div class="editor-heading">
+   <div><h2>Lead Status and Previous Result</h2><p>Use the disposition defaults, or choose a different Salesforce value.</p></div>
+   <button type="button" class="close-popover editor-close" aria-label="Close Lead Status editor">×</button>
+  </div>
+  <div class="editor-body lead-fields">
+   <label>Lead Status
+    <select data-key="lead_status" aria-label="Lead Status">
+     <option value="">Automatic from Dispo</option>
+     {% for option in lead_status_choices %}
+     <option value="{{ option.value }}" {% if d.lead_status==option.value %}selected{% endif %}>{{ option.label }}</option>
+     {% endfor %}
+    </select>
+   </label>
+   <label>Previous Result
+    <select data-key="previous_result" aria-label="Previous Result">
+     <option value="">Automatic from Dispo</option>
+     <option value="__clear__" {% if d.previous_result=='__clear__' %}selected{% endif %}>Clear Previous Result</option>
+     {% for option in previous_result_choices %}
+     <option value="{{ option.value }}" {% if d.previous_result==option.value %}selected{% endif %}>{{ option.label }}</option>
+     {% endfor %}
+    </select>
+   </label>
+   {% if not lead_status_choices or not previous_result_choices %}
+   <p class="editor-hint">Salesforce lead picklist choices are unavailable. Current saved values are preserved.</p>
+   {% endif %}
+   <p class="editor-hint dnr-lead-status-hint" {% if not d.dnr %}hidden{% endif %}>DNR is checked. Lead Status will be set to Do Not Call automatically. Uncheck DNR to edit Lead Status.</p>
   </div>
   <div class="editor-footer"><button type="button" class="close-popover editor-primary">Done</button></div>
  </dialog>

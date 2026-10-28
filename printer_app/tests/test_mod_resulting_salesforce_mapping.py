@@ -12,7 +12,7 @@ from printer_app.mod_resulting.contract import clean_draft, outcome_fields
 from printer_app.mod_resulting.service import ResultingService
 from printer_app.mod_resulting.salesforce_adapter import (
     ResultingSalesforceAdapter, ResultingSalesforceError, WO, SA, LEAD_FIELDS, PR,
-    PRODUCT_RESULT,
+    PRODUCT_RESULT, REVIEW_FIELD,
 )
 
 DAY = '2026-10-27'
@@ -48,8 +48,8 @@ def _schemas():
         _field('Start_Price__c','currency'), _field('Price__c','currency'),
         _field('Deposit_Payment__c','currency'),
         _field('Need__c','textarea'), _field('Want__c','textarea'),
-        # These exist and are writable in the synthetic org. They must NOT
-        # appear in a resulting write even when the UI checkboxes are selected.
+        # Review is now an opt-in checked-only write; the other ghost fields
+        # remain excluded even when their UI checkboxes are selected.
         *[_field(name,'boolean') for name in (
             'Review__c','Pictures__c','Power_Questions__c',
             'T_Close__c','Bid_Sheet_Submitted__c',
@@ -156,7 +156,7 @@ def _single(plan,name):
 
 def _assert_no_protected_fields(plan):
     forbidden={
-        'Review__c','Pictures__c','Power_Questions__c','T_Close__c',
+        'Pictures__c','Power_Questions__c','T_Close__c',
         'Bid_Sheet_Submitted__c','Comment__c','Original_Disposition__c',
         'PR_Set_By__c',
     }
@@ -164,7 +164,7 @@ def _assert_no_protected_fields(plan):
         assert not set(values).intersection(forbidden), (obj,values)
     # Every updated field is in the declared API mapping for that object.
     allowed={
-        'WorkOrder':set(WO.values()),
+        'WorkOrder':set(WO.values()) | {REVIEW_FIELD},
         'Lead':set(LEAD_FIELDS.values()),
         'ServiceAppointment':{SA['status']},
         'Product_Interest_Result__c':set(PR.values()),
@@ -198,9 +198,13 @@ def test_ghost_fields_and_comment_are_never_written(review,redlines):
     assert wo['Call_2__c']=='13:27:00.000Z'
     assert wo['Docs__c'] is True and wo['Promotion__c'] is True
     assert wo['X90_Min__c'] is True
+    if review:
+        assert wo['Review__c'] is True
+    else:
+        assert 'Review__c' not in wo
     assert wo['Need__c']=='Need' and wo['Want__c']=='Want'
     lead=_single(plan,'Lead')[3]
-    assert lead['Status']=='Nurturing'  # DNR never forces Do Not Call.
+    assert lead['Status']=='Do Not Call'  # Checked DNR forces Do Not Call.
     assert lead['Previous_Result__c']=='Pitch No Sale'
     assert lead['DNR_Do_Not_Reset__c'] is True
     assert lead['DNR_Reason__c']=='Roofing;Windows'
@@ -216,6 +220,92 @@ def test_ghost_fields_and_comment_are_never_written(review,redlines):
     appointments=[row for row in plan if row[1]=='ServiceAppointment']
     assert {row[2] for row in appointments}=={SA1,SA2}
     assert all(row[3]=={'Status':'Completed'} for row in appointments)
+
+
+def test_checked_training_flags_send_yes_and_unchecked_flags_do_not_overwrite():
+    adapter,_ = _adapter()
+    off = _single(_operations(adapter, _payload('pns')), 'WorkOrder')[3]
+    assert all(field not in off for field in ('Docs__c','X90_Min__c','Review__c'))
+
+    yes = _single(_operations(adapter, _payload(
+        'pns',docs=True,ninety_min=True,review=True
+    )), 'WorkOrder')[3]
+    assert yes['Docs__c'] is True
+    assert yes['X90_Min__c'] is True
+    assert yes['Review__c'] is True
+
+    # Salesforce metadata determines whether a checked Yes is stored as a
+    # boolean or a literal/picklist value, never an invented value.
+    schemas = _schemas()
+    for row in schemas['WorkOrder']['fields']:
+        if row['name'] in ('Docs__c','X90_Min__c','Review__c'):
+            row['type'] = 'string'
+    adapter,_ = _adapter(schemas=schemas)
+    text_yes = _single(_operations(adapter, _payload(
+        'pns',docs=True,ninety_min=True,review=True
+    )), 'WorkOrder')[3]
+    assert {key:text_yes[key] for key in ('Docs__c','X90_Min__c','Review__c')} == {
+        'Docs__c':'Yes','X90_Min__c':'Yes','Review__c':'Yes',
+    }
+
+
+def test_manual_lead_choices_price_and_deposit_override_dispo_defaults():
+    draft = clean_draft({
+        'dispo':'pns','numbers':'25000\n17000',
+        'start_price_override':'27000',
+        'final_price_override':'16000',
+        'deposit_override':'2500',
+        'lead_status':'Do Not Call',
+        'previous_result':'No Pitch',
+        'dnr':True,'dnr_reason':'Roofing',
+    })
+    fields=outcome_fields(draft)
+    assert fields['lead_status']=='Do Not Call'
+    assert fields['previous_result']=='No Pitch'
+    assert fields['price']=={'highest':'27000','lowest':'16000'}
+    adapter,_=_adapter()
+    plan=_operations(adapter,_payload('pns',**{
+        key:value for key,value in draft.items() if key!='dispo'
+    }))
+    lead=_single(plan,'Lead')[3]
+    wo=_single(plan,'WorkOrder')[3]
+    assert lead['Status']=='Do Not Call' and lead['Previous_Result__c']=='No Pitch'
+    assert wo['Start_Price__c']=='27000'
+    assert wo['Price__c']=='16000'
+    assert wo['Deposit_Payment__c']=='2500'
+    cleared=_operations(adapter,_payload('pns',previous_result='__clear__'))
+    assert _single(cleared,'Lead')[3]['Previous_Result__c'] is None
+
+
+@pytest.mark.parametrize('dispo', ['sale','pns','np','cxl','nra','oos'])
+def test_dnr_forces_do_not_call_regardless_of_dispo_or_manual_override(dispo):
+    kwargs = {
+        'dnr':True, 'dnr_reason':'Roofing',
+        'lead_status':'Nurturing',
+    }
+    if dispo == 'sale':
+        kwargs['sale_products'] = {'Roofing':{'price':'17000','deposit':'0'}}
+    payload = _payload(dispo, **kwargs)
+    assert payload['fields']['lead_status'] == 'Do Not Call'
+    adapter,_ = _adapter()
+    lead = _single(_operations(adapter, payload), 'Lead')[3]
+    assert lead['Status'] == 'Do Not Call'
+    assert lead['DNR_Do_Not_Reset__c'] is True
+    assert lead['DNR_Reason__c'] == 'Roofing'
+    assert payload['draft']['lead_status'] == 'Nurturing'
+
+
+def test_review_write_refuses_missing_sf_api_field_and_off_does_not_require_it():
+    schemas=_schemas()
+    schemas['WorkOrder']['fields']=[
+        row for row in schemas['WorkOrder']['fields'] if row['name']!='Review__c'
+    ]
+    adapter,_=_adapter(schemas=schemas)
+    assert 'Review__c' not in _single(
+        _operations(adapter,_payload('pns',review=False)), 'WorkOrder'
+    )[3]
+    with pytest.raises(ResultingSalesforceError,match='Review__c'):
+        _operations(adapter,_payload('pns',review=True))
 
 
 @pytest.mark.parametrize('dispo,lead_status,wo_status,sa_status,pr_result,previous',[
@@ -338,19 +428,19 @@ def test_mismatched_api_field_never_falls_back_to_a_guessed_label():
         _operations(adapter,_payload('pns'))
 
 
-def test_dnr_is_separate_from_lead_status_and_multiselect():
+def test_dnr_forces_do_not_call_and_keeps_reason_multiselect():
     draft=clean_draft({
         'dispo':'nra','dnr':True,'dnr_reason':'Roofing;Bath;Roofing',
     })
     assert draft['dnr_reason']=='Roofing;Bath'
-    assert outcome_fields(draft)['lead_status']=='Nurturing'
+    assert outcome_fields(draft)['lead_status']=='Do Not Call'
     assert outcome_fields(draft)['work_order_status']=='Completed'
     adapter,_=_adapter()
     plan=_operations(adapter,_payload('nra',dnr=True,dnr_reason='Roofing;Bath'))
     lead=_single(plan,'Lead')[3]
     assert lead['DNR_Do_Not_Reset__c'] is True
     assert lead['DNR_Reason__c']=='Roofing;Bath'
-    assert lead['Status']=='Nurturing'
+    assert lead['Status']=='Do Not Call'
 
 
 def test_synthetic_runner_never_allows_live_salesforce_writes():

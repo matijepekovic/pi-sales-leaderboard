@@ -54,6 +54,9 @@ def cell(column, row, columns=1, rows=1):
 BOXES = {
     'power': cell(9, 1), 'tclose': cell(9, 2),
     'product': cell(2, 3, 3), 'detail': cell(9, 3),
+    # These are click-through price override controls on the original PDF row.
+    'startprice': cell(4, 4, 2), 'finalprice': cell(6, 4, 2),
+    'depositpayment': cell(8, 4, 2),
     'notes': cell(4, 5, 6, 6),
     'docs': cell(0, 6), 'bids': cell(1, 6, 2), 'pictures': cell(3, 6),
     'dispo': cell(0, 7, 2), 'extras': cell(2, 7, 2),

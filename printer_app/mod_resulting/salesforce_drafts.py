@@ -76,6 +76,9 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             draft[field] = value is True
         prices = [_money(work.get(WO[key])) for key in ('start_price', 'final_price')]
         draft['numbers'] = '\n'.join(price for price in prices if price)
+        # Preserve the actual Work Order deposit even for multiple sold products:
+        # individual product deposits cannot be reconstructed from a total.
+        draft['deposit_override'] = _money(work.get(WO['deposit']))
         if lead_id:
             lead = leads[lead_id]
             dnr = lead.get(LEAD_FIELDS['dnr'])
@@ -87,6 +90,11 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             draft['dnr'] = dnr is True
             draft['dnr_reason'] = str(lead.get(LEAD_FIELDS['dnr_reason']) or '')
             draft['one_leg'] = one_leg is True
+            if dispo:
+                draft['lead_status'] = str(lead.get(LEAD_FIELDS['status']) or '')
+                draft['previous_result'] = str(
+                    lead.get(LEAD_FIELDS['previous_result']) or ''
+                )
 
         per_product, sales, details, seen = {}, {}, set(), set()
         for item in products.get(work_id, ()):

@@ -40,7 +40,8 @@ def read_result_drafts(adapter, records):
         if lead_ids:
             filter_ids = ','.join(_soql(key) for key in lead_ids)
             fields = (LEAD_FIELDS['dnr'], LEAD_FIELDS['dnr_reason'],
-                      LEAD_FIELDS['one_leg'])
+                      LEAD_FIELDS['one_leg'], LEAD_FIELDS['status'],
+                      LEAD_FIELDS['previous_result'])
             for item in adapter._query(
                 'SELECT Id,' + ','.join(fields) + ' FROM ' + LEAD
                 + ' WHERE Id IN (' + filter_ids + ') ORDER BY Id LIMIT 2000'

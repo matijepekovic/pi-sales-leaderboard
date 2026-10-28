@@ -37,7 +37,7 @@ def test_dispo_and_dnr_statuses_do_not_require_a_lead_dropdown():
                           ('nra','Nurturing'),('oos','Out of Scope')]:
         values = outcome_fields(clean_draft({'dispo':dispo}))
         assert values['lead_status'] == status
-        assert outcome_fields(clean_draft({'dispo':dispo,'dnr':True,'dnr_reason':'Roofing'}))['lead_status'] == status
+        assert outcome_fields(clean_draft({'dispo':dispo,'dnr':True,'dnr_reason':'Roofing'}))['lead_status'] == 'Do Not Call'
         assert outcome_fields(clean_draft({'dispo':dispo,'dnr':False,'dnr_reason':'Roofing'}))['lead_status'] == status
 
 
@@ -210,12 +210,20 @@ def test_sale_zero_price_is_not_sold_and_zero_deposit_is_valid(tmp_path):
     assert 'SALE Roofing: $18,000 | Deposit: $0' in payload['final_redlines']
 
 
-def test_dnr_never_changes_lead_status():
-    draft=clean_draft({'dispo':'pns','dnr':True,'dnr_reason':'Roofing;Bath'})
+def test_dnr_forces_do_not_call_and_restores_manual_status_when_unchecked():
+    draft=clean_draft({
+        'dispo':'pns','dnr':True,'dnr_reason':'Roofing;Bath',
+        'lead_status':'Sale Pending',
+    })
     fields=outcome_fields(draft)
-    assert fields['lead_status']=='Nurturing'
+    assert fields['lead_status']=='Do Not Call'
     assert fields['work_order_status']=='Completed'
+    assert draft['lead_status']=='Sale Pending'
     assert draft['dnr_reason']=='Roofing;Bath'
+    draft['dnr']=False
+    assert outcome_fields(draft)['lead_status']=='Sale Pending'
+    draft['lead_status']=''
+    assert outcome_fields(draft)['lead_status']=='Nurturing'
 
 
 def test_eight_am_pull_keeps_the_existing_printer_schedule_untouched(tmp_path):

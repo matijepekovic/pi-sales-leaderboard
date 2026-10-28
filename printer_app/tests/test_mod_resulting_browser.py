@@ -43,6 +43,14 @@ class FakeModWriter:
         return {
             'result_details': [{'value':'Price Objection','label':'Price Objection'}],
             'dnr_reasons': [{'value':'Roofing','label':'Roofing'}],
+            'lead_status': [
+                {'value':value,'label':value}
+                for value in ('Sale Pending','Nurturing','Canceled','Out of Scope','Do Not Call')
+            ],
+            'previous_results': [
+                {'value':value,'label':value}
+                for value in ('Pitch No Sale','No Pitch','No Rep Available')
+            ],
             'products': [
                 {'value':value,'label':value}
                 for value in ('Roofing','Siding','Windows')
@@ -471,6 +479,125 @@ def test_existing_split_notes_are_preserved_when_migrated_to_one_textbox(mod_bro
     assert saved['notes'] == 'Legacy first note\nLegacy second note\nAdditional note'
     assert saved['redlines'] == ''
     assert saved['dispo'] == 'pns'
+    assert not writer.applied
+
+
+@pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
+def test_lead_status_and_manual_price_cells_are_editable_and_persist(mod_browser, viewport):
+    from playwright.sync_api import expect
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width':viewport[0], 'height':viewport[1]})
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+    browser_errors = []
+    page.on('pageerror', lambda exc: browser_errors.append(str(exc)))
+    first.locator('[data-key="numbers"]').fill('25000\n17000')
+    first.locator('[data-key="dispo"]').select_option('pns')
+    lead_trigger = (first.locator('[data-lead-trigger]') if viewport[0] <= 900
+                    else first.locator('.edit-lead-status'))
+    if viewport[0] <= 900:
+        assert lead_trigger.bounding_box()['height'] >= 44
+    lead_trigger.click()
+    lead = first.locator('.lead-panel')
+    expect(lead).to_be_visible()
+    lead.locator('[data-key="lead_status"]').select_option('Do Not Call')
+    lead.locator('[data-key="previous_result"]').select_option('No Pitch')
+    lead.locator('.editor-primary').click()
+    expect(lead).to_be_hidden()
+
+    trigger = (first.locator('.mobile-call-actions [data-price-trigger]')
+               if viewport[0] <= 900 else first.locator('.field-startprice [data-price-trigger]'))
+    if viewport[0] <= 900:
+        assert trigger.bounding_box()['height'] >= 44
+    trigger.click()
+    prices = first.locator('.price-panel')
+    expect(prices).to_be_visible()
+    prices.locator('[data-key="start_price_override"]').fill('27000')
+    prices.locator('[data-key="final_price_override"]').fill('16000')
+    prices.locator('[data-key="deposit_override"]').fill('2500')
+    # Must update the actual printed row while the native modal is open, and
+    # remain updated after closing, before any draft save or navigation.
+    state = first.evaluate("""sheet => {
+      const key = 'start_price_override';
+      const input = sheet.querySelector('[data-key="' + key + '"]');
+      const preview = sheet.querySelector('[data-price-display="' + key + '"]');
+      return {
+        input: input?.value, preview: preview?.textContent,
+        fields: sheet.querySelectorAll('[data-key="' + key + '"]').length,
+        previews: sheet.querySelectorAll('[data-price-display="' + key + '"]').length,
+        popupOpen: sheet.querySelector('.price-panel')?.open,
+      };
+    }""")
+    assert not browser_errors, browser_errors
+    assert state == {
+        'input':'27000', 'preview':'$27000',
+        'fields':1, 'previews':1, 'popupOpen':True,
+    }, state
+    expect(first.locator('[data-price-display="start_price_override"]')).to_have_text('$27000')
+    expect(first.locator('[data-price-display="final_price_override"]')).to_have_text('$16000')
+    expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('$2500')
+    prices.locator('.editor-primary').click()
+    expect(prices).to_be_hidden()
+    expect(first.locator('[data-price-display="start_price_override"]')).to_have_text('$27000')
+    for key in ('docs','review','ninety_min'):
+        first.locator('[data-key="' + key + '"]').check()
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    saved = service.repository.sheets(service.day())[0]['draft']
+    assert saved['lead_status'] == 'Do Not Call'
+    assert saved['previous_result'] == 'No Pitch'
+    assert saved['start_price_override'] == '27000'
+    assert saved['final_price_override'] == '16000'
+    assert saved['deposit_override'] == '2500'
+    assert all(saved[key] for key in ('docs','review','ninety_min'))
+    assert not writer.applied
+    assert page.evaluate('window.modCspViolations') == []
+
+
+def test_dnr_locks_lead_status_to_do_not_call_and_preserves_manual_choice(mod_browser):
+    from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import outcome_fields
+
+    page, service, writer, origin, evidence = mod_browser
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+    first.locator('[data-key=dispo]').select_option('pns')
+    first.locator('.edit-lead-status').click()
+    lead = first.locator('.lead-panel')
+    manual = lead.locator('[data-key=lead_status]')
+    manual.select_option('Sale Pending')
+    lead.locator('.editor-primary').click()
+
+    first.locator('[data-key=dnr]').check()
+    dnr = first.locator('.dnr-panel')
+    dnr.locator('[data-reason-choice][value="Roofing"]').check()
+    dnr.locator('.editor-primary').click()
+    first.locator('.edit-lead-status').click()
+    expect(manual).to_be_disabled()
+    expect(manual).to_have_value('Sale Pending')
+    expect(lead.locator('.dnr-lead-status-hint')).to_contain_text(
+        'Lead Status will be set to Do Not Call automatically'
+    )
+    lead.locator('.editor-primary').click()
+    # Draft saves are debounced; Refresh explicitly flushes all outstanding
+    # edits before checking the persisted Salesforce submission payload.
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    draft=service.repository.sheets(service.day())[0]['draft']
+    assert outcome_fields(draft)['lead_status']=='Do Not Call'
+    assert draft['lead_status']=='Sale Pending'
+
+    first.locator('[data-key=dnr]').uncheck()
+    first.locator('.edit-lead-status').click()
+    expect(manual).to_be_enabled()
+    expect(manual).to_have_value('Sale Pending')
+    expect(lead.locator('.dnr-lead-status-hint')).to_be_hidden()
+    lead.locator('.editor-primary').click()
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    draft=service.repository.sheets(service.day())[0]['draft']
+    assert outcome_fields(draft)['lead_status']=='Sale Pending'
+    assert draft['dnr'] is False
     assert not writer.applied
 
 
