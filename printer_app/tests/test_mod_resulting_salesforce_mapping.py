@@ -264,7 +264,7 @@ def test_checked_training_flags_send_yes_and_unchecked_flags_do_not_overwrite():
     }
 
 
-def test_manual_lead_choices_price_and_deposit_override_dispo_defaults():
+def test_legacy_manual_choices_cannot_override_automatic_status_or_history():
     draft = clean_draft({
         'dispo':'pns','numbers':'25000\n17000',
         'start_price_override':'27000',
@@ -293,6 +293,50 @@ def test_manual_lead_choices_price_and_deposit_override_dispo_defaults():
         'pns', lead_status='Sale Pending', previous_result='No Pitch'))
     assert _single(overridden,'Lead')[3]['Status']=='Nurturing'
     assert _single(overridden,'Lead')[3]['Previous_Result__c'] is None
+
+
+@pytest.mark.parametrize('previous_dispo,expected', [
+    ('PNS','Pitch No Sale'), ('No Pitch','No Pitch'),
+    ('NRA','No Rep Available'), ('Sale',None),
+    ('CXL',None), ('OOS',None),
+])
+def test_previous_result_comes_only_from_latest_older_work_order(previous_dispo,expected):
+    history = [
+        {'Id':WORK, 'Lead__c':LEAD,
+         'Appointment_Date_Time__c':'2026-10-27T19:00:00Z',
+         'Appointment_Date__c':'2026-10-27', 'Dispo__c':None},
+        {'Id':'0WO000000000002AAA', 'Lead__c':LEAD,
+         'Appointment_Date_Time__c':'2026-10-26T19:00:00Z',
+         'Appointment_Date__c':'2026-10-26', 'Dispo__c':previous_dispo},
+        {'Id':'0WO000000000003AAA', 'Lead__c':LEAD,
+         'Appointment_Date_Time__c':'2026-10-20T19:00:00Z',
+         'Appointment_Date__c':'2026-10-20', 'Dispo__c':'PNS'},
+    ]
+    adapter,_=_adapter(history=history)
+    lead=_single(_operations(adapter,_payload(
+        'nra',previous_result='Pitch No Sale',lead_status='Sale Pending'
+    )), 'Lead')[3]
+    assert lead['Previous_Result__c']==expected
+    assert lead['Status']=='Nurturing'
+
+
+def test_previous_result_preflight_rejects_required_field_if_blank():
+    schemas=_schemas()
+    for field in schemas['Lead']['fields']:
+        if field['name']=='Previous_Result__c':
+            field['nillable']=False
+    adapter,_=_adapter(schemas=schemas)
+    with pytest.raises(ResultingSalesforceError,match='required and cannot be blank'):
+        _operations(adapter,_payload('pns'))
+
+
+def test_independent_final_price_override_writes_without_start_price():
+    adapter,_=_adapter()
+    wo=_single(_operations(adapter,_payload(
+        'pns',final_price_override='15500'
+    )), 'WorkOrder')[3]
+    assert 'Start_Price__c' not in wo
+    assert wo['Price__c']=='15500'
 
 
 @pytest.mark.parametrize('dispo', ['sale','pns','np','cxl','nra','oos'])
