@@ -258,7 +258,8 @@ def deposit_payment_text(draft):
     def plain_amount(value):
         # Reuse the established money formatter; remove only the currency
         # symbol and grouping while retaining two significant cents digits.
-        return format_money(value)[1:].replace(',', '') if str(value).strip() else ''
+        text = '' if value is None else str(value).strip()
+        return format_money(text)[1:].replace(',', '') if text else ''
 
     override = draft.get('deposit_override', '')
     if not sales:
