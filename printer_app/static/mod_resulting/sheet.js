@@ -88,6 +88,44 @@
     if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
     return data;
   }
+  function compactRuns(runs) {
+    const result = [];
+    for (const run of runs) {
+      if (!run.text) continue;
+      if (result.length && result[result.length - 1].red === run.red) {
+        result[result.length - 1].text += run.text;
+      } else {
+        result.push({text:run.text, red:run.red});
+      }
+    }
+    return result;
+  }
+  function runSlice(runs, start, end) {
+    let offset = 0;
+    const result = [];
+    for (const run of runs) {
+      const left = Math.max(start - offset, 0);
+      const right = Math.min(end - offset, run.text.length);
+      if (right > left) result.push({text:run.text.slice(left,right),red:run.red});
+      offset += run.text.length;
+    }
+    return result;
+  }
+  function changedNoteRuns(runs, text, red) {
+    const before = runs.map(run => run.text).join('');
+    if (before === text) return runs;
+    let prefix = 0;
+    while (prefix < before.length && prefix < text.length &&
+           before[prefix] === text[prefix]) prefix++;
+    let suffix = 0;
+    while (suffix < before.length - prefix && suffix < text.length - prefix &&
+           before[before.length - suffix - 1] === text[text.length - suffix - 1]) suffix++;
+    return compactRuns([
+      ...runSlice(runs, 0, prefix),
+      {text:text.slice(prefix, text.length - suffix), red},
+      ...runSlice(runs, before.length - suffix, before.length),
+    ]);
+  }
   function serialize(sheet) {
     const draft = JSON.parse(sheet.dataset.initial || '{}');
     for (const input of sheet.querySelectorAll('[data-key]')) {
@@ -101,6 +139,9 @@
     // displays their concatenated text in the single MOD Notes input and
     // migrates it losslessly into the one notes key on its next save.
     draft.redlines = '';
+    draft.note_runs = (sheet._noteRuns || []).map(run => ({
+      text:run.text, red:run.red
+    }));
     draft.product_results = {};
     if (draft.additional_products && draft.dispo !== 'sale') {
       for (const row of sheet.querySelectorAll('[data-product]')) {
@@ -123,6 +164,19 @@
       };
     }
     return draft;
+  }
+  function resultDetailPreview(sheet, draft) {
+    const output = sheet.querySelector('.result-detail-in-redline');
+    if (!output) return;
+    const lines = [];
+    if (draft.result_detail) lines.push('RESULT DETAIL: ' + draft.result_detail);
+    if (draft.additional_products && draft.dispo !== 'sale') {
+      for (const [product, info] of Object.entries(draft.product_results || {})) {
+        if (info.detail) lines.push(product + ' RESULT DETAIL: ' + info.detail);
+      }
+    }
+    output.textContent = [...new Set(lines)].join('\n');
+    output.hidden = !output.textContent;
   }
   function dnrPreview(sheet, draft) {
     const text = sheet.querySelector('.dnr-in-redline');
@@ -229,14 +283,43 @@
     syncIndividualSaleRows();
     sheet.dataset.dirty = 'no';
     dnrPreview(sheet, init);
+    resultDetailPreview(sheet, init);
     const noteArea = sheet.querySelector('.notes-text');
+    const noteInput = sheet.querySelector('.mod-notes-input');
+    const noteMirror = sheet.querySelector('.mod-notes-display');
+    let noteRuns;
+    if (Array.isArray(init.note_runs) && init.note_runs.length) {
+      noteRuns = init.note_runs.map(run => ({text:run.text,red:run.red}));
+    } else {
+      noteRuns = init.notes ? [{text:init.notes,red:false}] : [];
+    }
+    if (init.redlines) {
+      if (noteRuns.length) noteRuns.push({text:'\n',red:false});
+      noteRuns.push({text:init.redlines,red:true});
+    }
+    sheet._noteRuns = compactRuns(noteRuns);
+    function renderNoteRuns() {
+      const elements = sheet._noteRuns.map(run => {
+        const part = document.createElement('span');
+        if (run.red) part.className = 'after-dispo';
+        part.textContent = run.text;
+        return part;
+      });
+      noteMirror.replaceChildren(...elements);
+      noteArea.classList.add('mixed-notes-ready');
+      noteMirror.scrollTop = noteInput.scrollTop;
+    }
     function syncNoteMode() {
-      // This must NEVER replace, split, hide or rewrite the input's content.
-      // The disposition only changes the font size and text color.
+      // A disposition changes the ink used by FUTURE input only.
+      // Existing black/red characters never get recolored.
       noteArea.dataset.notesMode =
         sheet.querySelector('[data-key="dispo"]').value ? 'red' : 'black';
     }
+    renderNoteRuns();
     syncNoteMode();
+    noteInput.addEventListener('scroll', () => {
+      noteMirror.scrollTop = noteInput.scrollTop;
+    });
     const product = sheet.querySelector('.product-panel');
     const dnr = sheet.querySelector('.dnr-panel');
     const cxl = sheet.querySelector('.cxl-panel');
@@ -300,6 +383,7 @@
       sheet.dataset.dispo = draft.dispo;
       syncNoteMode();
       dnrPreview(sheet,draft);
+      resultDetailPreview(sheet,draft);
       applyVisibility();
       scheduleSave(sheet);
     }
@@ -350,6 +434,12 @@
     sheet.addEventListener('input', event => {
       const input = event.target;
       if (!(input instanceof HTMLElement)) return;
+      if (input.dataset.key === 'notes') {
+        sheet._noteRuns = changedNoteRuns(
+          sheet._noteRuns, input.value, !!sheet.querySelector('[data-key="dispo"]').value
+        );
+        renderNoteRuns();
+      }
       if (input.dataset.key === 'call_1' || input.dataset.key === 'call_2') {
         const mobile = sheet.querySelector('.mobile-call-actions [data-time-trigger="' + input.dataset.key + '"]');
         if (mobile) {

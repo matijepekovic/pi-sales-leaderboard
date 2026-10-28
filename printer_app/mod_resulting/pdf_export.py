@@ -5,17 +5,20 @@ Never changes the existing renderer or its three-sheets-per-page layout.
 from __future__ import annotations
 
 from io import BytesIO
+from xml.sax.saxutils import escape
 
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
+from reportlab.platypus import Paragraph
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase.pdfmetrics import stringWidth
 
 from ..mod_sheet_contract import ModSheetRecord
 from ..mod_sheets.pdf_renderer import MOD_TABLE_WIDTH, MOD_ROW_HEIGHTS, render_mod_pdf
-from .contract import clean_draft, final_redline_text
+from .contract import clean_draft, final_redline_text, note_runs_for_display
 
 
 COL_WIDTH = MOD_TABLE_WIDTH / 10
@@ -78,6 +81,37 @@ def _fit_lines(c, text, x, top, width, height, *, bold=False, red=False, start=1
     for index,line in enumerate(lines):
         _write(c,x,top+index*leading,line,size,bold,
                colors.HexColor('#bb0707') if red else colors.black)
+    c.restoreState()
+
+
+def _fit_mixed_notes(c, runs, x, top, width, height):
+    """One MOD Notes text field with preserved black/red character formatting."""
+    if not runs:
+        return
+    for size in (10, 9, 8, 7, 6.5):
+        parts = []
+        for run in runs:
+            ink = '#b00000' if run['red'] else '#000000'
+            font_size = size * 1.18 if run['red'] else size
+            content = escape(run['text']).replace('\n', '<br/>')
+            parts.append(
+                '<font color="' + ink + '" size="' + str(font_size) + '">'
+                + content + '</font>'
+            )
+        markup = ''.join(parts)
+        style = ParagraphStyle('MODNotesMixed', fontName='Times-Roman',
+                               fontSize=size, leading=size * 1.32,
+                               spaceBefore=0, spaceAfter=0,
+                               allowWidows=0, allowOrphans=0)
+        paragraph = Paragraph(markup, style)
+        _, actual_height = paragraph.wrap(width, 10000)
+        if actual_height <= height or size == 6.5:
+            break
+    c.saveState()
+    clip = c.beginPath()
+    clip.rect(x-0.2, letter[1]-(top+height), width+0.4, height)
+    c.clipPath(clip, stroke=0, fill=0)
+    paragraph.drawOn(c, x, letter[1]-top-actual_height)
     c.restoreState()
 
 
@@ -168,19 +202,19 @@ def _overlay_one(c,index,draft):
     text_x=x+numbers_width+2
     text_width=full_width-numbers_width-7
     notes_height=sum(MOD_ROW_HEIGHTS[5:])-15
-    # One actual notes field (plus any text retained in old split drafts).
-    # Dispo changes ONLY its font size and ink color, not its content.
-    user_notes='\n'.join(part for part in (d['notes'],d['redlines']) if part)
-    generated=final_redline_text(dict(d, redlines=''))
-    note_size=12 if d['dispo'] else 9
+    # Redlines are entries typed after Dispo in the same user Notes field.
+    # A selected Dispo never recolors earlier black notes.
+    runs = note_runs_for_display(d)
+    user_notes = ''.join(part['text'] for part in runs)
+    generated = final_redline_text(dict(d, redlines=''))
     if generated:
-        line_count=len(_lines(user_notes,'Times-Roman',note_size,text_width))
-        comment_height=min(notes_height*.75,max(13,line_count*note_size*1.2)) if user_notes else 0
+        line_count = len(_lines(user_notes, 'Times-Roman', 9, text_width))
+        comment_height = min(notes_height*.75, max(13, line_count*11)) if user_notes else 0
     else:
-        comment_height=notes_height
+        comment_height = notes_height
     if user_notes:
-        _fit_lines(c,user_notes,text_x,t+13,text_width,max(13,comment_height),
-                   start=note_size,red=bool(d['dispo']))
+        _fit_mixed_notes(c, runs, text_x, t+13, text_width,
+                         max(13, comment_height))
     # DNR and sale lines are generated from checkboxes/products, not a second
     # notes input. Keep them below the user's note without double printing.
     if generated:

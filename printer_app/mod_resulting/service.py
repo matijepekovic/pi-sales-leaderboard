@@ -58,7 +58,10 @@ class ResultingService:
         for record in records:
             if record.source_id in external:
                 normalized[record.source_id] = clean_draft(external[record.source_id])
-        self.repository.refresh(day, records, external_drafts=normalized)
+        self.repository.refresh(
+            day, records, external_drafts=normalized,
+            market_segment=kwargs['market_segment'],
+        )
         return len(records)
 
     def snapshot(self, day):
@@ -80,14 +83,27 @@ class ResultingService:
         data['assigned_service_resources'] = tuple(data.get('assigned_service_resources', ()))
         return ModSheetRecord(**data)
 
-    def users(self):
-        return self.writer.mod_users()
+    def users(self, day=None):
+        day = day or self.day()
+        market = self.repository.imported_market(day)
+        if not market:
+            # Upgrade legacy days that were imported before market provenance
+            # was stored. Reimport using the saved MOD Settings scope; drafts
+            # are still preserved by the repository.
+            config = self.settings_repository.settings()
+            if not config or not config.market_segment:
+                raise ValueError('Imported MOD sheets have no market. Set the market in MOD Settings and Refresh.')
+            self.refresh(day)
+            market = self.repository.imported_market(day)
+        if not market:
+            raise ValueError('No imported MOD market is available.')
+        return self.writer.mod_users(market)
 
     def dropdowns(self):
         return self.writer.dropdowns()
 
     def set_mod(self, day, user_id):
-        users = self.users()
+        users = self.users(day)
         matches = [(item['id'], item['name']) for item in users if item['id'] == user_id]
         if len(matches) != 1:
             raise ValueError('Select a MOD from the Salesforce list.')

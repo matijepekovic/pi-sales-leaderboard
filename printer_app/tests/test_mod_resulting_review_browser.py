@@ -41,18 +41,19 @@ def test_review_checkbox_persists_independently_in_checklist_row(mod_browser, vi
         return (box['x'] - sheet['x'], box['y'] - sheet['y'], box['width'], box['height'])
     notes_bounds = notes_geometry()
     notes = first.locator('[data-key=notes]')
-    note_text = 'Black comment stays here.\nREDLINE STAYS IN MOD NOTES.'
+    black_note = 'Black comment stays here.'
+    red_note = '\nREDLINE STAYS IN MOD NOTES.'
+    note_text = black_note + red_note
     assert first.locator('.notes-text textarea').count() == 1
-    notes.fill(note_text)
-    regular_size = notes.evaluate('(el) => parseFloat(getComputedStyle(el).fontSize)')
-    regular_weight = notes.evaluate('(el) => getComputedStyle(el).fontWeight')
-    assert notes.evaluate('(el) => getComputedStyle(el).color') == 'rgb(0, 0, 0)'
-    # Dispo changes only the same textbox's font size and color.
+    notes.fill(black_note)
+    expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
     first.locator('[data-key=dispo]').select_option('pns')
-    expect(notes).to_have_value(note_text)
-    assert notes.evaluate('(el) => getComputedStyle(el).color') == 'rgb(176, 0, 0)'
-    assert notes.evaluate('(el) => parseFloat(getComputedStyle(el).fontSize)') > regular_size
-    assert notes.evaluate('(el) => getComputedStyle(el).fontWeight') == regular_weight
+    # Dispo never recolors the existing black characters.
+    expect(first.locator('.mod-notes-display span').first).to_have_text(black_note)
+    notes.fill(note_text)
+    expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(red_note)
+    assert first.locator('.mod-notes-display .after-dispo').evaluate(
+        '(el) => getComputedStyle(el).color') == 'rgb(176, 0, 0)'
     for selected in (True, False):
         review.set_checked(selected)
         assert notes_geometry() == pytest.approx(notes_bounds, abs=1)
@@ -65,16 +66,17 @@ def test_review_checkbox_persists_independently_in_checklist_row(mod_browser, vi
             expect(review).not_to_be_checked()
         expect(notes).to_have_value(note_text)
         assert first.locator('.notes-text textarea').count() == 1
-        assert notes.evaluate('(el) => getComputedStyle(el).color') == 'rgb(176, 0, 0)'
+        expect(first.locator('.mod-notes-display span').first).to_have_text(black_note)
+        expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(red_note)
         draft = service.repository.sheets(service.day())[0]['draft']
         assert draft['review'] is selected
         assert draft['notes'] == note_text
         assert draft['redlines'] == ''
+        assert draft['note_runs'] == [
+            {'text':black_note,'red':False},{'text':red_note,'red':True}]
     first.locator('[data-key=dispo]').select_option('')
     expect(notes).to_have_value(note_text)
-    assert notes.evaluate('(el) => getComputedStyle(el).color') == 'rgb(0, 0, 0)'
-    assert notes.evaluate('(el) => parseFloat(getComputedStyle(el).fontSize)') == pytest.approx(regular_size)
-    assert notes.evaluate('(el) => getComputedStyle(el).fontWeight') == regular_weight
+    expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(red_note)
     assert page.evaluate('window.modCspViolations') == []
     assert service.allow_salesforce_writes is False and not writer.applied
     evidence('review-roundtrip-' + str(viewport[0]))
