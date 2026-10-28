@@ -43,6 +43,14 @@ class FakeModWriter:
         return {
             'result_details': [{'value':'Price Objection','label':'Price Objection'}],
             'dnr_reasons': [{'value':'Roofing','label':'Roofing'}],
+            'lead_status': [
+                {'value':value,'label':value}
+                for value in ('Sale Pending','Nurturing','Canceled','Out of Scope','Do Not Call')
+            ],
+            'previous_results': [
+                {'value':value,'label':value}
+                for value in ('Pitch No Sale','No Pitch','No Rep Available')
+            ],
             'products': [
                 {'value':value,'label':value}
                 for value in ('Roofing','Siding','Windows')
@@ -472,6 +480,47 @@ def test_existing_split_notes_are_preserved_when_migrated_to_one_textbox(mod_bro
     assert saved['redlines'] == ''
     assert saved['dispo'] == 'pns'
     assert not writer.applied
+
+
+@pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
+def test_lead_status_and_manual_price_cells_are_editable_and_persist(mod_browser, viewport):
+    from playwright.sync_api import expect
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width':viewport[0], 'height':viewport[1]})
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+    first.locator('[data-key="numbers"]').fill('25000\n17000')
+    first.locator('[data-key="dispo"]').select_option('pns')
+    first.locator('.edit-lead-status').click()
+    lead = first.locator('.lead-panel')
+    expect(lead).to_be_visible()
+    lead.locator('[data-key="lead_status"]').select_option('Do Not Call')
+    lead.locator('[data-key="previous_result"]').select_option('No Pitch')
+    lead.locator('.editor-primary').click()
+    expect(lead).to_be_hidden()
+
+    first.locator('.field-startprice [data-price-trigger]').click()
+    prices = first.locator('.price-panel')
+    expect(prices).to_be_visible()
+    prices.locator('[data-key="start_price_override"]').fill('27000')
+    prices.locator('[data-key="final_price_override"]').fill('16000')
+    prices.locator('[data-key="deposit_override"]').fill('2500')
+    prices.locator('.editor-primary').click()
+    expect(prices).to_be_hidden()
+    expect(first.locator('[data-price-display="start_price_override"]')).to_have_text('$27000')
+    for key in ('docs','review','ninety_min'):
+        first.locator('[data-key="' + key + '"]').check()
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    saved = service.repository.sheets(service.day())[0]['draft']
+    assert saved['lead_status'] == 'Do Not Call'
+    assert saved['previous_result'] == 'No Pitch'
+    assert saved['start_price_override'] == '27000'
+    assert saved['final_price_override'] == '16000'
+    assert saved['deposit_override'] == '2500'
+    assert all(saved[key] for key in ('docs','review','ninety_min'))
+    assert not writer.applied
+    assert page.evaluate('window.modCspViolations') == []
 
 
 def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
