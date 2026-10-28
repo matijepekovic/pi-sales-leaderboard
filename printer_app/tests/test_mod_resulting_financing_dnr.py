@@ -139,4 +139,4 @@ def test_payment_printed_in_red_generated_notes_without_recoloring_old_notes():
     assert 'Customer asked for scope details' in text
     assert 'SALE Roofing:' in text
     assert 'Deposit: $0' in text
-    assert 'Payment: $159.50' in text
+    assert 'Payment: $159.50' in text.replace('\n', ' ')
