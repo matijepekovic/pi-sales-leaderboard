@@ -23,6 +23,12 @@ def blueprint(service, surface):
             notice = str(exc)[:250]
         try:
             users = service.users()
+            if not users:
+                market = service.repository.imported_market(day)
+                notice = notice or (
+                    'No active Sales Managers found in the imported '
+                    + (market or 'unknown') + ' market.'
+                )
         except Exception as exc:
             users = []
             notice = notice or 'Salesforce MOD list unavailable: ' + str(exc)[:180]
