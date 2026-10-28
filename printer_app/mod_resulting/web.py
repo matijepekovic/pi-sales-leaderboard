@@ -37,7 +37,8 @@ def blueprint(service, surface):
         except Exception:
             # No made-up Salesforce dropdown options. The saved sheet and
             # other local controls remain available when metadata is offline.
-            choices = {'result_details':[], 'dnr_reasons':[], 'products':[]}
+            choices = {'result_details':[], 'dnr_reasons':[], 'products':[],
+                       'lead_status':[], 'previous_results':[]}
             current_app.logger.warning('MOD resulting Salesforce picklists unavailable.')
         # Existing draft selections are grounded values, not guessed picklist
         # options. Keep them visible and lossless through offline Refresh.
@@ -61,12 +62,24 @@ def blueprint(service, surface):
             for value in draft.get('sale_products', {}):
                 if value and not any(o['value'] == value for o in choices['products']):
                     choices['products'].append({'value': value, 'label': value})
+            # Keep already-saved manual choices visible during Salesforce
+            # metadata outages; preflight still validates actual picklists.
+            for key, group in (('lead_status', 'lead_status'),
+                               ('previous_result', 'previous_results')):
+                value = str(draft.get(key) or '').strip()
+                options = choices.setdefault(group, [])
+                if value and value != '__clear__' and not any(
+                    option['value'] == value for option in options
+                ):
+                    options.append({'value':value, 'label':value})
         return render_template(
             'mod_resulting.html',
             data=data, users=users,
             result_details=choices['result_details'],
             dnr_reasons=choices['dnr_reasons'],
             products=choices.get('products', []),
+            lead_status_choices=choices.get('lead_status', []),
+            previous_result_choices=choices.get('previous_results', []),
             live_writes_enabled=service.allow_salesforce_writes,
             notice=notice,
         )
