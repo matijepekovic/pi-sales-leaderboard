@@ -294,6 +294,8 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     bounds = first.locator('.field-notes').bounding_box()
     first.locator('[data-key=notes]').fill('Black comment above redlines.')
     first.locator('[data-key=dispo]').select_option('sale')
+    expect(first.locator('.redline-pen')).to_have_attribute('aria-pressed', 'false')
+    expect(first.locator('.notes-text')).to_have_attribute('data-notes-mode', 'black')
     expect(first.locator('.sale-panel')).to_be_visible()
     roof = first.locator('[data-sale-product="Roofing"]')
     roof.locator('[data-sale-selected]').check()
@@ -302,13 +304,20 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     roof.locator('[data-sale-payment]').fill('159')
     expect(first.locator('.sale-in-redline')).to_have_text(
         'SALE Roofing: $17,850 | Deposit: $0 | Payment: $159')
+    expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('0/159')
     # Zero-priced selected products are not treated as sold.
     siding = first.locator('[data-sale-product="Siding"]')
     siding.locator('[data-sale-selected]').check()
     siding.locator('[data-sale-price]').fill('0')
     first.locator('.sale-panel .sale-done').click()
-    expect(first.locator('[data-key=notes]')).to_have_value('Black comment above redlines.')
-    first.locator('[data-key=notes]').fill('Black comment above redlines.\nREPLACE TRIM WITH FULL SCOPE.')
+    note = first.locator('[data-key=notes]')
+    expect(note).to_have_value('Black comment above redlines.')
+    note.fill('Black comment above redlines.\nStill black after disposition.')
+    expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
+    first.locator('.redline-pen').click()
+    expect(first.locator('.redline-pen')).to_have_attribute('aria-pressed', 'true')
+    expect(first.locator('.notes-text')).to_have_attribute('data-notes-mode', 'red')
+    note.fill('Black comment above redlines.\nStill black after disposition.\nREPLACE TRIM WITH FULL SCOPE.')
     first.locator('[data-key=numbers]').fill('25,000\n17,850')
     for key in ('power_questions', 't_close', 'ninety_min', 'docs', 'bid_sheets',
                 'promotion', 'review', 'one_leg', 'free_lead'):
@@ -324,15 +333,18 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     red = first.locator('.mod-notes-display .after-dispo')
     expect(red).to_have_text('\nREPLACE TRIM WITH FULL SCOPE.')
     expect(first.locator('.mod-notes-display span').first).to_have_text(
-        'Black comment above redlines.')
+        'Black comment above redlines.\nStill black after disposition.')
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(first).to_have_class('mod-sheet surface-ready')
     draft = service.repository.sheets(service.day())[0]['draft']
-    assert draft['notes'] == 'Black comment above redlines.\nREPLACE TRIM WITH FULL SCOPE.'
+    assert draft['notes'] == (
+        'Black comment above redlines.\nStill black after disposition.'
+        '\nREPLACE TRIM WITH FULL SCOPE.'
+    )
     assert draft['redlines'] == ''
     assert draft['note_runs'] == [
-        {'text':'Black comment above redlines.', 'red':False},
+        {'text':'Black comment above redlines.\nStill black after disposition.', 'red':False},
         {'text':'\nREPLACE TRIM WITH FULL SCOPE.', 'red':True},
     ]
     assert draft['dnr_reason'] == 'Roofing'
@@ -530,7 +542,8 @@ def test_price_overrides_stay_in_original_sheet_cells(mod_browser, viewport):
         popup.locator('[data-key="deposit_override"]').fill('2500')
         expect(first.locator('[data-price-display="start_price_override"]')).to_have_text('$27000')
         expect(first.locator('[data-price-display="final_price_override"]')).to_have_text('$16000')
-        expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('$2500')
+        expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('2500')
+        expect(popup.locator('[data-deposit-payment-summary]')).to_have_text('2500')
         popup.locator('.editor-primary').click()
         expect(popup).to_be_hidden()
 
