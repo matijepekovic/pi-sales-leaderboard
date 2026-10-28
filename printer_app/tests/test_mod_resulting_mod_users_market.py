@@ -35,7 +35,7 @@ def _adapter():
         commands.append(command)
         assert command[1:3] == ['data', 'query']  # No User describe or writes.
         soql = command[command.index('--query') + 1]
-        assert 'SELECT Id,Name,Home_Branch__c,UserRole.Name FROM User' in soql
+        assert 'SELECT Id,Name,IsActive,Home_Branch__c,UserRole.Name FROM User' in soql
         assert 'WHERE IsActive = true' in soql
         assert "UserRole.Name = 'Sales Manager'" in soql
         assert 'Home_Branch__c = ' in soql
@@ -45,7 +45,7 @@ def _adapter():
         assert branch_value.startswith("'") and branch_value.endswith("'")
         branch_value = branch_value[1:-1].replace("\\'", "'").replace("\\\\", "\\")
         result = [
-            {key: value for key, value in user.items() if key != 'IsActive'}
+            dict(user)
             for user in USERS if user['IsActive']
             and user['UserRole']['Name'] == 'Sales Manager'
             and user['Home_Branch__c'] == branch_value
@@ -74,7 +74,7 @@ def test_untrusted_salesforce_results_cannot_bypass_market_or_role_gate():
     def runner(command, **kwargs):
         return SimpleNamespace(
             stdout=json.dumps({'status': 0, 'result': {
-                'records': [{k: v for k, v in user.items() if k != 'IsActive'}
+                'records': [dict(user)
                             for user in USERS], 'done': True,
             }}), stderr='', returncode=0,
         )
