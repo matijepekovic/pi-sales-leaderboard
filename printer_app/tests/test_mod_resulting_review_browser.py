@@ -48,8 +48,10 @@ def test_review_checkbox_persists_independently_in_checklist_row(mod_browser, vi
     notes.fill(black_note)
     expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
     first.locator('[data-key=dispo]').select_option('pns')
-    # Dispo never recolors the existing black characters.
+    # Dispo never recolors or changes the ink mode.
     expect(first.locator('.mod-notes-display span').first).to_have_text(black_note)
+    expect(first.locator('.redline-pen')).to_have_attribute('aria-pressed', 'false')
+    first.locator('.redline-pen').click()
     notes.fill(note_text)
     expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(red_note)
     assert first.locator('.mod-notes-display .after-dispo').evaluate(
