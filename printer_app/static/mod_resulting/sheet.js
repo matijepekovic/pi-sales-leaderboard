@@ -171,7 +171,7 @@
     const lines = [];
     if (draft.result_detail) lines.push(draft.result_detail);
     if (draft.additional_products && draft.dispo !== 'sale') {
-      for (const [product, info] of Object.entries(draft.product_results || {})) {
+      for (const info of Object.values(draft.product_results || {})) {
         if (info.detail) lines.push(info.detail);
       }
     }
