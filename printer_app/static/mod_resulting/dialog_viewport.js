@@ -24,8 +24,8 @@
     return {
       left: number(visual?.offsetLeft, 0),
       top: number(visual?.offsetTop, 0),
-      width: Math.max(120, number(visual?.width, window.innerWidth)),
-      height: Math.max(100, number(visual?.height, window.innerHeight)),
+      width: Math.max(1, number(visual?.width, window.innerWidth)),
+      height: Math.max(1, number(visual?.height, window.innerHeight)),
       scale: Math.min(6, Math.max(1, number(visual?.scale, 1)))
     };
   }
@@ -41,8 +41,10 @@
       active.classList.contains('price-panel') ? 440 : 420;
     // Size text in device pixels, not zoomed page pixels. A 3x pinched page
     // still gets an approximately 16px dialog input, not an unusable 48px one.
-    const width = Math.min(preferredWidth, Math.max(160, view.width * view.scale - 16));
-    const maxHeight = Math.max(120, view.height * view.scale - 16);
+    // Never force a minimum wider/taller than the real visible viewport.
+    // This matters for 4x/5x pinch and for the keyboard nearly filling it.
+    const width = Math.min(preferredWidth, Math.max(1, view.width * view.scale - 16));
+    const maxHeight = Math.max(1, view.height * view.scale - 16);
     const scale = 1 / view.scale;
     const props = [
       ['position', 'fixed'], ['inset', 'auto'], ['margin', '0'],
