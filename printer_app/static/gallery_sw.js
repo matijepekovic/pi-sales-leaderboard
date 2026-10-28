@@ -1,4 +1,6 @@
-const CACHE = 'stats-gallery-shell-v14';
+// Bump whenever a cache-first Gallery module changes so installed devices
+// receive the recovered offline-note code instead of a cached old copy.
+const CACHE = 'stats-gallery-shell-v15';
 const IMAGE_CACHE = 'stats-gallery-images-v1';
 const SHELL = [
   '/gallery/',
