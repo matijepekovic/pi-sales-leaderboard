@@ -6,7 +6,6 @@ import json
 from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request, send_file
 
 from .surface import SheetSurfaceError, overlay_css
-from .contract import RESULT_DETAILS
 
 
 def blueprint(service, surface):
@@ -30,20 +29,10 @@ def blueprint(service, surface):
         try:
             choices = service.dropdowns()
         except Exception:
-            # Training reference options permit safe offline draft review;
-            # the Salesforce writer independently validates live picklists.
-            choices = {
-                'result_details':[{'value':value,'label':value}
-                                  for value in RESULT_DETAILS],
-                'dnr_reasons':[{'value':value,'label':value}
-                               for value in ('Roofing','Bath','Siding','Windows',
-                                             'Behavior','Finance')],
-                # Sale/pivot product selection requires the live Salesforce
-                # product picklist. Never invent product values offline.
-                'products':[],
-            }
-            # Setup diagnostics belong in the log, not over the user's sheets.
-            current_app.logger.warning('MOD resulting picklists unavailable; using draft choices.')
+            # No made-up Salesforce dropdown options. The saved sheet and
+            # other local controls remain available when metadata is offline.
+            choices = {'result_details':[], 'dnr_reasons':[], 'products':[]}
+            current_app.logger.warning('MOD resulting Salesforce picklists unavailable.')
         return render_template(
             'mod_resulting.html',
             data=data, users=users,
