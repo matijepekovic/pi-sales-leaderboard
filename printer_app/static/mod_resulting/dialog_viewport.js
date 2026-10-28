@@ -35,6 +35,17 @@
       return;
     }
     const view = viewport();
+    const natural = Math.abs(view.scale - 1) < 0.01 &&
+      Math.abs(view.left) < 1 && Math.abs(view.top) < 1 &&
+      Math.abs(view.width - window.innerWidth) < 2 &&
+      Math.abs(view.height - window.innerHeight) < 2;
+    // At normal 1x with no keyboard obstruction, let the native dialog and
+    // CSS own layout. Visual-viewport overrides are only a fallback for an
+    // actual pinch/keyboard viewport, avoiding a second competing layout.
+    if (natural) {
+      reset();
+      return;
+    }
     const wide = active.classList.contains('sale-panel') ||
       active.classList.contains('product-panel');
     const preferredWidth = wide ? 600 :
