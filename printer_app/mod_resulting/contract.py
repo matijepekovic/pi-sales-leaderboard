@@ -21,7 +21,7 @@ TEXT_FIELDS = (
     'numbers', 'notes', 'redlines', 'call_1', 'call_2', 'need', 'want',
     'result_detail', 'dnr_reason', 'dispo', 'primary_product',
     'lead_status', 'previous_result', 'start_price_override',
-    'final_price_override', 'deposit_override',
+    'final_price_override', 'deposit_override', 'payment_override',
 )
 MAX_LENGTHS = {
     # One MOD Notes text can contain both halves of a legacy split draft.
@@ -30,7 +30,7 @@ MAX_LENGTHS = {
     'result_detail': 120, 'dnr_reason': 500, 'dispo': 8,
     'primary_product': 60, 'lead_status': 120, 'previous_result': 120,
     'start_price_override': 30, 'final_price_override': 30,
-    'deposit_override': 30,
+    'deposit_override': 30, 'payment_override': 30,
 }
 TIME_RE = re.compile(r'^(?:0?[1-9]|1[0-2]):[0-5][0-9] (?:AM|PM)$')
 _NUMBER_RE = re.compile(r'^\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?$')
@@ -119,7 +119,8 @@ def clean_draft(raw):
         raise ValueError('Choose a valid disposition.')
     # Explicit amount overrides are optional. Without one, the numeric notes
     # column (or sold-product deposit sum) retains the current behavior.
-    for field in ('start_price_override', 'final_price_override', 'deposit_override'):
+    for field in ('start_price_override', 'final_price_override',
+                  'deposit_override', 'payment_override'):
         if data[field]:
             _money(data[field])
     # Lead-status selections are validated against actual Salesforce picklists
@@ -233,6 +234,29 @@ def individual_product_sales(draft):
                 'payment': money_text(entry.get('payment', '')),
             })
     return tuple(sold)
+
+
+def deposit_payment_amounts(draft):
+    """Combined Work Order display with separate normalized numeric amounts.
+
+    Only positively priced sold products count. Monthly payments remain notes
+    data; the Salesforce WorkOrder.Deposit_Payment__c currency field receives
+    the numeric deposit alone. Optional manual totals override display/writes
+    without altering any individual product sale.
+    """
+    sales = (sold_products(draft) if draft.get('dispo') == 'sale'
+             else individual_product_sales(draft))
+    deposit = money_text(str(sum(
+        (Decimal(item['deposit']) for item in sales), Decimal('0')
+    ))) if sales else ''
+    payments = [Decimal(item['payment']) for item in sales if item['payment']]
+    payment = money_text(str(sum(payments, Decimal('0')))) if payments else ''
+    if draft.get('deposit_override'):
+        deposit = money_text(draft['deposit_override'])
+    if draft.get('payment_override'):
+        payment = money_text(draft['payment_override'])
+    display = deposit + (' / ' + payment if payment else '')
+    return {'deposit': deposit, 'payment': payment, 'display': display}
 
 
 def sale_redlines(draft):
