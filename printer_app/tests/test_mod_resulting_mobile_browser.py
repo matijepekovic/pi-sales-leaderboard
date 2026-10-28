@@ -28,7 +28,7 @@ def _assert_overlay_positions(sheet):
 
 
 @pytest.mark.parametrize('viewport', [(320, 740), (390, 844), (844, 390)])
-def test_phone_fit_zoom_pan_and_refresh_keep_the_actual_sheet(mod_browser, viewport):
+def test_phone_native_pinch_and_refresh_keep_the_actual_sheet(mod_browser, viewport):
     from playwright.sync_api import expect
     page, service, writer, origin, evidence = mod_browser
     width, height = viewport
@@ -43,36 +43,30 @@ def test_phone_fit_zoom_pan_and_refresh_keep_the_actual_sheet(mod_browser, viewp
     assert first.bounding_box()['width'] == pytest.approx(width - 16, abs=1)
     assert first.bounding_box()['y'] >= page.locator('.floating-controls').bounding_box()['height']
     _assert_overlay_positions(first)
-    for selector in ('#nameSearch', '#dailyMod', '#refresh', '#submitDay', '#zoomIn', '#zoomFit'):
+    for selector in ('#nameSearch', '#dailyMod', '#refresh', '#submitDay'):
         box = page.locator(selector).bounding_box()
         assert box['x'] >= 0 and box['x'] + box['width'] <= width + 1
         assert box['height'] >= 44
     expect(page.locator('#notice')).to_be_hidden()
-    for _ in range(3):
-        page.locator('#zoomIn').click()
-    expect(page.locator('#sheets')).to_have_attribute('data-zoom', '3')
-    assert first.bounding_box()['width'] == pytest.approx(3 * (width - 16), abs=1)
-    assert page.evaluate('document.documentElement.scrollWidth') <= width + 1
+    expect(page.locator('#sheetZoom,#zoomOut,#zoomFit,#zoomIn')).to_have_count(0)
+    assert page.locator('meta[name=viewport]').get_attribute('content') == (
+        'width=device-width,initial-scale=1'
+    )
+    assert first.bounding_box()['width'] == pytest.approx(width - 16, abs=1)
     _assert_overlay_positions(first)
-    page.locator('#sheets').evaluate('(el) => el.scrollLeft = el.scrollWidth - el.clientWidth')
-    assert page.locator('#sheets').evaluate('(el) => el.scrollLeft') > 0
-    assert page.locator('#zoomIn').bounding_box()['x'] + page.locator('#zoomIn').bounding_box()['width'] <= width
-    # Only presentation scales: the original controls and normal save path remain.
+    # The sheet still starts fit-to-width; users use browser-native pinch zoom.
     first.locator('[data-key=notes]').fill('Phone black notes')
     expect(first.locator('[data-key=redlines]')).to_have_count(0)
     first.locator('[data-key=review]').check()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(first).to_have_class('mod-sheet surface-ready')
-    expect(page.locator('#sheets')).to_have_attribute('data-zoom', '3')
+    expect(page.locator('#sheets')).not_to_have_attribute('data-zoom', '3')
     expect(first.locator('[data-key=notes]')).to_have_value('Phone black notes')
     expect(first.locator('[data-key=redlines]')).to_have_count(0)
     expect(first.locator('[data-key=review]')).to_be_checked()
     saved = service.repository.sheets(service.day())[0]['draft']
     assert saved['notes'] == 'Phone black notes' and saved['review'] is True
-    page.locator('#zoomFit').click()
-    expect(page.locator('#sheets')).to_have_attribute('data-zoom', '1')
-    assert page.locator('#sheets').evaluate('(el) => el.scrollLeft') == 0
     assert first.bounding_box()['width'] == pytest.approx(width - 16, abs=1)
     _assert_overlay_positions(first)
     page.locator('#nameSearch').fill('Alex')
@@ -158,4 +152,50 @@ def test_saved_sale_and_dnr_choices_survive_missing_salesforce_metadata(mod_brow
     assert draft['dnr_reason'] == 'Roofing'
     assert draft['notes'] == 'Saved before metadata outage\nEdited comment during metadata outage'
     assert draft['redlines'] == ''
+    assert not service.allow_salesforce_writes and writer.applied == []
+
+
+def test_popup_tracks_visible_viewport_when_zoomed_or_keyboard_opens(mod_browser):
+    from playwright.sync_api import expect
+
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width':390,'height':844})
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+    first.locator('[data-key=dispo]').select_option('sale')
+    dialog = first.locator('.sale-panel[open]')
+    expect(dialog).to_be_visible()
+
+    # Simulate the coordinates mobile Safari/Chromium report after a 2x pinch.
+    # The viewport is read-only in production, so override the page's getter
+    # in this browser regression and dispatch a normal window resize.
+    page.evaluate("""() => {
+      const fake = new EventTarget();
+      Object.assign(fake, {
+        width:180, height:220, scale:2, offsetLeft:50, offsetTop:60
+      });
+      Object.defineProperty(window, 'visualViewport', {
+        configurable:true, value:fake
+      });
+      window.__testViewport = fake;
+      window.dispatchEvent(new Event('resize'));
+    }""")
+    expect(dialog).to_have_css('transform', 'matrix(0.5, 0, 0, 0.5, 0, 0)')
+    bounds = dialog.bounding_box()
+    assert bounds['x'] >= 50-2 and bounds['x']+bounds['width'] <= 230+2
+    assert bounds['y'] >= 60-2 and bounds['y']+bounds['height'] <= 280+2
+
+    # Keyboard reduces only the visible viewport. The popup must shrink with
+    # it, preserving its scrollable body and the Done action.
+    page.evaluate("""() => {
+      window.__testViewport.height=120;
+      window.dispatchEvent(new Event('resize'));
+    }""")
+    expect(dialog).to_have_css('max-height', '224px')
+    bounds=dialog.bounding_box()
+    assert bounds['y'] >= 60-2 and bounds['y']+bounds['height'] <= 180+2
+    assert dialog.locator('.editor-footer').count()==1
+    assert dialog.locator('[data-sale-product="Roofing"]').count()==1
+    assert page.locator('[style]').count()==0
+    assert page.evaluate('window.modCspViolations') == []
     assert not service.allow_salesforce_writes and writer.applied == []
