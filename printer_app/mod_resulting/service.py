@@ -81,7 +81,11 @@ class ResultingService:
         return ModSheetRecord(**data)
 
     def users(self):
-        return self.writer.mod_users()
+        config = self.settings_repository.settings()
+        market = str(getattr(config, 'market_segment', '') or '').strip()
+        if not market:
+            raise ValueError('Select a market in MOD Settings before choosing the sales manager.')
+        return self.writer.mod_users(market)
 
     def dropdowns(self):
         return self.writer.dropdowns()
