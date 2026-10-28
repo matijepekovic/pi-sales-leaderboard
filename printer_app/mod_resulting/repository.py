@@ -39,8 +39,16 @@ class ResultingRepository:
             raise LookupError('This MOD sheet is not part of the selected day.')
         return json.loads(row['snapshot'])
 
-    def refresh(self, day, records):
-        """Replace external snapshots, never an unsubmitted draft or receipt."""
+    def refresh(self, day, records, external_drafts=None):
+        """Refresh source and verified Salesforce result data without erasing edits.
+
+        Only untouched revision-zero drafts receive server values. A disposition
+        already present in Salesforce is an existing completed result, not a new
+        item for the End of Day writer to submit again. The -1 submitted marker
+        denotes a read-only remote result, distinct from an actual local write
+        receipt (positive Unix timestamp), so later Refresh updates still work.
+        """
+        external_drafts = external_drafts or {}
         now = time.time()
         with self.db.connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
@@ -58,6 +66,17 @@ class ResultingRepository:
                         snapshot=excluded.snapshot,current=1,
                         display_order=excluded.display_order''',
                              (day, record.source_id, json.dumps(snapshot), position))
+                if record.source_id in external_drafts:
+                    draft = external_drafts[record.source_id]
+                    # A locally edited sheet always wins over a remote refresh.
+                    # Imported, already-resulted work is excluded from
+                    # submission to prevent rewriting existing Salesforce data.
+                    completed = -1.0 if draft.get('dispo') else None
+                    conn.execute('''UPDATE mod_result_sheets
+                        SET draft=?,submitted_at=?
+                        WHERE day=? AND work_order_id=? AND revision=0
+                        AND (submitted_at IS NULL OR submitted_at=-1.0)''',
+                        (json.dumps(draft), completed, day, record.source_id))
             conn.execute('UPDATE mod_result_days SET refreshed_at=? WHERE day=?', (now, day))
 
     def save_draft(self, day, work_order_id, draft, revision):

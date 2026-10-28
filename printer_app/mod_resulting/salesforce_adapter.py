@@ -231,6 +231,11 @@ class ResultingSalesforceAdapter:
             'Unsupported Salesforce type for ' + field['name'] + ': ' + str(kind)
         )
 
+    def read_results(self, records):
+        """Read existing Salesforce resulting fields; never write on Refresh."""
+        from .salesforce_refresh import read_result_drafts
+        return read_result_drafts(self, records)
+
     def mod_users(self):
         rows = self._query(
             "SELECT Id,Name FROM User WHERE IsActive = true ORDER BY Name LIMIT 2000"

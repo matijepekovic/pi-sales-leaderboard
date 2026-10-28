@@ -42,6 +42,10 @@
  <img class="printer-sheet" src="{{ url_for('mod_resulting.sheet_image', day=data.day, work_order_id=item.work_order_id) }}"
   alt="Printer MOD sheet for {{ sheet.lead_name }}, work order {{ sheet.work_order_number }}"
   loading="{{ 'eager' if loop.first else 'lazy' }}" decoding="async" draggable="false">
+ <div class="mobile-call-actions" role="group" aria-label="Call time pickers">
+  <button type="button" data-time-trigger="call_1">Call 1: {{ d.call_1 or 'Set time' }}</button>
+  <button type="button" data-time-trigger="call_2">Call 2: {{ d.call_2 or 'Set time' }}</button>
+ </div>
  <dl class="sr-only">
   <dt>Work Order Number:</dt><dd>{{ sheet.work_order_number }}</dd>
   <dt>Lead Name:</dt><dd>{{ sheet.lead_name }}</dd>
@@ -59,8 +63,13 @@
  <div class="cell field-product replacement">
   <div class="product-summary"><b>Product Interest:</b> {{ sheet.product_interest }}</div>
   <label class="small-checkbox separate-products"><input type="checkbox" data-key="additional_products" {% if d.additional_products %}checked{% endif %}> Result individually</label>
-  <div class="product-panel" hidden>
-   <button class="close-popover" type="button" aria-label="Close product results">×</button>
+  <button type="button" class="edit-product-results" {% if not d.additional_products or d.dispo=='sale' %}hidden{% endif %}>Edit products</button>
+  <dialog class="editor-dialog product-panel" aria-label="Individual product results">
+   <div class="editor-heading">
+    <div><h2>Results by product</h2><p>Set a different outcome for each original product.</p></div>
+    <button type="button" class="close-popover editor-close" aria-label="Close individual product results">×</button>
+   </div>
+   <div class="editor-body">
    {% for product in xs %}{% if product.strip() %}
    <div class="product-result-row" data-product="{{ product.strip() }}">
     <strong>{{ product.strip() }}</strong>
@@ -81,7 +90,9 @@
     </div>
    </div>
    {% endif %}{% endfor %}
-  </div>
+   </div>
+   <div class="editor-footer"><button type="button" class="close-popover editor-primary">Done</button></div>
+  </dialog>
  </div>
  {% endif %}
  <div class="cell field-detail replacement">
@@ -95,9 +106,8 @@
   <b class="sr-only">MOD Notes:</b>
   <div class="notes-content">
    <textarea data-key="numbers" aria-label="MOD Notes numbers" spellcheck="false">{{ d.numbers }}</textarea>
-   <div class="notes-text">
-    <textarea data-key="notes" aria-label="MOD Notes black comment">{{ d.notes }}</textarea>
-    <textarea data-key="redlines" class="redlines" aria-label="MOD Notes redlines">{{ d.redlines }}</textarea>
+   <div class="notes-text" data-notes-mode="{{ 'red' if d.dispo else 'black' }}" aria-label="MOD Notes">
+    <textarea data-key="notes" class="mod-notes-input" aria-label="MOD Notes" spellcheck="false">{{ d.notes ~ ('\n' if d.notes and d.redlines else '') ~ d.redlines }}</textarea>
     <div class="dnr-in-redline" {% if not d.dnr or not d.dnr_reason %}hidden{% endif %}>DNR - {{ d.dnr_reason }}</div>
    </div>
   </div>
@@ -124,16 +134,19 @@
    <option value="oos" {% if d.dispo=='oos' %}selected{% endif %}>OOS</option>
   </select>
   <button type="button" class="edit-sale-products" {% if d.dispo!='sale' %}hidden{% endif %}>Products</button>
+  <button type="button" class="edit-cxl-details" {% if d.dispo!='cxl' %}hidden{% endif %}>CXL details</button>
  </div>
  <div class="cell field-extras replacement">
   {{ checkbox('one_leg','1 Leg',d.one_leg) }}
   {{ checkbox('free_lead','Free Lead',d.free_lead) }}
  </div>
  <div class="cell field-call1">
-  <b class="sr-only">Call 1:</b><input class="time-entry" data-key="call_1" placeholder="h:mm AM" aria-label="Call 1 time AM/PM" value="{{ d.call_1 }}">
+  <b class="sr-only">Call 1:</b><input class="time-entry" data-key="call_1" placeholder="h:mm AM" aria-label="Call 1 time AM/PM" value="{{ d.call_1 }}" autocomplete="off">
+  <button type="button" class="time-picker-button" data-time-trigger="call_1" aria-label="Choose Call 1 time" title="Pick Call 1 time">◷</button>
  </div>
  <div class="cell field-call2">
-  <b class="sr-only">Call 2:</b><input class="time-entry" data-key="call_2" placeholder="h:mm PM" aria-label="Call 2 time AM/PM" value="{{ d.call_2 }}">
+  <b class="sr-only">Call 2:</b><input class="time-entry" data-key="call_2" placeholder="h:mm PM" aria-label="Call 2 time AM/PM" value="{{ d.call_2 }}" autocomplete="off">
+  <button type="button" class="time-picker-button" data-time-trigger="call_2" aria-label="Choose Call 2 time" title="Pick Call 2 time">◷</button>
  </div>
  <div class="cell field-need">
   <b class="sr-only">Need:</b><textarea data-key="need" aria-label="Need" class="box-text">{{ d.need }}</textarea>
@@ -141,24 +154,40 @@
  <div class="cell field-ninety replacement">
   {{ checkbox('ninety_min','90 Min',d.ninety_min) }}
   {{ checkbox('dnr','DNR',d.dnr) }}
-  <div class="dnr-panel" hidden>
-   <button type="button" class="close-popover" aria-label="Close DNR reason">×</button>
-   <label>DNR Reason
-    <select data-key="dnr_reason" multiple aria-label="DNR Reasons">
+  <button type="button" class="edit-dnr-reasons" {% if not d.dnr %}hidden{% endif %}>Reasons</button>
+  <dialog class="editor-dialog dnr-panel" aria-label="DNR reasons">
+   <div class="editor-heading">
+    <div><h2>Do Not Reset</h2><p>Select every reason that applies.</p></div>
+    <button type="button" class="close-popover editor-close" aria-label="Close DNR reasons">×</button>
+   </div>
+   <div class="editor-body">
+    <select data-key="dnr_reason" multiple hidden aria-hidden="true" tabindex="-1">
      {% set selected_dnr = d.dnr_reason.split(';') %}
      {% for reason in dnr_reasons %}
      <option value="{{ reason.value }}" {% if reason.value in selected_dnr %}selected{% endif %}>{{ reason.label }}</option>
      {% endfor %}
     </select>
-   </label>
-  </div>
+    <div class="dnr-options" role="group" aria-label="DNR reason options">
+     {% for reason in dnr_reasons %}
+     <label class="dnr-option"><input type="checkbox" data-reason-choice value="{{ reason.value }}" {% if reason.value in selected_dnr %}checked{% endif %}><span>{{ reason.label }}</span></label>
+     {% endfor %}
+    </div>
+    {% if not dnr_reasons %}<p class="editor-hint">Salesforce DNR reason list unavailable.</p>{% endif %}
+   </div>
+   <div class="editor-footer"><button type="button" class="close-popover editor-primary">Done</button></div>
+  </dialog>
  </div>
  <div class="cell field-want">
   <b class="sr-only">Want:</b><textarea data-key="want" aria-label="Want" class="box-text">{{ d.want }}</textarea>
  </div>
- <div class="sale-panel" hidden>
-  <button type="button" class="close-popover" aria-label="Close sold products">×</button>
-  <strong>Sold products</strong>
+ <dialog class="editor-dialog sale-panel" aria-label="Sold products">
+  <div class="editor-heading">
+   <div><h2>Sold products</h2><p>Select products and enter a price and deposit for each.</p></div>
+   <button type="button" class="close-popover editor-close" aria-label="Close sold products">×</button>
+  </div>
+  <div class="editor-body">
+   <input class="sale-product-filter" type="search" placeholder="Find product…" aria-label="Search sold products" autocomplete="off">
+   <p class="sale-product-count" aria-live="polite"></p>
   {% if products %}
    {% for product in products %}
    {% set sold = d.sale_products.get(product.value) %}
@@ -178,13 +207,20 @@
   {% else %}
    <p class="sale-products-unavailable">Salesforce product list unavailable.</p>
   {% endif %}
-  <p class="sale-hint">Price 0 = not sold. Deposit 0 is valid.</p>
-  <button type="button" class="close-popover sale-done">Done</button>
- </div>
- <div class="cxl-panel" hidden>
-  <label><input type="checkbox" data-key="cxl_at_lead" {% if d.cxl_at_lead %}checked{% endif %}> CXL At Lead</label>
-  <button type="button" class="close-popover">Done</button>
- </div>
+   <p class="sale-hint">Price 0 = not sold. A deposit of 0 is valid.</p>
+  </div>
+  <div class="editor-footer"><button type="button" class="close-popover editor-primary sale-done">Done</button></div>
+ </dialog>
+ <dialog class="editor-dialog cxl-panel" aria-label="Canceled appointment details">
+  <div class="editor-heading">
+   <div><h2>Cancellation details</h2><p>Was this appointment canceled at the lead?</p></div>
+   <button type="button" class="close-popover editor-close" aria-label="Close cancellation details">×</button>
+  </div>
+  <div class="editor-body">
+   <label class="dnr-option"><input type="checkbox" data-key="cxl_at_lead" {% if d.cxl_at_lead %}checked{% endif %}> CXL At Lead</label>
+  </div>
+  <div class="editor-footer"><button type="button" class="close-popover editor-primary">Done</button></div>
+ </dialog>
  <div class="sheet-message" role="status" aria-live="polite" hidden></div>
 </section>
 {% else %}
@@ -196,12 +232,31 @@
  <button type="button" id="zoomFit" aria-label="Fit sheets to screen">Fit</button>
  <button type="button" id="zoomIn" aria-label="Zoom sheets in">+</button>
 </div>
-<div class="confirm-backdrop" id="endConfirm" hidden>
- <div class="confirm-box">
-  <p>Submit all resulted MOD sheets to Salesforce?</p>
-  <p id="reviewCount"></p>
-  <button type="button" id="cancelEnd">Cancel</button>
-  <button type="button" id="confirmEnd" {% if not live_writes_enabled %}disabled title="Salesforce writes disabled for sandbox testing"{% endif %}>Submit</button>
+<dialog class="editor-dialog time-dialog" id="timeDialog" aria-label="Choose call time">
+ <div class="editor-heading">
+  <div><h2 id="timeTitle">Call time</h2><p>Choose hour, minute and AM or PM.</p></div>
+  <button type="button" class="close-popover editor-close" aria-label="Close time picker">×</button>
  </div>
-</div>
+ <div class="editor-body">
+  <div class="time-options">
+   <label>Hour<select id="timeHour" aria-label="Call hour">{% for n in range(1,13) %}<option value="{{ n }}">{{ n }}</option>{% endfor %}</select></label>
+   <label>Minute<select id="timeMinute" aria-label="Call minute">{% for n in range(60) %}<option value="{{ '%02d'|format(n) }}">{{ '%02d'|format(n) }}</option>{% endfor %}</select></label>
+   <label>AM / PM<select id="timePeriod" aria-label="AM or PM"><option value="AM">AM</option><option value="PM">PM</option></select></label>
+  </div>
+ </div>
+ <div class="editor-footer">
+  <button type="button" id="timeClear" class="editor-secondary">Clear</button>
+  <button type="button" id="timeApply" class="editor-primary">Set time</button>
+ </div>
+</dialog>
+<dialog class="editor-dialog end-dialog" id="endConfirm" aria-label="Confirm End of Day submission">
+ <div class="editor-heading"><div><h2>End of Day</h2><p>Review the selected MOD and resulting count before submitting.</p></div>
+  <button type="button" id="cancelEnd" class="editor-close" aria-label="Close confirmation">×</button>
+ </div>
+ <div class="editor-body"><p>Submit all resulted MOD sheets to Salesforce?</p><p id="reviewCount"></p></div>
+ <div class="editor-footer">
+  <button type="button" id="cancelEndSecondary" class="editor-secondary">Cancel</button>
+  <button type="button" id="confirmEnd" class="editor-primary" {% if not live_writes_enabled %}disabled title="Salesforce writes disabled for sandbox testing"{% endif %}>Submit</button>
+ </div>
+</dialog>
 </body></html>

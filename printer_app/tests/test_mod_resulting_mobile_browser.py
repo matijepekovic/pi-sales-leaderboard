@@ -59,14 +59,14 @@ def test_phone_fit_zoom_pan_and_refresh_keep_the_actual_sheet(mod_browser, viewp
     assert page.locator('#zoomIn').bounding_box()['x'] + page.locator('#zoomIn').bounding_box()['width'] <= width
     # Only presentation scales: the original controls and normal save path remain.
     first.locator('[data-key=notes]').fill('Phone black notes')
-    first.locator('[data-key=redlines]').fill('PHONE REDLINE')
+    expect(first.locator('[data-key=redlines]')).to_have_count(0)
     first.locator('[data-key=review]').check()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(first).to_have_class('mod-sheet surface-ready')
     expect(page.locator('#sheets')).to_have_attribute('data-zoom', '3')
     expect(first.locator('[data-key=notes]')).to_have_value('Phone black notes')
-    expect(first.locator('[data-key=redlines]')).to_have_value('PHONE REDLINE')
+    expect(first.locator('[data-key=redlines]')).to_have_count(0)
     expect(first.locator('[data-key=review]')).to_be_checked()
     saved = service.repository.sheets(service.day())[0]['draft']
     assert saved['notes'] == 'Phone black notes' and saved['review'] is True
@@ -145,7 +145,9 @@ def test_saved_sale_and_dnr_choices_survive_missing_salesforce_metadata(mod_brow
     )
     assert values == ['Roofing']
 
-    first.locator('[data-key=notes]').fill('Edited during metadata outage')
+    expect(first.locator('[data-key=notes]')).to_be_visible()
+    expect(first.locator('[data-key=notes]')).to_have_value('Saved before metadata outage')
+    first.locator('[data-key=notes]').fill('Saved before metadata outage\nEdited comment during metadata outage')
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
 
@@ -154,5 +156,6 @@ def test_saved_sale_and_dnr_choices_survive_missing_salesforce_metadata(mod_brow
         'Windows': {'price': '18000', 'deposit': '0'},
     }
     assert draft['dnr_reason'] == 'Roofing'
-    assert draft['notes'] == 'Edited during metadata outage'
+    assert draft['notes'] == 'Saved before metadata outage\nEdited comment during metadata outage'
+    assert draft['redlines'] == ''
     assert not service.allow_salesforce_writes and writer.applied == []

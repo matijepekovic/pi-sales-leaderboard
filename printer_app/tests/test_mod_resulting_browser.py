@@ -169,8 +169,9 @@ def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_br
     assert page.locator('body > header,body > nav,body > footer').count() == 0
     expect(page.locator('#nameSearch')).to_be_visible()
     first = page.locator('.mod-sheet').first
-    for key in ('numbers', 'notes', 'redlines'):
+    for key in ('numbers', 'notes'):
         expect(first.locator('[data-key=' + key + ']')).to_be_visible()
+    expect(first.locator('[data-key=redlines]')).to_have_count(0)
 
     page.locator('#nameSearch').fill('alex')
     expect(page.locator('.mod-sheet:visible')).to_have_count(1)
@@ -179,11 +180,14 @@ def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_br
     page.locator('#nameSearch').fill('')
     expect(page.locator('.mod-sheet:visible')).to_have_count(2)
 
+    first.locator('[data-key=notes]').fill('Black comment')
     first.locator('[data-key=dispo]').select_option('cxl')
     expect(first.locator('.cxl-panel')).to_be_visible()
     first.locator('[data-key=cxl_at_lead]').check()
-    first.locator('[data-key=notes]').fill('Black comment')
-    first.locator('[data-key=redlines]').fill('REDLINE')
+    first.locator('.cxl-panel .editor-primary').click()
+    expect(first.locator('[data-key=notes]')).to_be_visible()
+    expect(first.locator('[data-key=notes]')).to_have_value('Black comment')
+    first.locator('[data-key=notes]').fill('Black comment\nREDLINE')
     first.locator('[data-key=numbers]').fill('20000\n17000')
     page.locator('#hideCompleted').check()
     expect(page.locator('.mod-sheet:visible')).to_have_count(1)
@@ -192,7 +196,7 @@ def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_br
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(page.locator('.mod-sheet')).to_have_count(2)
-    expect(page.locator('.mod-sheet').first.locator('[data-key=notes]')).to_have_value('Black comment')
+    expect(page.locator('.mod-sheet').first.locator('[data-key=notes]')).to_have_value('Black comment\nREDLINE')
     row = service.repository.sheets(service.day())[0]
     assert row['draft']['dispo'] == 'cxl'
     assert row['draft']['cxl_at_lead'] is True
@@ -267,6 +271,7 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     first = page.locator('.mod-sheet').first
     expect(first).to_have_class('mod-sheet surface-ready')
     bounds = first.locator('.field-notes').bounding_box()
+    first.locator('[data-key=notes]').fill('Black comment above redlines.')
     first.locator('[data-key=dispo]').select_option('sale')
     expect(first.locator('.sale-panel')).to_be_visible()
     roof = first.locator('[data-sale-product="Roofing"]')
@@ -278,29 +283,29 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     siding.locator('[data-sale-selected]').check()
     siding.locator('[data-sale-price]').fill('0')
     first.locator('.sale-panel .sale-done').click()
-    first.locator('[data-key=notes]').fill('Black comment above redlines.')
-    first.locator('[data-key=redlines]').fill('REPLACE TRIM WITH FULL SCOPE.')
+    expect(first.locator('[data-key=notes]')).to_have_value('Black comment above redlines.')
+    first.locator('[data-key=notes]').fill('Black comment above redlines.\nREPLACE TRIM WITH FULL SCOPE.')
     first.locator('[data-key=numbers]').fill('25,000\n17,850')
     for key in ('power_questions', 't_close', 'ninety_min', 'docs', 'bid_sheets',
                 'promotion', 'review', 'one_leg', 'free_lead'):
         first.locator('[data-key=' + key + ']').check()
     first.locator('[data-key=dnr]').check()
     expect(first.locator('.dnr-panel')).to_be_visible()
-    first.locator('[data-key=dnr_reason]').select_option('Roofing')
+    first.locator('.dnr-panel [data-reason-choice][value="Roofing"]').check()
     expect(first.locator('.dnr-in-redline')).to_have_text('DNR - Roofing')
-    first.locator('.dnr-panel .close-popover').click()
+    first.locator('.dnr-panel .editor-primary').click()
     first.locator('[data-key=call_1]').fill('10:15 AM')
     first.locator('[data-key=call_2]').fill('10:27 AM')
     assert first.locator('.field-notes').bounding_box() == bounds
-    red = first.locator('[data-key=redlines]')
+    red = first.locator('[data-key=notes]')
     assert red.evaluate('(el) => getComputedStyle(el).color') == 'rgb(176, 0, 0)'
-    assert int(red.evaluate('(el) => getComputedStyle(el).fontWeight')) >= 700
+    assert red.evaluate('(el) => parseFloat(getComputedStyle(el).fontSize)') > 0
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(first).to_have_class('mod-sheet surface-ready')
     draft = service.repository.sheets(service.day())[0]['draft']
-    assert draft['notes'] == 'Black comment above redlines.'
-    assert draft['redlines'] == 'REPLACE TRIM WITH FULL SCOPE.'
+    assert draft['notes'] == 'Black comment above redlines.\nREPLACE TRIM WITH FULL SCOPE.'
+    assert draft['redlines'] == ''
     assert draft['dnr_reason'] == 'Roofing'
     assert draft['sale_products'] == {
         'Roofing':{'price':'17850','deposit':'0'},
@@ -317,6 +322,147 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     assert updated == dict(draft, review=False)
     evidence('filled-sheet')
     assert service.allow_salesforce_writes is False and not writer.applied
+
+
+@pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
+def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, viewport):
+    """All editors must use the viewport top layer, even in the zoomable PDF."""
+    from playwright.sync_api import expect
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width':viewport[0], 'height':viewport[1]})
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+
+    def visible_popup(selector):
+        dialog = page.locator(selector)
+        expect(dialog).to_be_visible()
+        expect(page.locator('.editor-dialog[open]')).to_have_count(1)
+        box = dialog.bounding_box()
+        assert box is not None
+        assert box['x'] >= 0 and box['y'] >= 0, box
+        assert box['x'] + box['width'] <= viewport[0] + 1, box
+        assert box['y'] + box['height'] <= viewport[1] + 1, box
+        return dialog
+
+    first.locator('[data-key="dnr"]').check()
+    popup = visible_popup('.dnr-panel[open]')
+    popup.locator('[data-reason-choice][value="Roofing"]').check()
+    expect(first.locator('.dnr-in-redline')).to_have_text('DNR - Roofing')
+    popup.locator('.editor-primary').click()
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+
+    first.locator('[data-key="dispo"]').select_option('sale')
+    popup = visible_popup('.sale-panel[open]')
+    popup.locator('.sale-product-filter').fill('Roofing')
+    expect(popup.locator('[data-sale-product="Roofing"]')).to_be_visible()
+    expect(popup.locator('[data-sale-product="Windows"]')).to_be_hidden()
+    popup.locator('[data-sale-product="Roofing"] [data-sale-selected]').check()
+    popup.locator('[data-sale-product="Roofing"] [data-sale-price]').fill('17000')
+    popup.locator('[data-sale-product="Roofing"] [data-sale-deposit]').fill('0')
+    popup.locator('.sale-done').click()
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+    first.locator('.edit-sale-products').click()
+    expect(page.locator('.editor-dialog[open]')).to_have_count(1)
+    first.locator('.sale-panel .sale-done').click()
+
+    first.locator('[data-key="dispo"]').select_option('cxl')
+    popup = visible_popup('.cxl-panel[open]')
+    popup.locator('[data-key="cxl_at_lead"]').check()
+    page.keyboard.press('Escape')
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+
+    first.locator('[data-key="dispo"]').select_option('pns')
+    first.locator('[data-key="additional_products"]').check()
+    popup = visible_popup('.product-panel[open]')
+    popup.locator('[data-product="Roofing"] [data-product-result]').select_option('np')
+    popup.locator('.editor-primary').click()
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+
+    call_controls = ('.mobile-call-actions' if viewport[0] <= 900 else '.field-call1')
+    call_one = first.locator(call_controls + ' [data-time-trigger="call_1"]')
+    if viewport[0] <= 900:
+        assert call_one.bounding_box()['height'] >= 44
+    call_one.click()
+    popup = visible_popup('#timeDialog[open]')
+    expect(popup.locator('#timeTitle')).to_have_text('Call 1 time')
+    popup.locator('#timeHour').select_option('10')
+    popup.locator('#timeMinute').select_option('15')
+    popup.locator('#timePeriod').select_option('AM')
+    popup.locator('#timeApply').click()
+    expect(first.locator('[data-key="call_1"]')).to_have_value('10:15 AM')
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+
+    call_two = first.locator(('.mobile-call-actions' if viewport[0] <= 900 else '.field-call2')
+                             + ' [data-time-trigger="call_2"]')
+    if viewport[0] <= 900:
+        assert call_two.bounding_box()['height'] >= 44
+        expect(first.locator('.mobile-call-actions [data-time-trigger="call_1"]')).to_contain_text('10:15 AM')
+    call_two.click()
+    popup = visible_popup('#timeDialog[open]')
+    popup.locator('#timeHour').select_option('1')
+    popup.locator('#timeMinute').select_option('27')
+    popup.locator('#timePeriod').select_option('PM')
+    popup.locator('#timeApply').click()
+    expect(first.locator('[data-key="call_2"]')).to_have_value('1:27 PM')
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    saved = service.repository.sheets(service.day())[0]['draft']
+    assert saved['dnr_reason'] == 'Roofing'
+    assert saved['sale_products'] == {'Roofing': {'price':'17000', 'deposit':'0'}}
+    assert saved['cxl_at_lead'] is True
+    assert saved['call_1'] == '10:15 AM'
+    assert saved['call_2'] == '1:27 PM'
+    assert saved['product_results']['Roofing']['result'] == 'np'
+    assert not writer.applied
+    evidence('editor-dialogs-' + str(viewport[0]))
+
+
+def test_opening_another_sheet_dialog_closes_the_previous(mod_browser):
+    from playwright.sync_api import expect
+    page, service, writer, origin, evidence = mod_browser
+    page.goto(origin + '/mod-resulting')
+    first, second = page.locator('.mod-sheet').all()
+    first.locator('[data-key="dnr"]').check()
+    expect(first.locator('.dnr-panel')).to_be_visible()
+    # Background sheets cannot be clicked while a modal is open. Simulate a
+    # second change event to assert that even programmatic open paths cannot
+    # stack dialogs across multiple appointments.
+    second.locator('[data-key="dnr"]').evaluate("""el => {
+        el.checked = true;
+        el.dispatchEvent(new Event('change', {bubbles:true}));
+    }""")
+    expect(page.locator('.editor-dialog[open]')).to_have_count(1)
+    expect(first.locator('.dnr-panel')).to_be_hidden()
+    expect(second.locator('.dnr-panel')).to_be_visible()
+    page.keyboard.press('Escape')
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+
+
+def test_existing_split_notes_are_preserved_when_migrated_to_one_textbox(mod_browser):
+    from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import clean_draft
+
+    page, service, writer, origin, evidence = mod_browser
+    day = service.day()
+    ident = service.repository.sheets(day)[0]['work_order_id']
+    service.save(day, ident, clean_draft({
+        'dispo':'pns', 'notes':'Legacy first note',
+        'redlines':'Legacy second note',
+    }), 0)
+    page.goto(origin + '/mod-resulting')
+    note = page.locator('.mod-sheet').first.locator('[data-key=notes]')
+    expect(note).to_have_value('Legacy first note\nLegacy second note')
+    assert page.locator('.mod-sheet').first.locator('.notes-text textarea').count() == 1
+    note.fill('Legacy first note\nLegacy second note\nAdditional note')
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    saved = service.repository.sheets(day)[0]['draft']
+    assert saved['notes'] == 'Legacy first note\nLegacy second note\nAdditional note'
+    assert saved['redlines'] == ''
+    assert saved['dispo'] == 'pns'
+    assert not writer.applied
 
 
 def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
@@ -345,18 +491,19 @@ def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
     first.locator('[data-key=review]').uncheck()
     first.locator('[data-key=numbers]').fill('')
     first.locator('[data-key=notes]').fill('Final black comment')
-    first.locator('[data-key=redlines]').fill('FINAL REDLINE')
     first.locator('[data-key=call_1]').fill('10:15 AM')
     first.locator('[data-key=call_2]').fill('1:27 PM')
     first.locator('[data-key=dispo]').select_option('cxl')
     first.locator('[data-key=cxl_at_lead]').check()
+    first.locator('.cxl-panel .editor-primary').click()
+    first.locator('[data-key=notes]').fill('Final black comment\nFINAL REDLINE')
     held[0].continue_()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(first).to_have_class('mod-sheet surface-ready')
     saved = service.repository.sheets(service.day())[0]['draft']
-    expected = {'review': False, 'numbers': '', 'notes': 'Final black comment',
-                'redlines': 'FINAL REDLINE', 'call_1': '10:15 AM',
+    expected = {'review': False, 'numbers': '', 'notes': 'Final black comment\nFINAL REDLINE',
+                'call_1': '10:15 AM',
                 'call_2': '1:27 PM', 'dispo': 'cxl', 'cxl_at_lead': True}
     for key, value in expected.items():
         assert saved[key] == value, (key, saved[key])

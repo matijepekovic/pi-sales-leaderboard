@@ -27,20 +27,27 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .notes-content{position:absolute;inset:2.05cqw .2cqw .2cqw;display:flex;gap:.4cqw;min-height:0}
 .notes-content textarea{display:block;resize:none;line-height:1.15;width:100%;padding:0;white-space:pre-wrap}
 .notes-content textarea[data-key=numbers]{width:21%;flex:none}
-.notes-text{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0}
-.notes-text textarea[data-key=notes]{height:32%;flex:none}
-.notes-text .redlines{font-size:2.18cqw;font-weight:700;color:#b00000;line-height:1.1;flex:1;min-height:0}
-.notes-text .dnr-in-redline{font-size:2.18cqw;font-weight:700;color:#b00000;line-height:1.1}
+/* MOD Notes is one editable field. Dispo changes only its typography:
+   before: regular black; after: larger bold red. Numbers remain separate. */
+.notes-text{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.notes-text textarea[data-key=notes]{display:block;flex:1;min-height:0;width:100%;color:#000;font-size:1.57cqw;font-weight:400;line-height:1.15;resize:none}
+.notes-text[data-notes-mode=red] textarea[data-key=notes]{font-size:2.18cqw;color:#b00000}
+.notes-text .dnr-in-redline{font-size:2.18cqw;font-weight:700;color:#b00000;line-height:1.1;flex:none}
 .checklist{display:flex;gap:.1cqw}
 .checklist label{display:flex;flex:1;flex-direction:column;gap:.6cqw;align-items:flex-start}
 .field-bids label{min-width:0;white-space:nowrap}
 .field-bids label:first-child{flex:1.5}
 .field-dispo{display:flex;align-items:center;gap:.4cqw}
 .field-dispo select{flex:1;font-size:1.4cqw}
-.edit-sale-products{border:0;background:white;padding:0 .25cqw;font-size:1.05cqw;text-decoration:underline}
+.edit-sale-products,.edit-cxl-details,.edit-product-results,.edit-dnr-reasons{border:0;background:#fff;color:#111;padding:0 .25cqw;font-size:1.05cqw;text-decoration:underline;cursor:pointer}
+.edit-product-results{position:absolute;right:.3cqw;bottom:0}
+.edit-dnr-reasons{position:absolute;bottom:0;left:3.2cqw}
 .field-extras{display:flex;align-items:center;justify-content:space-around;gap:.2cqw;border-left:1px solid #000}
 .field-extras label{display:flex;align-items:center;gap:.4cqw;font-size:1.3cqw;white-space:nowrap}
-.time-entry{position:absolute;left:5.05cqw;top:.1cqw;width:4.6cqw;font-size:1.23cqw!important;line-height:1.2}
+.time-entry{position:absolute;left:4.1cqw;top:.1cqw;width:4.2cqw;font-size:1.05cqw!important;line-height:1.2}
+.mod-sheet .time-picker-button{position:absolute;top:0;right:0;min-width:1.9cqw;min-height:2.1cqw;border:0;background:#fff;color:#222;font-size:max(12px,1.4cqw);line-height:1;cursor:pointer}
+.mod-sheet .time-picker-button:focus-visible{outline:2px solid #2563eb;outline-offset:-2px}
+.mobile-call-actions{display:none}
 .box-text{position:absolute;inset:1.85cqw .2cqw .1cqw;width:calc(100% - .4cqw);height:calc(100% - 1.95cqw);resize:none}
 .field-ninety{display:flex;flex-direction:column}
 .field-ninety>label{display:flex;height:50%;align-items:center;justify-content:space-between;padding:0 .3cqw}
@@ -49,38 +56,59 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .floating-controls input[type=search],.floating-controls select{background:white;border:1px solid #bbb;border-radius:5px;padding:6px 8px;font:inherit}
 .floating-controls input[type=search]{width:min(200px,26vw)}
 .floating-controls .mod-choice,.floating-controls .toggle-hide{display:flex;align-items:center;gap:6px;white-space:nowrap}
-.floating-controls button,.confirm-box button{background:white;border:1px solid #888;border-radius:5px;font:inherit;padding:7px 12px;cursor:pointer}
-.floating-controls #submitDay,.confirm-box #confirmEnd{background:#111;color:#fff}
+.floating-controls button{background:white;border:1px solid #888;border-radius:5px;font:inherit;padding:7px 12px;cursor:pointer}
+.floating-controls #submitDay{background:#111;color:#fff}
 .notification{position:fixed;z-index:50;top:75px;right:14px;padding:9px 13px;background:#fffbdf;border:1px solid #ad9b4c;border-radius:4px;max-width:430px;font:12px system-ui,sans-serif}
-.product-panel,.dnr-panel,.cxl-panel,.sale-panel{position:absolute;z-index:20;background:#fff;border:1px solid #000;box-shadow:2px 4px 18px #0002;padding:12px;font:13px system-ui,sans-serif;min-width:220px;color:#111}
-.mod-sheet .cell:has(.product-panel:not([hidden])),.mod-sheet .cell:has(.dnr-panel:not([hidden])){z-index:21}
-.sale-panel{top:64%;left:20%;min-width:430px;max-width:min(620px,76vw);max-height:62vh;overflow:auto}
-.sale-product-row{display:flex;flex-wrap:wrap;gap:8px;align-items:end;border-top:1px solid #ddd;padding:9px 0}
-.sale-product-row label{display:flex;flex:1 1 100px;min-width:95px;flex-direction:column;gap:4px;font-size:12px}
-.sale-product-row .sale-product-choice{flex-direction:row;align-items:center;font-weight:600}
-.sale-product-row input[type=text]{border:1px solid #aaa;padding:5px;background:white;font:13px system-ui,sans-serif}
-.sale-product-row input:disabled{background:#eee;color:#777}
-.sale-hint,.sale-products-unavailable{margin:8px 0 4px;font-size:12px;color:#555}
-.sale-done{float:none;margin-top:6px}
+/* Editors live in the browser's native dialog top layer, never inside the
+   zoomable sheet's absolute positioning or horizontal-scroll viewport. */
+body.dialog-open{overflow:hidden}
+.editor-dialog{position:fixed;inset:0;margin:auto;width:min(600px,calc(100vw - 28px));max-width:calc(100vw - 28px);max-height:min(84dvh,780px);overflow-y:auto;overscroll-behavior:contain;z-index:100;padding:0;border:1px solid #c5cbd3;border-radius:12px;background:#fff;color:#17212d;box-shadow:0 20px 70px #0007;font:15px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.editor-dialog::backdrop{background:rgba(15,23,42,.68)}
+.editor-dialog .editor-heading{position:sticky;z-index:2;top:0;display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:18px 20px 14px;background:#fff;border-bottom:1px solid #e3e7ec}
+.editor-heading h2{margin:0;font:650 20px/1.25 system-ui,-apple-system,sans-serif}
+.editor-heading p{margin:5px 0 0;color:#56616f;font-size:13px;line-height:1.4}
+.editor-dialog .editor-body{padding:16px 20px 20px}
+.editor-dialog .editor-footer{position:sticky;z-index:2;bottom:0;display:flex;gap:10px;justify-content:flex-end;padding:12px 20px;background:#fff;border-top:1px solid #e3e7ec}
+.editor-dialog button{font:600 14px/1.4 system-ui,-apple-system,sans-serif;border-radius:7px;min-height:42px;cursor:pointer}
+.editor-dialog .editor-close{flex:none;width:40px;height:40px;min-height:40px;border:1px solid #d1d7dd;background:#f8fafc;color:#303842;font-size:25px;line-height:1}
+.editor-dialog .editor-primary{background:#17212d;color:#fff;border:1px solid #17212d;padding:10px 22px}
+.editor-dialog .editor-secondary{background:#fff;color:#17212d;border:1px solid #a7b0bb;padding:10px 18px}
+.editor-dialog button:disabled{opacity:.45;cursor:not-allowed}
+.editor-dialog :focus-visible{outline:2px solid #2563eb!important;outline-offset:2px!important}
+.mod-sheet .editor-dialog input:not([type=checkbox]),.mod-sheet .editor-dialog select,
+.editor-dialog input:not([type=checkbox]),.editor-dialog select{display:block;border:1px solid #aeb6c2;border-radius:6px;min-height:44px;padding:8px 10px;background:#fff;color:#17212d;box-shadow:none;font:16px/1.25 system-ui,-apple-system,sans-serif}
+.mod-sheet .editor-dialog input[type=checkbox],.editor-dialog input[type=checkbox]{flex:none;width:20px;height:20px;margin:0;accent-color:#17212d;cursor:pointer}
+.editor-dialog label{font:500 14px/1.4 system-ui,-apple-system,sans-serif;color:#293340}
+.product-panel,.sale-panel{width:min(660px,calc(100vw - 28px))}
 .product-summary{font-size:1.25cqw;white-space:normal}
-.dnr-panel select[multiple]{min-height:92px}
-.product-panel{top:100%;left:0;min-width:310px;max-height:50vh;overflow-y:auto}
-.product-result-row{border-top:1px solid #ddd;padding:9px 0;display:flex;flex-direction:column;gap:6px}
-.product-result-row label{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:12px}
-.individual-sale-fields{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
-.individual-sale-fields label{display:flex;flex:1;flex-direction:column;align-items:stretch;gap:4px;min-width:110px}
-.individual-sale-fields input{border:1px solid #aaa!important;background:white!important;padding:5px!important;font:13px system-ui,sans-serif!important;width:100%}
-.mod-sheet .product-panel select,.mod-sheet .dnr-panel select{border:1px solid #aaa;padding:3px;max-width:170px;font:12px system-ui,sans-serif}
-.dnr-panel{left:100%;bottom:0}
-.dnr-panel>label{display:flex;flex-direction:column;gap:9px}
-.cxl-panel{top:69.2%;left:40%;min-width:190px}
-.cxl-panel>label{display:flex;align-items:center;gap:6px}
-.close-popover{float:right;background:white;border:1px solid #aaa;border-radius:3px}
+.product-result-row{padding:16px 0;border-bottom:1px solid #e3e7ec;display:flex;flex-wrap:wrap;gap:12px}
+.product-result-row strong{flex:1 1 100%;font-size:15px}
+.product-result-row>label{display:flex;flex:1 1 calc(50% - 6px);flex-direction:column;gap:5px;min-width:0}
+.mod-sheet .product-result-row select{width:100%;max-width:none}
+.product-result-row .individual-sale-fields{display:flex;flex:1 1 100%;flex-wrap:wrap;gap:12px}
+.individual-sale-fields label{display:flex;flex:1 1 calc(50% - 6px);flex-direction:column;gap:5px;min-width:0}
+.mod-sheet .individual-sale-fields input{width:100%;max-width:none}
+.sale-product-filter{width:100%;margin:0 0 6px}
+.sale-product-count{margin:5px 0 12px;color:#526071;font-size:13px}
+.sale-product-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:14px 0;border-bottom:1px solid #e3e7ec}
+.sale-product-row label{display:flex;flex:1 1 110px;flex-direction:column;gap:5px;min-width:0}
+.sale-product-row .sale-product-choice{flex:1 1 140px;flex-direction:row;align-items:center;gap:10px;font-weight:600}
+.sale-product-row input[type=text]{width:100%}
+.sale-product-row input:disabled{background:#f1f3f6!important;color:#87919e!important}
+.sale-hint,.sale-products-unavailable,.editor-hint{margin:12px 0 2px;font-size:13px;color:#56616f}
+.dnr-panel{width:min(500px,calc(100vw - 28px))}
+.dnr-options{display:flex;flex-wrap:wrap;gap:8px}
+.dnr-option{display:flex;flex:1 1 calc(50% - 4px);align-items:center;gap:12px;padding:12px;border:1px solid #e3e7ec;border-radius:8px;min-height:52px;cursor:pointer}
+.dnr-option:has(input:checked){background:#eaf1ff;border-color:#749de8}
+.cxl-panel{width:min(450px,calc(100vw - 28px))}
+.cxl-panel .dnr-option{max-width:100%}
+.time-dialog{width:min(440px,calc(100vw - 28px))}
+.time-options{display:flex;gap:10px}
+.time-options label{display:flex;flex:1 1 0;min-width:0;flex-direction:column;gap:6px;white-space:nowrap}
+.time-options select{width:100%}
+.end-dialog{width:min(480px,calc(100vw - 28px))}
+.end-dialog #reviewCount{line-height:1.5;color:#344156;font-size:14px}
 .sheet-message{position:absolute;z-index:22;bottom:101%;left:0;font:12px system-ui,sans-serif;color:#8c341b;background:#fff9de;padding:5px 8px;border:1px solid #e8cf86}
-.confirm-backdrop{position:fixed;inset:0;background:#0006;z-index:40;display:grid;place-items:center}
-.confirm-box{background:#fff;border:1px solid #111;box-shadow:0 8px 24px #0004;padding:22px;min-width:min(360px,95vw);font:14px system-ui,sans-serif}
-.confirm-box #reviewCount{font-size:12px;line-height:1.5}
-.confirm-box button{margin-right:8px}
 .submitted .cell{pointer-events:none}
 .no-sheets{padding:60px;text-align:center;font:15px system-ui,sans-serif}
 .sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
@@ -101,7 +129,11 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
  .floating-controls .toggle-hide input{width:18px;height:18px;margin:0}
  .floating-controls button,.floating-controls .completed-pdf{min-height:44px;padding:8px;font-size:12px}
  .sheets{width:100%;padding:12px 8px calc(76px + env(safe-area-inset-bottom));
-  gap:20px;align-items:flex-start;overflow-x:auto;overscroll-behavior-x:contain}
+  gap:70px;align-items:flex-start;overflow-x:auto;overscroll-behavior-x:contain}
+ .mod-sheet .time-picker-button{display:none}
+ .mobile-call-actions{position:absolute;top:100%;left:0;right:0;display:flex;gap:8px;padding-top:6px;font:14px system-ui,-apple-system,sans-serif}
+ .mod-sheet .mobile-call-actions button{flex:1 1 0;min-height:44px;min-width:0;padding:9px 6px;border:1px solid #adb7c2;border-radius:6px;background:#fff;color:#142033;font:600 13px system-ui,-apple-system,sans-serif;text-align:center}
+ .mobile-call-actions button:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
  .mod-sheet{width:calc(100vw - 16px);-webkit-text-size-adjust:100%;text-size-adjust:100%}
  .sheets[data-zoom="1.5"] .mod-sheet{width:calc(150vw - 24px)}
  .sheets[data-zoom="2"] .mod-sheet{width:calc(200vw - 32px)}
@@ -114,18 +146,16 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
   color:#111;font:inherit;border-radius:5px;cursor:pointer}
  .sheet-zoom button:disabled{color:#888;cursor:default}
  .notification{top:auto;bottom:68px;left:8px;right:8px;max-width:none}
- .product-panel,.dnr-panel,.cxl-panel,.sale-panel{min-width:min(290px,calc(100vw - 32px));
-  max-width:calc(100vw - 32px);font-size:16px;max-height:60dvh;overflow:auto}
- .product-result-row label{font-size:16px;flex-wrap:wrap}
- .individual-sale-fields input{font-size:16px!important;min-height:44px}
- .mod-sheet .product-panel select,.mod-sheet .dnr-panel select{font-size:16px;min-height:44px;max-width:100%}
- .sale-product-row{gap:6px}
- .sale-product-row label{flex-basis:100%}
- .sale-product-row label{font-size:16px}
- .sale-product-row input[type=text]{min-height:44px;font-size:16px}
- .close-popover{min-width:44px;min-height:44px;font-size:16px}
- .confirm-box{min-width:0;width:calc(100vw - 24px);max-height:80dvh;overflow:auto}
- .confirm-box button{min-height:44px}
+ .editor-dialog{width:calc(100vw - 20px);max-width:calc(100vw - 20px);max-height:calc(100dvh - 36px);border-radius:10px}
+ .editor-dialog .editor-heading{padding:14px 16px}
+ .editor-dialog .editor-body{padding:14px 16px 18px}
+ .editor-dialog .editor-footer{padding:12px 16px}
+ .dnr-option{flex-basis:100%}
+ .sale-product-row{gap:9px}
+ .sale-product-row .sale-product-choice{flex-basis:100%}
+ .product-result-row>label{flex-basis:100%}
+ .product-result-row .individual-sale-fields label{flex-basis:calc(50% - 6px)}
+ .mod-sheet .time-picker-button{min-width:30px;min-height:30px}
 }
 
-@media print{.sheet-zoom,.floating-controls,.notification,.confirm-backdrop,.cxl-panel,.dnr-panel,.product-panel,.sale-panel,.sheet-message{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}}
+@media print{.sheet-zoom,.floating-controls,.notification,.editor-dialog,.sheet-message,.time-picker-button,.mobile-call-actions{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}}

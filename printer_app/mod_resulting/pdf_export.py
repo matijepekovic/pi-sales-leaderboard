@@ -168,15 +168,24 @@ def _overlay_one(c,index,draft):
     text_x=x+numbers_width+2
     text_width=full_width-numbers_width-7
     notes_height=sum(MOD_ROW_HEIGHTS[5:])-15
-    comment_lines=_lines(d['notes'],'Times-Roman',9,text_width)
-    comment_height=min(notes_height*.40,max(0,len(comment_lines)*11))
-    if d['notes']:
-        _fit_lines(c,d['notes'],text_x,t+13,text_width,max(13,comment_height),
-                   start=9)
-    red=final_redline_text(d)
-    if red:
-        red_top=t+13+comment_height+2
-        _fit_lines(c,red,text_x,red_top,text_width,
+    # One actual notes field (plus any text retained in old split drafts).
+    # Dispo changes ONLY its font size and ink color, not its content.
+    user_notes='\n'.join(part for part in (d['notes'],d['redlines']) if part)
+    generated=final_redline_text(dict(d, redlines=''))
+    note_size=12 if d['dispo'] else 9
+    if generated:
+        line_count=len(_lines(user_notes,'Times-Roman',note_size,text_width))
+        comment_height=min(notes_height*.75,max(13,line_count*note_size*1.2)) if user_notes else 0
+    else:
+        comment_height=notes_height
+    if user_notes:
+        _fit_lines(c,user_notes,text_x,t+13,text_width,max(13,comment_height),
+                   start=note_size,red=bool(d['dispo']))
+    # DNR and sale lines are generated from checkboxes/products, not a second
+    # notes input. Keep them below the user's note without double printing.
+    if generated:
+        generated_top=t+13+comment_height+(2 if user_notes else 0)
+        _fit_lines(c,generated,text_x,generated_top,text_width,
                    max(8,notes_height-comment_height-2),
                    bold=True,red=True,start=12)
 

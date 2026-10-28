@@ -9,6 +9,69 @@
   const notice = document.getElementById('notice');
   const timers = new Map();
   const pending = new Map();
+  const timeDialog = document.getElementById('timeDialog');
+  const timeTitle = document.getElementById('timeTitle');
+  const timeHour = document.getElementById('timeHour');
+  const timeMinute = document.getElementById('timeMinute');
+  const timePeriod = document.getElementById('timePeriod');
+  let timeTarget = null;
+
+  // The native dialog top layer escapes PDF sheet clipping and zoom, traps
+  // focus, and positions every editor in the viewport on desktop and mobile.
+  // One modal can be open across ALL sheets, never one per work order.
+  function openDialog(dialog, focusSelector) {
+    if (!dialog) return;
+    for (const open of document.querySelectorAll('.editor-dialog[open]')) {
+      if (open !== dialog) open.close();
+    }
+    if (!dialog.open) dialog.showModal();
+    document.body.classList.add('dialog-open');
+    if (focusSelector) dialog.querySelector(focusSelector)?.focus({preventScroll:true});
+  }
+  function closeDialog(dialog) {
+    if (dialog?.open) dialog.close();
+  }
+  function openTimePicker(sheet, key) {
+    const input = sheet.querySelector('[data-key="' + key + '"]');
+    if (!input || input.disabled) return;
+    timeTarget = input;
+    timeTitle.textContent = key === 'call_1' ? 'Call 1 time' : 'Call 2 time';
+    const match = /^(\d{1,2}):([0-5]\d) (AM|PM)$/.exec(input.value);
+    timeHour.value = match ? String(Number(match[1])) : '12';
+    timeMinute.value = match ? match[2] : '00';
+    timePeriod.value = match ? match[3] : 'PM';
+    openDialog(timeDialog, '#timeHour');
+  }
+  function writeTime(value) {
+    if (!timeTarget) return;
+    timeTarget.value = value;
+    timeTarget.dispatchEvent(new Event('input', {bubbles:true}));
+    closeDialog(timeDialog);
+  }
+  for (const dialog of document.querySelectorAll('.editor-dialog')) {
+    dialog.addEventListener('close', () => {
+      if (!document.querySelector('.editor-dialog[open]')) {
+        document.body.classList.remove('dialog-open');
+      }
+      applyVisibility();
+      if (dialog === timeDialog) timeTarget = null;
+    });
+    dialog.addEventListener('click', event => {
+      if (event.target !== dialog) return;
+      const box = dialog.getBoundingClientRect();
+      if (event.clientX < box.left || event.clientX > box.right ||
+          event.clientY < box.top || event.clientY > box.bottom) {
+        closeDialog(dialog);
+      }
+    });
+  }
+  document.querySelectorAll('.close-popover').forEach(button => {
+    button.addEventListener('click', () => closeDialog(button.closest('dialog')));
+  });
+  document.getElementById('timeApply').addEventListener('click', () => {
+    writeTime(Number(timeHour.value) + ':' + timeMinute.value + ' ' + timePeriod.value);
+  });
+  document.getElementById('timeClear').addEventListener('click', () => writeTime(''));
 
   function message(text, sheet) {
     const target = sheet ? sheet.querySelector('.sheet-message') : notice;
@@ -34,6 +97,10 @@
         draft[input.dataset.key] = input.type === 'checkbox' ? input.checked : input.value;
       }
     }
+    // Historical drafts may contain a separate redlines key. The editor
+    // displays their concatenated text in the single MOD Notes input and
+    // migrates it losslessly into the one notes key on its next save.
+    draft.redlines = '';
     draft.product_results = {};
     if (draft.additional_products && draft.dispo !== 'sale') {
       for (const row of sheet.querySelectorAll('[data-product]')) {
@@ -69,7 +136,10 @@
     for (const sheet of sheets) {
       const nameMatches = sheet.dataset.name.includes(needle);
       const complete = !!sheet.dataset.dispo;
-      sheet.hidden = !nameMatches || (hideCompleted.checked && complete);
+      // Keep the edited sheet visible until its dialog is closed, even if
+      // "Hide completed" is enabled and selecting a dispo completes the sheet.
+      const editorOpen = !!sheet.querySelector('.editor-dialog[open]');
+      sheet.hidden = !editorOpen && (!nameMatches || (hideCompleted.checked && complete));
     }
   }
   function formFields(sheet) {
@@ -159,30 +229,76 @@
     syncIndividualSaleRows();
     sheet.dataset.dirty = 'no';
     dnrPreview(sheet, init);
-    syncSaleRows();
-    if (sheet.dataset.submitted === 'yes') {
-      for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
-      return;
+    const noteArea = sheet.querySelector('.notes-text');
+    function syncNoteMode() {
+      // This must NEVER replace, split, hide or rewrite the input's content.
+      // The disposition only changes the font size and text color.
+      noteArea.dataset.notesMode =
+        sheet.querySelector('[data-key="dispo"]').value ? 'red' : 'black';
     }
+    syncNoteMode();
     const product = sheet.querySelector('.product-panel');
     const dnr = sheet.querySelector('.dnr-panel');
     const cxl = sheet.querySelector('.cxl-panel');
     const sale = sheet.querySelector('.sale-panel');
     const saleButton = sheet.querySelector('.edit-sale-products');
+    const cxlButton = sheet.querySelector('.edit-cxl-details');
+    const productButton = sheet.querySelector('.edit-product-results');
+    const dnrButton = sheet.querySelector('.edit-dnr-reasons');
     const separate = sheet.querySelector('.separate-products');
     if (separate) separate.hidden = init.dispo === 'sale';
+    if (productButton) productButton.hidden = init.dispo === 'sale' || !init.additional_products;
+    if (cxlButton) cxlButton.hidden = init.dispo !== 'cxl';
+    if (dnrButton) dnrButton.hidden = !init.dnr;
+    syncSaleRows();
+    if (sheet.dataset.submitted === 'yes') {
+      for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
+      return;
+    }
+    const reasonSelect = sheet.querySelector('[data-key="dnr_reason"]');
+    const reasonChoices = [...sheet.querySelectorAll('[data-reason-choice]')];
+    function syncReasonSelect() {
+      if (!reasonSelect) return;
+      const checked = new Set(reasonChoices.filter(input => input.checked).map(input => input.value));
+      for (const option of reasonSelect.options) option.selected = checked.has(option.value);
+    }
+    function syncReasonChoices() {
+      if (!reasonSelect) return;
+      const selected = new Set([...reasonSelect.selectedOptions].map(option => option.value));
+      for (const input of reasonChoices) input.checked = selected.has(input.value);
+    }
+    syncReasonChoices();
+    function filterSaleRows() {
+      if (!sale) return;
+      const needle = sale.querySelector('.sale-product-filter')?.value.trim().toLocaleLowerCase() || '';
+      for (const row of sale.querySelectorAll('[data-sale-product]')) {
+        row.hidden = !row.dataset.saleProduct.toLocaleLowerCase().includes(needle);
+      }
+    }
     function syncSaleRows() {
+      let count = 0;
       for (const row of sheet.querySelectorAll('[data-sale-product]')) {
         const selected = row.querySelector('[data-sale-selected]');
         const enabled = !!selected?.checked;
+        if (enabled) count++;
         for (const field of row.querySelectorAll('[data-sale-price],[data-sale-deposit]')) {
           field.disabled = !enabled;
         }
       }
+      const summary = sale?.querySelector('.sale-product-count');
+      if (summary) summary.textContent = count + ' selected';
+    }
+    function openSale() {
+      if (!sale) return;
+      const filter = sale.querySelector('.sale-product-filter');
+      if (filter) filter.value = '';
+      filterSaleRows();
+      openDialog(sale, '.sale-product-filter');
     }
     function redraw() {
       const draft = serialize(sheet);
       sheet.dataset.dispo = draft.dispo;
+      syncNoteMode();
       dnrPreview(sheet,draft);
       applyVisibility();
       scheduleSave(sheet);
@@ -190,29 +306,42 @@
     function showRelated(input) {
       const draft = serialize(sheet);
       if (separate) separate.hidden = draft.dispo === 'sale';
+      if (productButton) productButton.hidden = draft.dispo === 'sale' || !draft.additional_products;
+      if (cxlButton) cxlButton.hidden = draft.dispo !== 'cxl';
+      if (dnrButton) dnrButton.hidden = !draft.dnr;
       if (input.dataset.key === 'dispo') {
-        cxl.hidden = draft.dispo !== 'cxl';
-        if (draft.dispo === 'cxl') cxl.querySelector('input').focus();
         if (saleButton) saleButton.hidden = draft.dispo !== 'sale';
-        if (sale) {
-          sale.hidden = draft.dispo !== 'sale';
-          if (draft.dispo === 'sale') sale.querySelector('[data-sale-selected]')?.focus();
+        if (draft.dispo === 'cxl') openDialog(cxl, '[data-key="cxl_at_lead"]');
+        else if (draft.dispo === 'sale') openSale();
+        else {
+          closeDialog(cxl);
+          closeDialog(sale);
         }
-        if (product && draft.dispo === 'sale') product.hidden = true;
+        if (draft.dispo === 'sale') closeDialog(product);
       }
       if (input.dataset.key === 'dnr') {
-        dnr.hidden = !draft.dnr;
-        if (draft.dnr) dnr.querySelector('select').focus();
+        if (draft.dnr) {
+          openDialog(dnr, '[data-reason-choice]');
+        } else {
+          reasonChoices.forEach(choice => { choice.checked = false; });
+          syncReasonSelect();
+          closeDialog(dnr);
+        }
       }
       if (input.dataset.key === 'additional_products' && product && draft.dispo !== 'sale') {
-        product.hidden = !draft.additional_products;
-        if (draft.additional_products) product.querySelector('select')?.focus();
+        if (draft.additional_products) openDialog(product, '[data-product-result]');
+        else closeDialog(product);
       }
       if (input.matches?.('[data-sale-selected]')) syncSaleRows();
+      if (input.matches?.('[data-key="dnr_reason"]')) syncReasonChoices();
     }
     sheet.addEventListener('change', event => {
       const input = event.target;
-      if (input instanceof HTMLElement && input.matches('[data-key],[data-product-result],[data-product-detail],[data-sale-selected]')) {
+      if (!(input instanceof HTMLElement)) return;
+      if (input.matches('[data-reason-choice]')) {
+        syncReasonSelect();
+        redraw();
+      } else if (input.matches('[data-key],[data-product-result],[data-product-detail],[data-sale-selected]')) {
         showRelated(input);
         syncIndividualSaleRows();
         redraw();
@@ -220,17 +349,24 @@
     });
     sheet.addEventListener('input', event => {
       const input = event.target;
-      if (input instanceof HTMLElement && input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-product-price],[data-product-deposit]')) redraw();
+      if (!(input instanceof HTMLElement)) return;
+      if (input.dataset.key === 'call_1' || input.dataset.key === 'call_2') {
+        const mobile = sheet.querySelector('.mobile-call-actions [data-time-trigger="' + input.dataset.key + '"]');
+        if (mobile) {
+          const label = input.dataset.key === 'call_1' ? 'Call 1' : 'Call 2';
+          mobile.textContent = label + ': ' + (input.value || 'Set time');
+        }
+      }
+      if (input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-product-price],[data-product-deposit]')) redraw();
     });
-    saleButton?.addEventListener('click', () => {
-      if (!sale) return;
-      sale.hidden = false;
-      sale.querySelector('[data-sale-selected]')?.focus();
-    });
-    sheet.querySelectorAll('.close-popover').forEach(button => button.addEventListener('click', () => {
-      const panel = button.closest('.product-panel,.cxl-panel,.dnr-panel,.sale-panel');
-      if (panel) panel.hidden = true;
-    }));
+    saleButton?.addEventListener('click', openSale);
+    cxlButton?.addEventListener('click', () => openDialog(cxl, '[data-key="cxl_at_lead"]'));
+    productButton?.addEventListener('click', () => openDialog(product, '[data-product-result]'));
+    dnrButton?.addEventListener('click', () => openDialog(dnr, '[data-reason-choice]'));
+    sale?.querySelector('.sale-product-filter')?.addEventListener('input', filterSaleRows);
+    for (const button of sheet.querySelectorAll('[data-time-trigger]')) {
+      button.addEventListener('click', () => openTimePicker(sheet, button.dataset.timeTrigger));
+    }
   }
   for (const sheet of sheets) setup(sheet);
   search.addEventListener('input', applyVisibility);
@@ -257,7 +393,8 @@
 
   const confirmation = document.getElementById('endConfirm');
   const submitButton = document.getElementById('submitDay');
-  document.getElementById('cancelEnd').addEventListener('click', () => { confirmation.hidden = true; });
+  document.getElementById('cancelEnd').addEventListener('click', () => closeDialog(confirmation));
+  document.getElementById('cancelEndSecondary').addEventListener('click', () => closeDialog(confirmation));
   submitButton.addEventListener('click', async () => {
     try {
       await flushAll();
@@ -267,7 +404,7 @@
       document.getElementById('reviewCount').textContent =
         count + ' resulted sheet(s). Sheets without a disposition are excluded. MOD: '
         + dayMod.selectedOptions[0].textContent;
-      confirmation.hidden = false;
+      openDialog(confirmation, '#cancelEndSecondary');
     } catch (error) { message(error.message); }
   });
   document.getElementById('confirmEnd').addEventListener('click', async event => {
@@ -276,11 +413,11 @@
     try {
       await flushAll();
       const result = await post(root.dataset.submit);
-      confirmation.hidden = true;
+      closeDialog(confirmation);
       message('Submitted ' + result.submitted + ' MOD sheet(s) to Salesforce.');
       location.reload();
     } catch (error) {
-      confirmation.hidden = true;
+      closeDialog(confirmation);
       message('Submission stopped: ' + error.message);
     } finally { button.disabled = false; }
   });
