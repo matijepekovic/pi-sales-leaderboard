@@ -70,7 +70,13 @@ class ResultingService:
         return ModSheetRecord(**data)
 
     def users(self):
-        return self.writer.mod_users()
+        settings = self.settings_repository.settings()
+        market = (settings.market_segment if settings else '').strip()
+        if not market or market.casefold() == 'all':
+            raise ValueError(
+                'Save a specific Market Segment in MOD Sheet settings before selecting a MOD.'
+            )
+        return self.writer.mod_users(market)
 
     def dropdowns(self):
         return self.writer.dropdowns()
@@ -182,6 +188,12 @@ class ResultingService:
         day_state = self.repository.day(day)
         if not day_state or not day_state['mod_user_id']:
             raise ValueError('Select a MOD from Salesforce first.')
+        # Recheck the current branch and MOD eligibility before permitting a
+        # live write. A saved selection may have become stale or moved markets.
+        if day_state['mod_user_id'] not in {item['id'] for item in self.users()}:
+            raise ValueError(
+                'Selected MOD is no longer eligible for this market. Choose a current MOD.'
+            )
         # A frozen batch is held by the repository's cross-process write lock.
         rows = self.repository.begin_submit(day)
         complete = False

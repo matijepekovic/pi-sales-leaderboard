@@ -5,6 +5,7 @@ import json
 import os
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -34,7 +35,8 @@ class FakeModWriter:
     def __init__(self):
         self.applied = []
 
-    def mod_users(self):
+    def mod_users(self, market):
+        assert market == 'Olympia'
         return [{'id': MOD, 'name': 'Sample MOD'}]
 
     def dropdowns(self):
@@ -94,6 +96,9 @@ def mod_browser(tmp_path, request):
     service = app.extensions['mod_resulting']
     service.source = source
     service.writer = writer
+    service.settings_repository = SimpleNamespace(
+        settings=lambda: SimpleNamespace(market_segment='Olympia')
+    )
     service.refresh(service.day())
     server = make_server('127.0.0.1', 0, app, threaded=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
