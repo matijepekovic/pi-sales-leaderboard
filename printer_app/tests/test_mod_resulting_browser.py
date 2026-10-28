@@ -96,9 +96,11 @@ def mod_browser(tmp_path, request):
     app.testing = True
     source = FakeModSource([
         ModSheetRecord(source_id='0WO000000000001AAA',
-            lead_name='Alex Example', work_order_number='00011111', product_interest='Roofing;Siding'),
+            lead_name='Alex Example', work_order_number='00011111', product_interest='Roofing;Siding',
+            assigned_service_resources=('Lama King','Isaiah North')),
         ModSheetRecord(source_id='0WO000000000002AAA',
-            lead_name='Blair Sample', work_order_number='00022222', product_interest='Bath'),
+            lead_name='Blair Sample', work_order_number='00022222', product_interest='Bath',
+            assigned_service_resources=('Dan South',)),
     ])
     writer = FakeModWriter()
     service = app.extensions['mod_resulting']
@@ -171,7 +173,7 @@ def mod_browser(tmp_path, request):
         thread.join(timeout=5)
 
 
-def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_browser):
+def test_mod_sheets_search_customers_and_assigned_reps_only(mod_browser):
     from playwright.sync_api import expect
 
     page, service, writer, origin, evidence = mod_browser
@@ -187,6 +189,13 @@ def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_br
 
     page.locator('#nameSearch').fill('alex')
     expect(page.locator('.mod-sheet:visible')).to_have_count(1)
+    page.locator('#nameSearch').fill('lama')
+    expect(page.locator('.mod-sheet:visible')).to_have_count(1)
+    page.locator('#nameSearch').fill('NORTH')
+    expect(page.locator('.mod-sheet:visible')).to_have_count(1)
+    page.locator('#nameSearch').fill('dan')
+    expect(page.locator('.mod-sheet:visible')).to_have_count(1)
+    expect(page.locator('.mod-sheet:visible').first).to_have_attribute('data-reps', 'dan south')
     page.locator('#nameSearch').fill('00022222')
     expect(page.locator('.mod-sheet:visible')).to_have_count(0)
     page.locator('#nameSearch').fill('')
@@ -395,10 +404,15 @@ def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, vi
     popup.locator('.editor-primary').click()
     expect(page.locator('.editor-dialog[open]')).to_have_count(0)
 
-    call_controls = ('.mobile-call-actions' if viewport[0] <= 900 else '.field-call1')
-    call_one = first.locator(call_controls + ' [data-time-trigger="call_1"]')
+    # On every screen, the existing Call 1 cell is the tappable control.
+    expect(first.locator('.mobile-call-actions')).to_have_count(0)
+    call_one = first.locator('.field-call1 [data-time-trigger="call_1"]')
     if viewport[0] <= 900:
-        assert call_one.bounding_box()['height'] >= 44
+        cell=first.locator('.field-call1').bounding_box()
+        target=call_one.bounding_box()
+        assert cell and target
+        assert abs(cell['x'] - target['x']) <= 2
+        assert abs(cell['y'] - target['y']) <= 2
     call_one.click()
     popup = visible_popup('#timeDialog[open]')
     expect(popup.locator('#timeTitle')).to_have_text('Call 1 time')
@@ -409,11 +423,13 @@ def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, vi
     expect(first.locator('[data-key="call_1"]')).to_have_value('10:15 AM')
     expect(page.locator('.editor-dialog[open]')).to_have_count(0)
 
-    call_two = first.locator(('.mobile-call-actions' if viewport[0] <= 900 else '.field-call2')
-                             + ' [data-time-trigger="call_2"]')
+    call_two = first.locator('.field-call2 [data-time-trigger="call_2"]')
     if viewport[0] <= 900:
-        assert call_two.bounding_box()['height'] >= 44
-        expect(first.locator('.mobile-call-actions [data-time-trigger="call_1"]')).to_contain_text('10:15 AM')
+        cell=first.locator('.field-call2').bounding_box()
+        target=call_two.bounding_box()
+        assert cell and target
+        assert abs(cell['x'] - target['x']) <= 2
+        assert abs(cell['y'] - target['y']) <= 2
     call_two.click()
     popup = visible_popup('#timeDialog[open]')
     popup.locator('#timeHour').select_option('1')
@@ -483,120 +499,71 @@ def test_existing_split_notes_are_preserved_when_migrated_to_one_textbox(mod_bro
 
 
 @pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
-def test_lead_status_and_manual_price_cells_are_editable_and_persist(mod_browser, viewport):
+def test_price_overrides_stay_in_original_sheet_cells(mod_browser, viewport):
     from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import outcome_fields
+
     page, service, writer, origin, evidence = mod_browser
     page.set_viewport_size({'width':viewport[0], 'height':viewport[1]})
     page.goto(origin + '/mod-resulting')
     first = page.locator('.mod-sheet').first
-    browser_errors = []
-    page.on('pageerror', lambda exc: browser_errors.append(str(exc)))
+    expect(first.locator('.mobile-call-actions,.edit-lead-status,.lead-panel')).to_have_count(0)
     first.locator('[data-key="numbers"]').fill('25000\n17000')
     first.locator('[data-key="dispo"]').select_option('pns')
-    lead_trigger = (first.locator('[data-lead-trigger]') if viewport[0] <= 900
-                    else first.locator('.edit-lead-status'))
-    if viewport[0] <= 900:
-        assert lead_trigger.bounding_box()['height'] >= 44
-    lead_trigger.click()
-    lead = first.locator('.lead-panel')
-    expect(lead).to_be_visible()
-    lead.locator('[data-key="lead_status"]').select_option('Do Not Call')
-    lead.locator('[data-key="previous_result"]').select_option('No Pitch')
-    lead.locator('.editor-primary').click()
-    expect(lead).to_be_hidden()
 
-    trigger = (first.locator('.mobile-call-actions [data-price-trigger]')
-               if viewport[0] <= 900 else first.locator('.field-startprice [data-price-trigger]'))
-    if viewport[0] <= 900:
-        assert trigger.bounding_box()['height'] >= 44
-    trigger.click()
-    prices = first.locator('.price-panel')
-    expect(prices).to_be_visible()
-    prices.locator('[data-key="start_price_override"]').fill('27000')
-    prices.locator('[data-key="final_price_override"]').fill('16000')
-    prices.locator('[data-key="deposit_override"]').fill('2500')
-    # Must update the actual printed row while the native modal is open, and
-    # remain updated after closing, before any draft save or navigation.
-    state = first.evaluate("""sheet => {
-      const key = 'start_price_override';
-      const input = sheet.querySelector('[data-key="' + key + '"]');
-      const preview = sheet.querySelector('[data-price-display="' + key + '"]');
-      return {
-        input: input?.value, preview: preview?.textContent,
-        fields: sheet.querySelectorAll('[data-key="' + key + '"]').length,
-        previews: sheet.querySelectorAll('[data-price-display="' + key + '"]').length,
-        popupOpen: sheet.querySelector('.price-panel')?.open,
-      };
-    }""")
-    assert not browser_errors, browser_errors
-    assert state == {
-        'input':'27000', 'preview':'$27000',
-        'fields':1, 'previews':1, 'popupOpen':True,
-    }, state
-    expect(first.locator('[data-price-display="start_price_override"]')).to_have_text('$27000')
-    expect(first.locator('[data-price-display="final_price_override"]')).to_have_text('$16000')
-    expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('$2500')
-    prices.locator('.editor-primary').click()
-    expect(prices).to_be_hidden()
-    expect(first.locator('[data-price-display="start_price_override"]')).to_have_text('$27000')
+    for field in ('startprice', 'finalprice', 'depositpayment'):
+        trigger = first.locator('.field-' + field + ' [data-price-trigger]')
+        expect(trigger).to_be_visible()
+        trigger.click()
+        popup = first.locator('.price-panel')
+        expect(popup).to_be_visible()
+        popup.locator('[data-key="start_price_override"]').fill('27000')
+        popup.locator('[data-key="final_price_override"]').fill('16000')
+        popup.locator('[data-key="deposit_override"]').fill('2500')
+        expect(first.locator('[data-price-display="start_price_override"]')).to_have_text('$27000')
+        expect(first.locator('[data-price-display="final_price_override"]')).to_have_text('$16000')
+        expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('$2500')
+        popup.locator('.editor-primary').click()
+        expect(popup).to_be_hidden()
+
     for key in ('docs','review','ninety_min'):
         first.locator('[data-key="' + key + '"]').check()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     saved = service.repository.sheets(service.day())[0]['draft']
-    assert saved['lead_status'] == 'Do Not Call'
-    assert saved['previous_result'] == 'No Pitch'
     assert saved['start_price_override'] == '27000'
     assert saved['final_price_override'] == '16000'
     assert saved['deposit_override'] == '2500'
+    assert outcome_fields(saved)['lead_status'] == 'Nurturing'
     assert all(saved[key] for key in ('docs','review','ninety_min'))
     assert not writer.applied
     assert page.evaluate('window.modCspViolations') == []
 
 
-def test_dnr_locks_lead_status_to_do_not_call_and_preserves_manual_choice(mod_browser):
+def test_dnr_automatically_overrides_dispo_status_without_lead_editor(mod_browser):
     from playwright.sync_api import expect
     from printer_app.mod_resulting.contract import outcome_fields
 
     page, service, writer, origin, evidence = mod_browser
     page.goto(origin + '/mod-resulting')
     first = page.locator('.mod-sheet').first
+    expect(first.locator('.lead-panel,.edit-lead-status,[data-lead-trigger]')).to_have_count(0)
     first.locator('[data-key=dispo]').select_option('pns')
-    first.locator('.edit-lead-status').click()
-    lead = first.locator('.lead-panel')
-    manual = lead.locator('[data-key=lead_status]')
-    manual.select_option('Sale Pending')
-    lead.locator('.editor-primary').click()
-
     first.locator('[data-key=dnr]').check()
     dnr = first.locator('.dnr-panel')
     dnr.locator('[data-reason-choice][value="Roofing"]').check()
     dnr.locator('.editor-primary').click()
-    first.locator('.edit-lead-status').click()
-    expect(manual).to_be_disabled()
-    expect(manual).to_have_value('Sale Pending')
-    expect(lead.locator('.dnr-lead-status-hint')).to_contain_text(
-        'Lead Status will be set to Do Not Call automatically'
-    )
-    lead.locator('.editor-primary').click()
-    # Draft saves are debounced; Refresh explicitly flushes all outstanding
-    # edits before checking the persisted Salesforce submission payload.
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
-    draft=service.repository.sheets(service.day())[0]['draft']
-    assert outcome_fields(draft)['lead_status']=='Do Not Call'
-    assert draft['lead_status']=='Sale Pending'
+    draft = service.repository.sheets(service.day())[0]['draft']
+    assert outcome_fields(draft)['lead_status'] == 'Do Not Call'
+    assert draft['dnr'] is True and draft['dnr_reason'] == 'Roofing'
 
     first.locator('[data-key=dnr]').uncheck()
-    first.locator('.edit-lead-status').click()
-    expect(manual).to_be_enabled()
-    expect(manual).to_have_value('Sale Pending')
-    expect(lead.locator('.dnr-lead-status-hint')).to_be_hidden()
-    lead.locator('.editor-primary').click()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
-    draft=service.repository.sheets(service.day())[0]['draft']
-    assert outcome_fields(draft)['lead_status']=='Sale Pending'
+    draft = service.repository.sheets(service.day())[0]['draft']
+    assert outcome_fields(draft)['lead_status'] == 'Nurturing'
     assert draft['dnr'] is False
     assert not writer.applied
 

@@ -210,20 +210,20 @@ def test_sale_zero_price_is_not_sold_and_zero_deposit_is_valid(tmp_path):
     assert 'SALE Roofing: $18,000 | Deposit: $0' in payload['final_redlines']
 
 
-def test_dnr_forces_do_not_call_and_restores_manual_status_when_unchecked():
+def test_dnr_sets_do_not_call_and_unchecking_restores_dispo_status():
     draft=clean_draft({
         'dispo':'pns','dnr':True,'dnr_reason':'Roofing;Bath',
-        'lead_status':'Sale Pending',
+        # Historic local manual values must never override current resulting.
+        'lead_status':'Sale Pending', 'previous_result':'No Pitch',
     })
     fields=outcome_fields(draft)
     assert fields['lead_status']=='Do Not Call'
+    assert 'previous_result' not in fields
     assert fields['work_order_status']=='Completed'
-    assert draft['lead_status']=='Sale Pending'
-    assert draft['dnr_reason']=='Roofing;Bath'
     draft['dnr']=False
-    assert outcome_fields(draft)['lead_status']=='Sale Pending'
-    draft['lead_status']=''
     assert outcome_fields(draft)['lead_status']=='Nurturing'
+    draft['dispo']='sale'
+    assert outcome_fields(draft)['lead_status']=='Sale Pending'
 
 
 def test_eight_am_pull_keeps_the_existing_printer_schedule_untouched(tmp_path):
@@ -316,7 +316,7 @@ def test_sandbox_is_reachable_from_printer_and_never_writes_salesforce(tmp_path)
     assert b'/mod-resulting' in control.data
     sandbox=client.get('/mod-resulting')
     assert sandbox.status_code==200
-    assert b'Search names only' in sandbox.data or b'Search names' in sandbox.data
+    assert b'Search customer or assigned service resource' in sandbox.data
     assert b'Hide completed' in sandbox.data
     assert b'End of day' in sandbox.data
     assert b'MOD Notes:' in sandbox.data

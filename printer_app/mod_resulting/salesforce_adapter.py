@@ -18,6 +18,10 @@ NAME_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,254}\Z')
 
 WORK_ORDER = 'WorkOrder'
 LEAD = 'Lead'
+# Verified org relationship and chronology fields for historical resulting.
+WO_LEAD = 'Lead__c'
+WO_APPOINTMENT_DATETIME = 'Appointment_Date_Time__c'
+WO_APPOINTMENT_DATE = 'Appointment_Date__c'
 SERVICE_APPOINTMENT = 'ServiceAppointment'
 PRODUCT_RESULT = 'Product_Interest_Result__c'
 # Review exists as a training field, but its live API metadata must be
@@ -318,12 +322,6 @@ class ResultingSalesforceAdapter:
             'products': self._options(
                 self._field(product, PR['product'], update=False, types=('picklist',))
             ),
-            'lead_status': self._options(
-                self._field(lead, LEAD_FIELDS['status'], types=('picklist',))
-            ),
-            'previous_results': self._options(
-                self._field(lead, LEAD_FIELDS['previous_result'], types=('picklist',))
-            ),
         }
 
     def _time_value(self, day, entered, field):
@@ -536,6 +534,42 @@ class ResultingSalesforceAdapter:
                 LEAD + '.' + LEAD_FIELDS['dnr_reason'] + ' must be a multi-select field.'
             )
 
+        # Historical Previous Result is resolved from each Lead's earlier
+        # resulted Work Orders. The current Work Order's Dispo is never used to
+        # infer its own Previous Result. Read everything before the first write.
+        from .historical_result import historical_previous_result
+        relationship = self._field(
+            wo_schema, WO_LEAD, update=False, types=('reference',)
+        )
+        if LEAD not in (relationship.get('referenceTo') or []):
+            raise ResultingSalesforceError(
+                WORK_ORDER + '.' + WO_LEAD + ' does not reference Lead.'
+            )
+        self._field(wo_schema, WO_APPOINTMENT_DATETIME, update=False,
+                    types=('datetime',))
+        self._field(wo_schema, WO_APPOINTMENT_DATE, update=False,
+                    types=('date',))
+        history_by_lead = {}
+        for lead_id in dict.fromkeys(
+            _require_id(payload['lead_id']) for payload in payloads
+        ):
+            rows = self._query(
+                'SELECT Id,' + WO_LEAD + ',' + WO['dispo']
+                + ',' + WO_APPOINTMENT_DATETIME + ',' + WO_APPOINTMENT_DATE
+                + ' FROM ' + WORK_ORDER
+                + ' WHERE ' + WO_LEAD + ' = ' + _soql(lead_id)
+                + ' ORDER BY ' + WO_APPOINTMENT_DATETIME + ' DESC LIMIT 2000'
+            )
+            if any(str(row.get(WO_LEAD) or '') != lead_id for row in rows):
+                raise ResultingSalesforceError(
+                    'Historical Work Order does not match the selected Lead.'
+                )
+            history_by_lead[lead_id] = rows
+        pending_dispositions = {
+            _require_id(payload['work_order_id']): WORK_ORDER_DISPO[payload['dispo']]
+            for payload in payloads
+        }
+
         operations = []
         # Different Work Orders can refer to the same Lead. Accumulate pivot
         # additions across the whole End of Day batch; never overwrite a pivot
@@ -599,10 +633,13 @@ class ResultingSalesforceAdapter:
                     wo_values[WO[key]] = self._time_value(
                         payload['day'], payload['draft'][key], wo_fields[key]
                     )
+            # These two values have independent manual overrides. Neither
+            # field requires the other field to be populated.
             if payload['fields']['price']['highest']:
                 wo_values[WO['start_price']] = self._value(
                     wo_fields['start_price'], payload['fields']['price']['highest']
                 )
+            if payload['fields']['price']['lowest']:
                 wo_values[WO['final_price']] = self._value(
                     wo_fields['final_price'], payload['fields']['price']['lowest']
                 )
@@ -635,16 +672,21 @@ class ResultingSalesforceAdapter:
                 )
             else:
                 lead_values[LEAD_FIELDS['dnr_reason']] = None
-            if payload['fields']['previous_result']:
-                previous = payload['fields']['previous_result']
-                if previous == '__clear__':
-                    lead_values[LEAD_FIELDS['previous_result']] = None
-                else:
-                    lead_values[LEAD_FIELDS['previous_result']] = (
-                        self._choice(lead_fields['previous_result'], previous)
-                        if lead_fields['previous_result'].get('type') in ('picklist', 'multipicklist')
-                        else previous
-                    )
+            previous = historical_previous_result(
+                history_by_lead[lead_id], work_order_id,
+                timezone_name=self.zone.key,
+                pending_dispositions=pending_dispositions,
+            )
+            if previous is None and lead_fields['previous_result'].get('nillable') is False:
+                raise ResultingSalesforceError(
+                    'Lead.Previous_Result__c is required and cannot be blank.'
+                )
+            # A missing/unsupported latest historical result intentionally
+            # clears the prior Lead value, rather than preserving a stale one.
+            lead_values[LEAD_FIELDS['previous_result']] = (
+                self._choice(lead_fields['previous_result'], previous)
+                if previous is not None else None
+            )
 
             sold = [
                 entry['product'] for entry in payload['product_results']
