@@ -398,7 +398,7 @@
     function renderNoteRuns() {
       const elements = sheet._noteRuns.map(run => {
         const part = document.createElement('span');
-        if (run.red) part.className = 'after-dispo';
+        if (run.red) part.className = 'redline-run';
         part.textContent = run.text;
         return part;
       });
