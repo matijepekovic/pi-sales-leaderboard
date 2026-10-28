@@ -108,3 +108,51 @@ def test_setup_notice_is_absent_but_failed_saves_still_show(mod_browser, monkeyp
     expect(first.locator('[data-key=notes]')).to_have_value('Unsaved phone note')
     assert not service.allow_salesforce_writes and writer.applied == []
     assert page.evaluate('window.modCspViolations') == []
+
+
+def test_saved_sale_and_dnr_choices_survive_missing_salesforce_metadata(mod_browser, monkeypatch):
+    from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import clean_draft
+
+    page, service, writer, origin, evidence = mod_browser
+    day = service.day()
+    first_id = service.repository.sheets(day)[0]['work_order_id']
+    service.save(day, first_id, clean_draft({
+        'dispo': 'sale',
+        'dnr': True,
+        'dnr_reason': 'Roofing',
+        'sale_products': {
+            'Windows': {'price': '18000', 'deposit': '0'},
+        },
+        'notes': 'Saved before metadata outage',
+    }), 0)
+
+    def unavailable():
+        raise RuntimeError('Salesforce picklists are not available')
+    monkeypatch.setattr(writer, 'dropdowns', unavailable)
+
+    assert page.goto(origin + '/mod-resulting').status == 200
+    first = page.locator('.mod-sheet').first
+    expect(first).to_have_class('mod-sheet surface-ready')
+    expect(page.locator('#notice')).to_be_hidden()
+    selected = first.locator('[data-sale-product="Windows"]')
+    expect(selected).to_have_count(1)
+    expect(selected.locator('[data-sale-selected]')).to_be_checked()
+    expect(selected.locator('[data-sale-price]')).to_have_value('18000')
+    expect(selected.locator('[data-sale-deposit]')).to_have_value('0')
+    values = first.locator('[data-key=dnr_reason]').evaluate(
+        '(el) => [...el.selectedOptions].map(opt => opt.value)'
+    )
+    assert values == ['Roofing']
+
+    first.locator('[data-key=notes]').fill('Edited during metadata outage')
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+
+    draft = service.repository.sheets(day)[0]['draft']
+    assert draft['sale_products'] == {
+        'Windows': {'price': '18000', 'deposit': '0'},
+    }
+    assert draft['dnr_reason'] == 'Roofing'
+    assert draft['notes'] == 'Edited during metadata outage'
+    assert not service.allow_salesforce_writes and writer.applied == []
