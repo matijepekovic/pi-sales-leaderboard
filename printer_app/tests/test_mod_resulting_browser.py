@@ -499,7 +499,11 @@ def test_lead_status_and_manual_price_cells_are_editable_and_persist(mod_browser
     lead.locator('.editor-primary').click()
     expect(lead).to_be_hidden()
 
-    first.locator('.field-startprice [data-price-trigger]').click()
+    trigger = (first.locator('.mobile-call-actions [data-price-trigger]')
+               if viewport[0] <= 900 else first.locator('.field-startprice [data-price-trigger]'))
+    if viewport[0] <= 900:
+        assert trigger.bounding_box()['height'] >= 44
+    trigger.click()
     prices = first.locator('.price-panel')
     expect(prices).to_be_visible()
     prices.locator('[data-key="start_price_override"]').fill('27000')
