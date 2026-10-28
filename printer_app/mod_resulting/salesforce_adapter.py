@@ -21,13 +21,8 @@ LEAD = 'Lead'
 SERVICE_APPOINTMENT = 'ServiceAppointment'
 PRODUCT_RESULT = 'Product_Interest_Result__c'
 
-# Explicit sales-leadership titles only; never present every employee or
-# customer-community/installer user from a branch as an eligible MOD.
-MOD_ROLE_RE = re.compile(
-    r'\b(?:sales managers?|sales leaders?|territory managers?|regional managers?|'
-    r'market sales trainers?|sales directors?|team leads?|managers? on duty|MOD)\b',
-    re.IGNORECASE,
-)
+# The Salesforce UserRole.Name value explicitly designated as MOD-eligible.
+MOD_USER_ROLE_NAME = 'Sales Manager'
 
 WO = {
     'dispo': 'Dispo__c',
@@ -240,10 +235,10 @@ class ResultingSalesforceAdapter:
         )
 
     def mod_users(self, market):
-        """Return active sales leaders from the configured MOD-sheet market only.
+        """Query active Sales Managers in the configured market, not job titles.
 
-        Market comes from the existing daily MOD sheet configuration.  Do not
-        fall back to an org-wide User list when market metadata is unavailable.
+        The market comes from existing MOD Sheet settings; no hardcoded users,
+        names, or branch identifiers, and no fallback to the org-wide User list.
         """
         if not isinstance(market, str) or not market.strip() or len(market) > 128:
             raise ResultingSalesforceError('Configure a specific MOD Sheet market first.')
@@ -266,9 +261,10 @@ class ResultingSalesforceAdapter:
             )
         branch = matching[0]
         rows = self._query(
-            "SELECT Id,Name,Title,Home_Branch__c,Title_Picklist__c,"
-            "UserRole.Name,Profile.Name FROM User WHERE IsActive = true"
-            " AND Home_Branch__c = " + _soql(branch) + " ORDER BY Name"
+            'SELECT Id,Name,Home_Branch__c,UserRole.Name FROM User'
+            ' WHERE IsActive = true AND Home_Branch__c = ' + _soql(branch)
+            + ' AND UserRole.Name = ' + _soql(MOD_USER_ROLE_NAME)
+            + ' ORDER BY Name'
         )
         users = []
         for item in rows:
@@ -276,20 +272,18 @@ class ResultingSalesforceAdapter:
                 raise ResultingSalesforceError(
                     'Salesforce returned a MOD user outside the selected market.'
                 )
+            role = item.get('UserRole')
+            if not isinstance(role, dict) or role.get('Name') != MOD_USER_ROLE_NAME:
+                raise ResultingSalesforceError(
+                    'Salesforce returned a user without the required Sales Manager role.'
+                )
             ident = str(item.get('Id') or '')
             name = str(item.get('Name') or '').strip()
-            role = item.get('UserRole') or {}
-            profile = item.get('Profile') or {}
-            titles = [
-                str(item.get('Title_Picklist__c') or ''),
-                str(item.get('Title') or ''),
-                str(role.get('Name') or '') if isinstance(role, dict) else '',
-                str(profile.get('Name') or '') if isinstance(profile, dict) else '',
-            ]
-            if ID_RE.fullmatch(ident) and name and any(
-                MOD_ROLE_RE.search(title) for title in titles
-            ):
-                users.append({'id': ident, 'name': name})
+            if not ID_RE.fullmatch(ident) or not name:
+                raise ResultingSalesforceError(
+                    'Salesforce returned a MOD with an invalid User identity.'
+                )
+            users.append({'id': ident, 'name': name})
         return users
 
     @staticmethod
