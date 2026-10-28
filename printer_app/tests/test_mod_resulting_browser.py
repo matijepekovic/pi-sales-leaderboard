@@ -313,7 +313,7 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     note = first.locator('[data-key=notes]')
     expect(note).to_have_value('Black comment above redlines.')
     note.fill('Black comment above redlines.\nStill black after disposition.')
-    expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
+    expect(first.locator('.mod-notes-display .redline-run')).to_have_count(0)
     first.locator('.redline-pen').click()
     expect(first.locator('.redline-pen')).to_have_attribute('aria-pressed', 'true')
     expect(first.locator('.notes-text')).to_have_attribute('data-notes-mode', 'red')
@@ -330,7 +330,7 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     first.locator('[data-key=call_1]').fill('10:15 AM')
     first.locator('[data-key=call_2]').fill('10:27 AM')
     assert first.locator('.field-notes').bounding_box() == bounds
-    red = first.locator('.mod-notes-display .after-dispo')
+    red = first.locator('.mod-notes-display .redline-run')
     expect(red).to_have_text('\nREPLACE TRIM WITH FULL SCOPE.')
     expect(first.locator('.mod-notes-display span').first).to_have_text(
         'Black comment above redlines.\nStill black after disposition.')
@@ -713,12 +713,12 @@ def test_result_detail_is_always_red_and_user_red_notes_require_pen(mod_browser)
     first.locator('[data-key=result_detail]').select_option('Price Objection')
     expect(first.locator('.result-detail-in-redline')).to_have_text(
         'Price Objection')
-    expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
+    expect(first.locator('.mod-notes-display .redline-run')).to_have_count(0)
 
     # Disposition is no longer an ink-mode switch.
     first.locator('[data-key=dispo]').select_option('pns')
     notes.fill('Before disposition\nStill black after disposition')
-    expect(first.locator('.mod-notes-display .after-dispo')).to_have_count(0)
+    expect(first.locator('.mod-notes-display .redline-run')).to_have_count(0)
     expect(first.locator('.mod-notes-display span').first).to_have_text(
         'Before disposition\nStill black after disposition')
 
@@ -728,12 +728,12 @@ def test_result_detail_is_always_red_and_user_red_notes_require_pen(mod_browser)
     expect(pen).to_have_attribute('aria-pressed', 'true')
     notes.fill(
         'Before disposition\nStill black after disposition\nManual redline')
-    expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(
+    expect(first.locator('.mod-notes-display .redline-run')).to_have_text(
         '\nManual redline')
 
     first.locator('[data-key=dispo]').select_option('')
     expect(pen).to_have_attribute('aria-pressed', 'true')
-    expect(first.locator('.mod-notes-display .after-dispo')).to_have_text(
+    expect(first.locator('.mod-notes-display .redline-run')).to_have_text(
         '\nManual redline')
     pen.click()
     expect(pen).to_have_attribute('aria-pressed', 'false')
@@ -741,7 +741,7 @@ def test_result_detail_is_always_red_and_user_red_notes_require_pen(mod_browser)
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(page.locator('.redline-pen').first).to_have_attribute('aria-pressed', 'false')
-    expect(page.locator('.mod-notes-display .after-dispo').first).to_have_text(
+    expect(page.locator('.mod-notes-display .redline-run').first).to_have_text(
         '\nManual redline')
     expect(page.locator('.result-detail-in-redline').first).to_have_text(
         'Price Objection')
