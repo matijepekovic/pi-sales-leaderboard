@@ -83,7 +83,7 @@ class Source:
 
 class Writer:
     def __init__(self): self.plans=[];self.applied=[]
-    def mod_users(self): return [{'id':USER,'name':'MOD Example'}]
+    def mod_users(self, market_segment): return [{'id':USER,'name':'MOD Example'}]
     def prepare(self,batch):
         self.plans.extend(batch)
         return [{'work_order_id':item['work_order_id']} for item in batch]
@@ -93,7 +93,7 @@ class Writer:
 def _service(tmp_path):
     repo=ResultingRepository(Database(tmp_path/'printer.sqlite'))
     source,writer=Source(),Writer()
-    settings=SimpleNamespace(settings=lambda:None)
+    settings=SimpleNamespace(settings=lambda:SimpleNamespace(market_segment="Olympia"))
     service=ResultingService(repo,source,writer,settings,'America/Los_Angeles',
                              allow_salesforce_writes=True)
     return service,repo,source,writer
