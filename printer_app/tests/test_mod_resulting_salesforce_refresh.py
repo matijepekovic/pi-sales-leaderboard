@@ -1,0 +1,123 @@
+"""Read-only Salesforce Refresh hydration without overwriting local MOD ink."""
+from dataclasses import asdict
+from types import SimpleNamespace
+import json
+
+from printer_app.db import Database
+from printer_app.mod_sheet_contract import ModSheetRecord
+from printer_app.mod_resulting.contract import clean_draft
+from printer_app.mod_resulting.repository import ResultingRepository
+from printer_app.mod_resulting.salesforce_adapter import ResultingSalesforceAdapter
+
+DAY = '2026-10-27'
+WORK = '0WO000000000001AAA'
+LEAD = '00Q000000000001AAA'
+PRODUCT = 'a12000000000001AAA'
+RECORD = ModSheetRecord(
+    source_id=WORK, lead_source_id=LEAD,
+    lead_name='Sample Customer', work_order_number='00012345',
+    product_interest='Roofing',
+)
+
+
+def test_refresh_imports_remote_results_and_preserves_local_draft(tmp_path):
+    repo = ResultingRepository(Database(tmp_path / 'printer.sqlite'))
+    remote = clean_draft({
+        'dispo':'pns', 'redlines':'WorkOrder.MOD_Notes__c from Salesforce',
+        'call_1':'10:15 AM', 'call_2':'1:27 PM',
+        'dnr':True, 'dnr_reason':'Roofing',
+    })
+    repo.refresh(DAY, [RECORD], external_drafts={WORK:remote})
+    sheet = repo.sheets(DAY)[0]
+    assert sheet['draft']['redlines'] == remote['redlines']
+    assert sheet['draft']['notes'] == ''
+    assert sheet['draft']['dnr_reason'] == 'Roofing'
+    assert sheet['submitted_at'] is not None  # Never re-submit an existing result.
+    repo.refresh(DAY, [RECORD], external_drafts={WORK:clean_draft({'notes':'new'})})
+    assert repo.sheets(DAY)[0]['draft'] == remote
+    assert repo.sheets(DAY)[0]['submitted_at'] is not None
+
+    different = '0WO000000000002AAA'
+    record_two = ModSheetRecord(source_id=different,lead_name='Second Customer')
+    repo.refresh(DAY, [RECORD,record_two],
+                 external_drafts={different:clean_draft({'notes':'Remote note'})})
+    assert repo.sheets(DAY)[1]['draft']['notes'] == 'Remote note'
+    local = clean_draft({'notes':'Edited on Pi before Refresh'})
+    repo.save_draft(DAY,different,local,0)
+    repo.refresh(DAY, [RECORD,record_two],
+                 external_drafts={different:clean_draft({'dispo':'pns','redlines':'Remote changed'})})
+    assert repo.sheets(DAY)[1]['draft'] == local
+    assert repo.sheets(DAY)[1]['submitted_at'] is None
+
+
+def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        assert command[1:3] == ['data','query']
+        query = command[command.index('--query') + 1]
+        if ' FROM WorkOrder ' in query:
+            assert 'MOD_Notes__c' in query
+            assert 'Call_1__c' in query and 'Call_2__c' in query
+            rows = [{
+                'Id':WORK, 'Dispo__c':'PNS',
+                'MOD_Notes__c':'Already resulted customer note',
+                'Call_1__c':'10:15:00.000Z',
+                'Call_2__c':'13:27:00.000Z',
+                'Docs__c':True, 'X90_Min__c':True,
+                'Promotion__c':False, 'Need__c':'Security',
+                'Want__c':'Value', 'Start_Price__c':25000,
+                'Price__c':17000, 'Deposit_Payment__c':0,
+            }]
+        elif ' FROM Lead ' in query:
+            assert 'DNR_Do_Not_Reset__c' in query
+            rows = [{
+                'Id':LEAD, 'DNR_Do_Not_Reset__c':True,
+                'DNR_Reason__c':'Roofing',
+                'X1_Leg_Appointment__c':False,
+            }]
+        elif ' FROM Product_Interest_Result__c ' in query:
+            rows = [{
+                'Id':PRODUCT, 'Work_Order__c':WORK, 'Lead__c':LEAD,
+                'Product_Interest__c':'Roofing',
+                'Result__c':'Pitch No Sale', 'Result_Detail__c':'Price Objection',
+                'Price_Given__c':None, 'PR_1_Leg_Appointment__c':False,
+                'Free_Product_Lead__c':False, 'CXL_Per_Redline__c':False,
+            }]
+        else:
+            raise AssertionError('Unexpected read query: ' + query)
+        return SimpleNamespace(stdout=json.dumps({'status':0,'result':{
+            'records':rows,'done':True}}), stderr='', returncode=0)
+
+    adapter = ResultingSalesforceAdapter(runner=runner)
+    external = adapter.read_results([RECORD])
+    draft = clean_draft(external[WORK])
+    assert draft['dispo'] == 'pns'
+    assert draft['notes'] == ''
+    assert draft['redlines'] == 'Already resulted customer note'
+    assert draft['call_1'] == '10:15 AM'
+    assert draft['call_2'] == '1:27 PM'
+    assert draft['need'] == 'Security' and draft['want'] == 'Value'
+    assert draft['numbers'] == '25000\n17000'
+    assert draft['docs'] is True and draft['ninety_min'] is True
+    assert draft['dnr'] is True and draft['dnr_reason'] == 'Roofing'
+    assert draft['product_results']['Roofing']['detail'] == 'Price Objection'
+    assert len(calls) == 3
+    assert all(command[1:3] == ['data', 'query'] for command in calls)
+
+
+def test_remote_unresulted_notes_stay_black():
+    from printer_app.mod_resulting.salesforce_drafts import project_salesforce_drafts
+    from zoneinfo import ZoneInfo
+    work = {
+        'Id':WORK, 'Dispo__c':None,
+        'MOD_Notes__c':'Pre-disposition black notes',
+        'Call_1__c':None, 'Call_2__c':None,
+    }
+    drafts = project_salesforce_drafts(ZoneInfo('America/Los_Angeles'),
+                                      {WORK:''}, {WORK:work}, {}, {})
+    draft = clean_draft(drafts[WORK])
+    assert draft['dispo'] == ''
+    assert draft['notes'] == 'Pre-disposition black notes'
+    assert draft['redlines'] == ''
