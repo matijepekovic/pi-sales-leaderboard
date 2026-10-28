@@ -26,7 +26,6 @@ SERVICE_APPOINTMENT = 'ServiceAppointment'
 PRODUCT_RESULT = 'Product_Interest_Result__c'
 # Review exists as a training field, but its live API metadata must be
 # verified on checked submissions; do not require it for unrelated jobs.
-REVIEW_FIELD = 'Review__c'
 
 WO = {
     'dispo': 'Dispo__c',
@@ -622,12 +621,6 @@ class ResultingSalesforceAdapter:
             for key in ('docs', 'ninety_min'):
                 if payload['draft'][key]:
                     wo_values[WO[key]] = self._checked_yes(wo_fields[key])
-            if payload['draft']['review']:
-                review = self._field(
-                    wo_schema, REVIEW_FIELD,
-                    types=('boolean', 'string', 'textarea', 'picklist')
-                )
-                wo_values[REVIEW_FIELD] = self._checked_yes(review)
             for key in ('call_1', 'call_2'):
                 if payload['draft'][key]:
                     wo_values[WO[key]] = self._time_value(
