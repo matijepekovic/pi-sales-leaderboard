@@ -324,6 +324,9 @@
     const dnr = sheet.querySelector('.dnr-panel');
     const cxl = sheet.querySelector('.cxl-panel');
     const sale = sheet.querySelector('.sale-panel');
+    const priceDialog = sheet.querySelector('.price-panel');
+    const leadDialog = sheet.querySelector('.lead-panel');
+    const leadButton = sheet.querySelector('.edit-lead-status');
     const saleButton = sheet.querySelector('.edit-sale-products');
     const cxlButton = sheet.querySelector('.edit-cxl-details');
     const productButton = sheet.querySelector('.edit-product-results');
@@ -333,6 +336,14 @@
     if (productButton) productButton.hidden = init.dispo === 'sale' || !init.additional_products;
     if (cxlButton) cxlButton.hidden = init.dispo !== 'cxl';
     if (dnrButton) dnrButton.hidden = !init.dnr;
+    function syncPricePreviews() {
+      for (const key of ('start_price_override', 'final_price_override', 'deposit_override')) {
+        const input = sheet.querySelector('[data-key="' + key + '"]');
+        const preview = sheet.querySelector('[data-price-display="' + key + '"]');
+        if (preview && input) preview.textContent = input.value ? '$' + input.value : '';
+      }
+    }
+    syncPricePreviews();
     syncSaleRows();
     if (sheet.dataset.submitted === 'yes') {
       for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
@@ -384,6 +395,7 @@
       syncNoteMode();
       dnrPreview(sheet,draft);
       resultDetailPreview(sheet,draft);
+      syncPricePreviews();
       applyVisibility();
       scheduleSave(sheet);
     }
@@ -450,6 +462,12 @@
       if (input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-product-price],[data-product-deposit]')) redraw();
     });
     saleButton?.addEventListener('click', openSale);
+    leadButton?.addEventListener('click', () => openDialog(leadDialog, '[data-key="lead_status"]'));
+    for (const price of sheet.querySelectorAll('[data-price-trigger]')) {
+      price.addEventListener('click', () => {
+        openDialog(priceDialog, '[data-key="' + price.dataset.priceTrigger + '"]');
+      });
+    }
     cxlButton?.addEventListener('click', () => openDialog(cxl, '[data-key="cxl_at_lead"]'));
     productButton?.addEventListener('click', () => openDialog(product, '[data-product-result]'));
     dnrButton?.addEventListener('click', () => openDialog(dnr, '[data-reason-choice]'));
