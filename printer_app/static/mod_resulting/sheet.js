@@ -406,32 +406,27 @@
       for (const input of reasonChoices) input.checked = selected.has(input.value);
     }
     syncReasonChoices();
-    function filterSaleRows() {
-      if (!sale) return;
-      const needle = sale.querySelector('.sale-product-filter')?.value.trim().toLocaleLowerCase() || '';
-      for (const row of sale.querySelectorAll('[data-sale-product]')) {
-        row.hidden = !row.dataset.saleProduct.toLocaleLowerCase().includes(needle);
+    dnr?.addEventListener('close', () => {
+      const checkbox = sheet.querySelector('[data-key="dnr"]');
+      // With no selected reason DNR is unchecked, not Do Not Call.
+      if (checkbox.checked && !reasonChoices.some(choice => choice.checked)) {
+        checkbox.checked = false;
+        if (dnrButton) dnrButton.hidden = true;
+        redraw();
       }
-    }
+    });
     function syncSaleRows() {
-      let count = 0;
       for (const row of sheet.querySelectorAll('[data-sale-product]')) {
         const selected = row.querySelector('[data-sale-selected]');
         const enabled = !!selected?.checked;
-        if (enabled) count++;
-        for (const field of row.querySelectorAll('[data-sale-price],[data-sale-deposit]')) {
+        for (const field of row.querySelectorAll('[data-sale-price],[data-sale-deposit],[data-sale-payment]')) {
           field.disabled = !enabled;
         }
       }
-      const summary = sale?.querySelector('.sale-product-count');
-      if (summary) summary.textContent = count + ' selected';
     }
     function openSale() {
       if (!sale) return;
-      const filter = sale.querySelector('.sale-product-filter');
-      if (filter) filter.value = '';
-      filterSaleRows();
-      openDialog(sale, '.sale-product-filter');
+      openDialog(sale, '[data-sale-selected]');
     }
     function redraw() {
       const draft = serialize(sheet);
@@ -497,7 +492,7 @@
         );
         renderNoteRuns();
       }
-      if (input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-product-price],[data-product-deposit]')) redraw();
+      if (input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-sale-payment],[data-product-price],[data-product-deposit],[data-product-payment]')) redraw();
     });
     saleButton?.addEventListener('click', openSale);
     for (const button of sheet.querySelectorAll('[data-price-trigger]')) {
@@ -508,7 +503,6 @@
     cxlButton?.addEventListener('click', () => openDialog(cxl, '[data-key="cxl_at_lead"]'));
     productButton?.addEventListener('click', () => openDialog(product, '[data-product-result]'));
     dnrButton?.addEventListener('click', () => openDialog(dnr, '[data-reason-choice]'));
-    sale?.querySelector('.sale-product-filter')?.addEventListener('input', filterSaleRows);
     for (const button of sheet.querySelectorAll('[data-time-trigger]')) {
       button.addEventListener('click', () => openTimePicker(sheet, button.dataset.timeTrigger));
     }
