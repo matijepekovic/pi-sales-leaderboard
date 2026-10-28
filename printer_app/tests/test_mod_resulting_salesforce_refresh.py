@@ -23,17 +23,17 @@ RECORD = ModSheetRecord(
 def test_refresh_imports_remote_results_and_preserves_local_draft(tmp_path):
     repo = ResultingRepository(Database(tmp_path / 'printer.sqlite'))
     remote = clean_draft({
-        'dispo':'pns', 'redlines':'WorkOrder.MOD_Notes__c from Salesforce',
+        'dispo':'pns', 'notes':'WorkOrder.MOD_Notes__c from Salesforce',
         'call_1':'10:15 AM', 'call_2':'1:27 PM',
         'dnr':True, 'dnr_reason':'Roofing',
     })
     repo.refresh(DAY, [RECORD], external_drafts={WORK:remote})
     sheet = repo.sheets(DAY)[0]
-    assert sheet['draft']['redlines'] == remote['redlines']
-    assert sheet['draft']['notes'] == ''
+    assert sheet['draft']['notes'] == remote['notes']
+    assert sheet['draft']['redlines'] == ''
     assert sheet['draft']['dnr_reason'] == 'Roofing'
     assert sheet['submitted_at'] is not None  # Never re-submit an existing result.
-    remote_updated = clean_draft({'dispo':'pns', 'redlines':'New remote redline'})
+    remote_updated = clean_draft({'dispo':'pns', 'notes':'Updated remote note'})
     repo.refresh(DAY, [RECORD], external_drafts={WORK:remote_updated})
     assert repo.sheets(DAY)[0]['draft'] == remote_updated
     assert repo.sheets(DAY)[0]['submitted_at'] == -1.0
@@ -46,7 +46,7 @@ def test_refresh_imports_remote_results_and_preserves_local_draft(tmp_path):
     local = clean_draft({'notes':'Edited on Pi before Refresh'})
     repo.save_draft(DAY,different,local,0)
     repo.refresh(DAY, [RECORD,record_two],
-                 external_drafts={different:clean_draft({'dispo':'pns','redlines':'Remote changed'})})
+                 external_drafts={different:clean_draft({'dispo':'pns','notes':'Remote changed'})})
     assert repo.sheets(DAY)[1]['draft'] == local
     assert repo.sheets(DAY)[1]['submitted_at'] is None
     # Positive local write receipts must not be overwritten by Salesforce.
@@ -100,8 +100,8 @@ def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
     external = adapter.read_results([RECORD])
     draft = clean_draft(external[WORK])
     assert draft['dispo'] == 'pns'
-    assert draft['notes'] == ''
-    assert draft['redlines'] == 'Already resulted customer note'
+    assert draft['notes'] == 'Already resulted customer note'
+    assert draft['redlines'] == ''
     assert draft['call_1'] == '10:15 AM'
     assert draft['call_2'] == '1:27 PM'
     assert draft['need'] == 'Security' and draft['want'] == 'Value'
