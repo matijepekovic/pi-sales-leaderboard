@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import datetime, time as wall_time
-from decimal import Decimal
 import time
 from pathlib import Path
 import os
@@ -11,7 +10,7 @@ from zoneinfo import ZoneInfo
 from ..mod_sheet_contract import ModSheetRecord
 from .contract import (
     clean_draft, final_redline_text, outcome_fields, sold_products,
-    individual_product_sales,
+    individual_product_sales, sale_amount_totals,
 )
 
 
@@ -150,10 +149,6 @@ class ResultingService:
                 'price': item['price'],
                 'deposit': item['deposit'],
             } for item in sales]
-            deposit_total = (
-                str(sum((Decimal(item['deposit']) for item in sales), Decimal('0')))
-                if sales else ''
-            )
         else:
             if not original_products:
                 raise ValueError('Product Interest is required for resulting.')
@@ -186,10 +181,8 @@ class ResultingService:
                         'deposit': '',
                     })
             individual_sales = individual_product_sales(draft)
-            deposit_total = (
-                str(sum((Decimal(item['deposit']) for item in individual_sales),
-                        Decimal('0'))) if individual_sales else ''
-            )
+
+        deposit_total = sale_amount_totals(draft)['deposit']
 
         # The training flow provides an independently editable Work Order
         # Deposit / Payment value. Without an override, preserve the existing
