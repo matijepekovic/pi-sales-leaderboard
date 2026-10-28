@@ -21,6 +21,14 @@ LEAD = 'Lead'
 SERVICE_APPOINTMENT = 'ServiceAppointment'
 PRODUCT_RESULT = 'Product_Interest_Result__c'
 
+# Explicit sales-leadership titles only; never present every employee or
+# customer-community/installer user from a branch as an eligible MOD.
+MOD_ROLE_RE = re.compile(
+    r'\b(?:sales managers?|sales leaders?|territory managers?|regional managers?|'
+    r'market sales trainers?|sales directors?|team leads?|managers? on duty|MOD)\b',
+    re.IGNORECASE,
+)
+
 WO = {
     'dispo': 'Dispo__c',
     'status': 'Status',
@@ -231,15 +239,55 @@ class ResultingSalesforceAdapter:
             'Unsupported Salesforce type for ' + field['name'] + ': ' + str(kind)
         )
 
-    def mod_users(self):
+    def mod_users(self, market):
+        """Return active sales leaders from the configured MOD-sheet market only.
+
+        Market comes from the existing daily MOD sheet configuration.  Do not
+        fall back to an org-wide User list when market metadata is unavailable.
+        """
+        if not isinstance(market, str) or not market.strip() or len(market) > 128:
+            raise ResultingSalesforceError('Configure a specific MOD Sheet market first.')
+        if market.strip().casefold() == 'all':
+            raise ResultingSalesforceError('An all-markets MOD selection is not allowed.')
+        schema = self._describe('User')
+        branch_field = self._field(
+            schema, 'Home_Branch__c', update=False, types=('picklist',)
+        )
+        choices = self._options(branch_field)
+        matching = [
+            option['value'] for option in choices
+            if market.strip().casefold() in (
+                option['value'].casefold(), option['label'].casefold()
+            )
+        ]
+        if len(matching) != 1:
+            raise ResultingSalesforceError(
+                'MOD Sheet market does not match a unique Salesforce User Home Branch.'
+            )
+        branch = matching[0]
         rows = self._query(
-            "SELECT Id,Name FROM User WHERE IsActive = true ORDER BY Name LIMIT 2000"
+            "SELECT Id,Name,Home_Branch__c,Title_Picklist__c,"
+            "UserRole.Name,Profile.Name FROM User WHERE IsActive = true"
+            " AND Home_Branch__c = " + _soql(branch) + " ORDER BY Name"
         )
         users = []
         for item in rows:
+            if item.get('Home_Branch__c') != branch:
+                raise ResultingSalesforceError(
+                    'Salesforce returned a MOD user outside the selected market.'
+                )
             ident = str(item.get('Id') or '')
             name = str(item.get('Name') or '').strip()
-            if ID_RE.fullmatch(ident) and name:
+            role = item.get('UserRole') or {}
+            profile = item.get('Profile') or {}
+            titles = [
+                str(item.get('Title_Picklist__c') or ''),
+                str(role.get('Name') or '') if isinstance(role, dict) else '',
+                str(profile.get('Name') or '') if isinstance(profile, dict) else '',
+            ]
+            if ID_RE.fullmatch(ident) and name and any(
+                MOD_ROLE_RE.search(title) for title in titles
+            ):
                 users.append({'id': ident, 'name': name})
         return users
 
@@ -470,6 +518,10 @@ class ResultingSalesforceAdapter:
             key: self._field(wo_schema, api_name, types=wo_types[key])
             for key, api_name in WO.items()
         }
+        if 'User' not in (wo_fields['mod'].get('referenceTo') or []):
+            raise ResultingSalesforceError(
+                'WorkOrder.MOD__c does not reference Salesforce User.'
+            )
         lead_types = {
             'status': ('picklist', 'string'),
             'previous_result': ('picklist', 'string'),
