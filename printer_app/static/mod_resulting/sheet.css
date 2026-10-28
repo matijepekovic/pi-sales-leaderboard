@@ -24,6 +24,13 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .small-checkbox{display:flex;align-items:center;gap:.3cqw;font-size:1.12cqw;margin-top:.5cqw;white-space:nowrap}
 .field-detail b{display:block;white-space:nowrap;font-size:1.25cqw}
 .field-detail select{width:100%;font-size:1.2cqw;margin-top:.3cqw}
+/* Price cells stay the exact printed row; touching the price opens the editor.
+   Existing labels stay legible and no parallel sheet is introduced. */
+.price-click{z-index:8}
+.mod-sheet .price-click button{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;display:flex;justify-content:flex-end;align-items:center;gap:.2cqw;padding:0 .45cqw 0 0;color:#121212;font:1.15cqw/1 "Times New Roman",Times,serif}
+.price-click button::after{content:"✎";font-size:1.35cqw}
+.price-click button span:not(:empty){background:#fff;max-width:53%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.price-click button:focus-visible{outline:2px solid #1e40af;outline-offset:-2px}
 .notes-content{position:absolute;inset:2.05cqw .2cqw .2cqw;display:flex;gap:.4cqw;min-height:0}
 .notes-content textarea{display:block;resize:none;line-height:1.15;width:100%;padding:0;white-space:pre-wrap}
 .notes-content textarea[data-key=numbers]{width:21%;flex:none}
@@ -44,7 +51,7 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .field-bids label:first-child{flex:1.5}
 .field-dispo{display:flex;align-items:center;gap:.4cqw}
 .field-dispo select{flex:1;font-size:1.4cqw}
-.edit-sale-products,.edit-cxl-details,.edit-product-results,.edit-dnr-reasons{border:0;background:#fff;color:#111;padding:0 .25cqw;font-size:1.05cqw;text-decoration:underline;cursor:pointer}
+.edit-sale-products,.edit-cxl-details,.edit-product-results,.edit-dnr-reasons,.edit-lead-status{border:0;background:#fff;color:#111;padding:0 .25cqw;font-size:1.05cqw;text-decoration:underline;cursor:pointer}
 .edit-product-results{position:absolute;right:.3cqw;bottom:0}
 .edit-dnr-reasons{position:absolute;bottom:0;left:3.2cqw}
 .field-extras{display:flex;align-items:center;justify-content:space-around;gap:.2cqw;border-left:1px solid #000}
@@ -111,6 +118,10 @@ body.dialog-open{overflow:hidden}
 .time-options{display:flex;gap:10px}
 .time-options label{display:flex;flex:1 1 0;min-width:0;flex-direction:column;gap:6px;white-space:nowrap}
 .time-options select{width:100%}
+.price-panel,.lead-panel{width:min(520px,calc(100vw - 28px))}
+.price-fields,.lead-fields{display:flex;flex-direction:column;gap:14px}
+.price-fields label,.lead-fields label{display:flex;flex-direction:column;gap:6px}
+.price-fields input,.lead-fields select{width:100%}
 .end-dialog{width:min(480px,calc(100vw - 28px))}
 .end-dialog #reviewCount{line-height:1.5;color:#344156;font-size:14px}
 .sheet-message{position:absolute;z-index:22;bottom:101%;left:0;font:12px system-ui,sans-serif;color:#8c341b;background:#fff9de;padding:5px 8px;border:1px solid #e8cf86}
