@@ -414,6 +414,10 @@ def test_mod_dropdown_queries_only_active_market_sales_leaders():
                 {'Id':'005000000000003AAA', 'Name':'Olympia Rep',
                  'Home_Branch__c':'Olympia', 'Title_Picklist__c':'Sales Rep',
                  'UserRole':{'Name':'SFS Mobile'}, 'Profile':{'Name':'SFS Mobile Rep'}},
+                {'Id':'005000000000006AAA', 'Name':'Olympia Manager (standard title)',
+                 'Home_Branch__c':'Olympia', 'Title':'Sales Manager',
+                 'Title_Picklist__c':None, 'UserRole':{'Name':'SFS Mobile'},
+                 'Profile':{'Name':'SFS Mobile Rep'}},
                 {'Id':'005000000000004AAA', 'Name':'Olympia Installer',
                  'Home_Branch__c':'Olympia', 'Title_Picklist__c':None,
                  'UserRole':{'Name':'Customer Person Account'},
@@ -434,6 +438,7 @@ def test_mod_dropdown_queries_only_active_market_sales_leaders():
     assert adapter.mod_users('Olympia') == [
         {'id':MOD, 'name':'Olympia Manager'},
         {'id':'005000000000002AAA', 'name':'Olympia Team Lead'},
+        {'id':'005000000000006AAA', 'name':'Olympia Manager (standard title)'},
     ]
     assert [c[1:3] for c in commands] == [
         ['sobject', 'describe'], ['data', 'query'],
