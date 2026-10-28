@@ -531,6 +531,45 @@ def test_lead_status_and_manual_price_cells_are_editable_and_persist(mod_browser
     assert page.evaluate('window.modCspViolations') == []
 
 
+def test_dnr_locks_lead_status_to_do_not_call_and_preserves_manual_choice(mod_browser):
+    from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import outcome_fields
+
+    page, service, writer, origin, evidence = mod_browser
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+    first.locator('[data-key=dispo]').select_option('pns')
+    first.locator('.edit-lead-status').click()
+    lead = first.locator('.lead-panel')
+    manual = lead.locator('[data-key=lead_status]')
+    manual.select_option('Sale Pending')
+    lead.locator('.editor-primary').click()
+
+    first.locator('[data-key=dnr]').check()
+    dnr = first.locator('.dnr-panel')
+    dnr.locator('[data-reason-choice][value="Roofing"]').check()
+    dnr.locator('.editor-primary').click()
+    first.locator('.edit-lead-status').click()
+    expect(manual).to_be_disabled()
+    expect(manual).to_have_value('Sale Pending')
+    expect(lead.locator('.dnr-lead-status-hint')).to_contain_text(
+        'Lead Status will be set to Do Not Call automatically'
+    )
+    lead.locator('.editor-primary').click()
+    draft=service.repository.sheets(service.day())[0]['draft']
+    assert outcome_fields(draft)['lead_status']=='Do Not Call'
+
+    first.locator('[data-key=dnr]').uncheck()
+    first.locator('.edit-lead-status').click()
+    expect(manual).to_be_enabled()
+    expect(manual).to_have_value('Sale Pending')
+    expect(lead.locator('.dnr-lead-status-hint')).to_be_hidden()
+    lead.locator('.editor-primary').click()
+    draft=service.repository.sheets(service.day())[0]['draft']
+    assert outcome_fields(draft)['lead_status']=='Sale Pending'
+    assert not writer.applied
+
+
 def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
     from playwright.sync_api import expect
     page, service, writer, origin, evidence = mod_browser
