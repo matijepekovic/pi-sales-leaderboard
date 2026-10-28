@@ -37,6 +37,7 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .field-bids label:first-child{flex:1.5}
 .field-dispo{display:flex;align-items:center;gap:.4cqw}
 .field-dispo select{flex:1;font-size:1.4cqw}
+.edit-sale-products{border:0;background:white;padding:0 .25cqw;font-size:1.05cqw;text-decoration:underline}
 .field-extras{display:flex;align-items:center;justify-content:space-around;gap:.2cqw;border-left:1px solid #000}
 .field-extras label{display:flex;align-items:center;gap:.4cqw;font-size:1.3cqw;white-space:nowrap}
 .time-entry{position:absolute;left:5.05cqw;top:.1cqw;width:4.6cqw;font-size:1.23cqw!important;line-height:1.2}
@@ -51,11 +52,24 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .floating-controls button,.confirm-box button{background:white;border:1px solid #888;border-radius:5px;font:inherit;padding:7px 12px;cursor:pointer}
 .floating-controls #submitDay,.confirm-box #confirmEnd{background:#111;color:#fff}
 .notification{position:fixed;z-index:50;top:75px;right:14px;padding:9px 13px;background:#fffbdf;border:1px solid #ad9b4c;border-radius:4px;max-width:430px;font:12px system-ui,sans-serif}
-.product-panel,.dnr-panel,.cxl-panel{position:absolute;z-index:20;background:#fff;border:1px solid #000;box-shadow:2px 4px 18px #0002;padding:12px;font:13px system-ui,sans-serif;min-width:220px;color:#111}
+.product-panel,.dnr-panel,.cxl-panel,.sale-panel{position:absolute;z-index:20;background:#fff;border:1px solid #000;box-shadow:2px 4px 18px #0002;padding:12px;font:13px system-ui,sans-serif;min-width:220px;color:#111}
 .mod-sheet .cell:has(.product-panel:not([hidden])),.mod-sheet .cell:has(.dnr-panel:not([hidden])){z-index:21}
+.sale-panel{top:64%;left:20%;min-width:430px;max-width:min(620px,76vw);max-height:62vh;overflow:auto}
+.sale-product-row{display:flex;flex-wrap:wrap;gap:8px;align-items:end;border-top:1px solid #ddd;padding:9px 0}
+.sale-product-row label{display:flex;flex:1 1 100px;min-width:95px;flex-direction:column;gap:4px;font-size:12px}
+.sale-product-row .sale-product-choice{flex-direction:row;align-items:center;font-weight:600}
+.sale-product-row input[type=text]{border:1px solid #aaa;padding:5px;background:white;font:13px system-ui,sans-serif}
+.sale-product-row input:disabled{background:#eee;color:#777}
+.sale-hint,.sale-products-unavailable{margin:8px 0 4px;font-size:12px;color:#555}
+.sale-done{float:none;margin-top:6px}
+.product-summary{font-size:1.25cqw;white-space:normal}
+.dnr-panel select[multiple]{min-height:92px}
 .product-panel{top:100%;left:0;min-width:310px;max-height:50vh;overflow-y:auto}
 .product-result-row{border-top:1px solid #ddd;padding:9px 0;display:flex;flex-direction:column;gap:6px}
 .product-result-row label{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:12px}
+.individual-sale-fields{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
+.individual-sale-fields label{display:flex;flex:1;flex-direction:column;align-items:stretch;gap:4px;min-width:110px}
+.individual-sale-fields input{border:1px solid #aaa!important;background:white!important;padding:5px!important;font:13px system-ui,sans-serif!important;width:100%}
 .mod-sheet .product-panel select,.mod-sheet .dnr-panel select{border:1px solid #aaa;padding:3px;max-width:170px;font:12px system-ui,sans-serif}
 .dnr-panel{left:100%;bottom:0}
 .dnr-panel>label{display:flex;flex-direction:column;gap:9px}
@@ -100,13 +114,18 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
   color:#111;font:inherit;border-radius:5px;cursor:pointer}
  .sheet-zoom button:disabled{color:#888;cursor:default}
  .notification{top:auto;bottom:68px;left:8px;right:8px;max-width:none}
- .product-panel,.dnr-panel,.cxl-panel{min-width:min(290px,calc(100vw - 32px));
+ .product-panel,.dnr-panel,.cxl-panel,.sale-panel{min-width:min(290px,calc(100vw - 32px));
   max-width:calc(100vw - 32px);font-size:16px;max-height:60dvh;overflow:auto}
  .product-result-row label{font-size:16px;flex-wrap:wrap}
+ .individual-sale-fields input{font-size:16px!important;min-height:44px}
  .mod-sheet .product-panel select,.mod-sheet .dnr-panel select{font-size:16px;min-height:44px;max-width:100%}
+ .sale-product-row{gap:6px}
+ .sale-product-row label{flex-basis:100%}
+ .sale-product-row label{font-size:16px}
+ .sale-product-row input[type=text]{min-height:44px;font-size:16px}
  .close-popover{min-width:44px;min-height:44px;font-size:16px}
  .confirm-box{min-width:0;width:calc(100vw - 24px);max-height:80dvh;overflow:auto}
  .confirm-box button{min-height:44px}
 }
 
-@media print{.sheet-zoom,.floating-controls,.notification,.confirm-backdrop,.cxl-panel,.dnr-panel,.product-panel,.sheet-message{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}}
+@media print{.sheet-zoom,.floating-controls,.notification,.confirm-backdrop,.cxl-panel,.dnr-panel,.product-panel,.sale-panel,.sheet-message{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}}

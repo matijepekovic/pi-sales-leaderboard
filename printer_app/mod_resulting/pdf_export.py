@@ -15,7 +15,7 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 
 from ..mod_sheet_contract import ModSheetRecord
 from ..mod_sheets.pdf_renderer import MOD_TABLE_WIDTH, MOD_ROW_HEIGHTS, render_mod_pdf
-from .contract import clean_draft, dnr_redline
+from .contract import clean_draft, final_redline_text
 
 
 COL_WIDTH = MOD_TABLE_WIDTH / 10
@@ -173,11 +173,7 @@ def _overlay_one(c,index,draft):
     if d['notes']:
         _fit_lines(c,d['notes'],text_x,t+13,text_width,max(13,comment_height),
                    start=9)
-    red=d['redlines'].strip()
-    if d['dnr'] and d['dnr_reason']:
-        dnr_line=dnr_redline(d['dnr_reason'])
-        if dnr_line.casefold() not in red.casefold():
-            red=(red+'\n'+dnr_line).strip()
+    red=final_redline_text(d)
     if red:
         red_top=t+13+comment_height+2
         _fit_lines(c,red,text_x,red_top,text_width,

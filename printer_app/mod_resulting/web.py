@@ -6,7 +6,6 @@ import json
 from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request, send_file
 
 from .surface import SheetSurfaceError, overlay_css
-from .contract import RESULT_DETAILS
 
 
 def blueprint(service, surface):
@@ -30,22 +29,38 @@ def blueprint(service, surface):
         try:
             choices = service.dropdowns()
         except Exception:
-            # Training reference options permit safe offline draft review;
-            # the Salesforce writer independently validates live picklists.
-            choices = {
-                'result_details':[{'value':value,'label':value}
-                                  for value in RESULT_DETAILS],
-                'dnr_reasons':[{'value':value,'label':value}
-                               for value in ('Roofing','Bath','Siding','Windows',
-                                             'Behavior','Finance')],
-            }
-            # Setup diagnostics belong in the log, not over the user's sheets.
-            current_app.logger.warning('MOD resulting picklists unavailable; using draft choices.')
+            # No made-up Salesforce dropdown options. The saved sheet and
+            # other local controls remain available when metadata is offline.
+            choices = {'result_details':[], 'dnr_reasons':[], 'products':[]}
+            current_app.logger.warning('MOD resulting Salesforce picklists unavailable.')
+        # Existing draft selections are grounded values, not guessed picklist
+        # options. Keep them visible and lossless through offline Refresh.
+        # The Salesforce writer independently validates every option before
+        # any write is permitted.
+        for sheet in data['sheets']:
+            draft = sheet['draft']
+            for value in str(draft.get('dnr_reason') or '').split(';'):
+                value = value.strip()
+                if value and not any(o['value'] == value for o in choices['dnr_reasons']):
+                    choices['dnr_reasons'].append({'value': value, 'label': value})
+            details = [draft.get('result_detail', '')]
+            details.extend(
+                str(item.get('detail') or '')
+                for item in draft.get('product_results', {}).values()
+                if isinstance(item, dict)
+            )
+            for value in details:
+                if value and not any(o['value'] == value for o in choices['result_details']):
+                    choices['result_details'].append({'value': value, 'label': value})
+            for value in draft.get('sale_products', {}):
+                if value and not any(o['value'] == value for o in choices['products']):
+                    choices['products'].append({'value': value, 'label': value})
         return render_template(
             'mod_resulting.html',
             data=data, users=users,
             result_details=choices['result_details'],
             dnr_reasons=choices['dnr_reasons'],
+            products=choices.get('products', []),
             live_writes_enabled=service.allow_salesforce_writes,
             notice=notice,
         )

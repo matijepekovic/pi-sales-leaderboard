@@ -38,8 +38,14 @@ class FakeModWriter:
         return [{'id': MOD, 'name': 'Sample MOD'}]
 
     def dropdowns(self):
-        return {'result_details': [{'value': 'Price Objection', 'label': 'Price Objection'}],
-                'dnr_reasons': [{'value': 'Roofing', 'label': 'Roofing'}]}
+        return {
+            'result_details': [{'value':'Price Objection','label':'Price Objection'}],
+            'dnr_reasons': [{'value':'Roofing','label':'Roofing'}],
+            'products': [
+                {'value':value,'label':value}
+                for value in ('Roofing','Siding','Windows')
+            ],
+        }
 
     def prepare(self, payload):
         return [[('sample',)] for _ in payload]
@@ -262,6 +268,16 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     expect(first).to_have_class('mod-sheet surface-ready')
     bounds = first.locator('.field-notes').bounding_box()
     first.locator('[data-key=dispo]').select_option('sale')
+    expect(first.locator('.sale-panel')).to_be_visible()
+    roof = first.locator('[data-sale-product="Roofing"]')
+    roof.locator('[data-sale-selected]').check()
+    roof.locator('[data-sale-price]').fill('17850')
+    roof.locator('[data-sale-deposit]').fill('0')
+    # Zero-priced selected products are not treated as sold.
+    siding = first.locator('[data-sale-product="Siding"]')
+    siding.locator('[data-sale-selected]').check()
+    siding.locator('[data-sale-price]').fill('0')
+    first.locator('.sale-panel .sale-done').click()
     first.locator('[data-key=notes]').fill('Black comment above redlines.')
     first.locator('[data-key=redlines]').fill('REPLACE TRIM WITH FULL SCOPE.')
     first.locator('[data-key=numbers]').fill('25,000\n17,850')
@@ -273,11 +289,6 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     first.locator('[data-key=dnr_reason]').select_option('Roofing')
     expect(first.locator('.dnr-in-redline')).to_have_text('DNR - Roofing')
     first.locator('.dnr-panel .close-popover').click()
-    first.locator('[data-key=additional_products]').check()
-    expect(first.locator('.product-panel')).to_be_visible()
-    for row in first.locator('[data-product]').all():
-        row.locator('[data-product-result]').select_option('sale')
-    first.locator('.product-panel .close-popover').click()
     first.locator('[data-key=call_1]').fill('10:15 AM')
     first.locator('[data-key=call_2]').fill('10:27 AM')
     assert first.locator('.field-notes').bounding_box() == bounds
@@ -291,6 +302,10 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     assert draft['notes'] == 'Black comment above redlines.'
     assert draft['redlines'] == 'REPLACE TRIM WITH FULL SCOPE.'
     assert draft['dnr_reason'] == 'Roofing'
+    assert draft['sale_products'] == {
+        'Roofing':{'price':'17850','deposit':'0'},
+        'Siding':{'price':'0','deposit':''},
+    }
     assert draft['call_1'] == '10:15 AM'
     assert draft['call_2'] == '10:27 AM'
     assert draft['review'] is True
