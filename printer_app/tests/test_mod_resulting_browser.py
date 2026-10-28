@@ -491,7 +491,11 @@ def test_lead_status_and_manual_price_cells_are_editable_and_persist(mod_browser
     first = page.locator('.mod-sheet').first
     first.locator('[data-key="numbers"]').fill('25000\n17000')
     first.locator('[data-key="dispo"]').select_option('pns')
-    first.locator('.edit-lead-status').click()
+    lead_trigger = (first.locator('[data-lead-trigger]') if viewport[0] <= 900
+                    else first.locator('.edit-lead-status'))
+    if viewport[0] <= 900:
+        assert lead_trigger.bounding_box()['height'] >= 44
+    lead_trigger.click()
     lead = first.locator('.lead-panel')
     expect(lead).to_be_visible()
     lead.locator('[data-key="lead_status"]').select_option('Do Not Call')
