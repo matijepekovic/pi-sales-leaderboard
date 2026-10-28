@@ -235,6 +235,34 @@ def individual_product_sales(draft):
     return tuple(sold)
 
 
+def sale_amount_totals(draft):
+    """Combined sold-product amounts for the MOD Deposit/Payment display."""
+    sales = (sold_products(draft) if draft.get('dispo') == 'sale'
+             else individual_product_sales(draft))
+    if not sales:
+        return {'deposit': '', 'payment': ''}
+    deposit = sum((Decimal(item['deposit']) for item in sales), Decimal('0'))
+    payments = [
+        Decimal(item['payment']) for item in sales if item.get('payment')
+    ]
+    return {
+        'deposit': money_text(str(deposit)),
+        'payment': money_text(str(sum(payments, Decimal('0')))) if payments else '',
+    }
+
+
+def deposit_payment_text(draft):
+    """Display Deposit/Payment without currency symbols; keep legacy override."""
+    totals = sale_amount_totals(draft)
+    deposit = (
+        money_text(draft['deposit_override'])
+        if draft.get('deposit_override') else totals['deposit']
+    )
+    if totals['deposit'] != '' or totals['payment'] != '':
+        return deposit + '/' + totals['payment']
+    return deposit
+
+
 def sale_redlines(draft):
     sales = (sold_products(draft) if draft.get('dispo') == 'sale'
              else individual_product_sales(draft))
