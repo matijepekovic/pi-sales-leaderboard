@@ -463,6 +463,9 @@
     });
     saleButton?.addEventListener('click', openSale);
     leadButton?.addEventListener('click', () => openDialog(leadDialog, '[data-key="lead_status"]'));
+    sheet.querySelector('[data-lead-trigger]')?.addEventListener(
+      'click', () => openDialog(leadDialog, '[data-key="lead_status"]')
+    );
     for (const price of sheet.querySelectorAll('[data-price-trigger]')) {
       price.addEventListener('click', () => {
         openDialog(priceDialog, '[data-key="' + price.dataset.priceTrigger + '"]');
