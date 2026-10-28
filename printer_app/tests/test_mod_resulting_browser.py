@@ -169,8 +169,9 @@ def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_br
     assert page.locator('body > header,body > nav,body > footer').count() == 0
     expect(page.locator('#nameSearch')).to_be_visible()
     first = page.locator('.mod-sheet').first
-    for key in ('numbers', 'notes', 'redlines'):
+    for key in ('numbers', 'notes'):
         expect(first.locator('[data-key=' + key + ']')).to_be_visible()
+    expect(first.locator('[data-key=redlines]')).to_be_hidden()
 
     page.locator('#nameSearch').fill('alex')
     expect(page.locator('.mod-sheet:visible')).to_have_count(1)
@@ -179,11 +180,13 @@ def test_mod_sheets_render_as_full_sheets_and_are_searchable_by_name_only(mod_br
     page.locator('#nameSearch').fill('')
     expect(page.locator('.mod-sheet:visible')).to_have_count(2)
 
+    first.locator('[data-key=notes]').fill('Black comment')
     first.locator('[data-key=dispo]').select_option('cxl')
     expect(first.locator('.cxl-panel')).to_be_visible()
     first.locator('[data-key=cxl_at_lead]').check()
     first.locator('.cxl-panel .editor-primary').click()
-    first.locator('[data-key=notes]').fill('Black comment')
+    expect(first.locator('[data-key=notes]')).to_be_hidden()
+    expect(first.locator('.notes-black-history')).to_have_text('Black comment')
     first.locator('[data-key=redlines]').fill('REDLINE')
     first.locator('[data-key=numbers]').fill('20000\n17000')
     page.locator('#hideCompleted').check()
@@ -268,6 +271,7 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     first = page.locator('.mod-sheet').first
     expect(first).to_have_class('mod-sheet surface-ready')
     bounds = first.locator('.field-notes').bounding_box()
+    first.locator('[data-key=notes]').fill('Black comment above redlines.')
     first.locator('[data-key=dispo]').select_option('sale')
     expect(first.locator('.sale-panel')).to_be_visible()
     roof = first.locator('[data-sale-product="Roofing"]')
@@ -279,7 +283,7 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     siding.locator('[data-sale-selected]').check()
     siding.locator('[data-sale-price]').fill('0')
     first.locator('.sale-panel .sale-done').click()
-    first.locator('[data-key=notes]').fill('Black comment above redlines.')
+    expect(first.locator('.notes-black-history')).to_have_text('Black comment above redlines.')
     first.locator('[data-key=redlines]').fill('REPLACE TRIM WITH FULL SCOPE.')
     first.locator('[data-key=numbers]').fill('25,000\n17,850')
     for key in ('power_questions', 't_close', 'ninety_min', 'docs', 'bid_sheets',
@@ -462,12 +466,12 @@ def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
     first.locator('[data-key=review]').uncheck()
     first.locator('[data-key=numbers]').fill('')
     first.locator('[data-key=notes]').fill('Final black comment')
-    first.locator('[data-key=redlines]').fill('FINAL REDLINE')
     first.locator('[data-key=call_1]').fill('10:15 AM')
     first.locator('[data-key=call_2]').fill('1:27 PM')
     first.locator('[data-key=dispo]').select_option('cxl')
     first.locator('[data-key=cxl_at_lead]').check()
     first.locator('.cxl-panel .editor-primary').click()
+    first.locator('[data-key=redlines]').fill('FINAL REDLINE')
     held[0].continue_()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
