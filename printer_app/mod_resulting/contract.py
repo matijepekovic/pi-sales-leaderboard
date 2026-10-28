@@ -251,12 +251,12 @@ def result_detail_redlines(draft):
     result = []
     detail = str(draft.get('result_detail') or '').strip()
     if detail:
-        result.append('RESULT DETAIL: ' + detail)
+        result.append(detail)
     if draft.get('additional_products') and draft.get('dispo') != 'sale':
         for product, info in (draft.get('product_results') or {}).items():
             choice = str(info.get('detail') or '').strip()
             if choice:
-                result.append(str(product) + ' RESULT DETAIL: ' + choice)
+                result.append(choice)
     return tuple(result)
 
 
