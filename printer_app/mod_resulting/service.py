@@ -47,7 +47,18 @@ class ResultingService:
             remove_canceled=False, remove_unconfirmed=False, limit=None,
         )
         records = tuple(self.source.records(**kwargs))
-        self.repository.refresh(day, records)
+        # Salesforce's read-only resulting projection is a separate adapter
+        # operation. Fetch it completely before modifying local SQLite;
+        # failures never replace existing snapshots or pending work.
+        reader = getattr(self.writer, 'read_results', None)
+        external = reader(records) if callable(reader) else {}
+        if not isinstance(external, dict):
+            raise ValueError('Salesforce resulting refresh returned invalid records.')
+        normalized = {}
+        for record in records:
+            if record.source_id in external:
+                normalized[record.source_id] = clean_draft(external[record.source_id])
+        self.repository.refresh(day, records, external_drafts=normalized)
         return len(records)
 
     def snapshot(self, day):
