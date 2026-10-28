@@ -194,6 +194,18 @@ def test_popup_tracks_visible_viewport_when_zoomed_or_keyboard_opens(mod_browser
     expect(dialog).to_have_css('max-height', '224px')
     bounds=dialog.bounding_box()
     assert bounds['y'] >= 60-2 and bounds['y']+bounds['height'] <= 180+2
+
+    # Strong pinch makes the visual viewport narrower than 120 CSS px.
+    # Never clamp the dialog wider than what the phone can actually show.
+    page.evaluate("""() => {
+      window.__testViewport.width=75;
+      window.__testViewport.scale=5;
+      window.dispatchEvent(new Event('resize'));
+    }""")
+    expect(dialog).to_have_css('transform', 'matrix(0.2, 0, 0, 0.2, 0, 0)')
+    bounds=dialog.bounding_box()
+    assert bounds['x'] >= 50-2 and bounds['x']+bounds['width'] <= 125+2
+    assert bounds['y'] >= 60-2 and bounds['y']+bounds['height'] <= 180+2
     assert dialog.locator('.editor-footer').count()==1
     assert dialog.locator('[data-sale-product="Roofing"]').count()==1
     assert page.locator('[style]').count()==0
