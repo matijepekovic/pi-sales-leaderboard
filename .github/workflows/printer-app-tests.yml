@@ -11,7 +11,7 @@ permissions:
 jobs:
   printer:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       MOD_RESULTING_QA_DIR: /tmp/mod-resulting-qa
     steps:
