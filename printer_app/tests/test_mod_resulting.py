@@ -37,7 +37,7 @@ def test_dispo_and_dnr_statuses_do_not_require_a_lead_dropdown():
                           ('nra','Nurturing'),('oos','Out of Scope')]:
         values = outcome_fields(clean_draft({'dispo':dispo}))
         assert values['lead_status'] == status
-        assert outcome_fields(clean_draft({'dispo':dispo,'dnr':True}))['lead_status'] == 'Do Not Call'
+        assert outcome_fields(clean_draft({'dispo':dispo,'dnr':True,'dnr_reason':'Roofing'}))['lead_status'] == status
         assert outcome_fields(clean_draft({'dispo':dispo,'dnr':False,'dnr_reason':'Roofing'}))['lead_status'] == status
 
 
@@ -107,16 +107,22 @@ def test_daily_mod_selection_refresh_and_end_of_day_idempotence(tmp_path):
     assert service.set_mod(DAY,USER)=='MOD Example'
     draft=clean_draft({'dispo':'sale','numbers':'20000\n17000',
                        'notes':'Black comment', 'redlines':'REDLINE',
-                       'additional_products':True,
-                       'product_results':{'Roofing':{'result':'sale','detail':''},
-                                          'Siding':{'result':'pns','detail':'Price Objection'}}})
+                       'sale_products':{
+                           'Roofing':{'price':'17000','deposit':'0'},
+                           'Siding':{'price':'0','deposit':''},
+                       }})
     service.save(DAY,WORK,draft,0)
     assert service.submit(DAY)=={'submitted':1,'day':DAY,'pdf':False}
     assert len(writer.applied)==1
     payload=writer.plans[0]
     assert payload['fields']['price']['lowest']=='17000'
     assert payload['draft']['notes']=='Black comment'
-    assert len(payload['product_results'])==2
+    assert payload['product_results']==[{
+        'product':'Roofing','result':'sale','detail':'',
+        'price':'17000','deposit':'0',
+    }]
+    assert payload['deposit_total']=='0'
+    assert 'SALE Roofing: $17,000 | Deposit: $0' in payload['final_redlines']
     assert repo.sheets(DAY)[0]['submitted_at'] is not None
     with pytest.raises(ValueError):
         service.submit(DAY)
@@ -172,15 +178,44 @@ def test_mod_sheet_grid_and_architecture_boundaries_are_stable():
     assert 'subprocess' not in service
 
 
-def test_single_product_result_uses_selected_primary_product(tmp_path):
+def test_default_product_result_uses_main_dispo_for_every_original_product(tmp_path):
     service,repo,source,writer=_service(tmp_path)
     service.refresh(DAY)
     sheet=dict(repo.sheets(DAY)[0],day=DAY)
-    sheet['draft']=clean_draft({'dispo':'pns','primary_product':'Siding'})
+    sheet['draft']=clean_draft({'dispo':'pns','result_detail':'Price Objection'})
     payload=service.submission_payload(sheet,USER)
-    assert payload['product_results']==[{
-        'product':'Siding','result':'pns','detail':'',
-    }]
+    assert payload['product_results']==[
+        {'product':'Roofing','result':'pns','detail':'Price Objection','price':'','deposit':''},
+        {'product':'Siding','result':'pns','detail':'Price Objection','price':'','deposit':''},
+    ]
+
+
+def test_sale_zero_price_is_not_sold_and_zero_deposit_is_valid(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    service.refresh(DAY)
+    sheet=dict(repo.sheets(DAY)[0],day=DAY)
+    sheet['draft']=clean_draft({
+        'dispo':'sale',
+        'numbers':'25000\n18000',
+        'sale_products':{
+            'Roofing':{'price':'18000','deposit':'0'},
+            'Windows':{'price':'0','deposit':'500'},
+        },
+    })
+    payload=service.submission_payload(sheet,USER)
+    assert payload['fields']['price']=={'highest':'25000','lowest':'18000'}
+    assert payload['deposit_total']=='0'
+    assert [item['product'] for item in payload['product_results']]==['Roofing']
+    assert 'Windows' not in payload['final_redlines']
+    assert 'SALE Roofing: $18,000 | Deposit: $0' in payload['final_redlines']
+
+
+def test_dnr_never_changes_lead_status():
+    draft=clean_draft({'dispo':'pns','dnr':True,'dnr_reason':'Roofing;Bath'})
+    fields=outcome_fields(draft)
+    assert fields['lead_status']=='Nurturing'
+    assert fields['work_order_status']=='Completed'
+    assert draft['dnr_reason']=='Roofing;Bath'
 
 
 def test_eight_am_pull_keeps_the_existing_printer_schedule_untouched(tmp_path):
