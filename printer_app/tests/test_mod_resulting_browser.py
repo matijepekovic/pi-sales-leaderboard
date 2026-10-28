@@ -338,7 +338,7 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     assert draft['dnr_reason'] == 'Roofing'
     assert draft['sale_products'] == {
         'Roofing':{'price':'17850','deposit':'0','payment':'159'},
-        'Siding':{'price':'0','deposit':'','payment':''},
+        'Siding':{'price':'0','deposit':''},
     }
     assert draft['call_1'] == '10:15 AM'
     assert draft['call_2'] == '10:27 AM'

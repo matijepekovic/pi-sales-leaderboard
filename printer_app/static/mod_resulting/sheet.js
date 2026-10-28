@@ -20,15 +20,26 @@
   // focus, and positions every editor in the viewport on desktop and mobile.
   // One modal can be open across ALL sheets, never one per work order.
   function openDialog(dialog, focusSelector) {
-    if (!dialog) return;
-    for (const open of document.querySelectorAll('.editor-dialog[open]')) {
-      if (open !== dialog) open.close();
-    }
-    if (!dialog.open) dialog.showModal();
-    document.body.classList.add('dialog-open');
-    // The dedicated layout owner adjusts the popup before keyboard focus.
-    dialog.dispatchEvent(new Event('mod-dialog-open'));
-    if (focusSelector) dialog.querySelector(focusSelector)?.focus({preventScroll:true});
+    if (!dialog || dialog.open) return;
+    let shown = false;
+    const show = () => {
+      if (shown || !dialog.isConnected) return;
+      shown = true;
+      for (const open of document.querySelectorAll('.editor-dialog[open]')) {
+        if (open !== dialog) open.close();
+      }
+      dialog.showModal();
+      document.body.classList.add('dialog-open');
+      dialog.dispatchEvent(new Event('mod-dialog-open'));
+      if (focusSelector) dialog.querySelector(focusSelector)?.focus({preventScroll:true});
+    };
+    // Presentation-only boundary: reset the zoom before the dialog exists in
+    // the top layer. If the viewport owner is unavailable, the dialog still opens.
+    const opening = {handled:false, show};
+    dialog.dispatchEvent(new CustomEvent('mod-dialog-opening', {
+      bubbles:true, detail:opening
+    }));
+    if (!opening.handled) show();
   }
   function closeDialog(dialog) {
     if (dialog?.open) dialog.close();

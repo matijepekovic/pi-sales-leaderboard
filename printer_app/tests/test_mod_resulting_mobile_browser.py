@@ -211,3 +211,53 @@ def test_popup_tracks_visible_viewport_when_zoomed_or_keyboard_opens(mod_browser
     assert page.locator('[style]').count()==0
     assert page.evaluate('window.modCspViolations') == []
     assert not service.allow_salesforce_writes and writer.applied == []
+
+
+def test_popup_fits_native_zoom_before_opening_and_allows_zoom_again(mod_browser):
+    """Exercise a real zoomed Chromium page; WebKit geometry has its own test."""
+    from playwright.sync_api import expect
+
+    page, service, writer, origin, evidence = mod_browser
+    if page.context.browser.browser_type.name != 'chromium':
+        pytest.skip('CDP pinch-scale injection is specific to Chromium')
+    page.set_viewport_size({'width': 390, 'height': 844})
+    assert page.goto(origin + '/mod-resulting').status == 200
+    page.evaluate("""() => {
+      const dialog = document.querySelector('.sale-panel');
+      window.modalScaleAtOpen = null;
+      new MutationObserver(() => {
+        if (dialog.open && window.modalScaleAtOpen === null)
+          window.modalScaleAtOpen = window.visualViewport.scale;
+      }).observe(dialog, {attributes:true, attributeFilter:['open']});
+    }""")
+    cdp = page.context.new_cdp_session(page)
+    cdp.send('Emulation.setDeviceMetricsOverride', {
+        'width':390, 'height':844, 'deviceScaleFactor':2, 'mobile':True,
+    })
+    cdp.send('Emulation.setPageScaleFactor', {'pageScaleFactor':2.5})
+    assert page.evaluate('window.visualViewport.scale') > 2.4
+
+    # Trigger the same user-driven disposition change without Playwright
+    # scrolling/focusing the field and interfering with the pinch simulation.
+    page.evaluate("""() => {
+      const dispo = document.querySelector('.mod-sheet [data-key=dispo]');
+      dispo.value = 'sale';
+      dispo.dispatchEvent(new Event('change', {bubbles:true}));
+    }""")
+    popup = page.locator('.sale-panel[open]').first
+    expect(popup).to_be_visible()
+    assert page.evaluate('window.modalScaleAtOpen') == pytest.approx(1, abs=.02)
+    assert page.evaluate('window.visualViewport.scale') == pytest.approx(1, abs=.02)
+    assert page.locator('meta[name=viewport]').get_attribute('content') == (
+        'width=device-width,initial-scale=1'
+    )
+    assert page.locator('#sheets').get_attribute('data-zoom') == '1'
+    assert page.locator('#zoomFit,#zoomIn,#zoomOut').count() == 0
+    assert page.evaluate('window.modCspViolations') == []
+    popup.locator('.sale-done').click()
+    expect(popup).to_be_hidden()
+
+    # The fit is automatic for popups, but pinch remains available afterward.
+    cdp.send('Emulation.setPageScaleFactor', {'pageScaleFactor':2.5})
+    assert page.evaluate('window.visualViewport.scale') > 2.4
+    assert not service.allow_salesforce_writes and writer.applied == []

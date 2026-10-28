@@ -82,6 +82,42 @@
     });
   }
 
+  // The old Fit button reset the sheet's zoom and horizontal pan. Do the
+  // same automatically before EVERY popup instead of showing a Fit button.
+  // When the phone is pinch-zoomed, nudge the viewport's initial scale and
+  // restore it across frames. This returns Chromium to 1x; visual-viewport
+  // positioning remains the fallback where a browser ignores the reset.
+  document.addEventListener('mod-dialog-opening', event => {
+    const gate = event.detail;
+    if (!gate || typeof gate.show !== 'function') return;
+    gate.handled = true;
+    const sheets = document.getElementById('sheets');
+    if (sheets) {
+      sheets.dataset.zoom = '1';
+      sheets.scrollLeft = 0;
+    }
+    const meta = document.querySelector('meta[name="viewport"]');
+    const scale = window.visualViewport?.scale || 1;
+    if (!meta || Math.abs(scale - 1) < 0.01) {
+      gate.show();
+      return;
+    }
+    const original = meta.getAttribute('content');
+    const nudged = original?.replace(
+      /initial-scale\s*=\s*[\d.]+/i, 'initial-scale=1.001'
+    );
+    if (!original || !nudged || nudged === original) {
+      gate.show();
+      return;
+    }
+    meta.setAttribute('content', nudged);
+    requestAnimationFrame(() => {
+      // Never leave browser zoom restricted or change initial scale permanently.
+      meta.setAttribute('content', original);
+      requestAnimationFrame(gate.show);
+    });
+  });
+
   for (const dialog of dialogs) {
     dialog.addEventListener('mod-dialog-open', () => {
       active = dialog;

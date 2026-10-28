@@ -14,6 +14,10 @@ def test_dialog_viewport_owns_only_presentation_and_keeps_native_pinch():
     assert 'data-zoom=' not in html
     assert 'visualViewport' in js and 'resize' in js and 'scroll' in js
     assert 'mod-dialog-open' in js
+    assert 'mod-dialog-opening' in js
+    assert 'initial-scale=1.001' in js
+    assert "sheets.dataset.zoom = '1'" in js
+    assert 'mod-dialog-opening' in (root / 'static/mod_resulting/sheet.js').read_text()
     assert '.editor-dialog[open]' in css
     for forbidden in ('fetch(', 'XMLHttpRequest', '/api/', 'data-key',
                       'preventDefault(', 'localStorage', 'sessionStorage',
