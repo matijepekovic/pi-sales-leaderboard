@@ -9,6 +9,7 @@ from printer_app.mod_sheet_contract import ModSheetRecord
 from printer_app.mod_resulting.contract import (
     clean_draft, final_redline_text, outcome_fields,
     sale_redlines, sold_products, individual_product_sales,
+    sale_amount_totals, deposit_payment_text,
 )
 from printer_app.mod_resulting.pdf_export import render_resulting_pdf
 from printer_app.mod_resulting.service import ResultingService
@@ -51,6 +52,8 @@ def test_monthly_payment_is_optional_per_product_and_never_part_of_deposit_total
     assert sale_redlines(draft) == expected
     assert final_redline_text(draft) == '\n'.join(expected)
     payload = _payload(draft)
+    assert sale_amount_totals(draft) == {'deposit': '5000', 'payment': '159.5'}
+    assert deposit_payment_text(draft) == '5000/159.5'
     assert payload['deposit_total'] == '5000'
     assert payload['fields']['price'] == {'highest': '25000', 'lowest': '17000'}
     assert [item['product'] for item in payload['product_results']] == [
@@ -59,6 +62,20 @@ def test_monthly_payment_is_optional_per_product_and_never_part_of_deposit_total
     assert payload['product_results'][0]['price'] == '17000'
     assert payload['product_results'][1]['price'] == '22000'
     assert payload['final_redlines'] == '\n'.join(expected)
+
+
+def test_deposit_payment_override_changes_only_deposit_side():
+    draft = clean_draft({
+        'dispo': 'sale',
+        'deposit_override': '2500',
+        'sale_products': {
+            'Roofing': {'price': '17000', 'deposit': '500', 'payment': '159.50'},
+            'Windows': {'price': '22000', 'deposit': '1000', 'payment': '140.50'},
+        },
+    })
+    assert sale_amount_totals(draft) == {'deposit': '1500', 'payment': '300'}
+    assert deposit_payment_text(draft) == '2500/300'
+    assert _payload(draft)['deposit_total'] == '2500'
 
 
 def test_independent_product_sale_payment_never_changes_main_disposition():
@@ -91,6 +108,8 @@ def test_old_sale_drafts_without_payment_remain_compatible():
     draft = clean_draft({'dispo': 'sale', 'sale_products': original})
     assert draft['sale_products'] == original
     assert sale_redlines(draft) == ('SALE Roofing: $17,000 | Deposit: $0',)
+    assert sale_amount_totals(draft) == {'deposit': '0', 'payment': ''}
+    assert deposit_payment_text(draft) == '0/'
     assert _payload(draft)['deposit_total'] == '0'
 
 
@@ -139,4 +158,6 @@ def test_payment_printed_in_red_generated_notes_without_recoloring_old_notes():
     assert 'Customer asked for scope details' in text
     assert 'SALE Roofing:' in text
     assert 'Deposit: $0' in text
-    assert 'Payment: $159.50' in text.replace('\n', ' ')
+    flat = text.replace('\n', ' ')
+    assert 'Payment: $159.50' in flat
+    assert '0/159.5' in flat.replace(' ', '')
