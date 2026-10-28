@@ -336,7 +336,15 @@
     });
     sheet.addEventListener('input', event => {
       const input = event.target;
-      if (input instanceof HTMLElement && input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-product-price],[data-product-deposit]')) redraw();
+      if (!(input instanceof HTMLElement)) return;
+      if (input.dataset.key === 'call_1' || input.dataset.key === 'call_2') {
+        const mobile = sheet.querySelector('.mobile-call-actions [data-time-trigger="' + input.dataset.key + '"]');
+        if (mobile) {
+          const label = input.dataset.key === 'call_1' ? 'Call 1' : 'Call 2';
+          mobile.textContent = label + ': ' + (input.value || 'Set time');
+        }
+      }
+      if (input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-product-price],[data-product-deposit]')) redraw();
     });
     saleButton?.addEventListener('click', openSale);
     cxlButton?.addEventListener('click', () => openDialog(cxl, '[data-key="cxl_at_lead"]'));
