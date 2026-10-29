@@ -395,6 +395,30 @@ def test_promotion_text_or_picklist_uses_the_actual_value_when_edited():
     assert 'Promotion__c' not in unchecked
 
 
+def test_review_raw_value_is_viewable_and_untouched_override_does_not_replace_it():
+    schemas = _schemas()
+    for field in schemas['WorkOrder']['fields']:
+        if field['name'] == REVIEW_FIELD:
+            field['type'] = 'string'
+            field['length'] = 140
+    adapter, _ = _adapter(schemas=schemas)
+    assert adapter.checkbox_fields()['review']['kind'] == 'string'
+    original = {'review': {'value': 'Supervisor Approved', 'edited': False}}
+    work = _single(_operations(adapter, _payload('pns',
+        checkbox_values=original, review=True)), 'WorkOrder')[3]
+    assert REVIEW_FIELD not in work
+
+    changed = {'review': {'value': 'Complete', 'edited': True}}
+    work = _single(_operations(adapter, _payload('pns',
+        checkbox_values=changed, review=True)), 'WorkOrder')[3]
+    assert work[REVIEW_FIELD] == 'Complete'
+
+    cleared = {'review': {'value': None, 'edited': True}}
+    work = _single(_operations(adapter, _payload('pns',
+        checkbox_values=cleared, review=False)), 'WorkOrder')[3]
+    assert work[REVIEW_FIELD] is None
+
+
 def test_override_retains_individual_product_checkbox_values_until_user_changes_them():
     adapter, _ = _adapter(existing_results=[{
         'Id': PR1, 'Product_Interest__c': 'Roofing',
