@@ -128,8 +128,9 @@ body.dialog-open{overflow:hidden}
 .cxl-panel .dnr-option{max-width:100%}
 .checkbox-dialog{width:min(400px,calc(100vw - 28px))}
 .checkbox-dialog .checkbox-current{overflow-wrap:anywhere;white-space:pre-wrap;padding:6px 0;font:600 17px/1.4 system-ui,-apple-system,sans-serif}
-.checkbox-dialog #checkboxTextEditor,.checkbox-dialog #checkboxChoiceEditor,.checkbox-dialog #checkboxBooleanEditor{display:block}
-.checkbox-dialog #checkboxText,.checkbox-dialog #checkboxChoice,.checkbox-dialog #checkboxBoolean{width:100%}
+.checkbox-dialog #checkboxTextEditor,.checkbox-dialog #checkboxTextareaEditor,.checkbox-dialog #checkboxChoiceEditor,.checkbox-dialog #checkboxBooleanEditor{display:block}
+.checkbox-dialog #checkboxText,.checkbox-dialog #checkboxTextarea,.checkbox-dialog #checkboxChoice,.checkbox-dialog #checkboxBoolean{width:100%}
+.checkbox-dialog #checkboxTextarea{display:block;min-height:100px;resize:vertical;padding:9px 10px;border:1px solid #aeb6c2;border-radius:6px;background:#fff;color:#17212d;font:16px/1.35 system-ui,-apple-system,sans-serif}
 .checkbox-dialog .editor-hint{margin-top:12px}
 .time-dialog{width:min(440px,calc(100vw - 28px))}
 .time-options{display:flex;gap:10px}
