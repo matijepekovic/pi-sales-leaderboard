@@ -635,7 +635,7 @@ def test_end_of_day_three_popups_submit_only_explicitly_selected_work_order(mod_
         route.fulfill(status=202, json={'ok':True, 'job_id':1,
                                         'day':service.day(), 'total':1})
     page.route('**/mod-resulting/api/submit', fake_submit)
-    page.route('**/mod-resulting/api/submission-status', lambda route:
+    page.route('**/mod-resulting/api/submission-status?job_id=1', lambda route:
         route.fulfill(status=200, json={'ok':True, 'submission':{
             'id':1, 'day':service.day(), 'state':'queued', 'total':1,
             'submitted':0, 'pending':1, 'processing':0, 'failed':0,
