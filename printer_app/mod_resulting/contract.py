@@ -20,7 +20,7 @@ CHECKBOXES = (
 # Normalized, source-backed checkbox keys. Source-specific field identifiers
 # and allowed input types belong exclusively to the Salesforce adapter.
 SOURCE_CHECKBOXES = frozenset((
-    'docs', 'ninety_min', 'promotion', 'dnr', 'one_leg',
+    'docs', 'ninety_min', 'promotion', 'review', 'dnr', 'one_leg',
     'free_lead', 'cxl_at_lead',
 ))
 TEXT_FIELDS = (
