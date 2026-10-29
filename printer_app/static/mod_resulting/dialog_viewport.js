@@ -142,6 +142,12 @@
   }
   window.visualViewport?.addEventListener('resize', schedule, {passive:true});
   window.visualViewport?.addEventListener('scroll', schedule, {passive:true});
-  window.addEventListener('resize', schedule);
+  // WebKit can defer an already-queued animation frame while a native modal
+  // owns focus. Apply the resize geometry immediately, then reconcile it on
+  // the next frame when the browser reports its settled visual viewport.
+  window.addEventListener('resize', () => {
+    reposition();
+    schedule();
+  });
   window.addEventListener('orientationchange', schedule);
 })();

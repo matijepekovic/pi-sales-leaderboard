@@ -142,12 +142,21 @@ class ResultingRepository:
                             prior_notes if prior_notes is not None else imported_notes
                         ) and (prior_notes is not None or old['revision'] > 0)
                     )
-                    if local_edited_notes:
+                    if local_edited_notes or (
+                        old['revision'] > 0 and local.get('note_runs')
+                    ):
                         remote['notes'] = local['notes']
                         remote['note_runs'] = local.get('note_runs', [])
                     if local.get('redlines'):
                         remote['redlines'] = local['redlines']
-                completed = -1.0 if external_drafts[record.source_id]['dispo'] else None
+                source = external_drafts[record.source_id]
+                # A Salesforce product result is already submitted even when
+                # conflicting product outcomes cannot choose one main Dispo.
+                resulted = source['dispo'] or any(
+                    item.get('result')
+                    for item in source.get('product_results', {}).values()
+                )
+                completed = -1.0 if resulted else None
                 revised = old['revision'] if old else 0
                 if old and (clear_local or remote != json.loads(old['draft'])):
                     revised += 1

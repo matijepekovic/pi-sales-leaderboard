@@ -302,6 +302,7 @@ def test_conflicting_product_results_use_most_information_or_remain_unresolved()
         'Product_Interest__c':'Windows', 'Result__c':'No Pitch',
     }])
     assert more_info['dispo'] == 'pns'
+    assert more_info['result_detail'] == 'Price Objection'
     assert more_info['product_results']['Roofing']['result'] == 'pns'
     assert more_info['product_results']['Windows']['result'] == 'np'
 
@@ -313,6 +314,7 @@ def test_conflicting_product_results_use_most_information_or_remain_unresolved()
         'Result_Detail__c':'Not Home',
     }])
     assert tie['dispo'] == ''
+    assert tie['result_detail'] == ''
     assert tie['product_results']['Roofing']['result'] == 'pns'
     assert tie['product_results']['Windows']['result'] == 'np'
 
@@ -324,9 +326,58 @@ def test_conflicting_product_results_use_most_information_or_remain_unresolved()
     }])
     assert same['dispo'] == 'pns'
 
+    # A losing product's Result Detail must never be paired with the winning
+    # main disposition simply because it is the only nonempty detail.
+    mismatch = _mapped(None, [{
+        'Product_Interest__c':'Roofing', 'Result__c':'Pitch No Sale',
+        'Price_Given__c':18000, 'Free_Product_Lead__c':True,
+    }, {
+        'Product_Interest__c':'Windows', 'Result__c':'No Pitch',
+        'Result_Detail__c':'Not Home',
+    }])
+    assert mismatch['dispo'] == 'pns'
+    assert mismatch['result_detail'] == ''
+    assert mismatch['product_results']['Windows']['detail'] == 'Not Home'
+
     work_order_wins = _mapped('OOS', [{
         'Product_Interest__c':'Windows', 'Result__c':'Sale',
         'Price_Given__c':17000,
     }])
     assert work_order_wins['dispo'] == 'oos'
     assert work_order_wins['product_results']['Windows']['result'] == 'sale'
+
+
+def test_conflicting_remote_product_results_are_still_already_submitted(tmp_path):
+    repo = ResultingRepository(Database(tmp_path / 'printer.sqlite'))
+    remote = clean_draft({
+        'additional_products': True,
+        'product_results': {
+            'Roofing': {'result':'pns', 'detail':'', 'price':'', 'deposit':''},
+            'Windows': {'result':'np', 'detail':'', 'price':'', 'deposit':''},
+        },
+    })
+    assert remote['dispo'] == ''
+    repo.refresh(DAY, [RECORD], external_drafts={WORK:remote})
+    sheet = repo.sheets(DAY)[0]
+    assert sheet['draft'] == remote
+    assert sheet['submitted_at'] == -1.0
+    with __import__('pytest').raises(ValueError, match='Reload'):
+        repo.save_draft(DAY, WORK, clean_draft({'dispo':'sale'}), sheet['revision'])
+
+
+def test_refresh_preserves_existing_red_note_runs_when_text_matches_remote(tmp_path):
+    repo = ResultingRepository(Database(tmp_path / 'printer.sqlite'))
+    imported = clean_draft({'notes':'Same note'})
+    repo.refresh(DAY, [RECORD], external_drafts={WORK:imported})
+    local = clean_draft({
+        'notes':'Same note',
+        'note_runs':[{'text':'Same note', 'red':True}],
+        'review':True,
+    })
+    repo.save_draft(DAY, WORK, local, 0)
+    updated = clean_draft({'notes':'Changed Salesforce note'})
+    repo.refresh(DAY, [RECORD], external_drafts={WORK:updated})
+    actual = repo.sheets(DAY)[0]['draft']
+    assert actual['notes'] == 'Same note'
+    assert actual['note_runs'] == [{'text':'Same note', 'red':True}]
+    assert actual['review'] is False

@@ -130,7 +130,7 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
                     item.get(PR[key]) is True
                     for key in ('one_leg', 'free_lead', 'cxl_at_lead')
                 )
-                ranked_results.append((evidence, result))
+                ranked_results.append((evidence, result, detail.strip()))
                 per_product[product] = {
                     'result': result, 'detail': detail,
                     'price': price, 'deposit': '',
@@ -140,15 +140,22 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             for key in ('free_lead', 'cxl_at_lead'):
                 if item.get(PR[key]) is True:
                     draft[key] = True
+        chosen_details = details
         if not dispo and ranked_results:
-            most_information = max(score for score, _ in ranked_results)
-            contenders = {result for score, result in ranked_results
-                          if score == most_information}
+            most_information = max(score for score, _, _ in ranked_results)
+            leaders = [(result, detail) for score, result, detail in ranked_results
+                       if score == most_information]
+            contenders = {result for result, _ in leaders}
             if len(contenders) == 1:
                 dispo = contenders.pop()
                 draft['dispo'] = dispo
-        if len(details) == 1:
-            draft['result_detail'] = next(iter(details))
+                # Main Result Detail belongs to the same winning product(s);
+                # never attach a losing product's reason to the chosen Dispo.
+                chosen_details = {detail for _, detail in leaders if detail}
+            else:
+                chosen_details = set()
+        if len(chosen_details) == 1:
+            draft['result_detail'] = next(iter(chosen_details))
         if per_product:
             # Preserve every product's actual Salesforce result, including
             # minority outcomes when the main Dispo is Sale.
