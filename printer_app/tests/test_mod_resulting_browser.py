@@ -307,6 +307,50 @@ def test_long_press_reads_completed_checkmarks_and_edits_unresulted_source_value
     evidence('checkbox-long-press')
 
 
+def test_long_press_textarea_preserves_multiline_source_value_on_phone(mod_browser):
+    from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import clean_draft
+
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width':390,'height':844})
+    record = service.source.records_data[1]
+    writer.checkbox_fields = lambda: {
+        'docs': {'kind':'textarea','editable':True,'nullable':True,
+                 'length':3000,'choices':[]},
+    }
+    writer.read_results = lambda rows: {
+        record.source_id: clean_draft({
+            'docs':True,
+            'checkbox_values': {
+                'docs':{'value':'Reviewed\nPending upload','edited':False},
+            },
+        }),
+    }
+    service.refresh(service.day())
+    page.goto(origin + '/mod-resulting')
+    sheet = page.locator('.mod-sheet').nth(1)
+    label = sheet.locator('.field-docs label')
+    label.scroll_into_view_if_needed()
+    bounds = label.bounding_box()
+    page.mouse.move(bounds['x']+bounds['width']/2, bounds['y']+bounds['height']/2)
+    page.mouse.down()
+    page.wait_for_timeout(720)
+    page.mouse.up()
+    popup = page.locator('#checkboxDialog')
+    expect(popup).to_be_visible()
+    expect(popup.locator('#checkboxCurrent')).to_have_text('Reviewed\nPending upload')
+    expect(popup.locator('#checkboxTextarea')).to_have_value('Reviewed\nPending upload')
+    popup.locator('#checkboxTextarea').fill('Reviewed\nApproved\nFiled')
+    popup.locator('#checkboxApply').click()
+    page.wait_for_timeout(800)
+    draft = service.repository.sheets(service.day())[1]['draft']
+    assert draft['docs'] is True
+    assert draft['checkbox_values']['docs'] == {
+        'value':'Reviewed\nApproved\nFiled', 'edited': True,
+    }
+    assert writer.applied == []
+
+
 @pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
 def test_completed_override_button_unlocks_one_sheet_and_refresh_restores_salesforce(mod_browser, viewport):
     from playwright.sync_api import expect
