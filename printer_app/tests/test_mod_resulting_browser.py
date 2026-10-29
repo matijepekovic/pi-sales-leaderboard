@@ -269,7 +269,9 @@ def test_long_press_reads_completed_checkmarks_and_edits_unresulted_source_value
     expect(popup.locator('.editor-heading,.editor-close,#checkboxReadOnly')).to_have_count(0)
     expect(popup.locator('button:visible')).to_have_count(1)
     expect(popup.locator('button:visible')).to_have_text('Close')
-    assert popup.inner_text().strip() == 'Signed in Salesforce\nClose'
+    assert [line.strip() for line in popup.inner_text().splitlines() if line.strip()] == [
+        'Signed in Salesforce', 'Close'
+    ]
     assert popup.bounding_box()['height'] < 160
     assert popup.bounding_box()['width'] < 340
     popup.locator('.editor-secondary').click()
