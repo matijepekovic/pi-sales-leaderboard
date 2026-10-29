@@ -185,7 +185,7 @@ class ResultingRepository:
                 raise ValueError('Submission in progress; editing is locked.')
             updated = conn.execute('''UPDATE mod_result_sheets
                 SET override_active=1,revision=revision+1,submit_error=''
-                WHERE day=? AND work_order_id=? AND current=1
+                WHERE day=? AND work_order_id=?
                 AND submitted_at IS NOT NULL AND override_active=0
                 AND revision=?''', (day, work_order_id, int(revision)))
             if updated.rowcount != 1:
