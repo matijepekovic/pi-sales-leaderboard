@@ -155,7 +155,7 @@ class _FitClipParagraph(Flowable):
             text.setFont('Times-Bold', self.value_font_size)
             text.textOut(self.label)
             if self.time_lines == 2:
-                text.moveCursor(-stringWidth(self.label, 'Times-Bold', self.value_font_size), -(self.value_font_size + 2))
+                text.moveCursor(0, self.value_font_size + 2)
             text.setFont('Times-Roman', self.value_font_size)
             text.textOut(self.value)
             canv.drawText(text)

@@ -814,6 +814,7 @@
   let currentSubmission = null;
   let progressTimer = null;
   let submissionActive = false;
+  let autoOpenedProgress = false;
 
   function eligibleSheets() {
     return sheets.filter(sheet =>
@@ -915,7 +916,8 @@
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || 'Progress unavailable');
       renderSubmission(data.submission);
-      if (data.submission && (openWhenActive || (submissionActive && !progressDialog.open))) {
+      if (data.submission && (openWhenActive || (submissionActive && !autoOpenedProgress))) {
+        autoOpenedProgress = true;
         openDialog(progressDialog);
       }
     } catch (error) {

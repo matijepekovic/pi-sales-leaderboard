@@ -817,7 +817,7 @@ def test_print_all_http_and_submission_http_are_independent(tmp_path):
     from printer_app.config import Config
     from printer_app.tests.auth_helpers import login_admin
     env = tmp_path/'env'
-    env.write_text('EMAIL_ENABLED=0\\n')
+    env.write_text('EMAIL_ENABLED=0\n')
     app = create_app(Config(data_dir=tmp_path/'data', env_file=env,
                             secret_key='s'*64, email_enabled=False))
     service = app.extensions['mod_resulting']
