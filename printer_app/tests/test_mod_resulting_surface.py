@@ -12,7 +12,7 @@ from pypdf import PdfReader, PdfWriter
 from reportlab.lib.pagesizes import letter
 
 from printer_app.mod_sheet_contract import ModSheetRecord
-from printer_app.mod_sheets.pdf_renderer import render_mod_pdf
+from printer_app.mod_sheets.pdf_renderer import PRODUCT_COLORS, render_mod_pdf
 from printer_app.mod_resulting.surface import (
     BOXES, DPI, HEIGHT, LEFT, TOP, WIDTH, ModSheetSurface, SheetSurfaceError, overlay_css,
 )
@@ -75,6 +75,22 @@ def test_color_code_reuses_printer_renderer_and_separate_image_cache():
         # existing PRODUCT_COLORS palette, not a second MOD Resulting palette.
         assert any(r < 40 and g > 140 and b > 200
                    for r, g, b in image.convert('RGB').getdata())
+
+
+@pytest.mark.skipif(not shutil.which('pdftoppm'), reason='Poppler required for color rendering')
+def test_gutters_is_purple_in_shared_printer_and_resulting_color_palette():
+    palette = {key: color for key, _, color in PRODUCT_COLORS}
+    assert palette['gutters'] == '#B266FF'
+    assert palette['roofing'] == '#00B0F0'  # Roofing stays blue.
+
+    record = replace(RECORD, product_interest='Gutters')
+    surface = ModSheetSurface(render_mod_pdf)
+    with Image.open(BytesIO(surface.image(record, color_code=True))) as colored:
+        assert any(abs(r - 178) <= 3 and abs(g - 102) <= 3 and abs(b - 255) <= 3
+                   for r, g, b in colored.convert('RGB').getdata())
+    with Image.open(BytesIO(surface.image(record, color_code=False))) as plain:
+        assert not any(abs(r - 178) <= 3 and abs(g - 102) <= 3 and abs(b - 255) <= 3
+                       for r, g, b in plain.convert('RGB').getdata())
 
 
 def test_coordinates_use_the_original_mod_notes_cell_and_allow_only_overlays():
