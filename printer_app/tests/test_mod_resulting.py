@@ -601,7 +601,9 @@ def test_completed_override_unlocks_one_sheet_and_resubmits_with_other_jobs(tmp_
     service.pdf_exporter = lambda sheets: (
         pages.append([s['work_order_id'] for s in sheets]) or b'%PDF mocked'
     )
-    assert service.submit(DAY) == {'submitted':2, 'day':DAY, 'pdf':True}
+    assert service.submit(DAY) == {'submitted':2, 'day':DAY}
+    assert pages == []  # Submitting never renders a PDF.
+    assert service.export_all_pdf(DAY) == b'%PDF mocked'
     assert len(writer.applied) == 2
     assert {p['work_order_id'] for p in writer.plans} == {
         WORK, second.source_id
@@ -617,7 +619,9 @@ def test_completed_override_unlocks_one_sheet_and_resubmits_with_other_jobs(tmp_
     # appears once in the PDF; it is never duplicated beside its old receipt.
     revision = service.override(DAY, WORK, first['revision'])
     service.save(DAY, WORK, clean_draft({'dispo':'cxl'}), revision)
-    assert service.submit(DAY, [WORK]) == {'submitted':1, 'day':DAY, 'pdf':True}
+    assert service.submit(DAY, [WORK]) == {'submitted':1, 'day':DAY}
+    assert len(pages) == 1  # No automatic replacement PDF during Override.
+    assert service.export_all_pdf(DAY) == b'%PDF mocked'
     assert pages[1].count(WORK) == 1
     assert pages[1].count(second.source_id) == 1
     assert repo.sheets(DAY)[0]['override_active'] == 0
@@ -687,7 +691,7 @@ def test_existing_sqlite_version_one_migrates_override_flag_without_data_loss(tm
     first = db.one('SELECT draft,submitted_at,override_active FROM mod_result_sheets')
     assert first == {'draft':'{"dispo":"cxl"}',
                      'submitted_at':-1.0, 'override_active':0}
-    assert db.one('PRAGMA user_version')['user_version'] == 2
+    assert db.one('PRAGMA user_version')['user_version'] == 3
     assert Database(path).one('SELECT override_active FROM mod_result_sheets') == {
         'override_active':0
     }
