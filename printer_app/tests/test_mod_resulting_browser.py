@@ -174,6 +174,42 @@ def mod_browser(tmp_path, request):
 
 
 @pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
+def test_saved_product_colors_keep_multiselect_controls_in_same_sheet_cells(mod_browser, viewport):
+    from playwright.sync_api import expect
+    from printer_app.mod_sheets.policy import ModSheetAutomationSettings
+    from printer_app.mod_sheets.repository import ModSheetAutomationRepository
+
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width': viewport[0], 'height': viewport[1]})
+    assert page.goto(origin + '/mod-resulting').status == 200
+    field = page.locator('.mod-sheet').first.locator('.field-product')
+    assert field.count() == 1
+    expect(field).not_to_have_class('cell field-product replacement color-coded-product')
+    original = field.locator('.separate-products').bounding_box()
+    expect(field.locator('.product-summary')).to_be_visible()
+
+    settings = ModSheetAutomationRepository(service.repository.db)
+    settings.save_settings(ModSheetAutomationSettings(
+        market_segment='Olympia', color_code=True
+    ))
+    page.reload(wait_until='domcontentloaded')
+    field = page.locator('.mod-sheet').first.locator('.field-product')
+    expect(field).to_have_class('cell field-product replacement color-coded-product')
+    assert field.evaluate('(el) => getComputedStyle(el).backgroundColor') == 'rgba(0, 0, 0, 0)'
+    assert field.locator('.product-summary').evaluate(
+        '(el) => getComputedStyle(el).visibility'
+    ) == 'hidden'
+    updated = field.locator('.separate-products').bounding_box()
+    assert abs(original['x'] - updated['x']) < 1
+    assert abs(original['y'] - updated['y']) < 1
+    expect(field.locator('[data-key=additional_products]')).to_be_enabled()
+    field.locator('[data-key=additional_products]').check()
+    expect(field.locator('.product-panel')).to_be_visible()
+    field.locator('.product-panel .editor-primary').click()
+    assert not writer.applied
+
+
+@pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
 def test_completed_override_button_unlocks_one_sheet_and_refresh_restores_salesforce(mod_browser, viewport):
     from playwright.sync_api import expect
     from printer_app.mod_resulting.contract import clean_draft
