@@ -32,7 +32,7 @@ class ResultingService:
     def day(self):
         return datetime.now(self.zone).date().isoformat()
 
-    def refresh(self, day):
+    def refresh(self, day, *, clear_local=False):
         # The same normalized records and market settings used by Printer;
         # canceled/unconfirmed results are included for live routing changes.
         config = self.settings_repository.settings()
@@ -53,15 +53,26 @@ class ResultingService:
         external = reader(records) if callable(reader) else {}
         if not isinstance(external, dict):
             raise ValueError('Salesforce resulting refresh returned invalid records.')
-        normalized = {}
-        for record in records:
-            if record.source_id in external:
-                normalized[record.source_id] = clean_draft(external[record.source_id])
+        # A successful read is authoritative, including blank Salesforce
+        # values. Do not allow stale local test fields to survive Refresh.
+        normalized = {
+            record.source_id: clean_draft(external.get(record.source_id, {}))
+            for record in records
+        }
         self.repository.refresh(
             day, records, external_drafts=normalized,
             market_segment=kwargs['market_segment'],
+            clear_local=clear_local,
         )
         return len(records)
+
+    def clear_local(self, day):
+        """Discard local drafts and restore verified Salesforce values.
+
+        This performs read-only Salesforce queries; it never calls the writer
+        or touches real End-of-Day submission receipts.
+        """
+        return self.refresh(day, clear_local=True)
 
     def snapshot(self, day):
         state = self.repository.day(day)

@@ -95,13 +95,15 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             draft['dnr'] = dnr is True
             draft['dnr_reason'] = str(lead.get(LEAD_FIELDS['dnr_reason']) or '')
             draft['one_leg'] = one_leg is True
-            if dispo:
-                draft['lead_status'] = str(lead.get(LEAD_FIELDS['status']) or '')
-                draft['previous_result'] = str(
-                    lead.get(LEAD_FIELDS['previous_result']) or ''
-                )
+            # These are independent Salesforce fields, not conditional on
+            # WorkOrder.Dispo__c being populated.
+            draft['lead_status'] = str(lead.get(LEAD_FIELDS['status']) or '')
+            draft['previous_result'] = str(
+                lead.get(LEAD_FIELDS['previous_result']) or ''
+            )
 
         per_product, sales, details, seen = {}, {}, set(), set()
+        ranked_results = []
         for item in products.get(work_id, ()):
             product = str(item.get(PR['product']) or '').strip()
             if not product:
@@ -118,6 +120,17 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
                 details.add(detail)
             price = _money(item.get(PR['price']))
             if result:
+                # When WorkOrder.Dispo__c is empty, choose the best-supported
+                # product result. A price of zero is still a recorded value;
+                # false checkboxes are not extra evidence. Never guess on
+                # conflicting results with an equal amount of information.
+                evidence = int(bool(detail.strip())) + int(
+                    item.get(PR['price']) is not None
+                ) + sum(
+                    item.get(PR[key]) is True
+                    for key in ('one_leg', 'free_lead', 'cxl_at_lead')
+                )
+                ranked_results.append((evidence, result))
                 per_product[product] = {
                     'result': result, 'detail': detail,
                     'price': price, 'deposit': '',
@@ -127,8 +140,20 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             for key in ('free_lead', 'cxl_at_lead'):
                 if item.get(PR[key]) is True:
                     draft[key] = True
+        if not dispo and ranked_results:
+            most_information = max(score for score, _ in ranked_results)
+            contenders = {result for score, result in ranked_results
+                          if score == most_information}
+            if len(contenders) == 1:
+                dispo = contenders.pop()
+                draft['dispo'] = dispo
         if len(details) == 1:
             draft['result_detail'] = next(iter(details))
+        if per_product:
+            # Preserve every product's actual Salesforce result, including
+            # minority outcomes when the main Dispo is Sale.
+            draft['additional_products'] = True
+            draft['product_results'] = per_product
         if dispo == 'sale':
             # One sold product can be reconstructed from the Work Order total.
             # Multiple products cannot be split reliably from that total.
@@ -140,8 +165,5 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
                 if len(parts) == 2 and parts[1]:
                     sold['payment'] = parts[1]
             draft['sale_products'] = sales
-        elif per_product:
-            draft['additional_products'] = True
-            draft['product_results'] = per_product
         output[work_id] = draft
     return output

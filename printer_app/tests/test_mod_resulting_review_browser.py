@@ -62,15 +62,14 @@ def test_review_checkbox_persists_independently_in_checklist_row(mod_browser, vi
         with page.expect_navigation(wait_until='domcontentloaded'):
             page.locator('#refresh').click()
         expect(first).to_have_class('mod-sheet surface-ready')
-        if selected:
-            expect(review).to_be_checked()
-        else:
-            expect(review).not_to_be_checked()
+        # Review has no Salesforce source in this fake adapter, so Refresh
+        # restores its authoritative false value even after local edits.
+        expect(review).not_to_be_checked()
         expect(notes).to_have_value(black_note)
         assert first.locator('.notes-text textarea').count() == 1
         expect(first.locator('.manual-redlines')).to_have_text(red_note)
         draft = service.repository.sheets(service.day())[0]['draft']
-        assert draft['review'] is selected
+        assert draft['review'] is False
         assert draft['notes'] == black_note
         assert draft['redlines'] == red_note
         assert draft['note_runs'] == []

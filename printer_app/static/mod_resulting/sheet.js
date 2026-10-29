@@ -576,6 +576,36 @@
     } catch (error) { message(error.message); button.disabled = false; }
   });
 
+  const clearDialog = document.getElementById('clearConfirm');
+  const clearButton = document.getElementById('clearLocal');
+  const confirmClear = document.getElementById('confirmClear');
+  clearButton.addEventListener('click', () => openDialog(clearDialog, '#cancelClear'));
+  confirmClear.addEventListener('click', async () => {
+    confirmClear.disabled = true;
+    clearButton.disabled = true;
+    try {
+      // Clear intentionally discards unsaved edits: do not call flushAll().
+      // Drain any save already in flight before the authoritative reset so
+      // it cannot reintroduce stale local data after Clear.
+      for (const timeout of timers.values()) clearTimeout(timeout);
+      timers.clear();
+      await Promise.all([...pending.values()].map(task => task.catch(() => {})));
+      await post(root.dataset.clear);
+      location.reload();
+    } catch (error) {
+      closeDialog(clearDialog);
+      message('Clear failed: ' + error.message);
+      // Restore normal autosave if the Salesforce read failed: the repository
+      // leaves local data untouched until a complete remote snapshot arrives.
+      for (const sheet of sheets) {
+        if (sheet.dataset.dirty === 'yes') scheduleSave(sheet);
+      }
+      clearButton.disabled = false;
+    } finally {
+      confirmClear.disabled = false;
+    }
+  });
+
   const confirmation = document.getElementById('endConfirm');
   const methodDialog = document.getElementById('endMethod');
   const selectionDialog = document.getElementById('endSelect');

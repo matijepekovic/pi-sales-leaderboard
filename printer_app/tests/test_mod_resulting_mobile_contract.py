@@ -40,6 +40,11 @@ def test_dialog_viewport_owns_only_presentation_and_keeps_native_pinch():
     assert 'Optional deposit override' not in html
     assert 'function numericExtremes(' in sheet_js
     assert 'input.placeholder = calculated[key]' in sheet_js
+    assert 'data-clear="{{ url_for(\'mod_resulting.clear_local\') }}"' in html
+    assert 'id="clearLocal"' in html
+    assert 'id="clearConfirm"' in html
+    assert "await post(root.dataset.clear);" in sheet_js
+    assert 'async function flushAll()' in sheet_js
     for popup in ('endConfirm', 'endMethod', 'endSelect'):
         assert 'id="' + popup + '"' in html
     assert "selectedWorkOrders()" in sheet_js

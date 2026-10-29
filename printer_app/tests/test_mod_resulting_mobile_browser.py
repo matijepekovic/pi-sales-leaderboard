@@ -43,7 +43,7 @@ def test_phone_native_pinch_and_refresh_keep_the_actual_sheet(mod_browser, viewp
     assert first.bounding_box()['width'] == pytest.approx(width - 16, abs=1)
     assert first.bounding_box()['y'] >= page.locator('.floating-controls').bounding_box()['height']
     _assert_overlay_positions(first)
-    for selector in ('#nameSearch', '#dailyMod', '#refresh', '#submitDay'):
+    for selector in ('#nameSearch', '#dailyMod', '#refresh', '#clearLocal', '#submitDay'):
         box = page.locator(selector).bounding_box()
         assert box['x'] >= 0 and box['x'] + box['width'] <= width + 1
         assert box['height'] >= 44
@@ -64,9 +64,9 @@ def test_phone_native_pinch_and_refresh_keep_the_actual_sheet(mod_browser, viewp
     expect(page.locator('#sheets')).not_to_have_attribute('data-zoom', '3')
     expect(first.locator('[data-key=notes]')).to_have_value('Phone black notes')
     expect(first.locator('[data-key=redlines]')).to_have_count(1)
-    expect(first.locator('[data-key=review]')).to_be_checked()
+    expect(first.locator('[data-key=review]')).not_to_be_checked()
     saved = service.repository.sheets(service.day())[0]['draft']
-    assert saved['notes'] == 'Phone black notes' and saved['review'] is True
+    assert saved['notes'] == 'Phone black notes' and saved['review'] is False
     assert first.bounding_box()['width'] == pytest.approx(width - 16, abs=1)
     _assert_overlay_positions(first)
     page.locator('#nameSearch').fill('Alex')
@@ -104,7 +104,7 @@ def test_setup_notice_is_absent_but_failed_saves_still_show(mod_browser, monkeyp
     assert page.evaluate('window.modCspViolations') == []
 
 
-def test_saved_sale_and_dnr_choices_survive_missing_salesforce_metadata(mod_browser, monkeypatch):
+def test_saved_sale_and_dnr_choices_load_with_metadata_outage_but_refresh_uses_salesforce(mod_browser, monkeypatch):
     from playwright.sync_api import expect
     from printer_app.mod_resulting.contract import clean_draft
 
@@ -146,10 +146,9 @@ def test_saved_sale_and_dnr_choices_survive_missing_salesforce_metadata(mod_brow
         page.locator('#refresh').click()
 
     draft = service.repository.sheets(day)[0]['draft']
-    assert draft['sale_products'] == {
-        'Windows': {'price': '18000', 'deposit': '0'},
-    }
-    assert draft['dnr_reason'] == 'Roofing'
+    assert draft['sale_products'] == {}
+    assert draft['dnr_reason'] == ''
+    assert draft['dispo'] == ''
     assert draft['notes'] == 'Saved before metadata outage\nEdited comment during metadata outage'
     assert draft['redlines'] == ''
     assert not service.allow_salesforce_writes and writer.applied == []

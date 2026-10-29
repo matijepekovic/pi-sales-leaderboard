@@ -106,6 +106,14 @@ def blueprint(service, surface):
             return jsonify(ok=False, error=str(exc)[:400]), 422
         return jsonify(ok=True, count=count)
 
+    @bp.post('/api/clear')
+    def clear_local():
+        try:
+            count = service.clear_local(service.day())
+        except Exception as exc:
+            return jsonify(ok=False, error=str(exc)[:400]), 422
+        return jsonify(ok=True, count=count)
+
     @bp.post('/api/mod')
     def choose_mod():
         try:

@@ -62,23 +62,30 @@ def test_times_are_am_pm_and_disallow_unexpected_draft_fields():
         clean_draft({'salesforce_api_field':'Status'})
 
 
-def test_refresh_preserves_unsent_notes_and_removed_routing(tmp_path):
+def test_refresh_preserves_only_local_notes_and_updates_routing(tmp_path):
     repo = ResultingRepository(Database(tmp_path/'printer.sqlite'))
-    repo.refresh(DAY,[RECORD])
-    revision = repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns','notes':'Do not lose'}),0)
+    repo.refresh(DAY, [RECORD], external_drafts={WORK:clean_draft({})})
+    revision = repo.save_draft(
+        DAY, WORK, clean_draft({'dispo':'pns','notes':'Do not lose',
+                                'review':True, 'numbers':'99999'}), 0)
     assert revision == 1
-    changed = ModSheetRecord(source_id=WORK,lead_source_id=LEAD,lead_name='Example Customer',
-        work_order_number='00001234',assigned_service_resources=('Reassigned Rep',))
-    repo.refresh(DAY,[changed])
+    changed = ModSheetRecord(
+        source_id=WORK,lead_source_id=LEAD,lead_name='Example Customer',
+        work_order_number='00001234',assigned_service_resources=('Reassigned Rep',)
+    )
+    sf = clean_draft({'dispo':'np','numbers':'18000', 'need':'Verified',
+                      'notes':'Salesforce note'})
+    repo.refresh(DAY, [changed], external_drafts={WORK:sf})
     row = repo.sheets(DAY)[0]
-    assert row['draft']['notes'] == 'Do not lose'
+    assert row['draft'] == dict(sf, notes='Do not lose')
+    assert row['submitted_at'] == -1.0  # Already resulted in Salesforce.
     assert row['snapshot']['assigned_service_resources'] == ['Reassigned Rep']
-    assert row['revision'] == 1
+    assert row['revision'] == 2
     with pytest.raises(ValueError,match='Reload'):
-        repo.save_draft(DAY,WORK,clean_draft({'dispo':'sale'}),0)
-    repo.refresh(DAY,[])
+        repo.save_draft(DAY, WORK, clean_draft({'dispo':'sale'}), 1)
+    repo.refresh(DAY, [])
     assert repo.sheets(DAY)[0]['current'] == 0
-    assert repo.sheets(DAY)[0]['draft']['dispo'] == 'pns'
+    assert repo.sheets(DAY)[0]['draft']['dispo'] == 'np'
 
 
 class Source:
@@ -104,6 +111,43 @@ def _service(tmp_path):
     service=ResultingService(repo,source,writer,settings,'America/Los_Angeles',
                              allow_salesforce_writes=True)
     return service,repo,source,writer
+
+
+def test_clear_local_restores_salesforce_and_never_writes_to_salesforce(tmp_path):
+    service,repo,source,writer = _service(tmp_path)
+    sf_before = clean_draft({'notes':'Initial remote note'})
+    writer.read_results = lambda records: {WORK: sf_before}
+    service.refresh(DAY)
+    initial = repo.sheets(DAY)[0]
+    assert initial['draft']['notes'] == 'Initial remote note'
+    assert initial['submitted_at'] is None
+
+    repo.save_draft(DAY, WORK, clean_draft({
+        'dispo':'sale', 'notes':'Local testing', 'redlines':'Local ink',
+        'numbers':'99999', 'review':True,
+    }), initial['revision'])
+    sf_after = clean_draft({
+        'dispo':'pns', 'notes':'Real Salesforce note',
+        'numbers':'25000\\n17000',
+        'result_detail':'Procrastination',
+    })
+    writer.read_results = lambda records: {WORK:sf_after}
+    assert service.clear_local(DAY) == 1
+    actual = repo.sheets(DAY)[0]
+    assert actual['draft'] == sf_after
+    assert actual['submitted_at'] == -1.0
+    assert actual['revision'] > initial['revision']
+    assert writer.applied == [] and writer.plans == []
+    assert len(source.queries) == 2
+
+    # A failed Salesforce read cannot erase the user's local drafts.
+    def unavailable(records):
+        raise RuntimeError('Salesforce unavailable')
+    writer.read_results = unavailable
+    previous = dict(actual)
+    with pytest.raises(RuntimeError, match='Salesforce unavailable'):
+        service.clear_local(DAY)
+    assert repo.sheets(DAY)[0] == previous
 
 
 def test_daily_mod_selection_refresh_and_end_of_day_idempotence(tmp_path):

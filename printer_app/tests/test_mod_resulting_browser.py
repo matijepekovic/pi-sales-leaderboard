@@ -225,8 +225,8 @@ def test_mod_sheets_search_customers_and_assigned_reps_only(mod_browser):
     expect(page.locator('.mod-sheet').first.locator('[data-key=notes]')).to_have_value('Black comment')
     expect(page.locator('.mod-sheet').first.locator('[data-key=redlines]')).to_have_value('REDLINE')
     row = service.repository.sheets(service.day())[0]
-    assert row['draft']['dispo'] == 'cxl'
-    assert row['draft']['cxl_at_lead'] is True
+    assert row['draft']['dispo'] == ''  # Salesforce returned no disposition.
+    assert row['draft']['cxl_at_lead'] is False
 
     with page.expect_response('**/mod-resulting/api/mod') as response:
         page.locator('#dailyMod').select_option(MOD)
@@ -236,6 +236,9 @@ def test_mod_sheets_search_customers_and_assigned_reps_only(mod_browser):
     assert page.locator('#notice').evaluate(
         "(el) => el.parentElement.classList.contains('floating-controls')")
     assert service.repository.day(service.day())['mod_user_id'] == MOD
+    # The read-only remote fixture has no disposition. Enter a new local one
+    # before testing End of Day's confirmation dialogs.
+    first.locator('[data-key=dispo]').select_option('pns')
     page.locator('#submitDay').click()
     expect(page.locator('#endConfirm')).to_be_visible()
     expect(page.locator('#endMethod')).to_be_hidden()
@@ -256,6 +259,89 @@ def test_mod_sheets_search_customers_and_assigned_reps_only(mod_browser):
     expect(page.locator('.editor-dialog[open]')).to_have_count(0)
     assert not writer.applied
     evidence('search-and-refresh')
+
+
+@pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
+def test_clear_button_resets_local_drafts_only_after_confirmation(mod_browser, viewport):
+    from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import clean_draft
+
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width':viewport[0],'height':viewport[1]})
+    page.goto(origin + '/mod-resulting')
+    sheet = page.locator('.mod-sheet').first
+    sheet.locator('[data-key=notes]').fill('Local notes to clear')
+    sheet.locator('[data-key=numbers]').fill('98765')
+    sheet.locator('[data-key=review]').check()
+    sheet.locator('[data-key=dispo]').select_option('pns')
+    sheet.locator('.red-pen').click()
+    popup = sheet.locator('.redlines-panel')
+    popup.locator('[data-key=redlines]').fill('Local redline to clear')
+    popup.locator('.editor-primary').click()
+
+    clear = page.locator('#clearLocal')
+    expect(clear).to_be_visible()
+    assert clear.evaluate(
+        "(el) => el.previousElementSibling.id") == 'refresh'
+    clear.click()
+    confirm = page.locator('#clearConfirm')
+    expect(confirm).to_be_visible()
+    expect(confirm).to_contain_text('Salesforce will not be changed')
+    expect(page.locator('.editor-dialog[open]')).to_have_count(1)
+    page.locator('#cancelClear').click()
+    expect(confirm).to_be_hidden()
+    expect(sheet.locator('[data-key=notes]')).to_have_value('Local notes to clear')
+    expect(sheet.locator('[data-key=dispo]')).to_have_value('pns')
+    clear.click()
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#confirmClear').click()
+    current = service.repository.sheets(service.day())[0]
+    assert current['draft'] == clean_draft({})
+    assert current['submitted_at'] is None
+    assert current['revision'] > 0
+    expect(sheet.locator('[data-key=notes]')).to_have_value('')
+    expect(sheet.locator('.manual-redlines')).to_be_hidden()
+    expect(sheet.locator('[data-key=dispo]')).to_have_value('')
+    assert not writer.applied
+
+
+def test_clear_discards_local_notes_and_restores_salesforce_without_writes(mod_browser):
+    from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import clean_draft
+
+    page, service, writer, origin, evidence = mod_browser
+    day = service.day()
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+    ident = first.get_attribute('data-id')
+    first.locator('[data-key=notes]').fill('Local test gibberish')
+    first.locator('[data-key=dispo]').select_option('sale')
+    first.locator('.sale-panel .sale-done').click()
+    # The next Clear reads the actual Salesforce adapter contract, not the
+    # local draft or the previous unsubmitted sheet's user-selected Dispo.
+    remote = clean_draft({
+        'dispo':'pns',
+        'notes':'Verified Salesforce MOD Notes',
+        'numbers':'25000\\n17000', 'result_detail':'Price Objection',
+    })
+    calls = []
+    def remote_results(records):
+        calls.append(tuple(r.source_id for r in records))
+        return {r.source_id: remote for r in records if r.source_id == ident}
+    writer.read_results = remote_results
+
+    page.locator('#clearLocal').click()
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#confirmClear').click()
+    assert calls and ident in calls[0]
+    refreshed = service.repository.sheets(day)[0]
+    assert refreshed['draft'] == remote
+    assert refreshed['submitted_at'] == -1.0
+    expect(first.locator('[data-key=notes]')).to_have_value(
+        'Verified Salesforce MOD Notes')
+    expect(first.locator('[data-key=dispo]')).to_have_value('pns')
+    expect(first).to_have_attribute('data-submitted','yes')
+    assert not writer.applied
 
 
 def test_end_of_day_three_popups_submit_only_explicitly_selected_work_order(mod_browser):
@@ -415,14 +501,13 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     assert draft['notes'] == 'Black comment above redlines.'
     assert draft['redlines'] == 'REPLACE TRIM WITH FULL SCOPE.'
     assert draft['note_runs'] == []
-    assert draft['dnr_reason'] == 'Roofing'
-    assert draft['sale_products'] == {
-        'Roofing':{'price':'17850','deposit':'0','payment':'159'},
-        'Siding':{'price':'0','deposit':''},
-    }
-    assert draft['call_1'] == '10:15 AM'
-    assert draft['call_2'] == '10:27 AM'
-    assert draft['review'] is True
+    assert draft['dnr_reason'] == ''
+    assert draft['sale_products'] == {}
+    assert draft['call_1'] == ''
+    assert draft['call_2'] == ''
+    assert draft['review'] is False
+    assert draft['dispo'] == ''
+    assert draft['numbers'] == ''
     first.locator('[data-key=review]').uncheck()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
@@ -528,14 +613,13 @@ def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, vi
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     saved = service.repository.sheets(service.day())[0]['draft']
-    assert saved['dnr_reason'] == 'Roofing'
-    assert saved['sale_products'] == {
-        'Roofing': {'price':'17000', 'deposit':'0', 'payment':'135'},
-    }
-    assert saved['cxl_at_lead'] is True
-    assert saved['call_1'] == '10:15 AM'
-    assert saved['call_2'] == '1:27 PM'
-    assert saved['product_results']['Roofing']['result'] == 'np'
+    assert saved['dnr_reason'] == ''
+    assert saved['sale_products'] == {}
+    assert saved['cxl_at_lead'] is False
+    assert saved['call_1'] == ''
+    assert saved['call_2'] == ''
+    assert saved['product_results'] == {}
+    assert saved['dispo'] == ''
     assert not writer.applied
     evidence('editor-dialogs-' + str(viewport[0]))
 
@@ -590,7 +674,7 @@ def test_existing_split_notes_remain_in_separate_redlines_editor(mod_browser):
     assert saved['notes'] == 'Legacy first note\nAdditional black note'
     assert saved['redlines'] == 'Legacy second note\nAdditional redline'
     assert saved['note_runs'] == []
-    assert saved['dispo'] == 'pns'
+    assert saved['dispo'] == ''
     assert not writer.applied
 
 
@@ -632,16 +716,16 @@ def test_price_overrides_stay_in_original_sheet_cells(mod_browser, viewport):
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     saved = service.repository.sheets(service.day())[0]['draft']
-    assert saved['start_price_override'] == '27000'
-    assert saved['final_price_override'] == '16000'
-    assert saved['deposit_override'] == '2500/159.50'
-    assert outcome_fields(saved)['lead_status'] == 'Nurturing'
-    assert all(saved[key] for key in ('docs','review','ninety_min'))
+    assert saved['start_price_override'] == ''
+    assert saved['final_price_override'] == ''
+    assert saved['deposit_override'] == ''
+    assert outcome_fields(saved) is None
+    assert not any(saved[key] for key in ('docs','review','ninety_min'))
     assert not writer.applied
     assert page.evaluate('window.modCspViolations') == []
 
 
-def test_dnr_automatically_overrides_dispo_status_without_lead_editor(mod_browser):
+def test_dnr_editor_respects_refresh_from_salesforce(mod_browser):
     from playwright.sync_api import expect
     from printer_app.mod_resulting.contract import outcome_fields
 
@@ -657,14 +741,14 @@ def test_dnr_automatically_overrides_dispo_status_without_lead_editor(mod_browse
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     draft = service.repository.sheets(service.day())[0]['draft']
-    assert outcome_fields(draft)['lead_status'] == 'Do Not Call'
-    assert draft['dnr'] is True and draft['dnr_reason'] == 'Roofing'
+    assert outcome_fields(draft) is None
+    assert draft['dnr'] is False and draft['dnr_reason'] == ''
 
     first.locator('[data-key=dnr]').uncheck()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     draft = service.repository.sheets(service.day())[0]['draft']
-    assert outcome_fields(draft)['lead_status'] == 'Nurturing'
+    assert outcome_fields(draft) is None
     assert draft['dnr'] is False
     assert not writer.applied
 
@@ -702,9 +786,9 @@ def test_dnr_unchecks_when_dialog_closes_without_a_reason(mod_browser):
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     saved = service.repository.sheets(service.day())[0]['draft']
-    assert saved['dispo'] == 'pns'
+    assert saved['dispo'] == ''
     assert saved['dnr'] is False and saved['dnr_reason'] == ''
-    assert outcome_fields(saved)['lead_status'] == 'Nurturing'
+    assert outcome_fields(saved) is None
     assert not writer.applied
 
 def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
@@ -748,8 +832,8 @@ def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
     saved = service.repository.sheets(service.day())[0]['draft']
     expected = {'review': False, 'numbers': '', 'notes': 'Final black comment',
                 'redlines': 'FINAL REDLINE',
-                'call_1': '10:15 AM',
-                'call_2': '1:27 PM', 'dispo': 'cxl', 'cxl_at_lead': True}
+                'call_1': '',
+                'call_2': '', 'dispo': '', 'cxl_at_lead': False}
     for key, value in expected.items():
         assert saved[key] == value, (key, saved[key])
         control = first.locator('[data-key=' + key + ']')

@@ -9,6 +9,7 @@
 <script defer src="{{ url_for('static',filename='mod_resulting/sheet.js') }}"></script>
 </head><body data-csrf="{{ session.csrf }}"
  data-refresh="{{ url_for('mod_resulting.refresh') }}"
+ data-clear="{{ url_for('mod_resulting.clear_local') }}"
  data-save="{{ url_for('mod_resulting.save') }}"
  data-mod="{{ url_for('mod_resulting.choose_mod') }}"
  data-submit="{{ url_for('mod_resulting.submit') }}">
@@ -23,6 +24,7 @@
  </select></label>
  <label class="toggle-hide"><input type="checkbox" id="hideCompleted"> Hide completed</label>
  <button type="button" id="refresh">Refresh</button>
+ <button type="button" id="clearLocal" title="Clear local edits without changing Salesforce">Clear</button>
  <button type="button" id="submitDay" data-live-writes="{{ 'yes' if live_writes_enabled else 'no' }}">End of day</button>
  {% if data.state and data.state.submitted_at %}
  <a class="completed-pdf" href="{{ url_for('mod_resulting.pdf') }}">PDF</a>
@@ -284,6 +286,16 @@
  <div class="editor-footer">
   <button type="button" id="timeClear" class="editor-secondary">Clear</button>
   <button type="button" id="timeApply" class="editor-primary">Set time</button>
+ </div>
+</dialog>
+<dialog class="editor-dialog end-dialog" id="clearConfirm" aria-label="Clear local MOD sheet edits">
+ <div class="editor-heading"><h2>Clear local edits?</h2>
+  <button type="button" class="close-popover editor-close" aria-label="Close Clear confirmation">×</button>
+ </div>
+ <div class="editor-body"><p>Discard today's local MOD Sheet edits, including MOD Notes and redlines? Salesforce will not be changed. The current Salesforce data will be loaded again, and submitted Work Orders will stay submitted.</p></div>
+ <div class="editor-footer">
+  <button type="button" class="close-popover editor-secondary" id="cancelClear">Cancel</button>
+  <button type="button" class="editor-primary" id="confirmClear">Clear local edits</button>
  </div>
 </dialog>
 <dialog class="editor-dialog end-dialog" id="endConfirm" aria-label="Confirm End of Day submission">

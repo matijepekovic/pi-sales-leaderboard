@@ -131,11 +131,10 @@ def clean_draft(raw):
     data['deposit_override'] = deposit_payment_value(data['deposit_override'])
     # Lead-status selections are validated against actual Salesforce picklists
     # in the adapter before any write; empty means use the Dispo default.
-    # DNR only applies when at least one reason is actually selected.
-    # A checked box with no reasons is an unchecked DNR, not Do Not Call.
+    # Salesforce can have DNR checked with no reason. Preserve the actual
+    # source checkbox; the editor still asks for a reason before a new write.
     data['dnr_reason'] = ';'.join(dnr_reasons(data['dnr_reason']))
-    if not data['dnr'] or not data['dnr_reason']:
-        data['dnr'] = False
+    if not data['dnr']:
         data['dnr_reason'] = ''
     for key in ('call_1', 'call_2'):
         if data[key] and not TIME_RE.fullmatch(data[key]):
@@ -382,7 +381,7 @@ def outcome_fields(draft):
         # DNR. Old manually edited draft fields remain accepted for backward
         # compatibility, but can never override the authoritative outcome.
         'lead_status': (
-            'Do Not Call' if draft['dnr'] and draft['dnr_reason'] else
+            'Do Not Call' if draft['dnr'] else
             {'sale':'Sale Pending', 'pns':'Nurturing',
              'np':'Nurturing', 'cxl':'Canceled',
              'nra':'Nurturing', 'oos':'Out of Scope'}[dispo]

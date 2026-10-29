@@ -145,12 +145,14 @@ def test_payment_rejects_unsafe_money_values(payment):
     ('nra', 'Nurturing'),
     ('oos', 'Out of Scope'),
 ])
-def test_dnr_without_reasons_is_unchecked_and_preserves_main_dispo(dispo, expected):
+def test_dnr_without_reasons_preserves_salesforce_true_without_guessing_reason(dispo, expected):
     draft = clean_draft({'dispo': dispo, 'dnr': True, 'dnr_reason': ''})
     assert draft['dispo'] == dispo
-    assert draft['dnr'] is False
+    assert draft['dnr'] is True
     assert draft['dnr_reason'] == ''
-    assert outcome_fields(draft)['lead_status'] == expected
+    assert outcome_fields(draft)['lead_status'] == 'Do Not Call'
+    unchecked = clean_draft({'dispo':dispo, 'dnr':False})
+    assert outcome_fields(unchecked)['lead_status'] == expected
     selected = clean_draft({
         'dispo': dispo, 'dnr': True, 'dnr_reason': 'Roofing;Bath',
     })

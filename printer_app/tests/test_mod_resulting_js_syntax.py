@@ -39,6 +39,32 @@ def test_mod_sheet_javascript_syntax_and_single_binding():
         assert result.returncode == 0, result.stderr
 
 
+def test_salesforce_refresh_and_clear_keep_explicit_module_boundaries():
+    root = Path(__file__).resolve().parents[1]
+    repo = (root/'mod_resulting/repository.py').read_text()
+    svc = (root/'mod_resulting/service.py').read_text()
+    web = (root/'mod_resulting/web.py').read_text()
+    adapter = (root/'mod_resulting/salesforce_adapter.py').read_text()
+    mapper = (root/'mod_resulting/salesforce_drafts.py').read_text()
+
+    # Salesforce-specific field paths stay behind the replaceable adapter,
+    # never in the web layer, repository, or normalized Stats contracts.
+    assert 'from .salesforce_adapter' not in repo
+    assert "from .salesforce_adapter" not in svc
+    assert "from .salesforce_adapter" not in web
+    assert "WO = {" in adapter
+    assert 'ranked_results' in mapper
+    assert "draft['dispo'] = dispo" in mapper
+    assert 'clear_local=clear_local' in svc
+    assert 'return self.refresh(day, clear_local=True)' in svc
+    assert 'service.clear_local(service.day())' in web
+    assert "def clear_local(self, day)" in svc
+    assert "def refresh(self, day, records," in repo
+    assert "local.get('redlines')" in repo
+    assert "mod_result_sf_notes:" in repo
+    assert 'repo.writer' not in repo
+
+
 def test_selected_submission_and_salesforce_field_boundaries_remain_isolated():
     root = Path(__file__).resolve().parents[1]
     repo = (root/'mod_resulting/repository.py').read_text()

@@ -53,14 +53,18 @@ class ResultingRepository:
             raise LookupError('This MOD sheet is not part of the selected day.')
         return json.loads(row['snapshot'])
 
-    def refresh(self, day, records, external_drafts=None, market_segment=None):
-        """Refresh source and verified Salesforce result data without erasing edits.
+    def refresh(self, day, records, external_drafts=None, market_segment=None,
+                *, clear_local=False):
+        """Apply a verified Salesforce snapshot atomically.
 
-        Only untouched revision-zero drafts receive server values. A disposition
-        already present in Salesforce is an existing completed result, not a new
-        item for the End of Day writer to submit again. The -1 submitted marker
-        denotes a read-only remote result, distinct from an actual local write
-        receipt (positive Unix timestamp), so later Refresh updates still work.
+        Salesforce owns every resulting field; locally edited MOD Notes and
+        redlines are the only exceptions on a normal Refresh. A remote outcome
+        remains submitted (-1) and cannot be sent a second time. Positive
+        receipts from actual End of Day writes are never changed.
+
+        Clear discards local edits (including notes) before importing the same
+        verified Salesforce snapshot. Remote-note baselines distinguish local
+        edits from older Salesforce notes even when other controls were edited.
         """
         external_drafts = external_drafts or {}
         if market_segment is not None and (
@@ -90,6 +94,23 @@ class ResultingRepository:
                     'INSERT INTO meta(key,value) VALUES(?,?) '
                     'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
                     (market_key, json.dumps(market_segment)))
+            previous = {
+                row['work_order_id']: row for row in conn.execute(
+                    'SELECT work_order_id,draft,revision,submitted_at '
+                    'FROM mod_result_sheets WHERE day=?', (day,)
+                ).fetchall()
+            }
+            if clear_local:
+                # Clear is a LOCAL reset, never a Salesforce write. Inactive
+                # unsubmitted drafts are reset too; true submission receipts
+                # remain untouched. Current sheets are then rehydrated below.
+                conn.execute('''UPDATE mod_result_sheets
+                    SET draft='{}',revision=revision+1,submitted_at=NULL,
+                        submit_error=''
+                    WHERE day=? AND (submitted_at IS NULL OR submitted_at=-1.0)''',
+                    (day,))
+                conn.execute('DELETE FROM meta WHERE key LIKE ?',
+                             ('mod_result_sf_notes:' + day + ':%',))
             conn.execute('UPDATE mod_result_sheets SET current=0 WHERE day=?', (day,))
             for position, record in enumerate(records):
                 snapshot = asdict(record)
@@ -100,17 +121,44 @@ class ResultingRepository:
                         snapshot=excluded.snapshot,current=1,
                         display_order=excluded.display_order''',
                              (day, record.source_id, json.dumps(snapshot), position))
-                if record.source_id in external_drafts:
-                    draft = external_drafts[record.source_id]
-                    # A locally edited sheet always wins over a remote refresh.
-                    # Imported, already-resulted work is excluded from
-                    # submission to prevent rewriting existing Salesforce data.
-                    completed = -1.0 if draft.get('dispo') else None
-                    conn.execute('''UPDATE mod_result_sheets
-                        SET draft=?,submitted_at=?
-                        WHERE day=? AND work_order_id=? AND revision=0
-                        AND (submitted_at IS NULL OR submitted_at=-1.0)''',
-                        (json.dumps(draft), completed, day, record.source_id))
+                if record.source_id not in external_drafts:
+                    continue
+                old = previous.get(record.source_id)
+                if old and old['submitted_at'] not in (None, -1.0):
+                    # Actual End of Day receipts must not be rewritten.
+                    continue
+                remote = dict(external_drafts[record.source_id])
+                imported_notes = remote['notes']
+                key = 'mod_result_sf_notes:' + day + ':' + record.source_id
+                marker = conn.execute('SELECT value FROM meta WHERE key=?',
+                                      (key,)).fetchone()
+                prior_notes = json.loads(marker['value']) if marker else None
+                if old and not clear_local:
+                    local = json.loads(old['draft'])
+                    # On older installations there is no marker yet; preserve
+                    # only explicitly edited legacy notes, not pristine imports.
+                    local_edited_notes = (
+                        local.get('notes', '') != (
+                            prior_notes if prior_notes is not None else imported_notes
+                        ) and (prior_notes is not None or old['revision'] > 0)
+                    )
+                    if local_edited_notes:
+                        remote['notes'] = local['notes']
+                        remote['note_runs'] = local.get('note_runs', [])
+                    if local.get('redlines'):
+                        remote['redlines'] = local['redlines']
+                completed = -1.0 if external_drafts[record.source_id]['dispo'] else None
+                revised = old['revision'] if old else 0
+                if old and (clear_local or remote != json.loads(old['draft'])):
+                    revised += 1
+                conn.execute('''UPDATE mod_result_sheets
+                    SET draft=?,revision=?,submitted_at=?,submit_error=''
+                    WHERE day=? AND work_order_id=?
+                    AND (submitted_at IS NULL OR submitted_at=-1.0)''',
+                    (json.dumps(remote), revised, completed, day, record.source_id))
+                conn.execute('''INSERT INTO meta(key,value) VALUES(?,?)
+                    ON CONFLICT(key) DO UPDATE SET value=excluded.value''',
+                    (key, json.dumps(imported_notes)))
             conn.execute('UPDATE mod_result_days SET refreshed_at=? WHERE day=?', (now, day))
 
     def save_draft(self, day, work_order_id, draft, revision):
