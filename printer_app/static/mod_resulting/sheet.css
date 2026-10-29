@@ -7,6 +7,10 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .sheets{padding:90px 12px 24px;display:flex;flex-direction:column;gap:28px;align-items:center}
 .mod-sheet{position:relative;flex:none;width:min(1460px,max(990px,calc(100vw - 24px)));container-type:inline-size;background:white}
 .printer-sheet{display:block;width:100%;height:100%;user-select:none}
+/* A completed-sheet action sits outside the existing printed geometry. */
+.mod-sheet.submitted{margin-top:54px}
+.mod-sheet>.override-sheet{position:absolute;right:0;top:-50px;z-index:21;min-height:44px;padding:8px 16px;border:1px solid #333;border-radius:6px;background:#fff;color:#111;font:600 14px system-ui,-apple-system,sans-serif;cursor:pointer}
+.mod-sheet>.override-sheet:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
 .mod-sheet .cell{position:absolute;min-width:0;min-height:0;padding:0;line-height:1.1;font-size:1.57cqw;visibility:hidden}
 .mod-sheet.surface-ready .cell{visibility:visible}
 .mod-sheet .replacement{background:#fff}
@@ -179,4 +183,4 @@ body.dialog-open{overflow:hidden}
  .product-result-row .individual-sale-fields label{flex-basis:85px}
 }
 
-@media print{.floating-controls,.notification,.editor-dialog,.sheet-message,.time-picker-button,.red-pen{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}}
+@media print{.floating-controls,.notification,.editor-dialog,.sheet-message,.time-picker-button,.red-pen,.override-sheet{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}.mod-sheet.submitted{margin-top:0}}
