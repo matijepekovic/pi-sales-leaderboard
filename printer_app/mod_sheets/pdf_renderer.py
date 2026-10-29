@@ -53,7 +53,7 @@ PRODUCT_COLORS = (
     ('roofing', 'Roofing', '#00B0F0'),
     ('siding', 'Siding', '#92D050'),
     ('bath', 'Bath', '#FF69B4'),
-    ('gutters', 'Gutters', '#00B0F0'),
+    ('gutters', 'Gutters', '#B266FF'),
     ('windows', 'Windows', '#FFA500'),
     ('doors', 'Doors', '#FFA500'),
     ('other', 'Other', '#D9D9D9'),
