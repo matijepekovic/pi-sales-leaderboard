@@ -124,6 +124,17 @@ def blueprint(service, surface):
             return jsonify(ok=False, error=str(exc)[:300]), 422
         return jsonify(ok=True, mod=name)
 
+    @bp.post('/api/override')
+    def override():
+        try:
+            revision = service.override(
+                service.day(), request.form.get('work_order_id', ''),
+                int(request.form.get('revision', '-1'))
+            )
+        except (ValueError, TypeError, LookupError) as exc:
+            return jsonify(ok=False, error=str(exc)), 409
+        return jsonify(ok=True, revision=revision)
+
     @bp.post('/api/save')
     def save():
         try:
