@@ -572,7 +572,7 @@ class ResultingSalesforceAdapter:
             'call_2': ('datetime', 'time', 'string', 'textarea'),
             'docs': ('boolean', 'string', 'textarea', 'picklist'),
             'ninety_min': ('boolean', 'string', 'textarea', 'picklist'),
-            'promotion': ('boolean',),
+            'promotion': ('boolean', 'string', 'textarea', 'picklist'),
             'start_price': ('currency', 'double', 'int', 'long'),
             'final_price': ('currency', 'double', 'int', 'long'),
             # WorkOrder.Deposit_Payment__c stores e.g. 500/159.50.
@@ -694,9 +694,13 @@ class ResultingSalesforceAdapter:
                             wo_fields[key], entry['value']
                         )
                 elif key == 'promotion':
-                    wo_values[WO[key]] = self._value(
-                        wo_fields[key], payload['draft']['promotion']
-                    )
+                    # Legacy boolean settings retain their original behavior.
+                    # Never coerce an unchecked text/picklist to the string
+                    # "False"; an explicit popup edit can clear/set it.
+                    if wo_fields[key].get('type') == 'boolean':
+                        wo_values[WO[key]] = payload['draft'][key]
+                    elif payload['draft'][key]:
+                        wo_values[WO[key]] = self._checked_yes(wo_fields[key])
                 elif payload['draft'][key]:
                     wo_values[WO[key]] = self._checked_yes(wo_fields[key])
             if payload['draft']['review']:
