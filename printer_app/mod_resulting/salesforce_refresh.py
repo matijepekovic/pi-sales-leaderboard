@@ -3,7 +3,7 @@
 The application never constructs SOQL itself and never writes during Refresh.
 """
 from .salesforce_adapter import (
-    ID_RE, LEAD, LEAD_FIELDS, PR, PRODUCT_RESULT, WORK_ORDER, WO,
+    ID_RE, LEAD, LEAD_FIELDS, PR, PRODUCT_RESULT, WORK_ORDER, WO, WO_LEAD,
     ResultingSalesforceError, _require_id, _soql,
 )
 from .salesforce_drafts import project_salesforce_drafts
@@ -23,7 +23,8 @@ def read_result_drafts(adapter, records):
         batch = work_keys[offset:offset + 40]
         ids = ','.join(_soql(key) for key in batch)
         for item in adapter._query(
-            'SELECT Id,' + ','.join(WO.values()) + ' FROM ' + WORK_ORDER
+            'SELECT Id,' + ','.join(WO.values()) + ',' + WO_LEAD
+            + ' FROM ' + WORK_ORDER
             + ' WHERE Id IN (' + ids + ') ORDER BY Id LIMIT 2000'
         ):
             key = _require_id(str(item.get('Id') or ''))
@@ -32,6 +33,15 @@ def read_result_drafts(adapter, records):
             works[key] = item
         if any(key not in works for key in batch):
             raise ResultingSalesforceError('Salesforce Work Order is missing during Refresh.')
+        for key in batch:
+            # Direct WorkOrder.Lead__c recovers a Lead missing from an imported
+            # sheet; never use a different Lead when two source identities clash.
+            linked_lead = str(works[key].get(WO_LEAD) or '').strip()
+            if linked_lead:
+                linked_lead = _require_id(linked_lead)
+                if identities[key] and _require_id(identities[key]) != linked_lead:
+                    raise ResultingSalesforceError('Work Order Lead changed during Refresh.')
+                identities[key] = linked_lead
 
         # Different Work Orders may share a Lead. Fetch each Lead exactly
         # once across every SOQL page rather than treating repeats as invalid.
