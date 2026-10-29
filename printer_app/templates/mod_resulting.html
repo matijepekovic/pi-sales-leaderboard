@@ -49,9 +49,6 @@
  <img class="printer-sheet" src="{{ url_for('mod_resulting.sheet_image', day=data.day, work_order_id=item.work_order_id) }}"
   alt="Printer MOD sheet for {{ sheet.lead_name }}, work order {{ sheet.work_order_number }}"
   loading="{{ 'eager' if loop.first else 'lazy' }}" decoding="async" draggable="false">
- {% if locked %}
- <button type="button" class="override-sheet" aria-label="Override completed work order {{ sheet.work_order_number }}">Override</button>
- {% endif %}
  <dl class="sr-only">
   <dt>Work Order Number:</dt><dd>{{ sheet.work_order_number }}</dd>
   <dt>Lead Name:</dt><dd>{{ sheet.lead_name }}</dd>
@@ -135,6 +132,9 @@
     <div class="sale-in-redline" hidden></div>
    </div>
   </div>
+  {% if locked %}
+  <button type="button" class="override-sheet" aria-label="Override completed work order {{ sheet.work_order_number }}">Override</button>
+  {% endif %}
  </div>
  <div class="cell field-docs replacement checklist">
   {{ checkbox('docs','Docs',d.docs) }}
@@ -279,10 +279,6 @@
 {% endfor %}
 </div>
 <dialog class="editor-dialog checkbox-dialog" id="checkboxDialog" aria-label="Checkbox value">
-  <div class="editor-heading">
-    <h2>Value</h2>
-    <button type="button" class="close-popover editor-close" aria-label="Close checkbox value">×</button>
-  </div>
   <div class="editor-body">
     <div id="checkboxCurrent" class="checkbox-current" aria-live="polite"></div>
     <label id="checkboxTextEditor" hidden>
@@ -304,7 +300,6 @@
         <option value="false">False</option>
       </select>
     </label>
-    <p id="checkboxReadOnly" class="editor-hint" hidden></p>
   </div>
   <div class="editor-footer">
     <button type="button" class="close-popover editor-secondary">Close</button>
