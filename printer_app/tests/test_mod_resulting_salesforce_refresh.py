@@ -220,6 +220,28 @@ def test_salesforce_refresh_handles_shared_leads_across_pages():
     assert all(row['dispo'] == '' for row in hydrated.values())
 
 
+def test_refresh_recovers_canceled_lead_when_source_record_has_no_lead_id():
+    from zoneinfo import ZoneInfo
+    from printer_app.mod_resulting.salesforce_refresh import read_result_drafts
+
+    record = ModSheetRecord(
+        source_id=WORK, lead_source_id='', product_interest='Roofing'
+    )
+    def query(text):
+        if ' FROM WorkOrder ' in text:
+            assert 'Lead__c' in text
+            return [{'Id':WORK, 'Lead__c':LEAD, 'Dispo__c':None}]
+        if ' FROM Lead ' in text:
+            return [{'Id':LEAD, 'Status':'Canceled'}]
+        if ' FROM Product_Interest_Result__c ' in text:
+            return []
+        raise AssertionError('Unexpected Salesforce object')
+    fake = SimpleNamespace(zone=ZoneInfo('America/Los_Angeles'), _query=query)
+    remote = clean_draft(read_result_drafts(fake, [record])[WORK])
+    assert remote['lead_status'] == 'Canceled'
+    assert remote['dispo'] == 'cxl'
+
+
 def test_salesforce_text_deposit_payment_is_hydrated_into_one_sale():
     from printer_app.mod_resulting.salesforce_drafts import project_salesforce_drafts
     from zoneinfo import ZoneInfo
