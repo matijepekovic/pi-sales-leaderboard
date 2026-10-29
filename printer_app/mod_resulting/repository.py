@@ -36,6 +36,15 @@ class ResultingRepository:
             row['draft'] = json.loads(row['draft'])
         return rows
 
+    def submitted_sheets(self, day):
+        """Only locally confirmed Salesforce writes belong in the completed PDF."""
+        rows = self.db.rows('''SELECT work_order_id,snapshot,draft
+            FROM mod_result_sheets WHERE day=? AND submitted_at>0
+            ORDER BY display_order,work_order_id''', (day,))
+        return [dict(work_order_id=row['work_order_id'],
+                     snapshot=json.loads(row['snapshot']),
+                     draft=json.loads(row['draft'])) for row in rows]
+
     def sheet_snapshot(self, day, work_order_id):
         row = self.db.one(
             'SELECT snapshot FROM mod_result_sheets WHERE day=? AND work_order_id=?',
@@ -132,41 +141,62 @@ class ResultingRepository:
             conn.execute('UPDATE mod_result_days SET mod_user_id=?,mod_user_name=? WHERE day=?',
                          (user_id, user_name, day))
 
-    def begin_submit(self, day):
-        """Atomic guard prevents two web workers submitting the same day."""
+    def begin_submit(self, day, work_order_ids=None):
+        """Lock and resolve one exact batch without sealing the entire day."""
+        selected = None
+        if work_order_ids is not None:
+            if (not isinstance(work_order_ids, list) or not work_order_ids
+                    or len(work_order_ids) > 2000
+                    or any(not isinstance(value, str) or not value
+                           for value in work_order_ids)
+                    or len(set(work_order_ids)) != len(work_order_ids)):
+                raise ValueError('Select valid, distinct Work Orders.')
+            selected = set(work_order_ids)
         with self.db.connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
             result = conn.execute('''UPDATE mod_result_days SET submitting=1
-                    WHERE day=? AND submitting=0 AND mod_user_id!=''
-                    AND submitted_at IS NULL''', (day,))
+                    WHERE day=? AND submitting=0 AND mod_user_id!='' ''', (day,))
             if result.rowcount != 1:
                 raise ValueError('Select a MOD, or a submission is already underway.')
             records = conn.execute('''SELECT work_order_id,snapshot,draft
-                    FROM mod_result_sheets WHERE day=? AND submitted_at IS NULL''', (day,)).fetchall()
+                    FROM mod_result_sheets WHERE day=? AND submitted_at IS NULL
+                    ORDER BY display_order,work_order_id''', (day,)).fetchall()
             pending = []
             for row in records:
                 draft = json.loads(row['draft'])
-                if draft.get('dispo'):
+                if draft.get('dispo') and (selected is None or
+                                          row['work_order_id'] in selected):
                     pending.append({
                         'work_order_id': row['work_order_id'],
                         'snapshot': json.loads(row['snapshot']),
                         'draft': draft,
                     })
+            if selected is not None and {row['work_order_id'] for row in pending} != selected:
+                raise ValueError('Selected Work Orders changed or were already submitted. Refresh and try again.')
             return pending
 
     def finish_item(self, day, work_order_id):
         with self.db.connect() as conn:
-            conn.execute('''UPDATE mod_result_sheets SET submitted_at=?,submit_error=''
+            conn.execute('BEGIN IMMEDIATE')
+            now = time.time()
+            updated = conn.execute('''UPDATE mod_result_sheets
+                    SET submitted_at=?,submit_error=''
                     WHERE day=? AND work_order_id=? AND submitted_at IS NULL''',
-                         (time.time(), day, work_order_id))
+                    (now, day, work_order_id))
+            if updated.rowcount != 1:
+                raise ValueError('Work Order submission receipt is already recorded.')
+            # First successful write fixes the day's MOD, but later batches
+            # remain possible. The day timestamp no longer means "sealed".
+            conn.execute('''UPDATE mod_result_days
+                    SET submitted_at=COALESCE(submitted_at,?) WHERE day=?''',
+                    (now, day))
 
     def error_item(self, day, work_order_id, message):
         with self.db.connect() as conn:
             conn.execute('''UPDATE mod_result_sheets SET submit_error=?
-                    WHERE day=? AND work_order_id=?''',
+                    WHERE day=? AND work_order_id=? AND submitted_at IS NULL''',
                          (str(message)[:500], day, work_order_id))
 
-    def finish_submit(self, day, complete=False):
+    def finish_submit(self, day):
         with self.db.connect() as conn:
-            conn.execute('UPDATE mod_result_days SET submitting=0,submitted_at=? WHERE day=?',
-                         (time.time() if complete else None, day))
+            conn.execute('UPDATE mod_result_days SET submitting=0 WHERE day=?', (day,))

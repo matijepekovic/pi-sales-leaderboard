@@ -105,44 +105,6 @@
     if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
     return data;
   }
-  function compactRuns(runs) {
-    const result = [];
-    for (const run of runs) {
-      if (!run.text) continue;
-      if (result.length && result[result.length - 1].red === run.red) {
-        result[result.length - 1].text += run.text;
-      } else {
-        result.push({text:run.text, red:run.red});
-      }
-    }
-    return result;
-  }
-  function runSlice(runs, start, end) {
-    let offset = 0;
-    const result = [];
-    for (const run of runs) {
-      const left = Math.max(start - offset, 0);
-      const right = Math.min(end - offset, run.text.length);
-      if (right > left) result.push({text:run.text.slice(left,right),red:run.red});
-      offset += run.text.length;
-    }
-    return result;
-  }
-  function changedNoteRuns(runs, text, red) {
-    const before = runs.map(run => run.text).join('');
-    if (before === text) return runs;
-    let prefix = 0;
-    while (prefix < before.length && prefix < text.length &&
-           before[prefix] === text[prefix]) prefix++;
-    let suffix = 0;
-    while (suffix < before.length - prefix && suffix < text.length - prefix &&
-           before[before.length - suffix - 1] === text[text.length - suffix - 1]) suffix++;
-    return compactRuns([
-      ...runSlice(runs, 0, prefix),
-      {text:text.slice(prefix, text.length - suffix), red},
-      ...runSlice(runs, before.length - suffix, before.length),
-    ]);
-  }
   function serialize(sheet) {
     const draft = JSON.parse(sheet.dataset.initial || '{}');
     for (const input of sheet.querySelectorAll('[data-key]')) {
@@ -152,13 +114,8 @@
         draft[input.dataset.key] = input.type === 'checkbox' ? input.checked : input.value;
       }
     }
-    // Historical drafts may contain a separate redlines key. The editor
-    // displays their concatenated text in the single MOD Notes input and
-    // migrates it losslessly into the one notes key on its next save.
-    draft.redlines = '';
-    draft.note_runs = (sheet._noteRuns || []).map(run => ({
-      text:run.text, red:run.red
-    }));
+    // Black Notes and popup Redlines are separate; migrate old mixed runs.
+    draft.note_runs = [];
     draft.product_results = {};
     if (draft.additional_products && draft.dispo !== 'sale') {
       for (const row of sheet.querySelectorAll('[data-product]')) {
@@ -187,6 +144,12 @@
       };
     }
     return draft;
+  }
+  function manualRedlinePreview(sheet, draft) {
+    const display = sheet.querySelector('.manual-redlines');
+    if (!display) return;
+    display.textContent = draft.redlines || '';
+    display.hidden = !display.textContent;
   }
   function resultDetailPreview(sheet, draft) {
     const output = sheet.querySelector('.result-detail-in-redline');
@@ -231,7 +194,17 @@
     return String(Math.floor(cents / 100)) +
       (fraction ? '.' + String(fraction).padStart(2, '0') : '');
   }
+  function numericExtremes(notes) {
+    const values = String(notes || '').split(/\r?\n/).map(moneyCents)
+      .filter(value => value !== null);
+    return {
+      highest: values.length ? centsText(Math.max(...values)) : '',
+      lowest: values.length ? centsText(Math.min(...values)) : ''
+    };
+  }
   function depositPaymentPreview(draft) {
+    const manual = String(draft.deposit_override || '').trim();
+    if (manual) return manual;
     const products = draft.dispo === 'sale' ? draft.sale_products :
       draft.additional_products ? draft.product_results : {};
     let deposits = 0, payments = 0, sold = false, hasPayment = false;
@@ -240,20 +213,17 @@
       const price = moneyCents(info.price);
       if (price === null || price <= 0) continue;
       const deposit = moneyCents(info.deposit);
-      if (deposit === null) return draft.deposit_override || '';
+      if (deposit === null) return '';
       sold = true;
       deposits += deposit;
       if (String(info.payment || '').trim()) {
         const payment = moneyCents(info.payment);
-        if (payment === null) return draft.deposit_override || '';
+        if (payment === null) return '';
         hasPayment = true;
         payments += payment;
       }
     }
-    if (!sold) return draft.deposit_override ? centsText(moneyCents(draft.deposit_override)) : '';
-    const override = draft.deposit_override ? moneyCents(draft.deposit_override) : null;
-    const deposit = draft.deposit_override ? override : deposits;
-    return centsText(deposit) + '/' + (hasPayment ? centsText(payments) : '');
+    return sold ? centsText(deposits) + '/' + (hasPayment ? centsText(payments) : '') : '';
   }
   function salePreview(sheet, draft) {
     const display = sheet.querySelector('.sale-in-redline');
@@ -378,49 +348,27 @@
     dnrPreview(sheet, init);
     resultDetailPreview(sheet, init);
     salePreview(sheet, init);
-    const noteArea = sheet.querySelector('.notes-text');
     const noteInput = sheet.querySelector('.mod-notes-input');
-    const noteMirror = sheet.querySelector('.mod-notes-display');
-    let noteRuns;
-    if (Array.isArray(init.note_runs) && init.note_runs.length) {
-      noteRuns = init.note_runs.map(run => ({text:run.text,red:run.red}));
-    } else {
-      noteRuns = init.notes ? [{text:init.notes,red:false}] : [];
+    const redlineInput = sheet.querySelector('[data-key="redlines"]');
+    // Preserve already-saved red ink by moving legacy mixed-color runs into
+    // the independent Redlines editor when the sheet is next edited.
+    if (Array.isArray(init.note_runs) && init.note_runs.some(run => run.red) &&
+        init.note_runs.map(run => run.text).join('') === init.notes) {
+      noteInput.value = init.note_runs.filter(run => !run.red)
+        .map(run => run.text).join('');
+      const oldRed = init.note_runs.filter(run => run.red)
+        .map(run => run.text.trim()).filter(Boolean).join('\n');
+      redlineInput.value = [init.redlines || '', oldRed].filter(Boolean).join('\n');
     }
-    if (init.redlines) {
-      if (noteRuns.length) noteRuns.push({text:'\n',red:false});
-      noteRuns.push({text:init.redlines,red:true});
-    }
-    sheet._noteRuns = compactRuns(noteRuns);
-    function renderNoteRuns() {
-      const elements = sheet._noteRuns.map(run => {
-        const part = document.createElement('span');
-        if (run.red) part.className = 'redline-ink';
-        part.textContent = run.text;
-        return part;
-      });
-      noteMirror.replaceChildren(...elements);
-      noteArea.classList.add('mixed-notes-ready');
-      noteMirror.scrollTop = noteInput.scrollTop;
-    }
-    const redPen = sheet.querySelector('.red-pen');
-    let redInk = false;
-    redPen?.addEventListener('click', () => {
-      redInk = !redInk;
-      redPen.setAttribute('aria-pressed', String(redInk));
-      redPen.title = redInk ? 'Turn off redline ink' : 'Turn on redline ink';
-      noteArea.dataset.notesMode = redInk ? 'red' : 'black';
-      noteInput.focus({preventScroll:true});
-    });
-    renderNoteRuns();
-    noteInput.addEventListener('scroll', () => {
-      noteMirror.scrollTop = noteInput.scrollTop;
-    });
+    manualRedlinePreview(sheet, {redlines:redlineInput.value});
     const product = sheet.querySelector('.product-panel');
     const dnr = sheet.querySelector('.dnr-panel');
     const cxl = sheet.querySelector('.cxl-panel');
     const sale = sheet.querySelector('.sale-panel');
     const priceDialog = sheet.querySelector('.price-panel');
+    const redlineDialog = sheet.querySelector('.redlines-panel');
+    sheet.querySelector('.red-pen')?.addEventListener('click', () =>
+      openDialog(redlineDialog, '[data-key="redlines"]'));
     const saleButton = sheet.querySelector('.edit-sale-products');
     const cxlButton = sheet.querySelector('.edit-cxl-details');
     const productButton = sheet.querySelector('.edit-product-results');
@@ -432,12 +380,20 @@
     if (dnrButton) dnrButton.hidden = !init.dnr;
     function syncPricePreviews() {
       const draft = serialize(sheet);
+      const amounts = numericExtremes(draft.numbers);
+      const calculated = {
+        start_price_override: amounts.highest,
+        final_price_override: amounts.lowest,
+        deposit_override: depositPaymentPreview({...draft, deposit_override:''})
+      };
       for (const key of ['start_price_override', 'final_price_override', 'deposit_override']) {
         const input = priceDialog?.querySelector('[data-key="' + key + '"]');
         const preview = sheet.querySelector('[data-price-display="' + key + '"]');
         if (!preview || !input) continue;
-        preview.textContent = key === 'deposit_override' ? depositPaymentPreview(draft) :
-          (input.value ? '$' + input.value : '');
+        input.placeholder = calculated[key];
+        const value = input.value || calculated[key];
+        preview.textContent = key === 'deposit_override' ? value :
+          (value ? '$' + value : '');
       }
     }
     syncPricePreviews();
@@ -491,6 +447,7 @@
     function redraw() {
       const draft = serialize(sheet);
       sheet.dataset.dispo = draft.dispo;
+      manualRedlinePreview(sheet,draft);
       dnrPreview(sheet,draft);
       resultDetailPreview(sheet,draft);
       salePreview(sheet,draft);
@@ -545,12 +502,6 @@
     sheet.addEventListener('input', event => {
       const input = event.target;
       if (!(input instanceof HTMLElement)) return;
-      if (input.dataset.key === 'notes') {
-        sheet._noteRuns = changedNoteRuns(
-          sheet._noteRuns, input.value, redInk
-        );
-        renderNoteRuns();
-      }
       if (input.matches('textarea[data-key],input[data-key]:not([type=checkbox]),[data-sale-price],[data-sale-deposit],[data-sale-payment],[data-product-price],[data-product-deposit],[data-product-payment]')) redraw();
     });
     saleButton?.addEventListener('click', openSale);
@@ -590,33 +541,114 @@
   });
 
   const confirmation = document.getElementById('endConfirm');
+  const methodDialog = document.getElementById('endMethod');
+  const selectionDialog = document.getElementById('endSelect');
   const submitButton = document.getElementById('submitDay');
-  document.getElementById('cancelEnd').addEventListener('click', () => closeDialog(confirmation));
-  document.getElementById('cancelEndSecondary').addEventListener('click', () => closeDialog(confirmation));
+  const selectionList = document.getElementById('endList');
+  const selectionSearch = document.getElementById('endSearch');
+  const selectionCount = document.getElementById('endSelectionCount');
+  const submitSelected = document.getElementById('submitSelected');
+  const selectAll = document.getElementById('endSelectAll');
+
+  function eligibleSheets() {
+    return sheets.filter(sheet =>
+      sheet.dataset.dispo && sheet.dataset.submitted !== 'yes');
+  }
+  function selectedWorkOrders() {
+    return [...selectionList.querySelectorAll('input[type=checkbox]:checked')]
+      .map(input => input.value);
+  }
+  function updateSelection() {
+    const choices = [...selectionList.querySelectorAll('input[type=checkbox]')];
+    const chosen = selectedWorkOrders().length;
+    selectionCount.textContent = chosen + ' of ' + choices.length + ' selected';
+    selectAll.textContent = chosen === choices.length ? 'Clear All' : 'Select All';
+    submitSelected.disabled = submitButton.dataset.liveWrites !== 'yes' || chosen === 0;
+  }
+  function buildSelection() {
+    selectionSearch.value = '';
+    selectionList.replaceChildren();
+    for (const sheet of eligibleSheets()) {
+      const label = document.createElement('label');
+      label.className = 'end-choice';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.value = sheet.dataset.id;
+      input.setAttribute('aria-label', 'Select Work Order ' + sheet.dataset.workNumber);
+      input.addEventListener('change', updateSelection);
+      const content = document.createElement('span');
+      content.className = 'end-choice-content';
+      const name = document.createElement('strong');
+      name.textContent = sheet.dataset.customer;
+      const detail = document.createElement('small');
+      detail.textContent = sheet.dataset.workNumber + ' · ' +
+        sheet.querySelector('[data-key="dispo"]').selectedOptions[0].textContent;
+      content.append(name, detail);
+      label.append(input, content);
+      selectionList.append(label);
+    }
+    updateSelection();
+  }
+  selectionSearch.addEventListener('input', () => {
+    const needle = selectionSearch.value.trim().toLocaleLowerCase();
+    for (const label of selectionList.querySelectorAll('.end-choice')) {
+      label.hidden = !label.textContent.toLocaleLowerCase().includes(needle);
+    }
+  });
+  selectAll.addEventListener('click', () => {
+    const inputs = [...selectionList.querySelectorAll('input[type=checkbox]')];
+    const allSelected = inputs.every(input => input.checked);
+    for (const input of inputs) input.checked = !allSelected;
+    updateSelection();
+  });
+  async function submitBatch(button, selected) {
+    button.disabled = true;
+    try {
+      await flushAll();
+      const fields = selected === null ? {mode:'all'} :
+        {mode:'selected',work_order_ids:JSON.stringify(selected)};
+      const result = await post(root.dataset.submit, fields);
+      closeDialog(methodDialog);
+      closeDialog(selectionDialog);
+      message('Submitted ' + result.submitted + ' MOD sheet(s) to Salesforce.');
+      location.reload();
+    } catch (error) {
+      closeDialog(methodDialog);
+      closeDialog(selectionDialog);
+      message('Submission stopped: ' + error.message);
+    } finally {
+      button.disabled = submitButton.dataset.liveWrites !== 'yes';
+      updateSelection();
+    }
+  }
+  document.getElementById('cancelEnd').addEventListener('click',
+    () => closeDialog(confirmation));
+  document.getElementById('cancelEndSecondary').addEventListener('click',
+    () => closeDialog(confirmation));
   submitButton.addEventListener('click', async () => {
     try {
       await flushAll();
       if (!dayMod.value) throw new Error('Select the MOD for this day before submission.');
-      const count = sheets.filter(s => s.dataset.dispo && s.dataset.submitted !== 'yes').length;
-      if (!count) throw new Error('No new MOD sheets have a disposition.');
-      document.getElementById('reviewCount').textContent =
-        count + ' resulted sheet(s). Sheets without a disposition are excluded. MOD: '
-        + dayMod.selectedOptions[0].textContent;
+      if (!eligibleSheets().length) throw new Error('No new MOD sheets have a disposition.');
       openDialog(confirmation, '#cancelEndSecondary');
     } catch (error) { message(error.message); }
   });
-  document.getElementById('confirmEnd').addEventListener('click', async event => {
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      await flushAll();
-      const result = await post(root.dataset.submit);
-      closeDialog(confirmation);
-      message('Submitted ' + result.submitted + ' MOD sheet(s) to Salesforce.');
-      location.reload();
-    } catch (error) {
-      closeDialog(confirmation);
-      message('Submission stopped: ' + error.message);
-    } finally { button.disabled = false; }
+  document.getElementById('proceedEnd').addEventListener('click', () => {
+    closeDialog(confirmation);
+    document.getElementById('reviewCount').textContent =
+      eligibleSheets().length + ' eligible Work Order(s). MOD: ' +
+      dayMod.selectedOptions[0].textContent;
+    openDialog(methodDialog);
+  });
+  document.getElementById('submitAll').addEventListener('click', event =>
+    submitBatch(event.currentTarget, null));
+  document.getElementById('chooseSelected').addEventListener('click', () => {
+    closeDialog(methodDialog);
+    buildSelection();
+    openDialog(selectionDialog);
+  });
+  submitSelected.addEventListener('click', event => {
+    const selected = selectedWorkOrders();
+    if (selected.length) submitBatch(event.currentTarget, selected);
   });
 })();

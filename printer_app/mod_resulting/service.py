@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import datetime, time as wall_time
-from decimal import Decimal
 import time
 from pathlib import Path
 import os
@@ -11,7 +10,7 @@ from zoneinfo import ZoneInfo
 from ..mod_sheet_contract import ModSheetRecord
 from .contract import (
     clean_draft, final_redline_text, outcome_fields, sold_products,
-    individual_product_sales,
+    individual_product_sales, deposit_payment_text,
 )
 
 
@@ -150,10 +149,6 @@ class ResultingService:
                 'price': item['price'],
                 'deposit': item['deposit'],
             } for item in sales]
-            deposit_total = (
-                str(sum((Decimal(item['deposit']) for item in sales), Decimal('0')))
-                if sales else ''
-            )
         else:
             if not original_products:
                 raise ValueError('Product Interest is required for resulting.')
@@ -186,16 +181,6 @@ class ResultingService:
                         'deposit': '',
                     })
             individual_sales = individual_product_sales(draft)
-            deposit_total = (
-                str(sum((Decimal(item['deposit']) for item in individual_sales),
-                        Decimal('0'))) if individual_sales else ''
-            )
-
-        # The training flow provides an independently editable Work Order
-        # Deposit / Payment value. Without an override, preserve the existing
-        # sum of actual sold-product deposits.
-        if draft['deposit_override']:
-            deposit_total = draft['deposit_override']
 
         return dict(
             day=sheet['day'], work_order_id=sheet['work_order_id'],
@@ -203,11 +188,26 @@ class ResultingService:
             lead_id=sheet['snapshot'].get('lead_source_id', ''),
             mod_id=mod_id, dispo=draft['dispo'], fields=fields,
             draft=draft, product_results=results,
-            deposit_total=deposit_total,
+            deposit_payment=deposit_payment_text(draft),
             final_redlines=final_redline_text(draft),
         )
 
-    def submit(self, day):
+    def _stage_completed_pdf(self, day, payload):
+        """Build the replacement file durably before touching Salesforce."""
+        if payload is None or self.output_directory is None:
+            return None
+        directory = self.output_directory
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        target = directory / (day + '-completed.pdf')
+        temp = directory / ('.' + day + '-completed.tmp')
+        with temp.open('wb') as stream:
+            os.chmod(temp, 0o600)
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        return temp, target
+
+    def submit(self, day, work_order_ids=None):
         if not self.allow_salesforce_writes:
             raise ValueError(
                 'Live Salesforce submission is disabled in the MOD sandbox '
@@ -215,34 +215,28 @@ class ResultingService:
         day_state = self.repository.day(day)
         if not day_state or not day_state['mod_user_id']:
             raise ValueError('Select a MOD from Salesforce first.')
-        # A frozen batch is held by the repository's cross-process write lock.
-        rows = self.repository.begin_submit(day)
-        complete = False
+
+        # A day can have multiple submissions; the repository locks one batch,
+        # validates exact selected IDs, and excludes previously submitted items.
+        rows = self.repository.begin_submit(day, work_order_ids)
         sent = 0
+        staged = None
         try:
             if not rows:
                 raise ValueError('No unsubmitted sheets have a disposition.')
             batch = [self.submission_payload(dict(row, day=day),
                                               day_state['mod_user_id'])
                      for row in rows]
-            # Preflight ALL Salesforce object/field mappings before a single write.
+            # Preflight the complete selected batch before the first write.
             plans = self.writer.prepare(batch)
             if len(plans) != len(rows):
                 raise ValueError('Salesforce preflight produced an incomplete submission plan.')
-            # Prepare and fsync the PDF before changing any Salesforce records.
-            # If writing the PDF fails, Salesforce is never modified.
-            pdf_payload = self.pdf_exporter(rows) if self.pdf_exporter else None
-            target = temp = None
-            if pdf_payload is not None and self.output_directory:
-                directory = self.output_directory
-                directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-                target = directory / (day + '-completed.pdf')
-                temp = directory / ('.' + day + '-completed.tmp')
-                with temp.open('wb') as stream:
-                    os.chmod(temp, 0o600)
-                    stream.write(pdf_payload)
-                    stream.flush()
-                    os.fsync(stream.fileno())
+
+            # Preserve all earlier submitted pages when a selected batch is
+            # published; never replace the PDF with only the latest selection.
+            previous = self.repository.submitted_sheets(day)
+            pdf_payload = self.pdf_exporter(previous + rows) if self.pdf_exporter else None
+            staged = self._stage_completed_pdf(day, pdf_payload)
             for row, plan in zip(rows, plans):
                 try:
                     self.writer.apply(plan)
@@ -251,12 +245,29 @@ class ResultingService:
                     raise
                 self.repository.finish_item(day, row['work_order_id'])
                 sent += 1
-            if target is not None:
-                temp.replace(target)
-            complete = True
+            if staged:
+                staged[0].replace(staged[1])
             return {'submitted': sent, 'day': day, 'pdf': bool(pdf_payload)}
+        except Exception:
+            # A Salesforce operation can fail after earlier Work Orders were
+            # committed. Publish a PDF of ONLY the successful receipts; do not
+            # accidentally include the unsuccessful remainder of the batch.
+            if sent and self.pdf_exporter and self.output_directory:
+                try:
+                    successful = self.repository.submitted_sheets(day)
+                    partial = self.pdf_exporter(successful)
+                    staged = self._stage_completed_pdf(day, partial)
+                    if staged:
+                        staged[0].replace(staged[1])
+                except Exception:
+                    # The original Salesforce failure is authoritative and the
+                    # durable receipt still permits PDF recovery on retry.
+                    pass
+            raise
         finally:
-            self.repository.finish_submit(day, complete)
+            if staged:
+                staged[0].unlink(missing_ok=True)
+            self.repository.finish_submit(day)
 
 
 class ResultingDailyPull:

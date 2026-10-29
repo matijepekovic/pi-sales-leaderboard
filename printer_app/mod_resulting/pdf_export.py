@@ -195,8 +195,8 @@ def _overlay_one(c,index,draft):
         _fit_lines(c,d[key],x+3,t+12,COL_WIDTH*cols-6,
                    sum(MOD_ROW_HEIGHTS[row:row+rows])-14,start=8.5)
 
-    # Work Order deposit stays numeric in Salesforce. The printed
-    # Deposit/Payment cell combines sold-product totals without dollar signs.
+    # The Work Order Deposit/Payment field is one slash-separated text value
+    # in the sheet, PDF, and Salesforce. Never add a currency symbol.
     automatic=prices(d['numbers'])
     start=d['start_price_override'] or automatic['highest']
     final=d['final_price_override'] or automatic['lowest']
@@ -223,11 +223,11 @@ def _overlay_one(c,index,draft):
     text_x=x+numbers_width+2
     text_width=full_width-numbers_width-7
     notes_height=sum(MOD_ROW_HEIGHTS[5:])-15
-    # Redline characters are explicitly entered with the red pen.
-    # Selecting a Dispo never changes ink or recolors existing notes.
-    runs = note_runs_for_display(d)
+    # Legacy mixed runs remain readable; new manual redlines are separate
+    # from the black Notes and belong with generated Sale/Result redlines.
+    runs = note_runs_for_display(dict(d, redlines=''))
     user_notes = ''.join(part['text'] for part in runs)
-    generated = final_redline_text(dict(d, redlines=''))
+    generated = final_redline_text(d)
     if generated:
         line_count = len(_lines(user_notes, 'Times-Roman', 9, text_width))
         comment_height = min(notes_height*.75, max(13, line_count*11)) if user_notes else 0

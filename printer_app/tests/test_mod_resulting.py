@@ -121,7 +121,7 @@ def test_daily_mod_selection_refresh_and_end_of_day_idempotence(tmp_path):
         'product':'Roofing','result':'sale','detail':'',
         'price':'17000','deposit':'0',
     }]
-    assert payload['deposit_total']=='0'
+    assert payload['deposit_payment']=='0/'
     assert 'SALE Roofing: $17,000 | Deposit: $0' in payload['final_redlines']
     assert repo.sheets(DAY)[0]['submitted_at'] is not None
     with pytest.raises(ValueError):
@@ -204,7 +204,7 @@ def test_sale_zero_price_is_not_sold_and_zero_deposit_is_valid(tmp_path):
     })
     payload=service.submission_payload(sheet,USER)
     assert payload['fields']['price']=={'highest':'25000','lowest':'18000'}
-    assert payload['deposit_total']=='0'
+    assert payload['deposit_payment']=='0/'
     assert [item['product'] for item in payload['product_results']]==['Roofing']
     assert 'Windows' not in payload['final_redlines']
     assert 'SALE Roofing: $18,000 | Deposit: $0' in payload['final_redlines']
@@ -325,7 +325,7 @@ def test_sandbox_is_reachable_from_printer_and_never_writes_salesforce(tmp_path)
     assert service.allow_salesforce_writes is False
 
     result=client.post('/mod-resulting/api/submit',
-                       data={'csrf':csrf},headers={'Origin':'http://localhost'})
+                       data={'csrf':csrf,'mode':'all'},headers={'Origin':'http://localhost'})
     assert result.status_code==422
     assert b'Live Salesforce submission is disabled' in result.data
     assert service.writer.applied==[]
@@ -390,3 +390,127 @@ def test_notes_keep_separate_ink_and_result_detail_is_always_red():
         clean_draft({
             'notes':'Actual', 'note_runs':[{'text':'Different','red':True}]
         })
+
+
+def test_selected_submissions_keep_remaining_work_orders_editable_and_preserve_pdf(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    second = ModSheetRecord(
+        source_id='0WO000000000002AAA', lead_source_id=LEAD,
+        lead_name='Second Customer', work_order_number='00001235',
+        product_interest='Roofing',
+    )
+    repo.refresh(DAY, [RECORD, second], market_segment='Olympia')
+    service.set_mod(DAY, USER)
+    repo.save_draft(DAY, WORK, clean_draft({'dispo':'pns','notes':'First'}), 0)
+    repo.save_draft(DAY, second.source_id, clean_draft({'dispo':'np','notes':'Second'}), 0)
+    service.pdf_exporter = render_resulting_pdf
+    service.output_directory = tmp_path/'completed'
+
+    assert service.submit(DAY,[WORK])['submitted'] == 1
+    assert [item['work_order_id'] for item in repo.submitted_sheets(DAY)] == [WORK]
+    pdf_path=service.output_directory/(DAY + '-completed.pdf')
+    first_pdf=PdfReader(BytesIO(pdf_path.read_bytes())).pages[0].extract_text()
+    assert '00001234' in first_pdf and '00001235' not in first_pdf
+    assert repo.day(DAY)['submitted_at'] is not None
+
+    with pytest.raises(ValueError,match='already submitted'):
+        service.submit(DAY,[WORK])
+    assert repo.day(DAY)['submitting'] == 0
+    with pytest.raises(ValueError):
+        service.set_mod(DAY,USER)
+
+    # Unselected sheets can still be edited after an earlier submission.
+    pending=next(row for row in repo.sheets(DAY) if row['work_order_id']==second.source_id)
+    assert pending['submitted_at'] is None
+    revised=clean_draft(dict(pending['draft'], notes='Second edited'))
+    repo.save_draft(DAY, second.source_id, revised, pending['revision'])
+
+    assert service.submit(DAY,[second.source_id])['submitted']==1
+    assert len(writer.applied)==2
+    assert len(repo.submitted_sheets(DAY))==2
+    combined=PdfReader(BytesIO(pdf_path.read_bytes())).pages[0].extract_text()
+    assert '00001234' in combined and '00001235' in combined
+    assert 'Second edited' in combined
+    with pytest.raises(ValueError,match='No unsubmitted'):
+        service.submit(DAY)
+    assert len(writer.applied)==2
+
+
+def test_selected_submission_rejects_blank_unknown_and_duplicate_ids(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    repo.refresh(DAY,[RECORD],market_segment='Olympia')
+    service.set_mod(DAY,USER)
+    repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
+    for selected in ([],[WORK,WORK],['0WO000000000999AAA'],[WORK,'0WO000000000999AAA']):
+        with pytest.raises(ValueError):
+            service.submit(DAY,selected)
+        assert repo.day(DAY)['submitting']==0
+        assert writer.applied==[]
+    assert service.submit(DAY,[WORK])['submitted']==1
+
+
+def test_partial_failure_preserves_receipts_pdf_and_retries_only_remaining(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    second=ModSheetRecord(source_id='0WO000000000002AAA',lead_source_id=LEAD,
+        lead_name='Second Customer',work_order_number='00001235',product_interest='Roofing')
+    repo.refresh(DAY,[RECORD,second],market_segment='Olympia')
+    service.set_mod(DAY,USER)
+    repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
+    repo.save_draft(DAY,second.source_id,clean_draft({'dispo':'np'}),0)
+    service.pdf_exporter=render_resulting_pdf
+    service.output_directory=tmp_path/'completed'
+    original=writer.apply
+    def fail_second(plan):
+        if plan['work_order_id']==second.source_id:
+            raise RuntimeError('Simulated Salesforce outage')
+        original(plan)
+    writer.apply=fail_second
+    with pytest.raises(RuntimeError,match='Salesforce outage'):
+        service.submit(DAY)
+    assert [row['work_order_id'] for row in repo.submitted_sheets(DAY)]==[WORK]
+    pending=next(row for row in repo.sheets(DAY) if row['work_order_id']==second.source_id)
+    assert 'Salesforce outage' in pending['submit_error']
+    assert pending['submitted_at'] is None
+    partial_pdf=service.output_directory/(DAY+'-completed.pdf')
+    text=PdfReader(BytesIO(partial_pdf.read_bytes())).pages[0].extract_text()
+    assert '00001234' in text and '00001235' not in text
+    writer.apply=original
+    assert service.submit(DAY,[second.source_id])['submitted']==1
+    assert [item['work_order_id'] for item in writer.applied]==[WORK,second.source_id]
+
+
+def test_live_salesforce_write_setting_requires_explicit_opt_in(tmp_path, monkeypatch):
+    from printer_app.config import Config
+    from printer_app.app import create_app
+    env = tmp_path / 'env'
+    env.write_text('EMAIL_ENABLED=0\nPRINTER_SECRET_KEY=' + 's'*64 + '\nMOD_RESULTING_LIVE_WRITES=1\n')
+    monkeypatch.setenv('PRINTER_ENV_FILE', str(env))
+    monkeypatch.setenv('PRINTER_DATA_DIR', str(tmp_path/'enabled'))
+    monkeypatch.delenv('MOD_RESULTING_LIVE_WRITES', raising=False)
+    cfg = Config.from_env()
+    assert cfg.mod_resulting_live_writes is True
+    app = create_app(cfg)
+    assert app.extensions['mod_resulting'].allow_salesforce_writes is True
+    # Opt-in config alone does not invoke Salesforce; no submission is made.
+    assert app.extensions['mod_resulting'].repository.sheets(DAY) == []
+
+
+def test_submit_api_rejects_unselected_and_malformed_scope_before_live_write(tmp_path):
+    from printer_app.app import create_app
+    from printer_app.config import Config
+    from printer_app.tests.auth_helpers import login_admin
+
+    env = tmp_path/'env'
+    env.write_text('EMAIL_ENABLED=0\n')
+    app=create_app(Config(data_dir=tmp_path/'data',env_file=env,
+                          secret_key='s'*64,email_enabled=False))
+    client=app.test_client()
+    csrf=login_admin(client)
+    for values in ({}, {'mode':'invalid'},
+                   {'mode':'selected','work_order_ids':'{}'},
+                   {'mode':'selected','work_order_ids':'not-json'}):
+        result=client.post('/mod-resulting/api/submit',
+                           data=dict({'csrf':csrf},**values),
+                           headers={'Origin':'http://localhost'})
+        assert result.status_code==422
+    assert app.extensions['mod_resulting'].allow_salesforce_writes is False

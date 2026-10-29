@@ -509,7 +509,8 @@ class ResultingSalesforceAdapter:
             'promotion': ('boolean',),
             'start_price': ('currency', 'double', 'int', 'long'),
             'final_price': ('currency', 'double', 'int', 'long'),
-            'deposit': ('currency', 'double', 'int', 'long'),
+            # WorkOrder.Deposit_Payment__c stores e.g. 500/159.50.
+            'deposit': ('string', 'textarea'),
             'need': ('textarea', 'string'),
             'want': ('textarea', 'string'),
         }
@@ -643,11 +644,9 @@ class ResultingSalesforceAdapter:
                 wo_values[WO['final_price']] = self._value(
                     wo_fields['final_price'], payload['fields']['price']['lowest']
                 )
-            if payload['deposit_total'] != '':
-                # The total is from actual sold products, never a Work Order
-                # price. Zero is a valid deposit total.
+            if payload['deposit_payment'] != '':
                 wo_values[WO['deposit']] = self._value(
-                    wo_fields['deposit'], payload['deposit_total']
+                    wo_fields['deposit'], payload['deposit_payment']
                 )
             plan.append(('update', WORK_ORDER, work_order_id, wo_values))
 

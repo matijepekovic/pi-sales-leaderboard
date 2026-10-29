@@ -65,6 +65,7 @@ class Config:
     # UI and retained only so the worker can redact it if it appears in logs.
     password_hash: str = field(default='', repr=False)
     secure_cookie: bool = False
+    mod_resulting_live_writes: bool = False
     timezone: str = 'America/Los_Angeles'
     attachment_limit: int = 20 * 1024 * 1024
     conversion_timeout: int = 120
@@ -109,6 +110,7 @@ class Config:
             secret_key=e.get('PRINTER_SECRET_KEY', ''),
             password_hash=e.get('PRINTER_UI_PASSWORD_HASH', ''),
             secure_cookie=e.get('PRINTER_SECURE_COOKIE', '0') == '1',
+            mod_resulting_live_writes=e.get('MOD_RESULTING_LIVE_WRITES', '0') == '1',
             timezone=e.get('PRINTER_TIMEZONE', 'America/Los_Angeles'),
             attachment_limit=int(e.get('MAX_ATTACHMENT_MB', '20')) * 1024 * 1024,
             conversion_timeout=int(e.get('CONVERSION_TIMEOUT_SECONDS', '120')),

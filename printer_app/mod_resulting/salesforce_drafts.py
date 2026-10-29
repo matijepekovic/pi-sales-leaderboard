@@ -3,6 +3,8 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 import re
 
+from .contract import deposit_payment_value
+
 from .salesforce_adapter import (
     LEAD_FIELDS, PR, WO, PRODUCT_RESULT_VALUE, WORK_ORDER_DISPO,
     ResultingSalesforceError,
@@ -76,9 +78,12 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             draft[field] = value is True
         prices = [_money(work.get(WO[key])) for key in ('start_price', 'final_price')]
         draft['numbers'] = '\n'.join(price for price in prices if price)
-        # Preserve the actual Work Order deposit even for multiple sold products:
-        # individual product deposits cannot be reconstructed from a total.
-        draft['deposit_override'] = _money(work.get(WO['deposit']))
+        # Salesforce's existing Deposit/Payment field is text and can contain
+        # both amounts separated by '/'. Preserve it exactly as a manual value.
+        try:
+            draft['deposit_override'] = deposit_payment_value(work.get(WO['deposit']))
+        except ValueError as exc:
+            raise ResultingSalesforceError('Invalid Salesforce Deposit/Payment.') from exc
         if lead_id:
             lead = leads[lead_id]
             dnr = lead.get(LEAD_FIELDS['dnr'])
@@ -125,9 +130,15 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
         if len(details) == 1:
             draft['result_detail'] = next(iter(details))
         if dispo == 'sale':
-            total = _money(work.get(WO['deposit']))
+            # One sold product can be reconstructed from the Work Order total.
+            # Multiple products cannot be split reliably from that total.
+            total = draft['deposit_override']
             if len(sales) == 1 and total:
-                next(iter(sales.values()))['deposit'] = total
+                parts = total.split('/', 1)
+                sold = next(iter(sales.values()))
+                sold['deposit'] = parts[0]
+                if len(parts) == 2 and parts[1]:
+                    sold['payment'] = parts[1]
             draft['sale_products'] = sales
         elif per_product:
             draft['additional_products'] = True

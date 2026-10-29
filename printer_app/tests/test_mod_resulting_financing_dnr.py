@@ -8,7 +8,8 @@ from pypdf import PdfReader
 from printer_app.mod_sheet_contract import ModSheetRecord
 from printer_app.mod_resulting.contract import (
     clean_draft, final_redline_text, outcome_fields,
-    sale_redlines, sold_products, individual_product_sales, deposit_payment_text,
+    sale_redlines, sold_products, individual_product_sales,
+    deposit_payment_text, deposit_payment_value,
 )
 from printer_app.mod_resulting.pdf_export import render_resulting_pdf
 from printer_app.mod_resulting.service import ResultingService
@@ -33,7 +34,7 @@ def _payload(draft):
     }, MOD)
 
 
-def test_monthly_payment_is_optional_per_product_and_never_part_of_deposit_total():
+def test_monthly_payment_is_optional_per_product_and_in_combined_deposit_payment():
     draft = clean_draft({
         'dispo': 'sale',
         'numbers': '25000\n17000',
@@ -51,7 +52,7 @@ def test_monthly_payment_is_optional_per_product_and_never_part_of_deposit_total
     assert sale_redlines(draft) == expected
     assert final_redline_text(draft) == '\n'.join(expected)
     payload = _payload(draft)
-    assert payload['deposit_total'] == '5000'
+    assert payload['deposit_payment'] == '5000/159.50'
     assert deposit_payment_text(draft) == '5000/159.50'
     assert payload['fields']['price'] == {'highest': '25000', 'lowest': '17000'}
     assert [item['product'] for item in payload['product_results']] == [
@@ -79,7 +80,7 @@ def test_independent_product_sale_payment_never_changes_main_disposition():
     payload = _payload(draft)
     assert payload['dispo'] == 'pns'
     assert payload['fields']['lead_status'] == 'Nurturing'
-    assert payload['deposit_total'] == '500'
+    assert payload['deposit_payment'] == '500/138'
     assert deposit_payment_text(draft) == '500/138'
     assert payload['product_results'][0]['result'] == 'sale'
     assert payload['product_results'][0]['price'] == '14500'
@@ -93,11 +94,11 @@ def test_old_sale_drafts_without_payment_remain_compatible():
     draft = clean_draft({'dispo': 'sale', 'sale_products': original})
     assert draft['sale_products'] == original
     assert sale_redlines(draft) == ('SALE Roofing: $17,000 | Deposit: $0',)
-    assert _payload(draft)['deposit_total'] == '0'
+    assert _payload(draft)['deposit_payment'] == '0/'
     assert deposit_payment_text(draft) == '0/'
 
 
-def test_combined_display_uses_actual_sales_and_preserves_numeric_deposit():
+def test_combined_display_uses_actual_sales_and_manual_whole_field_override():
     draft = clean_draft({'dispo': 'sale', 'sale_products': {
         'Roofing': {'price': '17000', 'deposit': '0'},
         'Windows': {'price': '25000', 'deposit': '300', 'payment': '120.50'},
@@ -106,10 +107,26 @@ def test_combined_display_uses_actual_sales_and_preserves_numeric_deposit():
     }})
     assert deposit_payment_text(draft) == '500/200.50'
     overridden = clean_draft(dict(draft, deposit_override='750'))
-    assert deposit_payment_text(overridden) == '750/200.50'
-    assert _payload(overridden)['deposit_total'] == '750'
+    assert deposit_payment_text(overridden) == '750'
+    assert _payload(overridden)['deposit_payment'] == '750'
+    with_slash = clean_draft(dict(draft, deposit_override='750/188.50'))
+    assert deposit_payment_text(with_slash) == '750/188.50'
+    assert _payload(with_slash)['deposit_payment'] == '750/188.50'
     assert deposit_payment_text(clean_draft({'deposit_override': '2500'})) == '2500'
     assert deposit_payment_text(clean_draft({'dispo': 'sale'})) == ''
+
+
+@pytest.mark.parametrize('value', ['500/159', '500/159.50', '0/159.50', '500/', '2500', '1,000/100'])
+def test_manual_deposit_payment_roundtrips_without_rounding(value):
+    normalized = clean_draft({'deposit_override': value})['deposit_override']
+    assert deposit_payment_value(normalized) == value.replace(',', '')
+    assert deposit_payment_text(clean_draft({'deposit_override':value})) == normalized
+
+
+@pytest.mark.parametrize('invalid', ['100//20', '/159', '$500/159', '100/abc', '100/-20', '100/159.123'])
+def test_manual_deposit_payment_rejects_unsafe_values(invalid):
+    with pytest.raises(ValueError):
+        clean_draft({'deposit_override':invalid})
 
 
 @pytest.mark.parametrize('payment', ['not a price', '-20', '12.345', '1,0,0'])

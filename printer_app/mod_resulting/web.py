@@ -133,8 +133,22 @@ def blueprint(service, surface):
     @bp.post('/api/submit')
     def submit():
         try:
-            result = service.submit(service.day())
-        except (ValueError, LookupError) as exc:
+            mode = request.form.get('mode', '')
+            if mode == 'all':
+                if request.form.get('work_order_ids'):
+                    raise ValueError('Submit All cannot include selected Work Orders.')
+                selected = None
+            elif mode == 'selected':
+                raw = request.form.get('work_order_ids', '')
+                if len(raw) > 75000:
+                    raise ValueError('Too many selected Work Orders.')
+                selected = json.loads(raw)
+                if not isinstance(selected, list):
+                    raise ValueError('Choose a list of Work Orders.')
+            else:
+                raise ValueError('Choose Submit All or Submit Selected.')
+            result = service.submit(service.day(), selected)
+        except (ValueError, TypeError, LookupError, json.JSONDecodeError) as exc:
             return jsonify(ok=False, error=str(exc)), 422
         except Exception as exc:
             # No partial-success claim on remote errors. Stored receipts survive retries.

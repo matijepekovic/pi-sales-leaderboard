@@ -117,11 +117,12 @@ def clean_draft(raw):
     data['note_runs'] = normalized_runs
     if data['dispo'] not in DISPOSITIONS:
         raise ValueError('Choose a valid disposition.')
-    # Explicit amount overrides are optional. Without one, the numeric notes
-    # column (or sold-product deposit sum) retains the current behavior.
-    for field in ('start_price_override', 'final_price_override', 'deposit_override'):
+    # Start and Final remain numeric; Deposit/Payment is one text-compatible
+    # value with an optional slash, as on the Salesforce Work Order.
+    for field in ('start_price_override', 'final_price_override'):
         if data[field]:
             _money(data[field])
+    data['deposit_override'] = deposit_payment_value(data['deposit_override'])
     # Lead-status selections are validated against actual Salesforce picklists
     # in the adapter before any write; empty means use the Dispo default.
     # DNR only applies when at least one reason is actually selected.
@@ -247,28 +248,43 @@ def sale_redlines(draft):
     )
 
 
-def deposit_payment_text(draft):
-    """Display deposit/payment from actual sold products; no currency symbols.
+def deposit_payment_value(value):
+    """Validate a manual Salesforce-compatible Deposit/Payment text entry.
 
-    Keep the Salesforce Work Order amount numeric (deposit only). An empty
-    payment means no payment was entered, not a fabricated zero.
+    A deposit-only number is supported for existing drafts. A slash separates
+    the deposit and payment, and an empty payment is allowed for cash sales.
     """
+    text = '' if value is None else str(value).strip()
+    if not text:
+        return ''
+    if '$' in text:
+        raise ValueError('Deposit/Payment does not use dollar signs.')
+    parts = text.split('/')
+    if len(parts) > 2 or not parts[0].strip():
+        raise ValueError('Deposit/Payment must be a deposit or deposit/payment.')
+    for part in parts:
+        if part.strip():
+            _money(part.strip())
+    return '/'.join(part.strip().replace(',', '') for part in parts)
+
+
+def deposit_payment_text(draft):
+    """The single Work Order Deposit/Payment value, manual or computed."""
+    manual = deposit_payment_value(draft.get('deposit_override', ''))
+    if manual:
+        return manual
     sales = (sold_products(draft) if draft.get('dispo') == 'sale'
              else individual_product_sales(draft))
-    def plain_amount(value):
-        # Reuse the established money formatter; remove only the currency
-        # symbol and grouping while retaining two significant cents digits.
-        text = '' if value is None else str(value).strip()
-        return format_money(text)[1:].replace(',', '') if text else ''
-
-    override = draft.get('deposit_override', '')
     if not sales:
-        return plain_amount(override)
-    deposit = (plain_amount(override) if override else
-               plain_amount(sum((_money(item['deposit']) for item in sales), Decimal('0'))))
+        return ''
+    def plain_amount(value):
+        return format_money(value)[1:].replace(',', '')
+
+    deposit = plain_amount(sum(
+        (_money(item['deposit']) for item in sales), Decimal('0')))
     payments = [item['payment'] for item in sales if item['payment']]
-    payment = (plain_amount(sum((_money(value) for value in payments), Decimal('0')))
-               if payments else '')
+    payment = plain_amount(sum(
+        (_money(value) for value in payments), Decimal('0'))) if payments else ''
     return deposit + '/' + payment
 
 
@@ -308,8 +324,8 @@ def result_detail_redlines(draft):
 
 
 def final_redline_text(draft):
-    # Historical drafts have a separate redlines key. New red characters
-    # already belong to notes and must not be appended a second time.
+    # Manual redlines live separately from black MOD Notes. Legacy mixed
+    # runs remain part of the historical Notes text and are not duplicated.
     lines = [line for line in str(draft.get('redlines') or '').splitlines() if line.strip()]
     lines.extend(result_detail_redlines(draft))
     if draft.get('dnr') and draft.get('dnr_reason'):

@@ -185,7 +185,7 @@ def test_mod_sheets_search_customers_and_assigned_reps_only(mod_browser):
     first = page.locator('.mod-sheet').first
     for key in ('numbers', 'notes'):
         expect(first.locator('[data-key=' + key + ']')).to_be_visible()
-    expect(first.locator('[data-key=redlines]')).to_have_count(0)
+    expect(first.locator('.redlines-panel [data-key=redlines]')).to_have_count(1)
 
     page.locator('#nameSearch').fill('alex')
     expect(page.locator('.mod-sheet:visible')).to_have_count(1)
@@ -208,7 +208,12 @@ def test_mod_sheets_search_customers_and_assigned_reps_only(mod_browser):
     first.locator('.cxl-panel .editor-primary').click()
     expect(first.locator('[data-key=notes]')).to_be_visible()
     expect(first.locator('[data-key=notes]')).to_have_value('Black comment')
-    first.locator('[data-key=notes]').fill('Black comment\nREDLINE')
+    first.locator('.red-pen').click()
+    expect(first.locator('.redlines-panel')).to_be_visible()
+    first.locator('.redlines-panel [data-key=redlines]').fill('REDLINE')
+    first.locator('.redlines-panel .editor-primary').click()
+    expect(first.locator('[data-key=notes]')).to_have_value('Black comment')
+    expect(first.locator('.manual-redlines')).to_have_text('REDLINE')
     first.locator('[data-key=numbers]').fill('20000\n17000')
     page.locator('#hideCompleted').check()
     expect(page.locator('.mod-sheet:visible')).to_have_count(1)
@@ -217,7 +222,8 @@ def test_mod_sheets_search_customers_and_assigned_reps_only(mod_browser):
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(page.locator('.mod-sheet')).to_have_count(2)
-    expect(page.locator('.mod-sheet').first.locator('[data-key=notes]')).to_have_value('Black comment\nREDLINE')
+    expect(page.locator('.mod-sheet').first.locator('[data-key=notes]')).to_have_value('Black comment')
+    expect(page.locator('.mod-sheet').first.locator('[data-key=redlines]')).to_have_value('REDLINE')
     row = service.repository.sheets(service.day())[0]
     assert row['draft']['dispo'] == 'cxl'
     assert row['draft']['cxl_at_lead'] is True
@@ -227,11 +233,78 @@ def test_mod_sheets_search_customers_and_assigned_reps_only(mod_browser):
     assert service.repository.day(service.day())['mod_user_id'] == MOD
     page.locator('#submitDay').click()
     expect(page.locator('#endConfirm')).to_be_visible()
-    expect(page.locator('#reviewCount')).to_contain_text('1 resulted sheet(s)')
-    expect(page.locator('#confirmEnd')).to_be_disabled()
-    page.locator('#cancelEnd').click()
+    expect(page.locator('#endMethod')).to_be_hidden()
+    page.locator('#cancelEndSecondary').click()
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+    page.locator('#submitDay').click()
+    page.locator('#proceedEnd').click()
+    expect(page.locator('#endConfirm')).to_be_hidden()
+    expect(page.locator('#endMethod')).to_be_visible()
+    expect(page.locator('#reviewCount')).to_contain_text('1 eligible Work Order(s)')
+    expect(page.locator('#submitAll')).to_be_disabled()
+    page.locator('#chooseSelected').click()
+    expect(page.locator('#endMethod')).to_be_hidden()
+    expect(page.locator('#endSelect')).to_be_visible()
+    expect(page.locator('#endList .end-choice')).to_have_count(1)
+    expect(page.locator('#submitSelected')).to_be_disabled()
+    page.locator('#endSelect .editor-close').click()
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
     assert not writer.applied
     evidence('search-and-refresh')
+
+
+def test_end_of_day_three_popups_submit_only_explicitly_selected_work_order(mod_browser):
+    from playwright.sync_api import expect
+    from urllib.parse import parse_qs
+
+    page, service, writer, origin, evidence = mod_browser
+    page.goto(origin + '/mod-resulting')
+    first, second = page.locator('.mod-sheet').all()
+    first.locator('[data-key=dispo]').select_option('pns')
+    second.locator('[data-key=dispo]').select_option('np')
+    page.locator('#dailyMod').select_option(MOD)
+
+    # Only intercept this one browser request. No Salesforce write is enabled,
+    # and the fixture still verifies that no writer ever ran.
+    submitted = []
+    def fake_submit(route):
+        submitted.append(parse_qs(route.request.post_data))
+        route.fulfill(status=200, json={'ok':True, 'submitted':1,
+                                        'day':service.day(), 'pdf':False})
+    page.route('**/mod-resulting/api/submit', fake_submit)
+
+    page.locator('#submitDay').click()
+    expect(page.locator('#endConfirm')).to_be_visible()
+    expect(page.locator('.editor-dialog[open]')).to_have_count(1)
+    page.locator('#cancelEndSecondary').click()
+    expect(page.locator('.editor-dialog[open]')).to_have_count(0)
+    page.locator('#submitDay').click()
+    page.locator('#proceedEnd').click()
+    expect(page.locator('#endConfirm')).to_be_hidden()
+    expect(page.locator('#endMethod')).to_be_visible()
+    expect(page.locator('#endSelect')).to_be_hidden()
+    expect(page.locator('.editor-dialog[open]')).to_have_count(1)
+
+    page.locator('#chooseSelected').click()
+    expect(page.locator('#endMethod')).to_be_hidden()
+    expect(page.locator('#endSelect')).to_be_visible()
+    expect(page.locator('#endList .end-choice')).to_have_count(2)
+    expect(page.locator('.editor-dialog[open]')).to_have_count(1)
+    page.locator('#endSearch').fill('00011111')
+    expect(page.locator('#endList .end-choice:visible')).to_have_count(1)
+    page.locator('#endSearch').fill('')
+    page.locator('#endList .end-choice input[type=checkbox]').first.check()
+    # Simulate only the UI opt-in; POST is intercepted and fake writer unused.
+    page.evaluate("""() => { document.querySelector('#submitDay').dataset.liveWrites = 'yes'; }""")
+    page.locator('#endList .end-choice input[type=checkbox]').first.uncheck()
+    page.locator('#endList .end-choice input[type=checkbox]').first.check()
+    expect(page.locator('#submitSelected')).to_be_enabled()
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#submitSelected').click()
+    assert len(submitted) == 1
+    assert submitted[0]['mode'] == ['selected']
+    assert submitted[0]['work_order_ids'] == [json.dumps([first.get_attribute('data-id')])]
+    assert writer.applied == []
 
 
 @pytest.mark.parametrize('viewport', [(1500, 1000), (1200, 820), (390, 844)])
@@ -310,7 +383,11 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('0/159')
     expect(first.locator('[data-key=notes]')).to_have_value('Black comment above redlines.')
     first.locator('.red-pen').click()
-    first.locator('[data-key=notes]').fill('Black comment above redlines.\nREPLACE TRIM WITH FULL SCOPE.')
+    expect(first.locator('.redlines-panel')).to_be_visible()
+    first.locator('.redlines-panel [data-key=redlines]').fill('REPLACE TRIM WITH FULL SCOPE.')
+    first.locator('.redlines-panel .editor-primary').click()
+    expect(first.locator('[data-key=notes]')).to_have_value('Black comment above redlines.')
+    expect(first.locator('.manual-redlines')).to_have_text('REPLACE TRIM WITH FULL SCOPE.')
     first.locator('[data-key=numbers]').fill('25,000\n17,850')
     for key in ('power_questions', 't_close', 'ninety_min', 'docs', 'bid_sheets',
                 'promotion', 'review', 'one_leg', 'free_lead'):
@@ -323,20 +400,16 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     first.locator('[data-key=call_1]').fill('10:15 AM')
     first.locator('[data-key=call_2]').fill('10:27 AM')
     assert first.locator('.field-notes').bounding_box() == bounds
-    red = first.locator('.mod-notes-display .redline-ink')
-    expect(red).to_have_text('\nREPLACE TRIM WITH FULL SCOPE.')
-    expect(first.locator('.mod-notes-display span').first).to_have_text(
-        'Black comment above redlines.')
+    red = first.locator('.manual-redlines')
+    expect(red).to_have_text('REPLACE TRIM WITH FULL SCOPE.')
+    expect(first.locator('[data-key=notes]')).to_have_value('Black comment above redlines.')
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(first).to_have_class('mod-sheet surface-ready')
     draft = service.repository.sheets(service.day())[0]['draft']
-    assert draft['notes'] == 'Black comment above redlines.\nREPLACE TRIM WITH FULL SCOPE.'
-    assert draft['redlines'] == ''
-    assert draft['note_runs'] == [
-        {'text':'Black comment above redlines.', 'red':False},
-        {'text':'\nREPLACE TRIM WITH FULL SCOPE.', 'red':True},
-    ]
+    assert draft['notes'] == 'Black comment above redlines.'
+    assert draft['redlines'] == 'REPLACE TRIM WITH FULL SCOPE.'
+    assert draft['note_runs'] == []
     assert draft['dnr_reason'] == 'Roofing'
     assert draft['sale_products'] == {
         'Roofing':{'price':'17850','deposit':'0','payment':'159'},
@@ -483,7 +556,7 @@ def test_opening_another_sheet_dialog_closes_the_previous(mod_browser):
     expect(page.locator('.editor-dialog[open]')).to_have_count(0)
 
 
-def test_existing_split_notes_are_preserved_when_migrated_to_one_textbox(mod_browser):
+def test_existing_split_notes_remain_in_separate_redlines_editor(mod_browser):
     from playwright.sync_api import expect
     from printer_app.mod_resulting.contract import clean_draft
 
@@ -495,15 +568,23 @@ def test_existing_split_notes_are_preserved_when_migrated_to_one_textbox(mod_bro
         'redlines':'Legacy second note',
     }), 0)
     page.goto(origin + '/mod-resulting')
-    note = page.locator('.mod-sheet').first.locator('[data-key=notes]')
-    expect(note).to_have_value('Legacy first note\nLegacy second note')
-    assert page.locator('.mod-sheet').first.locator('.notes-text textarea').count() == 1
-    note.fill('Legacy first note\nLegacy second note\nAdditional note')
+    first = page.locator('.mod-sheet').first
+    note = first.locator('[data-key=notes]')
+    expect(note).to_have_value('Legacy first note')
+    expect(first.locator('.manual-redlines')).to_have_text('Legacy second note')
+    assert first.locator('.notes-text textarea').count() == 1
+    first.locator('.red-pen').click()
+    popup = first.locator('.redlines-panel')
+    expect(popup.locator('[data-key=redlines]')).to_have_value('Legacy second note')
+    popup.locator('[data-key=redlines]').fill('Legacy second note\nAdditional redline')
+    popup.locator('.editor-primary').click()
+    note.fill('Legacy first note\nAdditional black note')
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     saved = service.repository.sheets(day)[0]['draft']
-    assert saved['notes'] == 'Legacy first note\nLegacy second note\nAdditional note'
-    assert saved['redlines'] == ''
+    assert saved['notes'] == 'Legacy first note\nAdditional black note'
+    assert saved['redlines'] == 'Legacy second note\nAdditional redline'
+    assert saved['note_runs'] == []
     assert saved['dispo'] == 'pns'
     assert not writer.applied
 
@@ -520,6 +601,8 @@ def test_price_overrides_stay_in_original_sheet_cells(mod_browser, viewport):
     expect(first.locator('.mobile-call-actions,.edit-lead-status,.lead-panel')).to_have_count(0)
     first.locator('[data-key="numbers"]').fill('25000\n17000')
     first.locator('[data-key="dispo"]').select_option('pns')
+    expect(first.locator('[data-price-display="start_price_override"]')).to_have_text('$25000')
+    expect(first.locator('[data-price-display="final_price_override"]')).to_have_text('$17000')
 
     for field in ('startprice', 'finalprice', 'depositpayment'):
         trigger = first.locator('.field-' + field + ' [data-price-trigger]')
@@ -527,12 +610,15 @@ def test_price_overrides_stay_in_original_sheet_cells(mod_browser, viewport):
         trigger.click()
         popup = first.locator('.price-panel')
         expect(popup).to_be_visible()
+        expect(popup.locator('[data-key="start_price_override"]')).to_have_attribute('placeholder','25000')
+        expect(popup.locator('[data-key="final_price_override"]')).to_have_attribute('placeholder','17000')
+        expect(popup.locator('[data-key="deposit_override"]')).to_have_attribute('placeholder','')
         popup.locator('[data-key="start_price_override"]').fill('27000')
         popup.locator('[data-key="final_price_override"]').fill('16000')
-        popup.locator('[data-key="deposit_override"]').fill('2500')
+        popup.locator('[data-key="deposit_override"]').fill('2500/159.50')
         expect(first.locator('[data-price-display="start_price_override"]')).to_have_text('$27000')
         expect(first.locator('[data-price-display="final_price_override"]')).to_have_text('$16000')
-        expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('2500')
+        expect(first.locator('[data-price-display="deposit_override"]')).to_have_text('2500/159.50')
         popup.locator('.editor-primary').click()
         expect(popup).to_be_hidden()
 
@@ -543,7 +629,7 @@ def test_price_overrides_stay_in_original_sheet_cells(mod_browser, viewport):
     saved = service.repository.sheets(service.day())[0]['draft']
     assert saved['start_price_override'] == '27000'
     assert saved['final_price_override'] == '16000'
-    assert saved['deposit_override'] == '2500'
+    assert saved['deposit_override'] == '2500/159.50'
     assert outcome_fields(saved)['lead_status'] == 'Nurturing'
     assert all(saved[key] for key in ('docs','review','ninety_min'))
     assert not writer.applied
@@ -647,13 +733,16 @@ def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
     first.locator('[data-key=dispo]').select_option('cxl')
     first.locator('[data-key=cxl_at_lead]').check()
     first.locator('.cxl-panel .editor-primary').click()
-    first.locator('[data-key=notes]').fill('Final black comment\nFINAL REDLINE')
+    first.locator('.red-pen').click()
+    first.locator('.redlines-panel [data-key=redlines]').fill('FINAL REDLINE')
+    first.locator('.redlines-panel .editor-primary').click()
     held[0].continue_()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(first).to_have_class('mod-sheet surface-ready')
     saved = service.repository.sheets(service.day())[0]['draft']
-    expected = {'review': False, 'numbers': '', 'notes': 'Final black comment\nFINAL REDLINE',
+    expected = {'review': False, 'numbers': '', 'notes': 'Final black comment',
+                'redlines': 'FINAL REDLINE',
                 'call_1': '10:15 AM',
                 'call_2': '1:27 PM', 'dispo': 'cxl', 'cxl_at_lead': True}
     for key, value in expected.items():
@@ -691,7 +780,7 @@ def test_real_policy_rejects_an_inline_style_in_a_separate_probe_page(mod_browse
     finally:
         probe.close()
 
-def test_result_detail_and_explicit_red_pen_independent_of_disposition(mod_browser):
+def test_red_pen_opens_separate_redlines_popup_and_never_recolors_notes(mod_browser):
     from playwright.sync_api import expect
 
     page, service, writer, origin, evidence = mod_browser
@@ -699,29 +788,70 @@ def test_result_detail_and_explicit_red_pen_independent_of_disposition(mod_brows
     first = page.locator('.mod-sheet').first
     notes = first.locator('[data-key=notes]')
     pen = first.locator('.red-pen')
-    notes.fill('Black')
+    notes.fill('Black notes remain black')
     first.locator('[data-key=result_detail]').select_option('Price Objection')
     expect(first.locator('.result-detail-in-redline')).to_have_text('Price Objection')
     first.locator('[data-key=dispo]').select_option('pns')
-    notes.fill('Black\nStill black')
-    expect(first.locator('.mod-notes-display .redline-ink')).to_have_count(0)
-    expect(pen).to_have_attribute('aria-pressed', 'false')
+    expect(notes).to_have_value('Black notes remain black')
+    expect(pen).to_be_visible()
+    assert pen.evaluate('(el) => el.parentElement.classList.contains("mod-sheet")')
     pen.click()
-    notes.fill('Black\nStill black\nRedline')
-    expect(first.locator('.mod-notes-display .redline-ink')).to_have_text('\nRedline')
+    popup = first.locator('.redlines-panel')
+    expect(popup).to_be_visible()
+    expect(popup.locator('.editor-heading h2')).to_have_text('Redlines')
+    expect(page.locator('.editor-dialog[open]')).to_have_count(1)
+    popup.locator('[data-key=redlines]').fill('Scope changed')
+    popup.locator('.editor-primary').click()
+    expect(notes).to_have_value('Black notes remain black')
+    expect(first.locator('.manual-redlines')).to_have_text('Scope changed')
     first.locator('[data-key=dispo]').select_option('')
-    expect(pen).to_have_attribute('aria-pressed', 'true')
     pen.click()
-    notes.fill('Black\nStill black\nRedline\nBlack again')
+    expect(popup.locator('[data-key=redlines]')).to_have_value('Scope changed')
+    popup.locator('[data-key=redlines]').fill('Scope changed\nNew redline')
+    popup.locator('.editor-primary').click()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     stored = service.repository.sheets(service.day())[0]['draft']
     assert stored['dispo'] == ''
-    assert stored['note_runs'] == [
-        {'text':'Black\nStill black','red':False},
-        {'text':'\nRedline','red':True},
-        {'text':'\nBlack again','red':False},
-    ]
+    assert stored['notes'] == 'Black notes remain black'
+    assert stored['redlines'] == 'Scope changed\nNew redline'
+    assert stored['note_runs'] == []
     assert not writer.applied
 
 
+def test_calculated_amount_placeholders_update_and_clear_to_automatic(mod_browser):
+    from playwright.sync_api import expect
+
+    page, service, writer, origin, evidence = mod_browser
+    page.goto(origin + '/mod-resulting')
+    sheet = page.locator('.mod-sheet').first
+    sheet.locator('[data-key=numbers]').fill('17000\n25000\n21000')
+    expect(sheet.locator('[data-price-display=start_price_override]')).to_have_text('$25000')
+    expect(sheet.locator('[data-price-display=final_price_override]')).to_have_text('$17000')
+
+    sheet.locator('[data-key=dispo]').select_option('sale')
+    sale = sheet.locator('.sale-panel')
+    roofing = sale.locator('[data-sale-product="Roofing"]')
+    windows = sale.locator('[data-sale-product="Windows"]')
+    roofing.locator('[data-sale-selected]').check()
+    roofing.locator('[data-sale-price]').fill('18000')
+    roofing.locator('[data-sale-deposit]').fill('300')
+    roofing.locator('[data-sale-payment]').fill('159.50')
+    windows.locator('[data-sale-selected]').check()
+    windows.locator('[data-sale-price]').fill('20000')
+    windows.locator('[data-sale-deposit]').fill('200')
+    windows.locator('[data-sale-payment]').fill('80')
+    sale.locator('.sale-done').click()
+    expect(sheet.locator('[data-price-display=deposit_override]')).to_have_text('500/239.50')
+    sheet.locator('[data-price-trigger=deposit_override]').click()
+    popup = sheet.locator('.price-panel')
+    expect(popup.locator('[data-key=start_price_override]')).to_have_attribute('placeholder','25000')
+    expect(popup.locator('[data-key=final_price_override]')).to_have_attribute('placeholder','17000')
+    deposit = popup.locator('[data-key=deposit_override]')
+    expect(deposit).to_have_attribute('placeholder','500/239.50')
+    deposit.fill('750/250')
+    expect(sheet.locator('[data-price-display=deposit_override]')).to_have_text('750/250')
+    deposit.fill('')
+    expect(sheet.locator('[data-price-display=deposit_override]')).to_have_text('500/239.50')
+    popup.locator('.editor-primary').click()
+    assert not writer.applied

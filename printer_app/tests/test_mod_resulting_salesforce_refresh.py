@@ -74,7 +74,7 @@ def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
                 'Docs__c':True, 'X90_Min__c':True,
                 'Promotion__c':False, 'Need__c':'Security',
                 'Want__c':'Value', 'Start_Price__c':25000,
-                'Price__c':17000, 'Deposit_Payment__c':0,
+                'Price__c':17000, 'Deposit_Payment__c':'0/159.50',
             }]
         elif ' FROM Lead ' in query:
             assert 'DNR_Do_Not_Reset__c' in query
@@ -106,6 +106,7 @@ def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
     assert draft['call_2'] == '1:27 PM'
     assert draft['need'] == 'Security' and draft['want'] == 'Value'
     assert draft['numbers'] == '25000\n17000'
+    assert draft['deposit_override'] == '0/159.50'
     assert draft['docs'] is True and draft['ninety_min'] is True
     assert draft['dnr'] is True and draft['dnr_reason'] == 'Roofing'
     assert draft['product_results']['Roofing']['detail'] == 'Price Objection'
@@ -157,3 +158,23 @@ def test_salesforce_refresh_handles_shared_leads_across_pages():
     assert len(hydrated) == 41
     assert len(lead_queries) == 1
     assert all(row['dispo'] == '' for row in hydrated.values())
+
+
+def test_salesforce_text_deposit_payment_is_hydrated_into_one_sale():
+    from printer_app.mod_resulting.salesforce_drafts import project_salesforce_drafts
+    from zoneinfo import ZoneInfo
+
+    works = {WORK: {
+        'Id': WORK, 'Dispo__c':'Sale', 'MOD_Notes__c':'Black note',
+        'Deposit_Payment__c':'500/159.50',
+    }}
+    products = {WORK: [{
+        'Product_Interest__c':'Roofing', 'Result__c':'Sale',
+        'Price_Given__c':18000,
+    }]}
+    draft = clean_draft(project_salesforce_drafts(
+        ZoneInfo('America/Los_Angeles'), {WORK: LEAD},
+        works, {LEAD:{}}, products)[WORK])
+    assert draft['deposit_override']=='500/159.50'
+    assert draft['sale_products']['Roofing']=={
+        'price':'18000', 'deposit':'500', 'payment':'159.50'}

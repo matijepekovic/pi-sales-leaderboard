@@ -49,7 +49,7 @@ def _schemas():
         _field('Docs__c','boolean'), _field('X90_Min__c','boolean'),
         _field('Promotion__c','boolean'),
         _field('Start_Price__c','currency'), _field('Price__c','currency'),
-        _field('Deposit_Payment__c','currency'),
+        _field('Deposit_Payment__c','string'),
         _field('Need__c','textarea'), _field('Want__c','textarea'),
         # Review is now an opt-in checked-only write; the other ghost fields
         # remain excluded even when their UI checkboxes are selected.
@@ -415,7 +415,7 @@ def test_main_sale_uses_separate_product_prices_deposits_and_preserves_lead_inte
     assert wo['Dispo__c']=='Sale'
     assert wo['Start_Price__c']=='25000'
     assert wo['Price__c']=='17000'
-    assert wo['Deposit_Payment__c']=='5000'
+    assert wo['Deposit_Payment__c']=='5000/'
     assert 'SALE Roofing: $17,000 | Deposit: $0' in wo['MOD_Notes__c']
     assert 'SALE Windows: $22,000 | Deposit: $5,000' in wo['MOD_Notes__c']
     assert 'SALE Bath:' not in wo['MOD_Notes__c']
@@ -453,7 +453,7 @@ def test_individual_sale_price_deposit_does_not_change_work_order_dispo():
     plan=_operations(adapter,payload)
     wo=_single(plan,'WorkOrder')[3]
     assert wo['Dispo__c']=='PNS'
-    assert wo['Deposit_Payment__c']=='0'
+    assert wo['Deposit_Payment__c']=='0/'
     assert 'SALE Roofing: $14,500 | Deposit: $0' in wo['MOD_Notes__c']
     results=[row[3] for row in plan if row[1]==PRODUCT_RESULT]
     assert {item['Product_Interest__c']:item['Result__c'] for item in results}=={
@@ -576,7 +576,7 @@ def test_all_adapter_api_names_are_exactly_the_supplied_mapping():
     assert PRODUCT_RESULT == 'Product_Interest_Result__c'
 
 
-def test_financing_payment_only_enters_mod_notes_and_preserves_checked_review():
+def test_financing_payment_goes_to_work_order_and_notes_preserving_review():
     payload=_payload('sale',review=True,sale_products={
         'Roofing':{'price':'17000','deposit':'0','payment':'159.50'},
     })
@@ -585,7 +585,7 @@ def test_financing_payment_only_enters_mod_notes_and_preserves_checked_review():
     wo=_single(plan,'WorkOrder')[3]
     assert wo['Dispo__c']=='Sale'
     assert wo['Review__c'] is True
-    assert wo['Deposit_Payment__c']=='0'
+    assert wo['Deposit_Payment__c']=='0/159.50'
     assert 'SALE Roofing: $17,000 | Deposit: $0 | Payment: $159.50' in wo['MOD_Notes__c']
     assert {field for field in wo if 'Payment' in field} == {
         'Deposit_Payment__c',
@@ -594,3 +594,26 @@ def test_financing_payment_only_enters_mod_notes_and_preserves_checked_review():
     assert product['Price_Given__c']=='17000'
     assert all('Payment' not in field for field in product)
     _assert_no_protected_fields(plan)
+
+
+def test_manual_slash_deposit_payment_uses_existing_text_field():
+    adapter,_ = _adapter()
+    payload = _payload('sale', deposit_override='1,250/159.50', sale_products={
+        'Roofing': {'price':'18000', 'deposit':'100', 'payment':'200'},
+    })
+    wo = _single(_operations(adapter, payload), 'WorkOrder')[3]
+    assert wo['Deposit_Payment__c'] == '1250/159.50'
+    assert 'Review__c' not in wo
+
+
+def test_numeric_salesforce_deposit_field_is_rejected_before_any_write():
+    schemas = _schemas()
+    for field in schemas['WorkOrder']['fields']:
+        if field['name'] == 'Deposit_Payment__c':
+            field['type'] = 'currency'
+    adapter,calls = _adapter(schemas=schemas)
+    with pytest.raises(ResultingSalesforceError, match='Deposit_Payment__c has unexpected type'):
+        _operations(adapter, _payload('sale', sale_products={
+            'Roofing': {'price':'18000', 'deposit':'0', 'payment':'159'},
+        }))
+    assert all(command[1:3] != ['data', 'update'] for command in calls)

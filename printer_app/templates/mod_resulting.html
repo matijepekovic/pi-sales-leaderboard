@@ -37,7 +37,7 @@
 {% set sheet=item.snapshot %}{% set d=item.draft %}{% set xs=sheet.product_interest.split(';') %}
 <section class="mod-sheet{% if item.submitted_at %} submitted{% endif %}" aria-label="MOD sheet for {{ sheet.lead_name }}"
  data-id="{{ item.work_order_id }}" data-revision="{{ item.revision }}"
- data-name="{{ sheet.lead_name|lower }}" data-reps="{{ sheet.assigned_service_resources|join(' ')|lower }}" data-dispo="{{ d.dispo }}"
+ data-name="{{ sheet.lead_name|lower }}" data-customer="{{ sheet.lead_name }}" data-work-number="{{ sheet.work_order_number }}" data-reps="{{ sheet.assigned_service_resources|join(' ')|lower }}" data-dispo="{{ d.dispo }}"
  data-submitted="{{ 'yes' if item.submitted_at else 'no' }}"
  data-initial='{{ d|tojson|forceescape }}'>
  <img class="printer-sheet" src="{{ url_for('mod_resulting.sheet_image', day=data.day, work_order_id=item.work_order_id) }}"
@@ -113,14 +113,11 @@
   <b class="sr-only">MOD Notes:</b>
   <div class="notes-content">
    <textarea data-key="numbers" aria-label="MOD Notes numbers" spellcheck="false">{{ d.numbers }}</textarea>
-   <div class="notes-text" data-notes-mode="black" aria-label="MOD Notes">
+   <div class="notes-text" aria-label="MOD Notes">
     <div class="mod-notes-editor">
-     <button type="button" class="red-pen" aria-label="Red pen" aria-pressed="false" title="Turn on redline ink">
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m12 19 7-7 3 3-7 7-4 1 1-4ZM4 16l-2 6 6-2L20 8l-4-4L4 16Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
-     </button>
-     <div class="mod-notes-display" aria-hidden="true"></div>
-     <textarea data-key="notes" class="mod-notes-input" aria-label="MOD Notes" spellcheck="false">{{ d.notes ~ ('\n' if d.notes and d.redlines else '') ~ d.redlines }}</textarea>
+     <textarea data-key="notes" class="mod-notes-input" aria-label="MOD Notes" spellcheck="false">{{ d.notes }}</textarea>
     </div>
+    <div class="manual-redlines" {% if not d.redlines %}hidden{% endif %}>{{ d.redlines }}</div>
     <div class="result-detail-in-redline" hidden></div>
     <div class="dnr-in-redline" {% if not d.dnr or not d.dnr_reason %}hidden{% endif %}>DNR - {{ d.dnr_reason }}</div>
     <div class="sale-in-redline" hidden></div>
@@ -249,9 +246,20 @@
     <input type="text" inputmode="decimal" data-key="final_price_override" aria-label="Override Final Price" value="{{ d.final_price_override }}">
    </label>
    <label>Deposit/Payment
-    <input type="text" inputmode="decimal" data-key="deposit_override" aria-label="Override Deposit total" value="{{ d.deposit_override }}">
+    <input type="text" inputmode="text" data-key="deposit_override" aria-label="Deposit/Payment" value="{{ d.deposit_override }}">
    </label>
-   <p class="editor-hint">Optional deposit override. Payment is combined automatically from sold products.</p>
+  </div>
+  <div class="editor-footer"><button type="button" class="close-popover editor-primary">Done</button></div>
+ </dialog>
+ <button type="button" class="red-pen" aria-label="Edit redlines" title="Redlines">
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m12 19 7-7 3 3-7 7-4 1 1-4ZM4 16l-2 6 6-2L20 8l-4-4L4 16Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+ </button>
+ <dialog class="editor-dialog redlines-panel" aria-label="Redlines">
+  <div class="editor-heading"><h2>Redlines</h2>
+   <button type="button" class="close-popover editor-close" aria-label="Close Redlines">×</button>
+  </div>
+  <div class="editor-body">
+   <textarea data-key="redlines" aria-label="Redlines" spellcheck="false">{{ d.redlines }}</textarea>
   </div>
   <div class="editor-footer"><button type="button" class="close-popover editor-primary">Done</button></div>
  </dialog>
@@ -279,13 +287,38 @@
  </div>
 </dialog>
 <dialog class="editor-dialog end-dialog" id="endConfirm" aria-label="Confirm End of Day submission">
- <div class="editor-heading"><div><h2>End of Day</h2><p>Review the selected MOD and resulting count before submitting.</p></div>
+ <div class="editor-heading"><h2>End of Day</h2>
   <button type="button" id="cancelEnd" class="editor-close" aria-label="Close confirmation">×</button>
  </div>
- <div class="editor-body"><p>Submit all resulted MOD sheets to Salesforce?</p><p id="reviewCount"></p></div>
+ <div class="editor-body"><p>Are you sure you want to submit End of Day?</p></div>
  <div class="editor-footer">
-  <button type="button" id="cancelEndSecondary" class="editor-secondary">Cancel</button>
-  <button type="button" id="confirmEnd" class="editor-primary" {% if not live_writes_enabled %}disabled title="Salesforce writes disabled for sandbox testing"{% endif %}>Submit</button>
+  <button type="button" id="cancelEndSecondary" class="editor-secondary">No</button>
+  <button type="button" id="proceedEnd" class="editor-primary">Yes</button>
+ </div>
+</dialog>
+<dialog class="editor-dialog end-dialog" id="endMethod" aria-label="Choose End of Day submission method">
+ <div class="editor-heading"><h2>Submit End of Day</h2>
+  <button type="button" class="close-popover editor-close" aria-label="Close submission method">×</button>
+ </div>
+ <div class="editor-body"><p id="reviewCount"></p></div>
+ <div class="editor-footer">
+  <button type="button" id="submitAll" class="editor-primary" {% if not live_writes_enabled %}disabled title="Salesforce writes disabled for sandbox testing"{% endif %}>Submit All</button>
+  <button type="button" id="chooseSelected" class="editor-secondary">Submit Selected</button>
+ </div>
+</dialog>
+<dialog class="editor-dialog end-dialog end-selection" id="endSelect" aria-label="Select Work Orders">
+ <div class="editor-heading"><h2>Select Work Orders</h2>
+  <button type="button" class="close-popover editor-close" aria-label="Close Work Order selection">×</button>
+ </div>
+ <div class="editor-body">
+  <input type="search" id="endSearch" aria-label="Search Work Orders" placeholder="Search customer or Work Order">
+  <div class="end-selection-controls"><span id="endSelectionCount"></span>
+   <button type="button" id="endSelectAll" class="editor-secondary">Select All</button>
+  </div>
+  <div id="endList" class="end-list"></div>
+ </div>
+ <div class="editor-footer">
+  <button type="button" id="submitSelected" class="editor-primary" {% if not live_writes_enabled %}disabled title="Salesforce writes disabled for sandbox testing"{% endif %}>Submit Selected</button>
  </div>
 </dialog>
 </body></html>

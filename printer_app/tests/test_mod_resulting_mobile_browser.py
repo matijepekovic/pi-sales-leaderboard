@@ -56,14 +56,14 @@ def test_phone_native_pinch_and_refresh_keep_the_actual_sheet(mod_browser, viewp
     _assert_overlay_positions(first)
     # The sheet still starts fit-to-width; users use browser-native pinch zoom.
     first.locator('[data-key=notes]').fill('Phone black notes')
-    expect(first.locator('[data-key=redlines]')).to_have_count(0)
+    expect(first.locator('[data-key=redlines]')).to_have_count(1)
     first.locator('[data-key=review]').check()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     expect(first).to_have_class('mod-sheet surface-ready')
     expect(page.locator('#sheets')).not_to_have_attribute('data-zoom', '3')
     expect(first.locator('[data-key=notes]')).to_have_value('Phone black notes')
-    expect(first.locator('[data-key=redlines]')).to_have_count(0)
+    expect(first.locator('[data-key=redlines]')).to_have_count(1)
     expect(first.locator('[data-key=review]')).to_be_checked()
     saved = service.repository.sheets(service.day())[0]['draft']
     assert saved['notes'] == 'Phone black notes' and saved['review'] is True
@@ -153,6 +153,33 @@ def test_saved_sale_and_dnr_choices_survive_missing_salesforce_metadata(mod_brow
     assert draft['notes'] == 'Saved before metadata outage\nEdited comment during metadata outage'
     assert draft['redlines'] == ''
     assert not service.allow_salesforce_writes and writer.applied == []
+
+
+def test_redline_pen_is_small_at_sheet_bottom_and_popup_stays_in_view(mod_browser):
+    from playwright.sync_api import expect
+
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width':390,'height':844})
+    page.goto(origin + '/mod-resulting')
+    first=page.locator('.mod-sheet').first
+    pen=first.locator('.red-pen')
+    paper=first.bounding_box()
+    icon=pen.bounding_box()
+    assert icon['width'] <= 30 and icon['height'] <= 30
+    assert icon['x'] >= paper['x']+paper['width']-40
+    assert icon['y'] >= paper['y']+paper['height']-40
+    pen.click()
+    popup=first.locator('.redlines-panel')
+    expect(popup).to_be_visible()
+    expect(popup.locator('.editor-heading h2')).to_have_text('Redlines')
+    expect(page.locator('.editor-dialog[open]')).to_have_count(1)
+    popup.locator('[data-key=redlines]').fill('Changed scope')
+    popup.locator('.editor-primary').click()
+    expect(first.locator('.manual-redlines')).to_have_text('Changed scope')
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    assert service.repository.sheets(service.day())[0]['draft']['redlines'] == 'Changed scope'
+    assert not writer.applied
 
 
 def test_popup_tracks_visible_viewport_when_zoomed_or_keyboard_opens(mod_browser):

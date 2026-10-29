@@ -162,6 +162,7 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         mod_sheet_repository, cfg.timezone,
         pdf_exporter=render_resulting_pdf,
         output_directory=cfg.data_dir / 'mod-resulting',
+        allow_salesforce_writes=cfg.mod_resulting_live_writes,
     )
     app.extensions['mod_resulting'] = mod_resulting
     app.register_blueprint(mod_resulting_blueprint(mod_resulting, ModSheetSurface(render_mod_pdf)))
@@ -222,6 +223,11 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             session['csrf'] = secrets.token_urlsafe(32)
             session.permanent = True
         if request.method == 'POST':
+            if request.endpoint == 'mod_resulting.submit':
+                # A selected batch can contain many Work Order IDs. Scope the
+                # larger form limit to this protected route, not Printer-wide.
+                request.max_content_length = 90000
+                request.max_form_memory_size = 90000
             if request.endpoint == 'report_printing.save':
                 request.max_form_parts = 3000  # Salesforce report selection may contain many entries.
             origin = request.headers.get('Origin')
