@@ -327,7 +327,7 @@ class ResultingSalesforceAdapter:
     def checkbox_fields(self):
         """Safe presentation contracts; never expose source API field names."""
         groups = (
-            (WORK_ORDER, ('docs', 'ninety_min', 'promotion')),
+            (WORK_ORDER, ('docs', 'ninety_min', 'promotion', 'review')),
             (LEAD, ('dnr', 'one_leg')),
             (PRODUCT_RESULT, ('free_lead', 'cxl_at_lead')),
         )
@@ -338,8 +338,9 @@ class ResultingSalesforceAdapter:
                 LEAD_FIELDS if object_name == LEAD else PR
             )
             for key in keys:
+                name = REVIEW_FIELD if key == 'review' else names[key]
                 match = [item for item in schema.get('fields', ())
-                         if item.get('name') == names[key]]
+                         if item.get('name') == name]
                 if len(match) != 1:
                     continue
                 field = match[0]
@@ -711,7 +712,17 @@ class ResultingSalesforceAdapter:
                         wo_values[WO[key]] = self._checked_yes(wo_fields[key])
                 elif payload['draft'][key]:
                     wo_values[WO[key]] = self._checked_yes(wo_fields[key])
-            if payload['draft']['review']:
+            review_source = source_values.get('review')
+            if review_source is not None:
+                if review_source['edited']:
+                    review = self._field(
+                        wo_schema, REVIEW_FIELD,
+                        types=('boolean', 'string', 'textarea', 'picklist')
+                    )
+                    wo_values[REVIEW_FIELD] = self._source_checkbox_value(
+                        review, review_source['value']
+                    )
+            elif payload['draft']['review']:
                 review = self._field(
                     wo_schema, REVIEW_FIELD,
                     types=('boolean', 'string', 'textarea', 'picklist')
