@@ -7,16 +7,24 @@
 (() => {
   'use strict';
   const link = document.querySelector('link[data-dialog-viewport]');
-  let rule;
-  try { rule = link?.sheet?.cssRules?.[0]; } catch (_) { return; }
-  if (!rule || rule.selectorText !== '.editor-dialog[open]') return;
+  // Some WebKit loads expose the linked stylesheet only after deferred JS
+  // starts. Always register the event listeners; resolve the rule when needed.
+  function dialogRule() {
+    try {
+      const rule = link?.sheet?.cssRules?.[0];
+      return rule?.selectorText === '.editor-dialog[open]' ? rule : null;
+    } catch (_) {
+      return null;
+    }
+  }
 
   const dialogs = [...document.querySelectorAll('.editor-dialog')];
   let active = null;
   let scheduled = false;
 
   function reset() {
-    rule.style.cssText = '';
+    const rule = dialogRule();
+    if (rule) rule.style.cssText = '';
   }
   function viewport() {
     const visual = window.visualViewport;
@@ -30,10 +38,15 @@
     };
   }
   function reposition() {
-    if (!active?.open) {
+    // A resize can arrive before a WebKit native-dialog open callback.
+    // Derive the active top-layer dialog rather than relying on event ordering.
+    if (!active?.open) active = dialogs.find(dialog => dialog.open) || null;
+    if (!active) {
       reset();
       return;
     }
+    const rule = dialogRule();
+    if (!rule) return;
     const view = viewport();
     const natural = Math.abs(view.scale - 1) < 0.01 &&
       Math.abs(view.left) < 1 && Math.abs(view.top) < 1 &&
@@ -140,14 +153,18 @@
     });
     dialog.addEventListener('focusin', schedule);
   }
-  window.visualViewport?.addEventListener('resize', schedule, {passive:true});
-  window.visualViewport?.addEventListener('scroll', schedule, {passive:true});
-  // WebKit can defer an already-queued animation frame while a native modal
-  // owns focus. Apply the resize geometry immediately, then reconcile it on
-  // the next frame when the browser reports its settled visual viewport.
+  // Register the reliable Window fallback first. Optional VisualViewport
+  // listeners must never prevent WebKit from receiving synthetic or real
+  // window resize events, including when its API is only partially available.
   window.addEventListener('resize', () => {
     reposition();
     schedule();
   });
   window.addEventListener('orientationchange', schedule);
+  link?.addEventListener('load', schedule);
+  const visual = window.visualViewport;
+  if (visual && typeof visual.addEventListener === 'function') {
+    visual.addEventListener('resize', schedule, {passive:true});
+    visual.addEventListener('scroll', schedule, {passive:true});
+  }
 })();
