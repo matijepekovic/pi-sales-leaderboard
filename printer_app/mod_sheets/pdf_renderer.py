@@ -73,12 +73,14 @@ def _content_height(*rows):
 class _FitClipParagraph(Flowable):
     """Shrink only the value text to fit a fixed MOD cell, then clip."""
 
-    def __init__(self, label, value, *, max_height, value_background=''):
+    def __init__(self, label, value, *, max_height, value_background='', time_lines=0):
         super().__init__()
         self.label = str(label or '')
         self.value = str(value or '')
         self.max_height = float(max_height)
         self.value_background = str(value_background or '')
+        self.time_lines = time_lines
+        self._time_scale = 100
         self.value_font_size = FIT_VALUE_SIZES[0]
         self.clipped = False
         self._paragraph = None
@@ -109,6 +111,22 @@ class _FitClipParagraph(Flowable):
 
     def wrap(self, availWidth, availHeight):
         self.width = max(0, availWidth)
+        if self.time_lines:
+            # The printed template has fixed-height time cells. Scale the text,
+            # never clip off AM/PM or move a neighboring card.
+            for size in (9, 8.5, 8, 7.5, 7, 6.5, 6):
+                if self.time_lines == 1:
+                    needed = (stringWidth(self.label, 'Times-Bold', size)
+                              + stringWidth(self.value, 'Times-Roman', size))
+                else:
+                    needed = max(stringWidth(self.label, 'Times-Bold', size),
+                                 stringWidth(self.value, 'Times-Roman', size))
+                if needed <= self.width - 1:
+                    break
+            self.value_font_size = size
+            self._time_scale = min(100, 100 * max(1, self.width - 1) / max(needed, 1))
+            self.height = min(self.max_height, (size + 2) * self.time_lines)
+            return self.width, self.height
         chosen = None
         chosen_height = 0
         for value_size in FIT_VALUE_SIZES:
@@ -129,6 +147,20 @@ class _FitClipParagraph(Flowable):
         return self.width, self.height
 
     def draw(self):
+        if self.time_lines:
+            canv = self.canv
+            canv.saveState()
+            text = canv.beginText(0, self.height - self.value_font_size)
+            text.setHorizScale(self._time_scale)
+            text.setFont('Times-Bold', self.value_font_size)
+            text.textOut(self.label)
+            if self.time_lines == 2:
+                text.moveCursor(0, self.value_font_size + 2)
+            text.setFont('Times-Roman', self.value_font_size)
+            text.textOut(self.value)
+            canv.drawText(text)
+            canv.restoreState()
+            return
         if self._paragraph is None:
             self.wrap(self.width, self.max_height)
 
@@ -145,12 +177,13 @@ class _FitClipParagraph(Flowable):
         canv.restoreState()
 
 
-def _fit(label, value, *rows, value_background=''):
+def _fit(label, value, *rows, value_background='', time_lines=0):
     return _FitClipParagraph(
         label,
         value,
         max_height=_content_height(*rows),
         value_background=value_background,
+        time_lines=time_lines,
     )
 
 
@@ -220,7 +253,7 @@ def _mod_table(record, color_code):
 
     # Row 1: resolved by the reference PDF renderer as 3 / 4 / 3 columns.
     data[0][0] = _fit('Work Order Number: ', record.work_order_number, 0)
-    data[0][3] = _fit('Local Scheduled Start Time: ', record.local_scheduled_start_time, 0)
+    data[0][3] = _fit('Local Scheduled Start Time: ', record.local_scheduled_start_time, 0, time_lines=1)
     data[0][7] = _canvass(style, record.canvass_set_by, color_code)
 
     # Row 2: 3 / 4 / 2 / 1.
@@ -230,7 +263,7 @@ def _mod_table(record, color_code):
     data[1][9] = _PowerQuestions()
 
     # Row 3: 2 / 5 / 2 / 1.
-    data[2][0] = _fit('Scheduled Start: ', record.scheduled_start, 2)
+    data[2][0] = _fit('Scheduled Start: ', record.scheduled_start, 2, time_lines=2)
     data[2][2] = _fit(
         'Assigned Service Resource: ',
         ', '.join(record.assigned_service_resources),

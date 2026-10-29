@@ -35,6 +35,7 @@ from .retention_files import RetentionFiles
 from .gmail_cleanup import GmailCleanup
 from .mod_sheets.pdf_renderer import render_mod_pdf
 from .mod_resulting.repository import ResultingRepository
+from .mod_resulting.salesforce_adapter import ResultingSalesforceAdapter
 from .mod_resulting.service import ResultingService, ResultingDailyPull
 from .mod_sheets.repository import ModSheetAutomationRepository
 from .mod_sheets.rep_repository import ModSheetRepRepository
@@ -282,6 +283,8 @@ def main():
     with (cfg.data_dir / 'worker.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         PrintQueueRepository(db).recover_cancellations(time.time())
+        # A killed worker must never silently replay an in-flight SF update.
+        ResultingRepository(db).interrupt_abandoned_submissions()
         engine = Engine(cfg, db, stop=stop)
         gmail = GmailClient(cfg, db, stop=stop, gallery=GalleryInbox(cfg.data_dir, cfg.gallery))
 
@@ -335,9 +338,16 @@ def main():
             map_sync = JobMapSyncService(JobMapRepository(db), source)
             digital = ResultingDailyPull(ResultingService(
                 ResultingRepository(db), source, None, repository, captured.timezone))
-            return daily, references, manual_gallery, map_sync, digital
+            submitter = ResultingService(
+                ResultingRepository(db), source,
+                ResultingSalesforceAdapter(
+                    executable='/usr/bin/sf', target_org='work',
+                    timezone_name=captured.timezone),
+                repository, captured.timezone,
+                allow_salesforce_writes=captured.mod_resulting_live_writes)
+            return daily, references, manual_gallery, map_sync, digital, submitter
 
-        daily_mod_sheets, mod_references, manual_mod_gallery, map_sync, daily_resulting = make_mod_workflows(cfg)
+        daily_mod_sheets, mod_references, manual_mod_gallery, map_sync, daily_resulting, mod_submitter = make_mod_workflows(cfg)
         report_printing = ReportPrintingService(
             ReportPrintingRepository(db),
             SalesforceSandboxService(SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')),
@@ -358,6 +368,7 @@ def main():
         background = ThreadPoolExecutor(max_workers=4, thread_name_prefix='printer-work')
         polling, preparing, cleaning, daily_mod_task = None, None, None, None
         resulting_task = None
+        submission_task = None
         report_print_task = None
         last_report_minute = None
         mod_reference_task = background.submit(mod_references.backfill_existing)
@@ -380,7 +391,7 @@ def main():
                                 engine = Engine(cfg, db, stop=stop)
                                 gmail = GmailClient(cfg, db, stop=stop, gallery=GalleryInbox(cfg.data_dir, cfg.gallery))
                                 retention = make_retention(cfg)
-                                daily_mod_sheets, mod_references, manual_mod_gallery, map_sync, daily_resulting = make_mod_workflows(cfg)
+                                daily_mod_sheets, mod_references, manual_mod_gallery, map_sync, daily_resulting, mod_submitter = make_mod_workflows(cfg)
                                 report_printing = ReportPrintingService(
                                     ReportPrintingRepository(db),
                                     SalesforceSandboxService(SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')),
@@ -433,6 +444,13 @@ def main():
                         result = finished.result()
                         if not result.get('ok'):
                             log.warning('Digital MOD morning pull failed: %s',result.get('error',''))
+                    if submission_task is not None and submission_task.done():
+                        finished, submission_task = submission_task, None
+                        result = finished.result()
+                        if result and not result.get('ok'):
+                            log.warning('MOD End of Day stopped: %s', result.get('error',''))
+                    if submission_task is None and mod_submitter.allow_salesforce_writes:
+                        submission_task = background.submit(mod_submitter.process_next_submission)
                     if mod_reference_task is not None and mod_reference_task.done():
                         finished, mod_reference_task = mod_reference_task, None
                         finished.result()

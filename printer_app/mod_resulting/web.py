@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 
 from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request, send_file
 
@@ -100,13 +101,16 @@ def blueprint(service, surface, *, color_code=None):
     @bp.get('/pdf')
     def pdf():
         day = service.day()
-        state = service.repository.day(day)
-        target = (service.output_directory / (day + '-completed.pdf')
-                  if service.output_directory else None)
-        if not state or not state['submitted_at'] or target is None or not target.is_file():
+        try:
+            payload = service.export_all_pdf(day)
+        except LookupError:
             abort(404)
-        return send_file(target, mimetype='application/pdf', as_attachment=True,
-                         download_name='MOD-Sheets-' + day + '.pdf')
+        response = send_file(BytesIO(payload), mimetype='application/pdf',
+                             as_attachment=False,
+                             download_name='MOD-Sheets-' + day + '.pdf')
+        response.headers['Cache-Control'] = 'no-store'
+        response.headers['Content-Security-Policy'] = "sandbox; default-src 'none'"
+        return response
 
     @bp.post('/api/refresh')
     def refresh():
@@ -159,6 +163,12 @@ def blueprint(service, surface, *, color_code=None):
             return jsonify(ok=False, error=str(exc)), 409
         return jsonify(ok=True, revision=result)
 
+    @bp.get('/api/submission-status')
+    def submission_status():
+        job_id = request.args.get('job_id', type=int)
+        return jsonify(ok=True, submission=service.repository.latest_submission(
+            service.day(), job_id=job_id))
+
     @bp.post('/api/submit')
     def submit():
         try:
@@ -176,12 +186,12 @@ def blueprint(service, surface, *, color_code=None):
                     raise ValueError('Choose a list of Work Orders.')
             else:
                 raise ValueError('Choose Submit All or Submit Selected.')
-            result = service.submit(service.day(), selected)
+            result = service.enqueue(service.day(), selected)
         except (ValueError, TypeError, LookupError, json.JSONDecodeError) as exc:
             return jsonify(ok=False, error=str(exc)), 422
         except Exception as exc:
             # No partial-success claim on remote errors. Stored receipts survive retries.
             return jsonify(ok=False, error=str(exc)[:500]), 502
-        return jsonify(ok=True, **result)
+        return jsonify(ok=True, **result), 202
 
     return bp

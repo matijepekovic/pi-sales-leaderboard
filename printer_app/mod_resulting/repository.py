@@ -36,11 +36,11 @@ class ResultingRepository:
             row['draft'] = json.loads(row['draft'])
         return rows
 
-    def submitted_sheets(self, day):
-        """Only locally confirmed Salesforce writes belong in the completed PDF."""
+    def print_sheets(self, day):
+        """Every card displayed for the day, including previously imported rows."""
         rows = self.db.rows('''SELECT work_order_id,snapshot,draft
-            FROM mod_result_sheets WHERE day=? AND submitted_at>0
-            AND override_active=0 ORDER BY display_order,work_order_id''', (day,))
+            FROM mod_result_sheets WHERE day=?
+            ORDER BY display_order,work_order_id''', (day,))
         return [dict(work_order_id=row['work_order_id'],
                      snapshot=json.loads(row['snapshot']),
                      draft=json.loads(row['draft'])) for row in rows]
@@ -158,6 +158,12 @@ class ResultingRepository:
                 receipt = old['submitted_at'] if old else None
                 completed = (receipt if receipt is not None and receipt > 0
                              else -1.0) if resulted else None
+                if resulted:
+                    conn.execute('''UPDATE mod_result_submission_items SET
+                        state='submitted',error=''
+                        WHERE work_order_id=? AND state='uncertain'
+                        AND job_id IN (SELECT id FROM mod_result_submission_jobs WHERE day=?)''',
+                        (record.source_id, day))
                 revised = old['revision'] if old else 0
                 if old and (clear_local or old['override_active']
                             or remote != json.loads(old['draft'])):
@@ -221,40 +227,176 @@ class ResultingRepository:
             conn.execute('UPDATE mod_result_days SET mod_user_id=?,mod_user_name=? WHERE day=?',
                          (user_id, user_name, day))
 
+    @staticmethod
+    def _selected_ids(work_order_ids):
+        if work_order_ids is None:
+            return None
+        if (not isinstance(work_order_ids, list) or not work_order_ids
+            or len(work_order_ids) > 2000
+            or any(not isinstance(value, str) or not value
+                   for value in work_order_ids)
+            or len(set(work_order_ids)) != len(work_order_ids)):
+            raise ValueError('Select valid, distinct Work Orders.')
+        return set(work_order_ids)
+
+    @staticmethod
+    def _reserve_rows(conn, day, selected):
+        result = conn.execute('''UPDATE mod_result_days SET submitting=1
+                WHERE day=? AND submitting=0 AND mod_user_id!='' ''', (day,))
+        if result.rowcount != 1:
+            raise ValueError('Select a MOD, or a submission is already underway.')
+        records = conn.execute('''SELECT work_order_id,snapshot,draft
+                FROM mod_result_sheets WHERE day=?
+                AND (submitted_at IS NULL OR override_active=1)
+                ORDER BY display_order,work_order_id''', (day,)).fetchall()
+        pending = []
+        for row in records:
+            draft = json.loads(row['draft'])
+            if draft.get('dispo') and (selected is None or row['work_order_id'] in selected):
+                pending.append({
+                    'work_order_id': row['work_order_id'],
+                    'snapshot': json.loads(row['snapshot']),
+                    'draft': draft,
+                })
+        if selected is not None and {row['work_order_id'] for row in pending} != selected:
+            raise ValueError('Selected Work Orders changed or were already submitted. Refresh and try again.')
+        if not pending:
+            raise ValueError('No unsubmitted sheets have a disposition.')
+        # A timed-out CLI operation could have reached Salesforce. Never
+        # silently retry a work order until Salesforce Refresh confirms it.
+        for row in pending:
+            uncertain = conn.execute('''SELECT 1 FROM mod_result_submission_items i
+                JOIN mod_result_submission_jobs j ON j.id=i.job_id
+                WHERE j.day=? AND i.work_order_id=? AND i.state='uncertain'
+                LIMIT 1''', (day, row['work_order_id'])).fetchone()
+            if uncertain:
+                raise ValueError('Work Order ' + row['snapshot'].get('work_order_number', '')
+                                 + ' requires Salesforce confirmation before resubmission.')
+        return pending
+
     def begin_submit(self, day, work_order_ids=None):
-        """Lock and resolve one exact batch without sealing the entire day."""
-        selected = None
-        if work_order_ids is not None:
-            if (not isinstance(work_order_ids, list) or not work_order_ids
-                    or len(work_order_ids) > 2000
-                    or any(not isinstance(value, str) or not value
-                           for value in work_order_ids)
-                    or len(set(work_order_ids)) != len(work_order_ids)):
-                raise ValueError('Select valid, distinct Work Orders.')
-            selected = set(work_order_ids)
+        """Existing synchronous submission boundary, including override rules."""
+        selected = self._selected_ids(work_order_ids)
         with self.db.connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
-            result = conn.execute('''UPDATE mod_result_days SET submitting=1
-                    WHERE day=? AND submitting=0 AND mod_user_id!='' ''', (day,))
-            if result.rowcount != 1:
-                raise ValueError('Select a MOD, or a submission is already underway.')
-            records = conn.execute('''SELECT work_order_id,snapshot,draft
-                    FROM mod_result_sheets WHERE day=?
-                    AND (submitted_at IS NULL OR override_active=1)
-                    ORDER BY display_order,work_order_id''', (day,)).fetchall()
-            pending = []
-            for row in records:
-                draft = json.loads(row['draft'])
-                if draft.get('dispo') and (selected is None or
-                                          row['work_order_id'] in selected):
-                    pending.append({
-                        'work_order_id': row['work_order_id'],
-                        'snapshot': json.loads(row['snapshot']),
-                        'draft': draft,
-                    })
-            if selected is not None and {row['work_order_id'] for row in pending} != selected:
-                raise ValueError('Selected Work Orders changed or were already submitted. Refresh and try again.')
-            return pending
+            return self._reserve_rows(conn, day, selected)
+
+    def enqueue_submit(self, day, work_order_ids=None):
+        """Atomically lock an immutable batch and queue it for the worker."""
+        selected = self._selected_ids(work_order_ids)
+        with self.db.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            rows = self._reserve_rows(conn, day, selected)
+            now = time.time()
+            job_id = conn.execute('''INSERT INTO mod_result_submission_jobs
+                (day,state,created_at) VALUES (?,'queued',?)''',
+                (day, now)).lastrowid
+            conn.executemany('''INSERT INTO mod_result_submission_items
+                (job_id,work_order_id,work_order_number,position,state)
+                VALUES (?,?,?,?,'pending')''', [
+                    (job_id, item['work_order_id'],
+                     str(item['snapshot'].get('work_order_number') or ''),
+                     position)
+                    for position, item in enumerate(rows)
+                ])
+        return {'job_id': job_id, 'day': day, 'total': len(rows)}
+
+    def claim_submission(self):
+        """Claim one queued batch; the worker is the only executor."""
+        with self.db.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            job = conn.execute('''SELECT id,day FROM mod_result_submission_jobs
+                WHERE state='queued' ORDER BY id LIMIT 1''').fetchone()
+            if job is None:
+                return None
+            day = job['day']
+            state = conn.execute('SELECT submitting,mod_user_id FROM mod_result_days WHERE day=?',
+                                 (day,)).fetchone()
+            if not state or not state['submitting'] or not state['mod_user_id']:
+                raise ValueError('Queued MOD submission lost its reserved day.')
+            conn.execute('''UPDATE mod_result_submission_jobs SET
+                state='running', started_at=? WHERE id=? AND state='queued' ''',
+                (time.time(), job['id']))
+            records = conn.execute('''SELECT i.work_order_id,s.snapshot,s.draft
+                FROM mod_result_submission_items i
+                JOIN mod_result_sheets s ON s.day=? AND s.work_order_id=i.work_order_id
+                WHERE i.job_id=? ORDER BY i.position''', (day, job['id'])).fetchall()
+            rows = [dict(work_order_id=row['work_order_id'],
+                         snapshot=json.loads(row['snapshot']),
+                         draft=json.loads(row['draft'])) for row in records]
+            expected = conn.execute(
+                'SELECT COUNT(*) FROM mod_result_submission_items WHERE job_id=?',
+                (job['id'],)).fetchone()[0]
+            if len(rows) != expected:
+                raise ValueError('Queued MOD sheet records changed. Submission was not started.')
+            return {'job_id': job['id'], 'day': day, 'mod_id': state['mod_user_id'],
+                    'rows': rows}
+
+    def submission_item(self, job_id, work_order_id, state, error=''):
+        if state not in ('pending','processing','submitted','uncertain'):
+            raise ValueError('Unknown submission state.')
+        with self.db.connect() as conn:
+            updated = conn.execute('''UPDATE mod_result_submission_items SET state=?,error=?
+                WHERE job_id=? AND work_order_id=?''',
+                (state, str(error)[:500], job_id, work_order_id))
+            if updated.rowcount != 1:
+                raise LookupError('Submission progress item missing.')
+
+    def finish_submission_job(self, job_id, error=''):
+        with self.db.connect() as conn:
+            conn.execute('''UPDATE mod_result_submission_jobs SET
+                state=?,finished_at=?,error=? WHERE id=? AND state='running' ''',
+                ('failed' if error else 'completed', time.time(), str(error)[:500], job_id))
+
+    def latest_submission(self, day, job_id=None):
+        fields = 'id,day,state,created_at,started_at,finished_at,error'
+        if job_id is not None:
+            job = self.db.one('SELECT ' + fields +
+                              ' FROM mod_result_submission_jobs WHERE id=?', (job_id,))
+        else:
+            # A long-running End of Day may cross local midnight. Show that
+            # active batch before showing a completed batch for the new day.
+            job = self.db.one('SELECT ' + fields + ''' FROM mod_result_submission_jobs
+                WHERE state IN ('queued','running') ORDER BY id DESC LIMIT 1''')
+            if job is None:
+                job = self.db.one('SELECT ' + fields +
+                                  ' FROM mod_result_submission_jobs WHERE day=? '
+                                  'ORDER BY id DESC LIMIT 1', (day,))
+        if not job:
+            return None
+        items = self.db.rows('''SELECT work_order_number,state,error
+            FROM mod_result_submission_items WHERE job_id=? ORDER BY position''',
+            (job['id'],))
+        return {**job, 'items': items,
+                'total': len(items),
+                'submitted': sum(item['state']=='submitted' for item in items),
+                'pending': sum(item['state']=='pending' for item in items),
+                'processing': sum(item['state']=='processing' for item in items),
+                'failed': sum(item['state']=='uncertain' for item in items)}
+
+    def interrupt_abandoned_submissions(self):
+        """Worker-start reconciliation; never replay an in-flight Salesforce write."""
+        with self.db.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            jobs = list(conn.execute(
+                "SELECT id,day FROM mod_result_submission_jobs WHERE state='running'"))
+            for job in jobs:
+                # Local receipts conclusively identify successful operations.
+                conn.execute('''UPDATE mod_result_submission_items SET
+                    state='submitted',error='' WHERE job_id=? AND state='processing'
+                    AND EXISTS (SELECT 1 FROM mod_result_sheets s
+                        WHERE s.day=? AND s.work_order_id=mod_result_submission_items.work_order_id
+                        AND s.submitted_at>0 AND s.override_active=0)''',
+                    (job['id'], job['day']))
+                conn.execute('''UPDATE mod_result_submission_items
+                    SET state='uncertain',error='Worker stopped during Salesforce submission.'
+                    WHERE job_id=? AND state='processing' ''', (job['id'],))
+                conn.execute('''UPDATE mod_result_submission_jobs
+                    SET state='interrupted',finished_at=?,
+                        error='Worker stopped before submission completed.'
+                    WHERE id=?''', (time.time(), job['id']))
+                conn.execute('UPDATE mod_result_days SET submitting=0 WHERE day=?',
+                             (job['day'],))
 
     def finish_item(self, day, work_order_id):
         with self.db.connect() as conn:

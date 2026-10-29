@@ -1,4 +1,4 @@
-"""Private, durable SQLite inbox, job queue and print outbox (schema version 2)."""
+"""Private, durable SQLite inbox, job queue and print outbox (schema version 3)."""
 from __future__ import annotations
 
 import json
@@ -123,6 +123,27 @@ CREATE TABLE IF NOT EXISTS mod_result_sheets (
  PRIMARY KEY(day, work_order_id));
 CREATE INDEX IF NOT EXISTS mod_result_pending
  ON mod_result_sheets(day, submitted_at);
+
+-- Only the active/latest batch is displayed; older uncertain work orders
+-- remain durable so a new submission cannot blindly resend them.
+CREATE TABLE IF NOT EXISTS mod_result_submission_jobs (
+ id INTEGER PRIMARY KEY,
+ day TEXT NOT NULL REFERENCES mod_result_days(day),
+ state TEXT NOT NULL CHECK(state IN ('queued','running','completed','failed','interrupted')),
+ created_at REAL NOT NULL,
+ started_at REAL,
+ finished_at REAL,
+ error TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS mod_result_submission_jobs_day
+ ON mod_result_submission_jobs(day,id);
+CREATE TABLE IF NOT EXISTS mod_result_submission_items (
+ job_id INTEGER NOT NULL REFERENCES mod_result_submission_jobs(id) ON DELETE CASCADE,
+ work_order_id TEXT NOT NULL,
+ work_order_number TEXT NOT NULL DEFAULT '',
+ position INTEGER NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('pending','processing','submitted','uncertain')),
+ error TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(job_id,work_order_id));
 '''
 
 
@@ -133,7 +154,7 @@ class Database:
         with self.connect() as conn:
             conn.execute('PRAGMA journal_mode=WAL')
             version = conn.execute('PRAGMA user_version').fetchone()[0]
-            if version > 2:
+            if version > 3:
                 raise RuntimeError('Database is newer than this printer-app release')
             conn.executescript(SCHEMA)
             # Existing version-1 printer databases gain one local override flag;
@@ -144,7 +165,7 @@ class Database:
                     'ALTER TABLE mod_result_sheets ADD COLUMN override_active '
                     'INTEGER NOT NULL DEFAULT 0 CHECK(override_active IN (0,1))'
                 )
-            conn.execute('PRAGMA user_version=2')
+            conn.execute('PRAGMA user_version=3')
 
     @contextmanager
     def connect(self):

@@ -144,6 +144,21 @@ body.dialog-open{overflow:hidden}
 .redlines-panel{width:min(520px,calc(100vw - 28px))}
 .redlines-panel textarea[data-key=redlines]{width:100%;min-height:180px;max-height:55dvh;resize:vertical;padding:10px;border:1px solid #aeb6c2;border-radius:6px;background:#fff;color:#17212d;font:16px/1.4 system-ui,-apple-system,sans-serif}
 .end-dialog{width:min(520px,calc(100vw - 28px))}
+.submission-panel{width:min(520px,calc(100vw - 28px));font:14px system-ui,-apple-system,sans-serif}
+.submission-state{font:600 12px system-ui,sans-serif;padding:5px 9px;background:#edf0f4;border-radius:12px;white-space:nowrap}
+.submission-summary{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.submission-summary strong{font:700 27px system-ui,sans-serif}
+.submission-summary span{font-size:12px;color:#555f6d}
+.submission-panel progress{display:block;width:100%;height:13px;margin:12px 0;accent-color:#27313f}
+.submission-counts{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px}
+.submission-succeeded{color:#206340}
+.submission-failed,.submission-error{color:#aa3030}
+.submission-detail{border-top:1px solid #e3e7ec;margin-top:15px;padding-top:10px;font-weight:600}
+.submission-error{border-top:1px solid #e3e7ec;padding-top:10px;white-space:pre-wrap;overflow-wrap:anywhere}
+.submission-errors{padding:0;margin:12px 0 0;list-style:none;max-height:40dvh;overflow:auto}
+.submission-errors li{display:flex;flex-direction:column;gap:3px;padding:8px 0;border-top:1px solid #e3e7ec}
+.submission-errors li span{color:#aa3030;overflow-wrap:anywhere}
+.floating-controls .completed-pdf{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:6px 9px;color:#111;border:1px solid #777;border-radius:5px;text-decoration:none}
 .end-dialog .editor-footer{flex-wrap:wrap}
 .end-dialog #reviewCount{line-height:1.5;color:#344156;font-size:14px}
 .end-selection #endSearch{width:100%;font:16px system-ui,-apple-system,sans-serif;min-height:44px;padding:8px 10px;border:1px solid #aeb6c2;border-radius:6px}

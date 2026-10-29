@@ -72,9 +72,16 @@ def test_selected_submission_and_salesforce_field_boundaries_remain_isolated():
     adapter = (root/'mod_resulting/salesforce_adapter.py').read_text()
     html = (root/'templates/mod_resulting.html').read_text()
     assert 'def begin_submit(self, day, work_order_ids=None):' in repo
-    assert 'def submitted_sheets(self, day):' in repo
+    assert 'def print_sheets(self, day):' in repo
     assert 'self.repository.begin_submit(day, work_order_ids)' in svc
-    assert 'self.repository.submitted_sheets(day)' in svc
+    assert 'self.repository.print_sheets(day)' in svc
+    assert 'def enqueue_submit(self, day, work_order_ids=None):' in repo
+    assert 'def claim_submission(self):' in repo
+    assert 'def process_next_submission(self):' in svc
+    # End of Day cannot silently grow a PDF dependency again.
+    submission = svc.split('    def _apply_batch(', 1)[1].split('    def submit(', 1)[0]
+    assert 'pdf_exporter' not in submission
+    assert 'self.writer.apply(plan)' in submission
     assert 'deposit_payment=deposit_payment_text(draft)' in svc
     assert "payload['deposit_payment']" in adapter
     assert "'deposit': ('string', 'textarea')" in adapter

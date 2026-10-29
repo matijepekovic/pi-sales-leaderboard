@@ -203,8 +203,27 @@ def _overlay_one(c,index,draft):
     for row,label,key in [(8,'Call 1:','call_1'),(9,'Call 2:','call_2')]:
         _erase(c,index,0,row)
         x,t=_location(index,0,row)
-        _write(c,x+2,t+1,label,7.5,bold=True)
-        if d[key]: _write(c,x+2,t+9,d[key],6.6)
+        label_size = 7
+        _write(c,x+2,t+1,label,label_size,bold=True)
+        if d[key]:
+            # These rows are only 13.5/16.5 points high. A second line is
+            # outside Call 1's border and can be erased by the next cell.
+            # Fit the complete value inline, preserving its AM/PM suffix.
+            value = d[key]
+            value_x = x + 3 + stringWidth(label, 'Times-Bold', label_size)
+            width = COL_WIDTH - (value_x-x) - 3
+            size = 7
+            while size > 5 and stringWidth(value, 'Times-Roman', size) > width:
+                size -= 0.5
+            scale = min(100, 100 * max(1, width) /
+                        max(1, stringWidth(value, 'Times-Roman', size)))
+            c.saveState()
+            txt = c.beginText(value_x, letter[1]-(t+1+size))
+            txt.setFont('Times-Roman', size)
+            txt.setHorizScale(scale)
+            txt.textOut(value)
+            c.drawText(txt)
+            c.restoreState()
 
     # 90 Min and DNR share the existing tall field with one new horizontal line.
     _erase(c,index,0,10)

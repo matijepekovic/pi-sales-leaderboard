@@ -170,7 +170,6 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             executable='/usr/bin/sf', target_org='work', timezone_name=cfg.timezone),
         mod_sheet_repository, cfg.timezone,
         pdf_exporter=resulting_pdf,
-        output_directory=cfg.data_dir / 'mod-resulting',
         allow_salesforce_writes=cfg.mod_resulting_live_writes,
     )
     app.extensions['mod_resulting'] = mod_resulting
