@@ -123,12 +123,14 @@
     label.title = 'Hold to view value';
     let timer = null;
     let origin = null;
+    let longHeld = false;
     let suppressClick = false;
     let resetClick = null;
     function cancel() {
       if (timer !== null) clearTimeout(timer);
       timer = null;
       origin = null;
+      longHeld = false;
     }
     function open() {
       cancel();
@@ -141,13 +143,20 @@
       if (event.button !== 0 || event.isPrimary === false) return;
       cancel();
       origin = {x:event.clientX, y:event.clientY};
-      timer = setTimeout(open, 600);
+      // Open when the press is released, so the releasing click cannot land
+      // on the newly opened native dialog backdrop and close it immediately.
+      timer = setTimeout(() => { longHeld = true; }, 600);
     });
     label.addEventListener('pointermove', event => {
       if (origin && Math.hypot(event.clientX-origin.x, event.clientY-origin.y) > 12)
         cancel();
     });
-    label.addEventListener('pointerup', cancel);
+    label.addEventListener('pointerup', event => {
+      if (longHeld) {
+        event.preventDefault();
+        open();
+      } else cancel();
+    });
     label.addEventListener('pointercancel', cancel);
     label.addEventListener('pointerleave', cancel);
     label.addEventListener('click', event => {
@@ -159,7 +168,8 @@
     }, true);
     label.addEventListener('contextmenu', event => {
       event.preventDefault();
-      if (!checkboxDialog.open) open();
+      if (origin) longHeld = true;
+      else if (!checkboxDialog.open) open();
     });
   }
 
