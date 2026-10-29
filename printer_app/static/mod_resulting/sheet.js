@@ -195,7 +195,12 @@
       (fraction ? '.' + String(fraction).padStart(2, '0') : '');
   }
   function numericExtremes(notes) {
-    const values = String(notes || '').split(/\r?\n/).map(moneyCents)
+    // The Numbers column may contain annotations. Ignore letters, extract
+    // independent valid amounts, and never join or round their digits.
+    const tokens = String(notes || '').matchAll(
+      /(?<![\d.,-])\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?(?![\d.]|,\d)/g
+    );
+    const values = [...tokens].map(match => moneyCents(match[0]))
       .filter(value => value !== null);
     return {
       highest: values.length ? centsText(Math.max(...values)) : '',
@@ -243,6 +248,27 @@
     display.textContent = lines.join('\n');
     display.hidden = !display.textContent;
   }
+  function fitSalePreview(sheet) {
+    // Keep Sale details at the bottom of the existing MOD Notes box. Scale
+    // only that preview's font until its wrapped lines fit above the border,
+    // reserving room for the black Notes editor and other redline entries.
+    const display = sheet.querySelector('.sale-in-redline');
+    const area = sheet.querySelector('.notes-text');
+    if (!display || display.hidden || !area || !area.clientHeight) return;
+    display.dataset.saleFit = '0';
+    const otherHeight = [...area.querySelectorAll(
+      '.manual-redlines,.result-detail-in-redline,.dnr-in-redline'
+    )].filter(element => !element.hidden).reduce(
+      (height, element) => height + element.getBoundingClientRect().height, 0
+    );
+    const notesReserve = Math.min(20, area.clientHeight * .24);
+    const available = Math.max(3, area.clientHeight - otherHeight - notesReserve);
+    for (let level = 0; level <= 7; level++) {
+      display.dataset.saleFit = String(level);
+      if (display.getBoundingClientRect().height <= available + .5 &&
+          display.scrollWidth <= display.clientWidth + 1) break;
+    }
+  }
   function applyVisibility() {
     const needle = search.value.trim().toLocaleLowerCase();
     for (const sheet of sheets) {
@@ -255,7 +281,9 @@
       // "Hide completed" is enabled and selecting a dispo completes the sheet.
       const editorOpen = sheet.dataset.dialogPending === 'yes' ||
         !!sheet.querySelector('.editor-dialog[open]');
+      const wasHidden = sheet.hidden;
       sheet.hidden = !editorOpen && (!nameMatches || (hideCompleted.checked && complete));
+      if (wasHidden && !sheet.hidden) fitSalePreview(sheet);
     }
   }
   function formFields(sheet) {
@@ -317,7 +345,10 @@
   function setup(sheet) {
     const background = sheet.querySelector('.printer-sheet');
     const showSurface = () => {
-      if (background.naturalWidth > 0) sheet.classList.add('surface-ready');
+      if (background.naturalWidth > 0) {
+        sheet.classList.add('surface-ready');
+        fitSalePreview(sheet);
+      }
     };
     background.addEventListener('load', showSurface);
     background.addEventListener('error', () => {
@@ -348,6 +379,7 @@
     dnrPreview(sheet, init);
     resultDetailPreview(sheet, init);
     salePreview(sheet, init);
+    fitSalePreview(sheet);
     const noteInput = sheet.querySelector('.mod-notes-input');
     const redlineInput = sheet.querySelector('[data-key="redlines"]');
     // Preserve already-saved red ink by moving legacy mixed-color runs into
@@ -453,6 +485,7 @@
       salePreview(sheet,draft);
       syncPricePreviews();
       applyVisibility();
+      if (!sheet.hidden) fitSalePreview(sheet);
       scheduleSave(sheet);
     }
     function showRelated(input) {
@@ -518,6 +551,9 @@
     }
   }
   for (const sheet of sheets) setup(sheet);
+  window.addEventListener('resize', () => {
+    for (const sheet of sheets) fitSalePreview(sheet);
+  });
   search.addEventListener('input', applyVisibility);
   hideCompleted.addEventListener('change', applyVisibility);
   applyVisibility();
@@ -525,8 +561,9 @@
   dayMod.addEventListener('change', async () => {
     try {
       if (!dayMod.value) throw new Error('Choose a MOD from Salesforce.');
-      const result = await post(root.dataset.mod, {mod_user_id:dayMod.value});
-      message('MOD for today: ' + result.mod);
+      await post(root.dataset.mod, {mod_user_id:dayMod.value});
+      // The selected MOD is already shown in the control. No success banner.
+      message('');
     } catch (error) { message(error.message); }
   });
   document.getElementById('refresh').addEventListener('click', async event => {
@@ -534,8 +571,7 @@
     button.disabled = true;
     try {
       await flushAll();
-      const result = await post(root.dataset.refresh);
-      message('Pulled ' + result.count + ' MOD sheets. Reloading…');
+      await post(root.dataset.refresh);
       location.reload();
     } catch (error) { message(error.message); button.disabled = false; }
   });
@@ -610,7 +646,6 @@
       const result = await post(root.dataset.submit, fields);
       closeDialog(methodDialog);
       closeDialog(selectionDialog);
-      message('Submitted ' + result.submitted + ' MOD sheet(s) to Salesforce.');
       location.reload();
     } catch (error) {
       closeDialog(methodDialog);

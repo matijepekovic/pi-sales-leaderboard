@@ -63,8 +63,21 @@ def _lines(text, font, size, width):
             if stringWidth(attempt,font,size) <= width:
                 current=attempt
                 continue
-            if current: result.append(current)
-            current=word
+            if current:
+                result.append(current)
+                current=''
+            if stringWidth(word,font,size) <= width:
+                current=word
+                continue
+            # Long unbroken sale amounts/notes must not cross the table edge.
+            chunk=''
+            for character in word:
+                if chunk and stringWidth(chunk+character,font,size) > width:
+                    result.append(chunk)
+                    chunk=character
+                else:
+                    chunk+=character
+            current=chunk
         if current: result.append(current)
     return result
 
@@ -85,6 +98,19 @@ def _fit_lines(c, text, x, top, width, height, *, bold=False, red=False, start=1
         _write(c,x,top+index*leading,line,size,bold,
                colors.HexColor('#bb0707') if red else colors.black)
     c.restoreState()
+
+
+def _bottom_redline_layout(text, width, max_height):
+    """Wrap and shrink generated notes until they fit the lower-right box."""
+    font='Times-Bold'
+    for size in (11,10,9,8,7,6,5,4,3,2,1.5):
+        lines=_lines(text,font,size,width)
+        leading=size*1.2
+        if len(lines)*leading <= max_height:
+            return lines,size,leading
+    # The physical paper has finite space. This last-resort size is still
+    # clipped by the original border, never drawn into the next Work Order.
+    return lines,size,leading
 
 
 def _fit_mixed_notes(c, runs, x, top, width, height):
@@ -228,21 +254,33 @@ def _overlay_one(c,index,draft):
     runs = note_runs_for_display(dict(d, redlines=''))
     user_notes = ''.join(part['text'] for part in runs)
     generated = final_redline_text(d)
+    # Reserve space for black notes above the bottom-anchored redlines.
     if generated:
-        line_count = len(_lines(user_notes, 'Times-Roman', 9, text_width))
-        comment_height = min(notes_height*.75, max(13, line_count*11)) if user_notes else 0
+        reserve = min(notes_height*.28, 30) if user_notes else 0
+        lines,size,leading = _bottom_redline_layout(
+            generated, text_width, max(8, notes_height-reserve-5))
+        red_height = len(lines)*leading
+        comment_height = max(8, notes_height-red_height-6)
     else:
+        lines = []
+        red_height = 0
         comment_height = notes_height
     if user_notes:
-        _fit_mixed_notes(c, runs, text_x, t+13, text_width,
-                         max(13, comment_height))
-    # DNR and sale lines are generated from checkboxes/products, not a second
-    # notes input. Keep them below the user's note without double printing.
+        _fit_mixed_notes(c, runs, text_x, t+13, text_width, comment_height)
+    # DNR, manual redlines and Sale lines stay anchored to the bottom of the
+    # original MOD Notes area. Fit them above the border, independently of how
+    # much black-note space remains.
     if generated:
-        generated_top=t+13+comment_height+(2 if user_notes else 0)
-        _fit_lines(c,generated,text_x,generated_top,text_width,
-                   max(8,notes_height-comment_height-2),
-                   bold=True,red=True,start=12)
+        red_top=t+13+notes_height-3-red_height
+        c.saveState()
+        clip=c.beginPath()
+        clip.rect(text_x-0.2, letter[1]-(t+13+notes_height-1),
+                  text_width+0.4, red_height+2)
+        c.clipPath(clip,stroke=0,fill=0)
+        for line_index,line in enumerate(lines):
+            _write(c,text_x,red_top+line_index*leading,line,size,bold=True,
+                   color=colors.HexColor('#bb0707'))
+        c.restoreState()
 
 
 def render_resulting_pdf(sheets):

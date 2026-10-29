@@ -33,16 +33,24 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .price-click button:focus-visible{outline:2px solid #1e40af;outline-offset:-2px}
 .notes-content{position:absolute;inset:2.05cqw .2cqw .2cqw;display:flex;gap:.4cqw;min-height:0}
 .notes-content textarea{display:block;resize:none;line-height:1.15;width:100%;padding:0;white-space:pre-wrap}
-.notes-content textarea[data-key=numbers]{width:21%;flex:none}
+.notes-content textarea[data-key=numbers]{width:21%;flex:none;padding-bottom:clamp(20px,2.2cqw,27px)}
 /* Black MOD Notes and separate redline previews occupy the original box. */
-.notes-text{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.notes-text{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;overflow:hidden;padding:0 .4cqw .65cqw 0}
 .mod-notes-editor{position:relative;flex:1;min-height:0;min-width:0}
 .notes-text .mod-notes-editor textarea[data-key=notes]{display:block;height:100%;width:100%;color:#000;font-size:1.57cqw;font-weight:400;line-height:1.15;resize:none;white-space:pre-wrap;overflow-wrap:break-word}
-.notes-text .manual-redlines,.notes-text .result-detail-in-redline,.notes-text .dnr-in-redline,.notes-text .sale-in-redline{font-size:1.85cqw;font-weight:700;color:#b00000;line-height:1.1;flex:none;white-space:pre-wrap}
-.mod-sheet>.red-pen{position:absolute;right:.65cqw;bottom:.65cqw;z-index:18;display:grid;place-items:center;width:clamp(22px,2.5cqw,28px);height:clamp(22px,2.5cqw,28px);padding:3px;border:1px solid #b00000;border-radius:5px;background:#fff;color:#b00000;cursor:pointer}
-.mod-sheet>.red-pen svg{display:block;width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.8}
-.mod-sheet>.red-pen:focus-visible{outline:2px solid #b00000;outline-offset:2px}
-.submitted>.red-pen{display:none}
+.notes-text .manual-redlines,.notes-text .result-detail-in-redline,.notes-text .dnr-in-redline,.notes-text .sale-in-redline{font-size:1.85cqw;font-weight:700;color:#b00000;line-height:1.1;flex:none;min-width:0;max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere}
+.notes-text .sale-in-redline{width:100%;font-size:1.65cqw;line-height:1.08}
+.notes-text .sale-in-redline[data-sale-fit="1"]{font-size:1.45cqw}
+.notes-text .sale-in-redline[data-sale-fit="2"]{font-size:1.25cqw}
+.notes-text .sale-in-redline[data-sale-fit="3"]{font-size:1.05cqw}
+.notes-text .sale-in-redline[data-sale-fit="4"]{font-size:.9cqw}
+.notes-text .sale-in-redline[data-sale-fit="5"]{font-size:.75cqw}
+.notes-text .sale-in-redline[data-sale-fit="6"]{font-size:.6cqw}
+.notes-text .sale-in-redline[data-sale-fit="7"]{font-size:.5cqw}
+.notes-content>.red-pen{position:absolute;left:.15cqw;bottom:.2cqw;z-index:18;display:grid;place-items:center;width:clamp(16px,1.55cqw,21px);height:clamp(16px,1.55cqw,21px);padding:2px;border:1px solid #b00000;border-radius:4px;background:#fff;color:#b00000;cursor:pointer}
+.notes-content>.red-pen svg{display:block;width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.8}
+.notes-content>.red-pen:focus-visible{outline:2px solid #b00000;outline-offset:2px}
+.submitted .red-pen{display:none}
 .checklist{display:flex;gap:.1cqw}
 .checklist label{display:flex;flex:1;flex-direction:column;gap:.6cqw;align-items:flex-start}
 .field-bids label{min-width:0;white-space:nowrap}
@@ -67,7 +75,7 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .floating-controls .mod-choice,.floating-controls .toggle-hide{display:flex;align-items:center;gap:6px;white-space:nowrap}
 .floating-controls button{background:white;border:1px solid #888;border-radius:5px;font:inherit;padding:7px 12px;cursor:pointer}
 .floating-controls #submitDay{background:#111;color:#fff}
-.notification{position:fixed;z-index:50;top:75px;right:14px;padding:9px 13px;background:#fffbdf;border:1px solid #ad9b4c;border-radius:4px;max-width:430px;font:12px system-ui,sans-serif}
+.notification{position:static;flex:0 1 auto;max-width:320px;padding:0;background:transparent;border:0;color:#983721;font:12px/1.35 system-ui,sans-serif;overflow-wrap:anywhere}
 /* Editors live in the browser's native dialog top layer, never inside the
    zoomable sheet's absolute positioning or horizontal-scroll viewport. */
 body.dialog-open{overflow:hidden}
@@ -160,7 +168,7 @@ body.dialog-open{overflow:hidden}
   border:0;border-radius:0;cursor:pointer;
  }
  .mod-sheet{width:calc(100vw - 16px);-webkit-text-size-adjust:100%;text-size-adjust:100%}
-   .notification{top:auto;bottom:68px;left:8px;right:8px;max-width:none}
+ .notification{flex:1 1 100%;max-width:100%;padding:2px 0;color:#983721}
  .editor-dialog{width:calc(100vw - 20px);max-width:calc(100vw - 20px);max-height:calc(100dvh - 16px);border-radius:10px}
  .editor-dialog .editor-heading{padding:9px 12px 7px}
  .editor-dialog .editor-body{padding:8px 12px 10px}

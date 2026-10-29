@@ -155,19 +155,25 @@ def test_saved_sale_and_dnr_choices_survive_missing_salesforce_metadata(mod_brow
     assert not service.allow_salesforce_writes and writer.applied == []
 
 
-def test_redline_pen_is_small_at_sheet_bottom_and_popup_stays_in_view(mod_browser):
+def test_redline_pen_is_small_at_numbers_bottom_left_and_popup_stays_in_view(mod_browser):
     from playwright.sync_api import expect
 
     page, service, writer, origin, evidence = mod_browser
     page.set_viewport_size({'width':390,'height':844})
     page.goto(origin + '/mod-resulting')
     first=page.locator('.mod-sheet').first
-    pen=first.locator('.red-pen')
-    paper=first.bounding_box()
+    pen=first.locator('.notes-content>.red-pen')
+    numbers=first.locator('[data-key=numbers]').bounding_box()
+    notes=first.locator('.field-notes').bounding_box()
+    content=first.locator('.notes-content').bounding_box()
     icon=pen.bounding_box()
-    assert icon['width'] <= 30 and icon['height'] <= 30
-    assert icon['x'] >= paper['x']+paper['width']-40
-    assert icon['y'] >= paper['y']+paper['height']-40
+    assert 0 < icon['width'] <= 22 and 0 < icon['height'] <= 22
+    assert icon['x'] >= numbers['x']-2
+    assert icon['x'] + icon['width'] <= numbers['x'] + numbers['width'] + 2
+    assert icon['y'] >= notes['y'] + notes['height'] - 40
+    assert icon['y'] + icon['height'] <= notes['y'] + notes['height'] + 1
+    assert 0 <= content['y'] + content['height'] - (
+        icon['y'] + icon['height']) <= 8
     pen.click()
     popup=first.locator('.redlines-panel')
     expect(popup).to_be_visible()

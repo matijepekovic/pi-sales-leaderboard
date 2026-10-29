@@ -23,8 +23,13 @@ def test_mod_sheet_javascript_syntax_and_single_binding():
                     'const noteMirror =', 'syncNoteMode()'):
         assert removed not in source, removed
     for owner in ('function manualRedlinePreview(', 'function numericExtremes(',
-                  'function buildSelection(', 'function submitBatch('):
+                  'function fitSalePreview(', 'function buildSelection(',
+                  'function submitBatch('):
         assert source.count(owner) == 1, owner
+    assert 'MOD for today:' not in source
+    assert "if (!sheet.hidden) fitSalePreview(sheet);" in source
+    assert "String(notes || '').matchAll(" in source
+    assert "display.dataset.saleFit = String(level);" in source
     node = shutil.which('node')
     if node:
         result = subprocess.run(

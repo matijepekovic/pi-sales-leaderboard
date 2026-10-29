@@ -41,10 +41,17 @@ def test_dispo_and_dnr_statuses_do_not_require_a_lead_dropdown():
         assert outcome_fields(clean_draft({'dispo':dispo,'dnr':False,'dnr_reason':'Roofing'}))['lead_status'] == status
 
 
-def test_prices_use_only_number_lines_not_numbers_in_comments():
-    assert prices('25,000\n$22,570.00\nno 100% guess\n17,850') == {
+def test_prices_ignore_letters_in_numbers_column_and_keep_separate_amounts():
+    assert prices('Estimate $25,000\nSale ABC17,850\nOffer 22,570.00') == {
         'highest':'25000','lowest':'17850'}
-    assert prices('redline 100,000') == {'highest':'','lowest':''}
+    assert prices('Start A66667B\nFinish X555') == {
+        'highest':'66667','lowest':'555'}
+    assert prices('redline 100,000') == {
+        'highest':'100000','lowest':'100000'}
+    assert prices('12.345') == {'highest':'','lowest':''}
+    assert prices('Invalid -100 or 1,00') == {'highest':'','lowest':''}
+    assert prices('Notes only') == {'highest':'','lowest':''}
+    assert prices('Zero 0') == {'highest':'0','lowest':'0'}
 
 
 def test_times_are_am_pm_and_disallow_unexpected_draft_fields():

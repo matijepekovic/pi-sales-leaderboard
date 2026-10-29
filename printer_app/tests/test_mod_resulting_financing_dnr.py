@@ -176,3 +176,56 @@ def test_payment_printed_in_red_generated_notes_without_recoloring_old_notes():
     assert 'Deposit: $0' in text
     assert 'Payment: $159.50' in text.replace('\n', ' ')
     assert '0/159.50' in text.replace('\n', ' ')
+
+
+def test_multiple_sale_redlines_wrap_and_anchor_above_original_pdf_border(monkeypatch):
+    from reportlab.lib import colors
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from printer_app.mod_resulting import pdf_export
+
+    original = pdf_export._write
+    red_lines = []
+
+    def capture(c, x, top, text, size=8.5, bold=False, color=colors.black):
+        if color != colors.black and text:
+            red_lines.append((x, top, text, size))
+        return original(c, x, top, text, size=size, bold=bold, color=color)
+
+    monkeypatch.setattr(pdf_export, '_write', capture)
+    draft = clean_draft({
+        'dispo': 'sale', 'numbers': 'Starting estimate 66667\nOffer 555',
+        'notes': 'Customer requested follow up',
+        'sale_products': {
+            'Roofing': {'price': '123456789.50', 'deposit': '123456.75',
+                        'payment': '159.50'},
+            'Windows': {'price': '92345678.75', 'deposit': '92345',
+                        'payment': '289.50'},
+            'Siding': {'price': '82345678.75', 'deposit': '82345',
+                       'payment': '189.50'},
+        },
+    })
+    output = pdf_export.render_resulting_pdf([{
+        'snapshot': asdict(RECORD), 'draft': draft,
+    }])
+    text = PdfReader(BytesIO(output)).pages[0].extract_text()
+    assert 'Customer requested follow up' in text
+    assert 'SALE Roofing:' in text
+    assert 'SALE Windows:' in text
+    assert 'SALE Siding:' in text
+
+    x, top = pdf_export._location(0, 4, 5)
+    full_width = pdf_export.COL_WIDTH * 6
+    text_x = x + full_width * .21 + 2
+    text_width = full_width - full_width * .21 - 7
+    bottom = top + sum(pdf_export.MOD_ROW_HEIGHTS[5:])
+    assert len(red_lines) >= 4  # At least one product line wraps.
+    assert all(line_x >= text_x - .5 for line_x, _, _, _ in red_lines)
+    assert all(line_x + stringWidth(line, 'Times-Bold', size)
+               <= text_x + text_width + 1
+               for line_x, _, line, size in red_lines)
+    assert all(line_top >= top + 13 - 1 for _, line_top, _, _ in red_lines)
+    assert all(line_top + size < bottom - 1
+               for _, line_top, _, size in red_lines)
+    # Last generated line is anchored near the lower border, with padding.
+    last = max(line_top + size for _, line_top, _, size in red_lines)
+    assert 2 <= bottom - last <= 12

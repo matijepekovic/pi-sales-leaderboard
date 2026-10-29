@@ -27,8 +27,8 @@
  {% if data.state and data.state.submitted_at %}
  <a class="completed-pdf" href="{{ url_for('mod_resulting.pdf') }}">PDF</a>
  {% endif %}
+ <span id="notice" role="status" aria-live="polite" class="notification" {% if not notice %}hidden{% endif %}>{{ notice }}</span>
 </div>
-<div id="notice" role="status" aria-live="polite" class="notification" {% if not notice %}hidden{% endif %}>{{ notice }}</div>
 {% macro checkbox(key, label, value, cls='') -%}
 <label class="{{ cls }}"><span>{{ label }}</span><input type="checkbox" data-key="{{ key }}" {% if value %}checked{% endif %}></label>
 {%- endmacro %}
@@ -113,6 +113,9 @@
   <b class="sr-only">MOD Notes:</b>
   <div class="notes-content">
    <textarea data-key="numbers" aria-label="MOD Notes numbers" spellcheck="false">{{ d.numbers }}</textarea>
+  <button type="button" class="red-pen" aria-label="Edit redlines" title="Redlines">
+   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m12 19 7-7 3 3-7 7-4 1 1-4ZM4 16l-2 6 6-2L20 8l-4-4L4 16Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
    <div class="notes-text" aria-label="MOD Notes">
     <div class="mod-notes-editor">
      <textarea data-key="notes" class="mod-notes-input" aria-label="MOD Notes" spellcheck="false">{{ d.notes }}</textarea>
@@ -251,9 +254,6 @@
   </div>
   <div class="editor-footer"><button type="button" class="close-popover editor-primary">Done</button></div>
  </dialog>
- <button type="button" class="red-pen" aria-label="Edit redlines" title="Redlines">
-  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m12 19 7-7 3 3-7 7-4 1 1-4ZM4 16l-2 6 6-2L20 8l-4-4L4 16Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
- </button>
  <dialog class="editor-dialog redlines-panel" aria-label="Redlines">
   <div class="editor-heading"><h2>Redlines</h2>
    <button type="button" class="close-popover editor-close" aria-label="Close Redlines">×</button>

@@ -228,8 +228,13 @@ def test_mod_sheets_search_customers_and_assigned_reps_only(mod_browser):
     assert row['draft']['dispo'] == 'cxl'
     assert row['draft']['cxl_at_lead'] is True
 
-    page.locator('#dailyMod').select_option(MOD)
-    expect(page.locator('#notice')).to_contain_text('Sample MOD')
+    with page.expect_response('**/mod-resulting/api/mod') as response:
+        page.locator('#dailyMod').select_option(MOD)
+    assert response.value.ok
+    # The MOD choice itself is confirmation; no yellow banner overlays sheets.
+    expect(page.locator('#notice')).to_be_hidden()
+    assert page.locator('#notice').evaluate(
+        "(el) => el.parentElement.classList.contains('floating-controls')")
     assert service.repository.day(service.day())['mod_user_id'] == MOD
     page.locator('#submitDay').click()
     expect(page.locator('#endConfirm')).to_be_visible()
@@ -794,7 +799,7 @@ def test_red_pen_opens_separate_redlines_popup_and_never_recolors_notes(mod_brow
     first.locator('[data-key=dispo]').select_option('pns')
     expect(notes).to_have_value('Black notes remain black')
     expect(pen).to_be_visible()
-    assert pen.evaluate('(el) => el.parentElement.classList.contains("mod-sheet")')
+    assert pen.evaluate('(el) => el.parentElement.classList.contains("notes-content")')
     pen.click()
     popup = first.locator('.redlines-panel')
     expect(popup).to_be_visible()
@@ -819,13 +824,69 @@ def test_red_pen_opens_separate_redlines_popup_and_never_recolors_notes(mod_brow
     assert not writer.applied
 
 
+@pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
+def test_sale_preview_stays_bottom_anchored_and_wraps_within_notes(mod_browser, viewport):
+    from playwright.sync_api import expect
+
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width':viewport[0],'height':viewport[1]})
+    page.goto(origin + '/mod-resulting')
+    sheet = page.locator('.mod-sheet').first
+    sheet.locator('[data-key=dispo]').select_option('sale')
+    popup = sheet.locator('.sale-panel')
+    for product in ('Roofing', 'Siding', 'Windows'):
+        item = popup.locator('[data-sale-product="' + product + '"]')
+        item.locator('[data-sale-selected]').check()
+        item.locator('[data-sale-price]').fill('123456789.50')
+        item.locator('[data-sale-deposit]').fill('123456.75')
+        item.locator('[data-sale-payment]').fill('159.50')
+    popup.locator('.sale-done').click()
+    sale = sheet.locator('.sale-in-redline')
+    expect(sale).to_be_visible()
+    expect(sale).to_contain_text('SALE Roofing:')
+    expect(sale).to_contain_text('SALE Siding:')
+    expect(sale).to_contain_text('SALE Windows:')
+    assert sale.get_attribute('data-sale-fit') is not None
+    area = sheet.locator('.notes-text').bounding_box()
+    text = sale.bounding_box()
+    assert text['x'] >= area['x'] - 1
+    assert text['x'] + text['width'] <= area['x'] + area['width'] + 1
+    assert text['y'] >= area['y'] - 1
+    assert text['y'] + text['height'] <= area['y'] + area['height'] + 1
+    assert sale.evaluate('(el) => el.scrollWidth <= el.clientWidth + 1')
+    # The sale details keep the lower edge, rather than following the first
+    # black-note line at the top of the box.
+    assert area['y'] + area['height'] - (text['y'] + text['height']) <= 12
+    assert not writer.applied
+
+
+def test_mod_selection_has_no_banner_and_errors_stay_inline(mod_browser):
+    from playwright.sync_api import expect
+
+    page, service, writer, origin, evidence = mod_browser
+    page.goto(origin + '/mod-resulting')
+    notice = page.locator('#notice')
+    expect(notice).to_be_hidden()
+    assert notice.evaluate(
+        "(el) => getComputedStyle(el).position") == 'static'
+    assert notice.evaluate(
+        "(el) => getComputedStyle(el).backgroundColor") == 'rgba(0, 0, 0, 0)'
+    assert notice.evaluate(
+        "(el) => el.parentElement.classList.contains('floating-controls')")
+    with page.expect_response('**/mod-resulting/api/mod') as response:
+        page.locator('#dailyMod').select_option(MOD)
+    assert response.value.ok
+    expect(notice).to_be_hidden()
+    assert not writer.applied
+
+
 def test_calculated_amount_placeholders_update_and_clear_to_automatic(mod_browser):
     from playwright.sync_api import expect
 
     page, service, writer, origin, evidence = mod_browser
     page.goto(origin + '/mod-resulting')
     sheet = page.locator('.mod-sheet').first
-    sheet.locator('[data-key=numbers]').fill('17000\n25000\n21000')
+    sheet.locator('[data-key=numbers]').fill('Sale 17000\nStarting price 25000\nAdjustment 21000')
     expect(sheet.locator('[data-price-display=start_price_override]')).to_have_text('$25000')
     expect(sheet.locator('[data-price-display=final_price_override]')).to_have_text('$17000')
 

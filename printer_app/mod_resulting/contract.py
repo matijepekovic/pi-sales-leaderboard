@@ -34,6 +34,12 @@ MAX_LENGTHS = {
 }
 TIME_RE = re.compile(r'^(?:0?[1-9]|1[0-2]):[0-5][0-9] (?:AM|PM)$')
 _NUMBER_RE = re.compile(r'^\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?$')
+# Numbers may be annotated with letters; use complete amount tokens instead
+# of requiring a line to contain only an amount. Never combine separated
+# numbers into one value or accept a fractional fragment of 12.345.
+_NUMBER_TOKEN_RE = re.compile(
+    r'(?<![\d.,-])\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?(?![\d.]|,\d)'
+)
 
 
 def _money(value, *, allow_blank=True):
@@ -345,18 +351,21 @@ def final_redline_text(draft):
 
 
 def prices(numbers):
-    """Only full numeric lines count; text and fragments are never guessed."""
+    """Highest/lowest complete amounts, ignoring surrounding letters.
+
+    Numbers is a dedicated numerical column. Annotations are allowed, but
+    unrelated Notes and incomplete decimal fragments are never inspected.
+    """
     result = []
     for line in str(numbers or '').splitlines():
-        value = line.strip()
-        if not value or not _NUMBER_RE.fullmatch(value):
-            continue
-        try:
-            number = Decimal(value.replace('$', '').replace(',', '').strip())
-        except InvalidOperation:
-            continue
-        if number.is_finite() and number >= 0:
-            result.append(number)
+        for match in _NUMBER_TOKEN_RE.finditer(line):
+            value = match.group().replace('$', '').replace(',', '').strip()
+            try:
+                number = Decimal(value)
+            except InvalidOperation:
+                continue
+            if number.is_finite() and number >= 0:
+                result.append(number)
     return {
         'highest': money_text(str(max(result))) if result else '',
         'lowest': money_text(str(min(result))) if result else '',

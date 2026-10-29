@@ -54,6 +54,12 @@ def test_pending_setup_notice_is_not_presented_as_a_page_banner():
     assert 'current_app.logger.warning' in web
     assert 'PREVIEW ONLY' not in js
     assert "message('Not saved: ' + error.message, sheet)" in js
+    html = (root / 'templates/mod_resulting.html').read_text()
+    css = (root / 'static/mod_resulting/sheet.css').read_text()
+    assert 'MOD for today:' not in js
+    assert '<span id="notice"' in html
+    assert '.notification{position:static;' in css
+    assert '#fffbdf' not in css
 
 
 def test_phone_scaling_does_not_override_print_layout():
@@ -62,3 +68,7 @@ def test_phone_scaling_does_not_override_print_layout():
     assert '@media screen and (max-width:900px)' in css
     assert '@media print{.floating-controls,' in css
     assert '.sheet-zoom' not in css and '[data-zoom' not in css
+    assert '.notes-content>.red-pen{position:absolute;left:' in css
+    assert 'width:clamp(16px,1.55cqw,21px)' in css
+    assert '.notes-text .sale-in-redline[data-sale-fit="7"]' in css
+    assert 'overflow-wrap:anywhere' in css
