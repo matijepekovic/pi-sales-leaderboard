@@ -6,7 +6,7 @@ import re
 from .contract import deposit_payment_value
 
 from .salesforce_adapter import (
-    LEAD_FIELDS, PR, WO, PRODUCT_RESULT_VALUE, WORK_ORDER_DISPO,
+    LEAD_FIELDS, PR, WO, REVIEW_FIELD, PRODUCT_RESULT_VALUE, WORK_ORDER_DISPO,
     ResultingSalesforceError,
 )
 
@@ -93,6 +93,12 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             value = _source_value(work.get(WO[field]))
             draft['checkbox_values'][field] = {'value': value, 'edited': False}
             draft[field] = _checked(value)
+        if REVIEW_FIELD in work:
+            review = _source_value(work[REVIEW_FIELD])
+            draft['checkbox_values']['review'] = {
+                'value': review, 'edited': False,
+            }
+            draft['review'] = _checked(review)
         prices = [_money(work.get(WO[key])) for key in ('start_price', 'final_price')]
         draft['numbers'] = '\n'.join(price for price in prices if price)
         # Salesforce's existing Deposit/Payment field is text and can contain
