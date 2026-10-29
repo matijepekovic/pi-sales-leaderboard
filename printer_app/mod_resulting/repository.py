@@ -37,9 +37,9 @@ class ResultingRepository:
         return rows
 
     def print_sheets(self, day):
-        """All current imported cards; no disposition or submission filter."""
+        """Every card displayed for the day, including previously imported rows."""
         rows = self.db.rows('''SELECT work_order_id,snapshot,draft
-            FROM mod_result_sheets WHERE day=? AND current=1
+            FROM mod_result_sheets WHERE day=?
             ORDER BY display_order,work_order_id''', (day,))
         return [dict(work_order_id=row['work_order_id'],
                      snapshot=json.loads(row['snapshot']),

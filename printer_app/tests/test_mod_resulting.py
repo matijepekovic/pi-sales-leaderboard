@@ -729,6 +729,11 @@ def test_print_all_includes_salesforce_result_local_result_and_blank_cards(tmp_p
     assert '10/26/2026 10:00 AM' in first
     assert '2026.10.26 ; 10:00:00 AM' in first
     assert writer.applied == [] and writer.plans == []
+    # Print All must include every card still shown in the UI, even if the
+    # latest Salesforce Refresh did not return an older imported card.
+    repo.refresh(DAY, records[1:], external_drafts={})
+    assert repo.sheets(DAY)[0]['current'] == 0
+    assert len(repo.print_sheets(DAY)) == len(repo.sheets(DAY)) == 4
 
 
 def test_queue_writes_nothing_until_worker_runs_and_reports_success(tmp_path):
