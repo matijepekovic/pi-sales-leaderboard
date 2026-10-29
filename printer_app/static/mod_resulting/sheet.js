@@ -809,6 +809,11 @@
   const selectionCount = document.getElementById('endSelectionCount');
   const submitSelected = document.getElementById('submitSelected');
   const selectAll = document.getElementById('endSelectAll');
+  const progressDialog = document.getElementById('submissionProgress');
+  const progressButton = document.getElementById('viewSubmissionProgress');
+  let currentSubmission = null;
+  let progressTimer = null;
+  let submissionActive = false;
 
   function eligibleSheets() {
     return sheets.filter(sheet =>
@@ -823,7 +828,7 @@
     const chosen = selectedWorkOrders().length;
     selectionCount.textContent = chosen + ' of ' + choices.length + ' selected';
     selectAll.textContent = chosen === choices.length ? 'Clear All' : 'Select All';
-    submitSelected.disabled = submitButton.dataset.liveWrites !== 'yes' || chosen === 0;
+    submitSelected.disabled = submitButton.dataset.liveWrites !== 'yes' || chosen === 0 || submissionActive;
   }
   function buildSelection() {
     selectionSearch.value = '';
@@ -861,31 +866,104 @@
     for (const input of inputs) input.checked = !allSelected;
     updateSelection();
   });
+  function renderSubmission(submission) {
+    currentSubmission = submission;
+    progressButton.hidden = !submission;
+    if (!submission) return;
+    submissionActive = ['queued', 'running'].includes(submission.state);
+    submitButton.disabled = submissionActive || submitButton.dataset.liveWrites !== 'yes';
+    updateSelection();
+    const completed = submission.submitted;
+    document.getElementById('submissionCompleted').textContent =
+      completed + ' / ' + submission.total;
+    const bar = document.getElementById('submissionBar');
+    bar.max = Math.max(submission.total, 1);
+    bar.value = completed;
+    document.getElementById('submissionSucceeded').textContent = completed;
+    document.getElementById('submissionPending').textContent =
+      submission.pending + submission.processing;
+    document.getElementById('submissionFailed').textContent = submission.failed;
+    const labels = {queued:'Queued', running:'In progress', completed:'Completed',
+                    failed:'Stopped', interrupted:'Interrupted'};
+    document.getElementById('submissionState').textContent =
+      labels[submission.state] || submission.state;
+    const processing = submission.items.find(item => item.state === 'processing');
+    const current = document.getElementById('submissionCurrent');
+    current.hidden = !processing;
+    current.textContent = processing ? 'Processing Work Order ' + processing.work_order_number : '';
+    const error = document.getElementById('submissionError');
+    error.textContent = submission.error || '';
+    error.hidden = !submission.error;
+    const errors = document.getElementById('submissionErrors');
+    errors.replaceChildren();
+    for (const item of submission.items.filter(item => item.state === 'uncertain')) {
+      const row = document.createElement('li');
+      const name = document.createElement('strong');
+      name.textContent = 'Work Order ' + item.work_order_number;
+      const explanation = document.createElement('span');
+      explanation.textContent = 'Salesforce confirmation required' +
+        (item.error ? ': ' + item.error : '');
+      row.append(name, explanation);
+      errors.append(row);
+    }
+  }
+  async function refreshSubmission(openWhenActive = false) {
+    try {
+      const response = await fetch(root.dataset.submissionStatus, {
+        headers: {'Accept':'application/json'}, cache:'no-store'
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || 'Progress unavailable');
+      renderSubmission(data.submission);
+      if (data.submission && (openWhenActive || (submissionActive && !progressDialog.open))) {
+        openDialog(progressDialog);
+      }
+    } catch (error) {
+      message('Could not read submission progress: ' + error.message);
+    } finally {
+      clearTimeout(progressTimer);
+      if (submissionActive) {
+        progressTimer = setTimeout(() => refreshSubmission(), 2000);
+      }
+    }
+  }
+  progressButton.addEventListener('click', () => {
+    if (currentSubmission) openDialog(progressDialog);
+    refreshSubmission();
+  });
+  progressDialog.addEventListener('close', () => {
+    if (currentSubmission && !submissionActive && currentSubmission.submitted > 0) {
+      location.reload(); // Reflect the durable Salesforce receipts on the cards.
+    }
+  });
   async function submitBatch(button, selected) {
     button.disabled = true;
     try {
       await flushAll();
       const fields = selected === null ? {mode:'all'} :
         {mode:'selected',work_order_ids:JSON.stringify(selected)};
-      const result = await post(root.dataset.submit, fields);
+      await post(root.dataset.submit, fields);
       closeDialog(methodDialog);
       closeDialog(selectionDialog);
-      location.reload();
+      await refreshSubmission(true);
     } catch (error) {
       closeDialog(methodDialog);
       closeDialog(selectionDialog);
       message('Submission stopped: ' + error.message);
     } finally {
-      button.disabled = submitButton.dataset.liveWrites !== 'yes';
+      button.disabled = submissionActive || submitButton.dataset.liveWrites !== 'yes';
       updateSelection();
     }
   }
+  // A reload or disconnected browser can reattach to an active server job.
+  refreshSubmission();
   document.getElementById('cancelEnd').addEventListener('click',
     () => closeDialog(confirmation));
   document.getElementById('cancelEndSecondary').addEventListener('click',
     () => closeDialog(confirmation));
   submitButton.addEventListener('click', async () => {
     try {
+      if (submissionActive) { openDialog(progressDialog); return; }
       await flushAll();
       if (!dayMod.value) throw new Error('Select the MOD for this day before submission.');
       if (!eligibleSheets().length) throw new Error('No new MOD sheets have a disposition.');

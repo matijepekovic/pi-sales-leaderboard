@@ -14,6 +14,7 @@
  data-save="{{ url_for('mod_resulting.save') }}"
  data-mod="{{ url_for('mod_resulting.choose_mod') }}"
  data-submit="{{ url_for('mod_resulting.submit') }}"
+ data-submission-status="{{ url_for('mod_resulting.submission_status') }}"
  data-checkbox-specs='{{ checkbox_specs|tojson|forceescape }}'>
 <div class="floating-controls" aria-label="MOD sheet controls">
  <input id="nameSearch" type="search" placeholder="Search customer or rep" aria-label="Search customer or assigned service resource">
@@ -28,6 +29,7 @@
  <button type="button" id="refresh">Refresh</button>
  <button type="button" id="clearLocal" title="Clear local edits without changing Salesforce">Clear</button>
  <button type="button" id="submitDay" data-live-writes="{{ 'yes' if live_writes_enabled else 'no' }}">End of day</button>
+ <button type="button" id="viewSubmissionProgress" hidden>Submission Status</button>
  <a class="completed-pdf" href="{{ url_for('mod_resulting.pdf') }}" target="_blank" rel="noopener">Print All</a>
  <span id="notice" role="status" aria-live="polite" class="notification" {% if not notice %}hidden{% endif %}>{{ notice }}</span>
 </div>
@@ -365,5 +367,24 @@
  <div class="editor-footer">
   <button type="button" id="submitSelected" class="editor-primary" {% if not live_writes_enabled %}disabled title="Salesforce writes disabled for sandbox testing"{% endif %}>Submit Selected</button>
  </div>
+</dialog>
+<dialog class="editor-dialog submission-panel" id="submissionProgress" aria-label="End of Day submission progress">
+ <div class="editor-heading">
+  <h2>End of Day Submission</h2>
+  <span class="submission-state" id="submissionState" role="status">Queued</span>
+ </div>
+ <div class="editor-body">
+  <div class="submission-summary"><strong id="submissionCompleted">0 / 0</strong><span>Work orders completed</span></div>
+  <progress id="submissionBar" value="0" max="1" aria-label="Submission progress"></progress>
+  <div class="submission-counts">
+   <span class="submission-succeeded"><strong id="submissionSucceeded">0</strong> Submitted</span>
+   <span><strong id="submissionPending">0</strong> Pending</span>
+   <span class="submission-failed"><strong id="submissionFailed">0</strong> Failed</span>
+  </div>
+  <div class="submission-detail" id="submissionCurrent" hidden></div>
+  <p class="submission-error" id="submissionError" hidden></p>
+  <ul class="submission-errors" id="submissionErrors"></ul>
+ </div>
+ <div class="editor-footer"><button type="button" class="close-popover editor-secondary">Close</button></div>
 </dialog>
 </body></html>
