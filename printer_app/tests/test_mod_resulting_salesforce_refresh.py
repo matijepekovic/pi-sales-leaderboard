@@ -174,6 +174,65 @@ def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
     assert all(command[1:3] == ['data', 'query'] for command in calls)
 
 
+def test_raw_checkbox_text_hydrates_visually_and_survives_refresh_without_conversion(tmp_path):
+    from zoneinfo import ZoneInfo
+    from printer_app.mod_resulting.salesforce_drafts import project_salesforce_drafts
+
+    work = {
+        WORK: {
+            'Id': WORK, 'Dispo__c': None, 'Docs__c': '  Completed  ',
+            'X90_Min__c': 'No', 'Promotion__c': True,
+            'MOD_Notes__c': '',
+        },
+    }
+    leads = {LEAD: {
+        'DNR_Do_Not_Reset__c': False,
+        'X1_Leg_Appointment__c': True,
+    }}
+    remote = clean_draft(project_salesforce_drafts(
+        ZoneInfo('America/Los_Angeles'), {WORK: LEAD}, work, leads, {}
+    )[WORK])
+    assert remote['docs'] is True
+    assert remote['ninety_min'] is False
+    assert remote['promotion'] is True
+    assert remote['checkbox_values']['docs'] == {
+        'value': '  Completed  ', 'edited': False
+    }
+    assert remote['checkbox_values']['ninety_min'] == {
+        'value': 'No', 'edited': False
+    }
+    assert remote['checkbox_values']['promotion'] == {
+        'value': True, 'edited': False
+    }
+    assert remote['checkbox_values']['dnr'] == {
+        'value': False, 'edited': False
+    }
+    assert remote['checkbox_values']['one_leg'] == {
+        'value': True, 'edited': False
+    }
+
+    repo = ResultingRepository(Database(tmp_path / 'printer.sqlite'))
+    repo.refresh(DAY, [RECORD], external_drafts={WORK: remote})
+    sheet = repo.sheets(DAY)[0]
+    assert sheet['submitted_at'] is None
+    assert sheet['draft']['checkbox_values'] == remote['checkbox_values']
+
+    # Saving other fields must never mark an untouched raw value as edited.
+    edited = clean_draft(dict(remote, notes='MOD note only'))
+    repo.save_draft(DAY, WORK, edited, sheet['revision'])
+    assert repo.sheets(DAY)[0]['draft']['checkbox_values']['docs']['edited'] is False
+    # Salesforce still wins on Refresh, including after a local popup edit.
+    changed = clean_draft(dict(edited, checkbox_values={
+        **edited['checkbox_values'],
+        'docs': {'value': 'Checked in office', 'edited': True},
+    }))
+    repo.save_draft(DAY, WORK, changed, repo.sheets(DAY)[0]['revision'])
+    repo.refresh(DAY, [RECORD], external_drafts={WORK: remote})
+    assert repo.sheets(DAY)[0]['draft']['checkbox_values']['docs'] == {
+        'value': '  Completed  ', 'edited': False
+    }
+
+
 def test_remote_unresulted_notes_stay_black():
     from printer_app.mod_resulting.salesforce_drafts import project_salesforce_drafts
     from zoneinfo import ZoneInfo
