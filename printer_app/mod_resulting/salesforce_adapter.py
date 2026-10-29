@@ -509,15 +509,23 @@ class ResultingSalesforceAdapter:
                 self._choice(detail_field, entry['detail'])
                 if entry.get('detail') else None
             )
-            fields = {
-                PR['result']: result,
-                PR['one_leg']: self._value(one_leg_field, payload['draft']['one_leg']),
-                PR['free_lead']: self._value(free_field, payload['draft']['free_lead']),
-                PR['cxl_at_lead']: self._value(
-                    cxl_field, payload['draft']['cxl_at_lead']
-                ),
-            }
             old_id = existing.get(str(product).casefold())
+            fields = {PR['result']: result}
+            raw_checks = payload['draft'].get('checkbox_values') or {}
+            for key, field in (
+                ('one_leg', one_leg_field),
+                ('free_lead', free_field),
+                ('cxl_at_lead', cxl_field),
+            ):
+                value = raw_checks.get(key)
+                # Existing product rows already have an authoritative value.
+                # Do not silently stamp the sheet's aggregate checkmark over
+                # each product during Override. New rows still need values.
+                if old_id and value is not None and not value['edited']:
+                    continue
+                entered = (value['value'] if value is not None and value['edited']
+                           else payload['draft'][key])
+                fields[PR[key]] = self._value(field, entered)
             if detail is not None:
                 fields[PR['detail']] = detail
             elif old_id:
