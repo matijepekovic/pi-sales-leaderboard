@@ -324,6 +324,71 @@ class ResultingSalesforceAdapter:
             ),
         }
 
+    def checkbox_fields(self):
+        """Safe presentation contracts; never expose source API field names."""
+        groups = (
+            (WORK_ORDER, ('docs', 'ninety_min', 'promotion')),
+            (LEAD, ('dnr', 'one_leg')),
+            (PRODUCT_RESULT, ('free_lead', 'cxl_at_lead')),
+        )
+        definitions = {}
+        for object_name, keys in groups:
+            schema = self._describe(object_name)
+            names = WO if object_name == WORK_ORDER else (
+                LEAD_FIELDS if object_name == LEAD else PR
+            )
+            for key in keys:
+                match = [item for item in schema.get('fields', ())
+                         if item.get('name') == names[key]]
+                if len(match) != 1:
+                    continue
+                field = match[0]
+                kind = field.get('type')
+                if kind not in ('boolean', 'string', 'textarea', 'picklist'):
+                    continue
+                definitions[key] = {
+                    'kind': kind,
+                    'editable': field.get('updateable') is True,
+                    'nullable': field.get('nillable') is not False,
+                    'length': min(int(field.get('length') or 3000), 3000),
+                    'choices': [
+                        {'value': str(item['value']),
+                         'label': str(item.get('label') or item['value'])}
+                        for item in (field.get('picklistValues') or ())
+                        if kind == 'picklist' and isinstance(item, dict)
+                        and item.get('active', True) and item.get('value')
+                    ],
+                }
+        return definitions
+
+    @classmethod
+    def _source_checkbox_value(cls, field, value):
+        """A deliberate edit is validated against live field metadata."""
+        kind = field.get('type')
+        if value is None or value == '':
+            if field.get('nillable') is False:
+                raise ResultingSalesforceError(
+                    field['name'] + ' cannot be cleared.')
+            return None
+        if type(value) is bool:
+            if kind == 'boolean':
+                return value
+            if value:
+                return cls._checked_yes(field)
+            if field.get('nillable') is False:
+                raise ResultingSalesforceError(
+                    field['name'] + ' cannot be unchecked without a value.')
+            return None
+        if not isinstance(value, str):
+            raise ResultingSalesforceError('Invalid source checkbox edit.')
+        if kind == 'boolean':
+            raise ResultingSalesforceError('Checkbox requires True or False.')
+        if kind in ('string', 'textarea'):
+            limit = int(field.get('length') or 3000)
+            if len(value) > min(limit, 3000):
+                raise ResultingSalesforceError('Checkbox text exceeds the Salesforce field limit.')
+        return cls._value(field, value)
+
     def _time_value(self, day, entered, field):
         if not entered:
             return None
@@ -615,14 +680,24 @@ class ResultingSalesforceAdapter:
                         payload['final_redlines'],
                     ) if part).strip(),
                 ),
-                WO['promotion']: self._value(
-                    wo_fields['promotion'], payload['draft']['promotion']
-                ),
                 WO['need']: self._value(wo_fields['need'], payload['draft']['need']),
                 WO['want']: self._value(wo_fields['want'], payload['draft']['want']),
             }
-            for key in ('docs', 'ninety_min'):
-                if payload['draft'][key]:
+            source_values = payload['draft'].get('checkbox_values') or {}
+            for key in ('docs', 'ninety_min', 'promotion'):
+                entry = source_values.get(key)
+                if entry is not None:
+                    # An unchanged source value is deliberately omitted: do
+                    # not replace a text "Completed" with a guessed "Yes".
+                    if entry['edited']:
+                        wo_values[WO[key]] = self._source_checkbox_value(
+                            wo_fields[key], entry['value']
+                        )
+                elif key == 'promotion':
+                    wo_values[WO[key]] = self._value(
+                        wo_fields[key], payload['draft']['promotion']
+                    )
+                elif payload['draft'][key]:
                     wo_values[WO[key]] = self._checked_yes(wo_fields[key])
             if payload['draft']['review']:
                 review = self._field(
@@ -659,13 +734,18 @@ class ResultingSalesforceAdapter:
                     ) if lead_fields['status'].get('type') in ('picklist', 'multipicklist')
                     else payload['fields']['lead_status'],
                 ),
-                LEAD_FIELDS['dnr']: self._value(
-                    lead_fields['dnr'], payload['draft']['dnr']
-                ),
-                LEAD_FIELDS['one_leg']: self._value(
-                    lead_fields['one_leg'], payload['draft']['one_leg']
-                ),
             }
+            for key in ('dnr', 'one_leg'):
+                entry = source_values.get(key)
+                if entry is not None:
+                    if entry['edited']:
+                        lead_values[LEAD_FIELDS[key]] = self._source_checkbox_value(
+                            lead_fields[key], entry['value']
+                        )
+                else:
+                    lead_values[LEAD_FIELDS[key]] = self._value(
+                        lead_fields[key], payload['draft'][key]
+                    )
             if payload['draft']['dnr']:
                 lead_values[LEAD_FIELDS['dnr_reason']] = self._choice(
                     lead_fields['dnr_reason'], payload['draft']['dnr_reason']
