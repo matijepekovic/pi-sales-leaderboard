@@ -395,6 +395,41 @@ def test_promotion_text_or_picklist_uses_the_actual_value_when_edited():
     assert 'Promotion__c' not in unchecked
 
 
+def test_override_retains_individual_product_checkbox_values_until_user_changes_them():
+    adapter, _ = _adapter(existing_results=[{
+        'Id': PR1, 'Product_Interest__c': 'Roofing',
+    }])
+    flags = {
+        'one_leg': {'value': True, 'edited': False},
+        'free_lead': {'value': 'True / False', 'edited': False},
+        'cxl_at_lead': {'value': False, 'edited': False},
+    }
+    plan = _operations(adapter, _payload(
+        'pns', checkbox_values=flags, one_leg=True, free_lead=True,
+        cxl_at_lead=False
+    ))
+    existing = next(row[3] for row in plan if row[1] == PRODUCT_RESULT
+                    and row[0] == 'update')
+    added = next(row[3] for row in plan if row[1] == PRODUCT_RESULT
+                 and row[0] == 'create')
+    assert all(key not in existing for key in (
+        PR['one_leg'], PR['free_lead'], PR['cxl_at_lead']
+    ))
+    assert added[PR['one_leg']] is True
+    assert added[PR['free_lead']] is True
+    assert added[PR['cxl_at_lead']] is False
+
+    changed = {**flags, 'free_lead': {'value': False, 'edited': True}}
+    plan = _operations(adapter, _payload(
+        'pns', checkbox_values=changed, one_leg=True, free_lead=False
+    ))
+    existing = next(row[3] for row in plan if row[1] == PRODUCT_RESULT
+                    and row[0] == 'update')
+    assert existing[PR['free_lead']] is False
+    assert PR['one_leg'] not in existing
+    assert PR['cxl_at_lead'] not in existing
+
+
 def test_legacy_manual_choices_cannot_override_automatic_status_or_history():
     draft = clean_draft({
         'dispo':'pns','numbers':'25000\n17000',
