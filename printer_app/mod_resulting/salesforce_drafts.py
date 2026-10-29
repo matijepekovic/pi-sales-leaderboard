@@ -57,8 +57,7 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
         work = works[work_id]
         raw_dispo = str(work.get(WO['dispo']) or '').strip()
         dispo = dispositions.get(raw_dispo.casefold(), '')
-        if raw_dispo and not dispo:
-            raise ResultingSalesforceError('Unknown Salesforce Work Order disposition.')
+        # Lead.Status is checked before trusting any Work Order or Product result.
         content = str(work.get(WO['notes']) or '')
         draft = {
             'dispo': dispo,
@@ -101,8 +100,15 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             draft['previous_result'] = str(
                 lead.get(LEAD_FIELDS['previous_result']) or ''
             )
+        lead_canceled = draft.get('lead_status', '').strip().casefold() == 'canceled'
+        if lead_canceled:
+            # The actual Salesforce Lead status wins even when the Work Order
+            # has a contradictory Dispo or no existing product result.
+            dispo = draft['dispo'] = 'cxl'
+        elif raw_dispo and not dispo:
+            raise ResultingSalesforceError('Unknown Salesforce Work Order disposition.')
 
-        per_product, sales, details, seen = {}, {}, set(), set()
+        per_product, sales, details, seen = {}, {}, set()
         ranked_results = []
         for item in products.get(work_id, ()):
             product = str(item.get(PR['product']) or '').strip()
@@ -114,6 +120,10 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             raw_result = str(item.get(PR['result']) or '').strip()
             result = results.get(raw_result.casefold(), '')
             if raw_result and not result:
+                if lead_canceled:
+                    # An unrecognized product result cannot veto a canceled
+                    # Lead; leave that product untouched rather than guess.
+                    continue
                 raise ResultingSalesforceError('Unknown Salesforce product result.')
             detail = str(item.get(PR['detail']) or '')
             if detail:
@@ -140,7 +150,9 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             for key in ('free_lead', 'cxl_at_lead'):
                 if item.get(PR[key]) is True:
                     draft[key] = True
-        chosen_details = details
+        # Product-specific explanations must never become the reason for a
+        # Lead-authoritative CXL if their results contradict cancellation.
+        chosen_details = set() if lead_canceled else details
         if not dispo and ranked_results:
             most_information = max(score for score, _, _ in ranked_results)
             leaders = [(result, detail) for score, result, detail in ranked_results
