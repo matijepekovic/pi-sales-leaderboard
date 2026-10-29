@@ -293,7 +293,8 @@ def test_pdf_uses_existing_print_renderer_with_redlines_and_fixed_sheets():
     notes=clean_draft({'dispo':'sale','numbers':'25000\n17000',
                        'notes':'Customer comment',
                        'redlines':'CHANGE SCOPE','docs':True,
-                       'ninety_min':True,'dnr':True,'dnr_reason':'Roofing'})
+                       'ninety_min':True,'dnr':True,'dnr_reason':'Roofing',
+                       'call_1':'10:15 AM','call_2':'1:27 PM'})
     sheet={'snapshot':asdict(RECORD),'draft':notes}
     payload=render_resulting_pdf([sheet])
     pdf=PdfReader(BytesIO(payload))
@@ -304,6 +305,7 @@ def test_pdf_uses_existing_print_renderer_with_redlines_and_fixed_sheets():
     assert 'CHANGE SCOPE' in text
     assert 'DNR - Roofing' in text
     assert 'Customer comment' in text
+    assert '10:15 AM' in text and '1:27 PM' in text
     # Print generator's original label must remain; never redraw all boxes.
     assert 'Local Scheduled Start Time:' in text
 
