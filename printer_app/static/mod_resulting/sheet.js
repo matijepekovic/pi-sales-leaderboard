@@ -15,6 +15,153 @@
   const timeMinute = document.getElementById('timeMinute');
   const timePeriod = document.getElementById('timePeriod');
   let timeTarget = null;
+  const checkboxDialog = document.getElementById('checkboxDialog');
+  const checkboxCurrent = document.getElementById('checkboxCurrent');
+  const checkboxText = document.getElementById('checkboxText');
+  const checkboxChoice = document.getElementById('checkboxChoice');
+  const checkboxBoolean = document.getElementById('checkboxBoolean');
+  const checkboxApply = document.getElementById('checkboxApply');
+  const checkboxReadOnly = document.getElementById('checkboxReadOnly');
+  let checkboxSpecs = {};
+  try { checkboxSpecs = JSON.parse(root.dataset.checkboxSpecs || '{}'); }
+  catch (_) { checkboxSpecs = {}; }
+  let checkboxTarget = null;
+
+  function hasCheckmark(value) {
+    if (value == null || value === false) return false;
+    if (value === true) return true;
+    const text = String(value).trim().toLocaleLowerCase();
+    return !!text && !['false', 'no', '0', 'off', 'unchecked', 'none', 'null'].includes(text);
+  }
+  function readableCheckbox(value) {
+    if (value === undefined) return 'Not available';
+    if (value === null || value === '') return 'Empty';
+    if (value === true) return 'True';
+    if (value === false) return 'False';
+    return String(value);
+  }
+  function showCheckboxValue(sheet, input, onSave) {
+    const key = input.dataset.key;
+    const entry = sheet.checkboxValues?.[key];
+    const raw = entry ? entry.value : undefined;
+    const info = checkboxSpecs[key];
+    const canEdit = sheet.dataset.submitted !== 'yes' &&
+      info?.editable === true && ['boolean', 'string', 'textarea', 'picklist'].includes(info.kind);
+    checkboxTarget = null;
+    checkboxCurrent.textContent = readableCheckbox(raw);
+    for (const id of ['checkboxTextEditor', 'checkboxChoiceEditor', 'checkboxBooleanEditor']) {
+      document.getElementById(id).hidden = true;
+    }
+    checkboxReadOnly.hidden = true;
+    checkboxApply.hidden = true;
+    if (!canEdit) {
+      checkboxReadOnly.textContent = sheet.dataset.submitted === 'yes'
+        ? 'Press Override to change this value.'
+        : (info ? 'Salesforce does not allow editing this value.'
+                : 'No editable Salesforce value is available for this checkmark.');
+      checkboxReadOnly.hidden = false;
+    } else {
+      const kind = info.kind;
+      if (kind === 'boolean') {
+        checkboxBoolean.value = hasCheckmark(raw) ? 'true' : 'false';
+        document.getElementById('checkboxBooleanEditor').hidden = false;
+      } else if (kind === 'picklist') {
+        checkboxChoice.replaceChildren();
+        if (info.nullable) checkboxChoice.add(new Option('Empty', ''));
+        for (const item of info.choices || []) {
+          checkboxChoice.add(new Option(item.label, item.value));
+        }
+        if (raw !== null && raw !== undefined && raw !== '' &&
+            ![...checkboxChoice.options].some(option => option.value === raw)) {
+          // Existing inactive values can still be seen. They cannot be
+          // reselected for a new write without active Salesforce metadata.
+          const existing = new Option(String(raw), String(raw));
+          existing.disabled = true;
+          checkboxChoice.add(existing, 0);
+        }
+        checkboxChoice.value = raw == null ? '' : String(raw);
+        document.getElementById('checkboxChoiceEditor').hidden = false;
+      } else {
+        checkboxText.value = raw == null ? '' : String(raw);
+        checkboxText.maxLength = Math.min(Number(info.length) || 3000, 3000);
+        document.getElementById('checkboxTextEditor').hidden = false;
+      }
+      checkboxTarget = {kind, info, onSave};
+      checkboxApply.hidden = false;
+      if (kind === 'picklist' &&
+          ![...checkboxChoice.options].some(option => !option.disabled)) {
+        checkboxApply.disabled = true;
+      } else {
+        checkboxApply.disabled = false;
+      }
+    }
+    openDialog(checkboxDialog, canEdit
+      ? (info.kind === 'boolean' ? '#checkboxBoolean' :
+         info.kind === 'picklist' ? '#checkboxChoice' : '#checkboxText')
+      : '.editor-close');
+  }
+  checkboxApply.addEventListener('click', () => {
+    if (!checkboxTarget) return;
+    const {kind, info, onSave} = checkboxTarget;
+    let value;
+    if (kind === 'boolean') value = checkboxBoolean.value === 'true';
+    else if (kind === 'picklist') {
+      if (checkboxChoice.selectedOptions[0]?.disabled) return;
+      value = checkboxChoice.value || null;
+    } else value = checkboxText.value || null;
+    if (value === null && !info.nullable) return;
+    checkboxTarget = null;
+    closeDialog(checkboxDialog);
+    onSave(value);
+  });
+  checkboxDialog.addEventListener('close', () => { checkboxTarget = null; });
+
+  function inspectCheckbox(sheet, input, onSave) {
+    const label = input.closest('label') || input;
+    const cell = input.closest('.cell');
+    if (cell) cell.classList.add('checkbox-inspectable');
+    label.title = 'Hold to view value';
+    let timer = null;
+    let origin = null;
+    let suppressClick = false;
+    let resetClick = null;
+    function cancel() {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+      origin = null;
+    }
+    function open() {
+      cancel();
+      suppressClick = true;
+      clearTimeout(resetClick);
+      resetClick = setTimeout(() => { suppressClick = false; }, 1000);
+      showCheckboxValue(sheet, input, onSave);
+    }
+    label.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || event.isPrimary === false) return;
+      cancel();
+      origin = {x:event.clientX, y:event.clientY};
+      timer = setTimeout(open, 600);
+    });
+    label.addEventListener('pointermove', event => {
+      if (origin && Math.hypot(event.clientX-origin.x, event.clientY-origin.y) > 12)
+        cancel();
+    });
+    label.addEventListener('pointerup', cancel);
+    label.addEventListener('pointercancel', cancel);
+    label.addEventListener('pointerleave', cancel);
+    label.addEventListener('click', event => {
+      if (suppressClick) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        suppressClick = false;
+      }
+    }, true);
+    label.addEventListener('contextmenu', event => {
+      event.preventDefault();
+      if (!checkboxDialog.open) open();
+    });
+  }
 
   // The native dialog top layer escapes PDF sheet clipping and zoom, traps
   // focus, and positions every editor in the viewport on desktop and mobile.
@@ -114,6 +261,9 @@
         draft[input.dataset.key] = input.type === 'checkbox' ? input.checked : input.value;
       }
     }
+    // Preserve raw source values independently from the visible checkboxes.
+    // Only explicit changes set edited=true; an unmodified value stays exact.
+    draft.checkbox_values = sheet.checkboxValues || draft.checkbox_values || {};
     // Black Notes and popup Redlines are separate; migrate old mixed runs.
     draft.note_runs = [];
     draft.product_results = {};
@@ -357,6 +507,7 @@
     });
     if (background.complete) showSurface();
     const init = JSON.parse(sheet.dataset.initial || '{}');
+    sheet.checkboxValues = JSON.parse(JSON.stringify(init.checkbox_values || {}));
     for (const row of sheet.querySelectorAll('[data-product]')) {
       const selected = init.product_results?.[row.dataset.product];
       if (selected) {
@@ -438,6 +589,16 @@
     }
     syncSaleRows();
     const overrideButton = sheet.querySelector('.override-sheet');
+    // Inspectors are installed before completed-sheet inputs are disabled:
+    // locked sheets still support reading, but never saving raw values.
+    for (const input of sheet.querySelectorAll('input[type="checkbox"][data-key]')) {
+      inspectCheckbox(sheet, input, value => {
+        sheet.checkboxValues[input.dataset.key] = {value, edited:true};
+        input.checked = hasCheckmark(value);
+        showRelated(input);
+        redraw();
+      });
+    }
     overrideButton?.addEventListener('click', async () => {
       overrideButton.hidden = true;
       try {
@@ -544,6 +705,12 @@
         syncReasonSelect();
         redraw();
       } else if (input.matches('[data-key],[data-product-result],[data-product-detail],[data-sale-selected]')) {
+        if (input.matches('input[type="checkbox"][data-key]') &&
+            checkboxSpecs[input.dataset.key]) {
+          sheet.checkboxValues[input.dataset.key] = {
+            value:input.checked, edited:true
+          };
+        }
         showRelated(input);
         syncIndividualSaleRows();
         redraw();
