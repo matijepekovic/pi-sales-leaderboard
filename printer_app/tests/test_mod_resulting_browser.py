@@ -266,8 +266,12 @@ def test_long_press_reads_completed_checkmarks_and_edits_unresulted_source_value
     expect(popup).to_be_visible()
     expect(popup.locator('#checkboxCurrent')).to_have_text('Signed in Salesforce')
     expect(popup.locator('#checkboxApply')).to_be_hidden()
-    assert 'Work Order' not in popup.inner_text()
-    assert 'Docs__c' not in popup.inner_text()
+    expect(popup.locator('.editor-heading,.editor-close,#checkboxReadOnly')).to_have_count(0)
+    expect(popup.locator('button:visible')).to_have_count(1)
+    expect(popup.locator('button:visible')).to_have_text('Close')
+    assert popup.inner_text().strip() == 'Signed in Salesforce\nClose'
+    assert popup.bounding_box()['height'] < 160
+    assert popup.bounding_box()['width'] < 340
     popup.locator('.editor-secondary').click()
     expect(done.locator('[data-key=docs]')).to_be_checked()
     assert service.repository.sheets(service.day())[0]['override_active'] == 0
@@ -276,8 +280,9 @@ def test_long_press_reads_completed_checkmarks_and_edits_unresulted_source_value
     expect(waiting.locator('[data-key=docs]')).to_be_checked()
     hold(waiting.locator('.field-docs label'))
     expect(popup).to_be_visible()
-    expect(popup.locator('#checkboxCurrent')).to_have_text('Waiting for docs')
+    expect(popup.locator('#checkboxCurrent')).to_be_hidden()
     expect(popup.locator('#checkboxText')).to_have_value('Waiting for docs')
+    expect(popup.locator('.close-popover')).to_have_count(1)
     popup.locator('#checkboxText').fill('Approved by MOD')
     popup.locator('#checkboxApply').click()
     expect(popup).to_be_hidden()
@@ -290,7 +295,7 @@ def test_long_press_reads_completed_checkmarks_and_edits_unresulted_source_value
     assert draft['dispo'] == ''  # The popup alone never results a Work Order.
 
     hold(waiting.locator('.field-ninety label').first)
-    expect(popup.locator('#checkboxCurrent')).to_have_text('No')
+    expect(popup.locator('#checkboxCurrent')).to_be_hidden()
     expect(popup.locator('#checkboxChoice')).to_have_value('No')
     popup.locator('#checkboxChoice').select_option('Scheduled')
     popup.locator('#checkboxApply').click()
@@ -338,7 +343,7 @@ def test_long_press_textarea_preserves_multiline_source_value_on_phone(mod_brows
     page.mouse.up()
     popup = page.locator('#checkboxDialog')
     expect(popup).to_be_visible()
-    expect(popup.locator('#checkboxCurrent')).to_have_text('Reviewed\nPending upload')
+    expect(popup.locator('#checkboxCurrent')).to_be_hidden()
     expect(popup.locator('#checkboxTextarea')).to_have_value('Reviewed\nPending upload')
     popup.locator('#checkboxTextarea').fill('Reviewed\nApproved\nFiled')
     popup.locator('#checkboxApply').click()
@@ -375,7 +380,19 @@ def test_completed_override_button_unlocks_one_sheet_and_refresh_restores_salesf
     expect(page.locator('.override-sheet')).to_have_count(1)
     override = first.locator('.override-sheet')
     expect(override).to_be_visible()
-    assert override.bounding_box()['height'] >= 44
+    expect(override).to_have_text('Override')
+    assert override.evaluate('(el) => el.parentElement.classList.contains("field-notes")')
+    assert first.evaluate('(el) => getComputedStyle(el).marginTop') == '0px'
+    notes = first.locator('.field-notes').bounding_box()
+    button = override.bounding_box()
+    content = first.locator('.field-notes .notes-content').bounding_box()
+    assert 22 <= button['height'] < 36
+    assert notes['x'] <= button['x']
+    assert notes['y'] + notes['height'] * .75 < button['y']
+    assert button['x'] + button['width'] <= notes['x'] + notes['width']
+    assert button['y'] + button['height'] <= notes['y'] + notes['height']
+    assert content['y'] + content['height'] <= button['y'] + .6
+    initial_notes_bounds = notes
 
     with page.expect_navigation(wait_until='domcontentloaded'):
         override.click()
@@ -384,6 +401,10 @@ def test_completed_override_button_unlocks_one_sheet_and_refresh_restores_salesf
     expect(first.locator('.override-sheet')).to_have_count(0)
     expect(first.locator('[data-key=dispo]')).to_be_enabled()
     expect(first.locator('[data-key=dispo]')).to_have_value('cxl')
+    # Neither Override nor the completed state changes the printed cell.
+    restored_notes = first.locator('.field-notes').bounding_box()
+    assert all(abs(restored_notes[k] - initial_notes_bounds[k]) < .8
+               for k in ('x', 'y', 'width', 'height'))
     expect(second.locator('[data-key=dispo]')).to_be_enabled()
     sheet = service.repository.sheets(day)[0]
     assert sheet['override_active'] == 1
