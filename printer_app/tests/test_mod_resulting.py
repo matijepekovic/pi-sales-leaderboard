@@ -163,7 +163,7 @@ def test_daily_mod_selection_refresh_and_end_of_day_idempotence(tmp_path):
                            'Siding':{'price':'0','deposit':''},
                        }})
     service.save(DAY,WORK,draft,0)
-    assert service.submit(DAY)=={'submitted':1,'day':DAY,'pdf':False}
+    assert service.submit(DAY)=={'submitted':1,'day':DAY}
     assert len(writer.applied)==1
     payload=writer.plans[0]
     assert payload['fields']['price']['lowest']=='17000'
@@ -443,7 +443,7 @@ def test_notes_keep_separate_ink_and_result_detail_is_always_red():
         })
 
 
-def test_selected_submissions_keep_remaining_work_orders_editable_and_preserve_pdf(tmp_path):
+def test_selected_submissions_keep_remaining_work_orders_editable_and_print_every_card(tmp_path):
     service,repo,source,writer=_service(tmp_path)
     second = ModSheetRecord(
         source_id='0WO000000000002AAA', lead_source_id=LEAD,
@@ -455,13 +455,11 @@ def test_selected_submissions_keep_remaining_work_orders_editable_and_preserve_p
     repo.save_draft(DAY, WORK, clean_draft({'dispo':'pns','notes':'First'}), 0)
     repo.save_draft(DAY, second.source_id, clean_draft({'dispo':'np','notes':'Second'}), 0)
     service.pdf_exporter = render_resulting_pdf
-    service.output_directory = tmp_path/'completed'
-
     assert service.submit(DAY,[WORK])['submitted'] == 1
     assert [item['work_order_id'] for item in repo.submitted_sheets(DAY)] == [WORK]
-    pdf_path=service.output_directory/(DAY + '-completed.pdf')
-    first_pdf=PdfReader(BytesIO(pdf_path.read_bytes())).pages[0].extract_text()
-    assert '00001234' in first_pdf and '00001235' not in first_pdf
+    # Print All is independent: include already submitted and still pending.
+    first_pdf=PdfReader(BytesIO(service.export_all_pdf(DAY))).pages[0].extract_text()
+    assert '00001234' in first_pdf and '00001235' in first_pdf
     assert repo.day(DAY)['submitted_at'] is not None
 
     with pytest.raises(ValueError,match='already submitted'):
@@ -479,7 +477,7 @@ def test_selected_submissions_keep_remaining_work_orders_editable_and_preserve_p
     assert service.submit(DAY,[second.source_id])['submitted']==1
     assert len(writer.applied)==2
     assert len(repo.submitted_sheets(DAY))==2
-    combined=PdfReader(BytesIO(pdf_path.read_bytes())).pages[0].extract_text()
+    combined=PdfReader(BytesIO(service.export_all_pdf(DAY))).pages[0].extract_text()
     assert '00001234' in combined and '00001235' in combined
     assert 'Second edited' in combined
     with pytest.raises(ValueError,match='No unsubmitted'):
@@ -500,7 +498,7 @@ def test_selected_submission_rejects_blank_unknown_and_duplicate_ids(tmp_path):
     assert service.submit(DAY,[WORK])['submitted']==1
 
 
-def test_partial_failure_preserves_receipts_pdf_and_retries_only_remaining(tmp_path):
+def test_partial_failure_preserves_receipts_and_never_generates_pdf(tmp_path):
     service,repo,source,writer=_service(tmp_path)
     second=ModSheetRecord(source_id='0WO000000000002AAA',lead_source_id=LEAD,
         lead_name='Second Customer',work_order_number='00001235',product_interest='Roofing')
@@ -508,8 +506,7 @@ def test_partial_failure_preserves_receipts_pdf_and_retries_only_remaining(tmp_p
     service.set_mod(DAY,USER)
     repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
     repo.save_draft(DAY,second.source_id,clean_draft({'dispo':'np'}),0)
-    service.pdf_exporter=render_resulting_pdf
-    service.output_directory=tmp_path/'completed'
+    service.pdf_exporter=lambda rows: (_ for _ in ()).throw(AssertionError('PDF in submit'))
     original=writer.apply
     def fail_second(plan):
         if plan['work_order_id']==second.source_id:
@@ -522,9 +519,7 @@ def test_partial_failure_preserves_receipts_pdf_and_retries_only_remaining(tmp_p
     pending=next(row for row in repo.sheets(DAY) if row['work_order_id']==second.source_id)
     assert 'Salesforce outage' in pending['submit_error']
     assert pending['submitted_at'] is None
-    partial_pdf=service.output_directory/(DAY+'-completed.pdf')
-    text=PdfReader(BytesIO(partial_pdf.read_bytes())).pages[0].extract_text()
-    assert '00001234' in text and '00001235' not in text
+    assert not list(tmp_path.rglob('*.pdf'))
     writer.apply=original
     assert service.submit(DAY,[second.source_id])['submitted']==1
     assert [item['work_order_id'] for item in writer.applied]==[WORK,second.source_id]
@@ -696,3 +691,160 @@ def test_existing_sqlite_version_one_migrates_override_flag_without_data_loss(tm
     assert Database(path).one('SELECT override_active FROM mod_result_sheets') == {
         'override_active':0
     }
+
+
+def test_print_all_includes_salesforce_result_local_result_and_blank_cards(tmp_path):
+    service, repo, source, writer = _service(tmp_path)
+    records = [ModSheetRecord(
+        source_id='0WO00000000000' + str(i) + 'AAA',
+        lead_source_id=LEAD, work_order_number='0000123' + str(i),
+        lead_name='Customer ' + str(i), product_interest='Roofing',
+        local_scheduled_start_time='10/26/2026 10:00 AM',
+        scheduled_start='2026.10.26 ; 10:00:00 AM',
+    ) for i in range(1, 5)]
+    source.records = lambda **kwargs: records
+    existing = records[0].source_id
+    repo.refresh(DAY, records, external_drafts={
+        existing: clean_draft({'dispo': 'cxl', 'notes': 'Remote result'}),
+    })
+    local = records[1].source_id
+    repo.save_draft(DAY, local, clean_draft({'dispo': 'pns', 'notes': 'Local result'}), 0)
+    # Fourth sheet has no result either; none may be discarded by Print All.
+    service.pdf_exporter = render_resulting_pdf
+    pdf = PdfReader(BytesIO(service.export_all_pdf(DAY)))
+    assert len(pdf.pages) == 2
+    first = pdf.pages[0].extract_text()
+    second = pdf.pages[1].extract_text()
+    for number in ('00001231', '00001232', '00001233'):
+        assert number in first
+    assert '00001234' not in first
+    assert '00001234' in second
+    assert 'Remote result' in first and 'Local result' in first
+    assert '10/26/2026 10:00 AM' in first
+    assert '2026.10.26 ; 10:00:00 AM' in first
+    assert writer.applied == [] and writer.plans == []
+
+
+def test_queue_writes_nothing_until_worker_runs_and_reports_success(tmp_path):
+    service, repo, source, writer = _service(tmp_path)
+    service.refresh(DAY)
+    service.set_mod(DAY, USER)
+    repo.save_draft(DAY, WORK, clean_draft({'dispo': 'pns'}), 0)
+    queued = service.enqueue(DAY)
+    assert queued['total'] == 1 and queued['job_id']
+    assert writer.applied == [] and writer.plans == []
+    assert repo.latest_submission(DAY)['state'] == 'queued'
+    with pytest.raises(ValueError, match='already underway'):
+        service.enqueue(DAY)
+    with pytest.raises(ValueError, match='Cannot refresh'):
+        service.refresh(DAY)
+    result = service.process_next_submission()
+    assert result['ok'] and result['submitted'] == 1
+    progress = repo.latest_submission(DAY)
+    assert progress['state'] == 'completed'
+    assert (progress['total'], progress['submitted'], progress['pending'],
+            progress['processing'], progress['failed']) == (1, 1, 0, 0, 0)
+    assert repo.day(DAY)['submitting'] == 0
+    assert service.process_next_submission() is None
+    assert len(writer.applied) == 1
+    with pytest.raises(ValueError, match='No unsubmitted'):
+        service.enqueue(DAY)
+
+
+def test_queued_failure_records_uncertain_and_skips_successful_receipts(tmp_path):
+    service, repo, source, writer = _service(tmp_path)
+    other = ModSheetRecord(
+        source_id='0WO000000000002AAA', lead_source_id=LEAD,
+        work_order_number='00001235', product_interest='Roofing')
+    source.records = lambda **kwargs: [RECORD, other]
+    repo.refresh(DAY, [RECORD, other], market_segment='Olympia')
+    service.set_mod(DAY, USER)
+    repo.save_draft(DAY, WORK, clean_draft({'dispo':'pns'}), 0)
+    repo.save_draft(DAY, other.source_id, clean_draft({'dispo':'np'}), 0)
+    original = writer.apply
+    def fail_second(plan):
+        if plan['work_order_id'] == other.source_id:
+            raise TimeoutError('SF timed out after possible write')
+        original(plan)
+    writer.apply = fail_second
+    service.enqueue(DAY)
+    result = service.process_next_submission()
+    assert result['ok'] is False
+    status = repo.latest_submission(DAY)
+    assert status['state'] == 'failed'
+    assert status['submitted'] == 1 and status['failed'] == 1
+    assert status['items'][0]['state'] == 'submitted'
+    assert status['items'][1]['state'] == 'uncertain'
+    assert repo.day(DAY)['submitting'] == 0
+    # A new submit-all attempt must not replay the possibly-written record.
+    writer.apply = original
+    with pytest.raises(ValueError, match='requires Salesforce confirmation'):
+        service.enqueue(DAY)
+    assert len(writer.applied) == 1
+    # An authoritative Salesforce Refresh can confirm the uncertain outcome.
+    writer.read_results = lambda records: {
+        other.source_id: clean_draft({'dispo': 'np'}),
+        WORK: clean_draft({'dispo': 'pns'}),
+    }
+    service.refresh(DAY)
+    assert status['failed'] == 1  # Historic returned snapshot remains immutable.
+    assert repo.latest_submission(DAY)['failed'] == 0
+    assert all(row['submitted_at'] is not None for row in repo.sheets(DAY))
+
+
+def test_worker_restart_marks_only_inflight_item_uncertain(tmp_path):
+    service, repo, source, writer = _service(tmp_path)
+    service.refresh(DAY)
+    service.set_mod(DAY, USER)
+    repo.save_draft(DAY, WORK, clean_draft({'dispo':'pns'}), 0)
+    job = service.enqueue(DAY)
+    claimed = repo.claim_submission()
+    assert claimed['job_id'] == job['job_id']
+    repo.submission_item(job['job_id'], WORK, 'processing')
+    # Model an abrupt process termination after a CLI command began.
+    repo.interrupt_abandoned_submissions()
+    status = repo.latest_submission(DAY)
+    assert status['state'] == 'interrupted'
+    assert status['failed'] == 1 and status['items'][0]['state'] == 'uncertain'
+    assert repo.day(DAY)['submitting'] == 0
+    with pytest.raises(ValueError, match='requires Salesforce confirmation'):
+        service.enqueue(DAY)
+    assert writer.applied == []
+
+
+def test_print_all_http_and_submission_http_are_independent(tmp_path):
+    from printer_app.app import create_app
+    from printer_app.config import Config
+    from printer_app.tests.auth_helpers import login_admin
+    env = tmp_path/'env'
+    env.write_text('EMAIL_ENABLED=0\\n')
+    app = create_app(Config(data_dir=tmp_path/'data', env_file=env,
+                            secret_key='s'*64, email_enabled=False))
+    service = app.extensions['mod_resulting']
+    service.allow_salesforce_writes = True
+    service.writer = Writer()
+    service.source = Source()
+    service.settings_repository = SimpleNamespace(
+        settings=lambda: SimpleNamespace(market_segment='Olympia'))
+    service.pdf_exporter = render_resulting_pdf
+    day = service.day()
+    service.refresh(day)
+    service.set_mod(day, USER)
+    client = app.test_client()
+    csrf = login_admin(client)
+    printable = client.get('/mod-resulting/pdf')
+    assert printable.status_code == 200
+    assert printable.mimetype == 'application/pdf'
+    assert printable.headers['Content-Disposition'].startswith('inline;')
+    assert '00001234' in PdfReader(BytesIO(printable.data)).pages[0].extract_text()
+    assert service.writer.applied == []
+    row = service.repository.sheets(day)[0]
+    service.save(day, WORK, clean_draft({'dispo':'pns'}), row['revision'])
+    response = client.post('/mod-resulting/api/submit',
+                           data={'csrf':csrf, 'mode':'all'},
+                           headers={'Origin':'http://localhost'})
+    assert response.status_code == 202
+    assert service.writer.applied == [] and service.writer.plans == []
+    current = client.get('/mod-resulting/api/submission-status').json['submission']
+    assert current['state'] == 'queued' and current['total'] == 1
+    assert service.repository.day(day)['submitting'] == 1

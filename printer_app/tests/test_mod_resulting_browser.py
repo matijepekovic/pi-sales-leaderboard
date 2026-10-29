@@ -632,9 +632,16 @@ def test_end_of_day_three_popups_submit_only_explicitly_selected_work_order(mod_
     submitted = []
     def fake_submit(route):
         submitted.append(parse_qs(route.request.post_data))
-        route.fulfill(status=200, json={'ok':True, 'submitted':1,
-                                        'day':service.day(), 'pdf':False})
+        route.fulfill(status=202, json={'ok':True, 'job_id':1,
+                                        'day':service.day(), 'total':1})
     page.route('**/mod-resulting/api/submit', fake_submit)
+    page.route('**/mod-resulting/api/submission-status', lambda route:
+        route.fulfill(status=200, json={'ok':True, 'submission':{
+            'id':1, 'day':service.day(), 'state':'queued', 'total':1,
+            'submitted':0, 'pending':1, 'processing':0, 'failed':0,
+            'items':[{'state':'pending','work_order_number':'00011111','error':''}],
+            'error':''
+        }}))
 
     page.locator('#submitDay').click()
     expect(page.locator('#endConfirm')).to_be_visible()
@@ -662,8 +669,9 @@ def test_end_of_day_three_popups_submit_only_explicitly_selected_work_order(mod_
     page.locator('#endList .end-choice input[type=checkbox]').first.uncheck()
     page.locator('#endList .end-choice input[type=checkbox]').first.check()
     expect(page.locator('#submitSelected')).to_be_enabled()
-    with page.expect_navigation(wait_until='domcontentloaded'):
-        page.locator('#submitSelected').click()
+    page.locator('#submitSelected').click()
+    expect(page.locator('#submissionProgress')).to_be_visible()
+    expect(page.locator('#submissionCompleted')).to_have_text('0 / 1')
     assert len(submitted) == 1
     assert submitted[0]['mode'] == ['selected']
     assert submitted[0]['work_order_ids'] == [json.dumps([first.get_attribute('data-id')])]
