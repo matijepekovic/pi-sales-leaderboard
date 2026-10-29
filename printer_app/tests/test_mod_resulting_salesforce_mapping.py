@@ -462,11 +462,12 @@ def test_individual_sale_price_deposit_does_not_change_work_order_dispo():
     assert next(item for item in results if item['Product_Interest__c']=='Roofing')['Price_Given__c']=='14500'
 
 
-def test_existing_product_result_uses_correct_identity_and_clears_pns_price_only():
+@pytest.mark.parametrize('dispo', ['pns', 'np', 'cxl', 'nra', 'oos'])
+def test_existing_product_result_uses_correct_identity_and_clears_non_sale_price(dispo):
     adapter,_=_adapter(existing_results=[{
         'Id':PR1,'Product_Interest__c':'Roofing',
     }])
-    plan=_operations(adapter,_payload('pns',interest='Roofing'))
+    plan=_operations(adapter,_payload(dispo,interest='Roofing'))
     result=_single(plan,PRODUCT_RESULT)
     assert result[0]=='update' and result[2]==PR1
     assert result[3]['Price_Given__c'] is None
