@@ -283,7 +283,7 @@ def _overlay_one(c,index,draft):
         c.restoreState()
 
 
-def render_resulting_pdf(sheets):
+def render_resulting_pdf(sheets, *, color_code=False):
     """Exactly the Printer sheet as base, with no rebuilt or duplicate template."""
     if not sheets:
         raise ValueError('Choose at least one sheet for PDF.')
@@ -291,7 +291,7 @@ def render_resulting_pdf(sheets):
         item['snapshot'],
         assigned_service_resources=tuple(item['snapshot'].get('assigned_service_resources',()))
     )) for item in sheets]
-    original=PdfReader(BytesIO(render_mod_pdf(records)))
+    original=PdfReader(BytesIO(render_mod_pdf(records, color_code=color_code)))
     overlay_pdf=BytesIO()
     c=canvas.Canvas(overlay_pdf,pagesize=letter)
     for index,item in enumerate(sheets):
