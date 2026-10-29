@@ -29,7 +29,7 @@ class ResultingRepository:
 
     def sheets(self, day):
         rows = self.db.rows('''SELECT work_order_id,snapshot,draft,revision,current,
-                submitted_at,submit_error FROM mod_result_sheets
+                submitted_at,override_active,submit_error FROM mod_result_sheets
                 WHERE day=? ORDER BY display_order,work_order_id''', (day,))
         for row in rows:
             row['snapshot'] = json.loads(row['snapshot'])
@@ -40,7 +40,7 @@ class ResultingRepository:
         """Only locally confirmed Salesforce writes belong in the completed PDF."""
         rows = self.db.rows('''SELECT work_order_id,snapshot,draft
             FROM mod_result_sheets WHERE day=? AND submitted_at>0
-            ORDER BY display_order,work_order_id''', (day,))
+            AND override_active=0 ORDER BY display_order,work_order_id''', (day,))
         return [dict(work_order_id=row['work_order_id'],
                      snapshot=json.loads(row['snapshot']),
                      draft=json.loads(row['draft'])) for row in rows]
@@ -57,14 +57,14 @@ class ResultingRepository:
                 *, clear_local=False):
         """Apply a verified Salesforce snapshot atomically.
 
-        Salesforce owns every resulting field; locally edited MOD Notes and
-        redlines are the only exceptions on a normal Refresh. A remote outcome
-        remains submitted (-1) and cannot be sent a second time. Positive
-        receipts from actual End of Day writes are never changed.
+        Salesforce owns every resulting field, even for completed sheets.
+        Locally edited MOD Notes and redlines are the only normal Refresh
+        exceptions. Refresh cancels any manual override. Successful End-of-Day
+        receipt timestamps survive only while Salesforce still has a result.
 
-        Clear discards local edits (including notes) before importing the same
-        verified Salesforce snapshot. Remote-note baselines distinguish local
-        edits from older Salesforce notes even when other controls were edited.
+        Clear also discards local Notes before importing the same verified
+        Salesforce snapshot. Remote-note baselines distinguish local edits
+        from older Salesforce notes even when other controls were edited.
         """
         external_drafts = external_drafts or {}
         if market_segment is not None and (
@@ -96,18 +96,18 @@ class ResultingRepository:
                     (market_key, json.dumps(market_segment)))
             previous = {
                 row['work_order_id']: row for row in conn.execute(
-                    'SELECT work_order_id,draft,revision,submitted_at '
+                    'SELECT work_order_id,draft,revision,submitted_at,override_active '
                     'FROM mod_result_sheets WHERE day=?', (day,)
                 ).fetchall()
             }
             if clear_local:
-                # Clear is a LOCAL reset, never a Salesforce write. Inactive
-                # unsubmitted drafts are reset too; true submission receipts
-                # remain untouched. Current sheets are then rehydrated below.
+                # Clear is a LOCAL reset. Inactive drafts are reset too; actual
+                # End-of-Day receipts remain intact until Salesforce says the
+                # corresponding Work Order is no longer resulted.
                 conn.execute('''UPDATE mod_result_sheets
-                    SET draft='{}',revision=revision+1,submitted_at=NULL,
+                    SET draft='{}',revision=revision+1,override_active=0,
                         submit_error=''
-                    WHERE day=? AND (submitted_at IS NULL OR submitted_at=-1.0)''',
+                    WHERE day=? AND (submitted_at IS NULL OR override_active=1)''',
                     (day,))
                 conn.execute('DELETE FROM meta WHERE key LIKE ?',
                              ('mod_result_sf_notes:' + day + ':%',))
@@ -124,9 +124,6 @@ class ResultingRepository:
                 if record.source_id not in external_drafts:
                     continue
                 old = previous.get(record.source_id)
-                if old and old['submitted_at'] not in (None, -1.0):
-                    # Actual End of Day receipts must not be rewritten.
-                    continue
                 remote = dict(external_drafts[record.source_id])
                 imported_notes = remote['notes']
                 key = 'mod_result_sf_notes:' + day + ':' + record.source_id
@@ -156,19 +153,44 @@ class ResultingRepository:
                     item.get('result')
                     for item in source.get('product_results', {}).values()
                 )
-                completed = -1.0 if resulted else None
+                # Keep real submission timestamps while Salesforce confirms a
+                # result. An empty Salesforce result is authoritative too.
+                receipt = old['submitted_at'] if old else None
+                completed = (receipt if receipt is not None and receipt > 0
+                             else -1.0) if resulted else None
                 revised = old['revision'] if old else 0
-                if old and (clear_local or remote != json.loads(old['draft'])):
+                if old and (clear_local or old['override_active']
+                            or remote != json.loads(old['draft'])):
                     revised += 1
                 conn.execute('''UPDATE mod_result_sheets
-                    SET draft=?,revision=?,submitted_at=?,submit_error=''
-                    WHERE day=? AND work_order_id=?
-                    AND (submitted_at IS NULL OR submitted_at=-1.0)''',
+                    SET draft=?,revision=?,submitted_at=?,override_active=0,
+                        submit_error=''
+                    WHERE day=? AND work_order_id=?''',
                     (json.dumps(remote), revised, completed, day, record.source_id))
                 conn.execute('''INSERT INTO meta(key,value) VALUES(?,?)
                     ON CONFLICT(key) DO UPDATE SET value=excluded.value''',
                     (key, json.dumps(imported_notes)))
             conn.execute('UPDATE mod_result_days SET refreshed_at=? WHERE day=?', (now, day))
+
+    def override(self, day, work_order_id, revision):
+        """Explicitly unlock exactly one completed sheet for End of Day."""
+        with self.db.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            state = conn.execute(
+                'SELECT submitting FROM mod_result_days WHERE day=?', (day,)
+            ).fetchone()
+            if state is None:
+                raise LookupError('No MOD sheets have been loaded for this day.')
+            if state['submitting']:
+                raise ValueError('Submission in progress; editing is locked.')
+            updated = conn.execute('''UPDATE mod_result_sheets
+                SET override_active=1,revision=revision+1,submit_error=''
+                WHERE day=? AND work_order_id=? AND current=1
+                AND submitted_at IS NOT NULL AND override_active=0
+                AND revision=?''', (day, work_order_id, int(revision)))
+            if updated.rowcount != 1:
+                raise ValueError('Sheet changed or is not completed. Refresh and try again.')
+            return int(revision) + 1
 
     def save_draft(self, day, work_order_id, draft, revision):
         with self.db.connect() as conn:
@@ -179,7 +201,8 @@ class ResultingRepository:
             if day_state['submitting']:
                 raise ValueError('Submission in progress; editing is locked.')
             result = conn.execute('''UPDATE mod_result_sheets SET draft=?,revision=revision+1
-                    WHERE day=? AND work_order_id=? AND revision=? AND submitted_at IS NULL''',
+                    WHERE day=? AND work_order_id=? AND revision=?
+                    AND (submitted_at IS NULL OR override_active=1)''',
                 (json.dumps(draft), day, work_order_id, int(revision)))
             if result.rowcount != 1:
                 raise ValueError('Sheet changed or already submitted. Reload before editing.')
@@ -216,7 +239,8 @@ class ResultingRepository:
             if result.rowcount != 1:
                 raise ValueError('Select a MOD, or a submission is already underway.')
             records = conn.execute('''SELECT work_order_id,snapshot,draft
-                    FROM mod_result_sheets WHERE day=? AND submitted_at IS NULL
+                    FROM mod_result_sheets WHERE day=?
+                    AND (submitted_at IS NULL OR override_active=1)
                     ORDER BY display_order,work_order_id''', (day,)).fetchall()
             pending = []
             for row in records:
@@ -237,8 +261,9 @@ class ResultingRepository:
             conn.execute('BEGIN IMMEDIATE')
             now = time.time()
             updated = conn.execute('''UPDATE mod_result_sheets
-                    SET submitted_at=?,submit_error=''
-                    WHERE day=? AND work_order_id=? AND submitted_at IS NULL''',
+                    SET submitted_at=?,override_active=0,submit_error=''
+                    WHERE day=? AND work_order_id=?
+                    AND (submitted_at IS NULL OR override_active=1)''',
                     (now, day, work_order_id))
             if updated.rowcount != 1:
                 raise ValueError('Work Order submission receipt is already recorded.')
@@ -251,7 +276,8 @@ class ResultingRepository:
     def error_item(self, day, work_order_id, message):
         with self.db.connect() as conn:
             conn.execute('''UPDATE mod_result_sheets SET submit_error=?
-                    WHERE day=? AND work_order_id=? AND submitted_at IS NULL''',
+                    WHERE day=? AND work_order_id=?
+                    AND (submitted_at IS NULL OR override_active=1)''',
                          (str(message)[:500], day, work_order_id))
 
     def finish_submit(self, day):
