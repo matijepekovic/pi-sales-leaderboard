@@ -110,9 +110,10 @@ def test_refresh_and_clear_preserve_real_salesforce_write_receipts(tmp_path):
     repo.refresh(DAY, [RECORD], external_drafts={WORK:remote})
     repo.refresh(DAY, [RECORD], external_drafts={WORK:remote}, clear_local=True)
     actual = repo.sheets(DAY)[0]
-    assert actual['draft'] == original['draft']
-    assert actual['revision'] == original['revision']
+    assert actual['draft'] == remote  # Salesforce wins after a real End of Day too.
+    assert actual['revision'] > original['revision']
     assert actual['submitted_at'] == original['submitted_at']
+    assert actual['override_active'] == 0
 
 
 def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
@@ -294,6 +295,33 @@ def test_product_result_is_primary_disposition_when_salesforce_work_order_blank(
     assert no_pitch['dispo'] == 'np'
 
 
+def test_canceled_lead_overrides_work_order_and_product_results_first():
+    blank = _mapped(None, [], lead={'Status':'Canceled'})
+    assert blank['dispo'] == 'cxl'
+    assert blank['lead_status'] == 'Canceled'
+    assert blank['result_detail'] == ''
+
+    # The Lead wins over explicit Work Order Sale and a fully priced product.
+    conflicting = _mapped('Sale', [{
+        'Product_Interest__c':'Roofing', 'Result__c':'Sale',
+        'Result_Detail__c':'Price Objection', 'Price_Given__c':20000,
+    }], lead={'Status':' CANCELED '})
+    assert conflicting['dispo'] == 'cxl'
+    assert conflicting['result_detail'] == ''
+    assert conflicting['product_results']['Roofing']['result'] == 'sale'
+
+    # The same rule applies to unrecognized Work Order/product values: neither
+    # may veto an authoritative canceled Lead, and no extra product is invented.
+    unexpected = _mapped('Unknown Dispo', [{
+        'Product_Interest__c':'Bath', 'Result__c':'Unknown Result',
+    }], lead={'Status':'Canceled'})
+    assert unexpected['dispo'] == 'cxl'
+    assert unexpected['product_results'] == {}
+
+    unchanged = _mapped('Sale', [], lead={'Status':'Nurturing'})
+    assert unchanged['dispo'] == 'sale'
+
+
 def test_conflicting_product_results_use_most_information_or_remain_unresolved():
     more_info = _mapped(None, [{
         'Product_Interest__c':'Roofing', 'Result__c':'Pitch No Sale',
@@ -345,6 +373,18 @@ def test_conflicting_product_results_use_most_information_or_remain_unresolved()
     }])
     assert work_order_wins['dispo'] == 'oos'
     assert work_order_wins['product_results']['Windows']['result'] == 'sale'
+
+
+def test_lead_canceled_without_any_work_order_result_is_already_completed(tmp_path):
+    repo = ResultingRepository(Database(tmp_path / 'printer.sqlite'))
+    canceled = _mapped(None, [], lead={'Status':'Canceled'})
+    repo.refresh(DAY, [RECORD], external_drafts={WORK:canceled})
+    sheet = repo.sheets(DAY)[0]
+    assert sheet['draft']['dispo'] == 'cxl'
+    assert sheet['submitted_at'] == -1.0
+    assert sheet['override_active'] == 0
+    with __import__('pytest').raises(ValueError, match='Reload'):
+        repo.save_draft(DAY, WORK, clean_draft({'dispo':'sale'}), sheet['revision'])
 
 
 def test_conflicting_remote_product_results_are_still_already_submitted(tmp_path):
