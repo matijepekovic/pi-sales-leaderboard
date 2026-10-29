@@ -225,7 +225,40 @@ def test_popup_tracks_visible_viewport_when_zoomed_or_keyboard_opens(mod_browser
       window.__testViewport = fake;
       window.dispatchEvent(new Event('resize'));
     }""")
-    expect(dialog).to_have_css('transform', 'matrix(0.5, 0, 0, 0.5, 0, 0)')
+    try:
+        expect(dialog).to_have_css('transform', 'matrix(0.5, 0, 0, 0.5, 0, 0)')
+    except AssertionError as failure:
+        diagnostic = page.evaluate("""() => {
+          const el = document.querySelector('.sale-panel[open]');
+          const link = document.querySelector('link[data-dialog-viewport]');
+          const sheet = link?.sheet;
+          const rule = sheet?.cssRules?.[0];
+          const before = getComputedStyle(el).transform;
+          const snapshot = {
+            before, ruleText:rule?.cssText, ruleStyle:rule?.style?.cssText,
+            ruleSelector:rule?.selectorText,
+            ready:document.readyState,
+            viewport:{width:visualViewport.width,height:visualViewport.height,
+              scale:visualViewport.scale,offsetLeft:visualViewport.offsetLeft,
+              offsetTop:visualViewport.offsetTop},
+            activeDialogs:[...document.querySelectorAll('.editor-dialog[open]')]
+              .map(d=>d.className),
+            sheetHref:sheet?.href,
+          };
+          // Diagnostic only after failure: distinguish missed resize from
+          // WebKit not applying CSSStyleRule declarations to a top-layer dialog.
+          if (rule) {
+            rule.style.setProperty('transform', 'scale(0.5)');
+            snapshot.afterSetProperty = getComputedStyle(el).transform;
+            sheet.insertRule('.editor-dialog[open] { transform: scale(0.5); }',
+              sheet.cssRules.length);
+            snapshot.afterInsertRule = getComputedStyle(el).transform;
+            sheet.deleteRule(sheet.cssRules.length - 1);
+            snapshot.afterDeleteRule = getComputedStyle(el).transform;
+          }
+          return snapshot;
+        }""")
+        raise AssertionError(f'WebKit viewport update diagnostics: {diagnostic}') from failure
     bounds = dialog.bounding_box()
     assert bounds['x'] >= 50-2 and bounds['x']+bounds['width'] <= 230+2
     assert bounds['y'] >= 60-2 and bounds['y']+bounds['height'] <= 280+2
