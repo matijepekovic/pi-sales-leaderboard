@@ -119,7 +119,7 @@
   function inspectCheckbox(sheet, input, onSave) {
     const label = input.closest('label') || input;
     const cell = input.closest('.cell');
-    if (cell) cell.classList.add('checkbox-inspectable');
+    if (cell) cell.dataset.checkboxInspect = 'yes';
     label.title = 'Hold to view value';
     let timer = null;
     let origin = null;
