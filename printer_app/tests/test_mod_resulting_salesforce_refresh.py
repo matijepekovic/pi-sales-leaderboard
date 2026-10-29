@@ -121,9 +121,17 @@ def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
 
     def runner(command, **kwargs):
         calls.append(command)
+        if command[1:3] == ['sobject', 'describe']:
+            assert command[command.index('--sobject')+1] == 'WorkOrder'
+            return SimpleNamespace(stdout=json.dumps({'status':0,'result':{
+                'name':'WorkOrder','fields':[
+                    {'name':'Review__c','type':'string','updateable':True},
+                ],
+            }}), stderr='', returncode=0)
         assert command[1:3] == ['data','query']
         query = command[command.index('--query') + 1]
         if ' FROM WorkOrder ' in query:
+            assert 'Review__c' in query
             assert 'MOD_Notes__c' in query
             assert 'Call_1__c' in query and 'Call_2__c' in query
             rows = [{
@@ -132,7 +140,8 @@ def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
                 'Call_1__c':'10:15:00.000Z',
                 'Call_2__c':'13:27:00.000Z',
                 'Docs__c':True, 'X90_Min__c':True,
-                'Promotion__c':False, 'Need__c':'Security',
+                'Promotion__c':False, 'Review__c':'Manager Approved',
+                'Need__c':'Security',
                 'Want__c':'Value', 'Start_Price__c':25000,
                 'Price__c':17000, 'Deposit_Payment__c':'0/159.50',
             }]
@@ -168,10 +177,15 @@ def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
     assert draft['numbers'] == '25000\n17000'
     assert draft['deposit_override'] == '0/159.50'
     assert draft['docs'] is True and draft['ninety_min'] is True
+    assert draft['review'] is True
+    assert draft['checkbox_values']['review'] == {
+        'value': 'Manager Approved', 'edited': False,
+    }
     assert draft['dnr'] is True and draft['dnr_reason'] == 'Roofing'
     assert draft['product_results']['Roofing']['detail'] == 'Price Objection'
-    assert len(calls) == 3
-    assert all(command[1:3] == ['data', 'query'] for command in calls)
+    assert len(calls) == 4
+    assert sum(command[1:3] == ['data', 'query'] for command in calls) == 3
+    assert sum(command[1:3] == ['sobject', 'describe'] for command in calls) == 1
 
 
 def test_raw_checkbox_text_hydrates_visually_and_survives_refresh_without_conversion(tmp_path):
