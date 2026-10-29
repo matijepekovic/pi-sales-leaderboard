@@ -36,11 +36,11 @@ class ResultingRepository:
             row['draft'] = json.loads(row['draft'])
         return rows
 
-    def submitted_sheets(self, day):
-        """Only locally confirmed Salesforce writes belong in the completed PDF."""
+    def print_sheets(self, day):
+        """All current imported cards; no disposition or submission filter."""
         rows = self.db.rows('''SELECT work_order_id,snapshot,draft
-            FROM mod_result_sheets WHERE day=? AND submitted_at>0
-            AND override_active=0 ORDER BY display_order,work_order_id''', (day,))
+            FROM mod_result_sheets WHERE day=? AND current=1
+            ORDER BY display_order,work_order_id''', (day,))
         return [dict(work_order_id=row['work_order_id'],
                      snapshot=json.loads(row['snapshot']),
                      draft=json.loads(row['draft'])) for row in rows]

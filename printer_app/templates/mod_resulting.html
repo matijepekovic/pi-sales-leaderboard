@@ -28,9 +28,7 @@
  <button type="button" id="refresh">Refresh</button>
  <button type="button" id="clearLocal" title="Clear local edits without changing Salesforce">Clear</button>
  <button type="button" id="submitDay" data-live-writes="{{ 'yes' if live_writes_enabled else 'no' }}">End of day</button>
- {% if data.state and data.state.submitted_at %}
- <a class="completed-pdf" href="{{ url_for('mod_resulting.pdf') }}">PDF</a>
- {% endif %}
+ <a class="completed-pdf" href="{{ url_for('mod_resulting.pdf') }}" target="_blank" rel="noopener">Print All</a>
  <span id="notice" role="status" aria-live="polite" class="notification" {% if not notice %}hidden{% endif %}>{{ notice }}</span>
 </div>
 {% macro checkbox(key, label, value, cls='') -%}

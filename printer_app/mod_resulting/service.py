@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from datetime import datetime, time as wall_time
 import time
-from pathlib import Path
-import os
 from zoneinfo import ZoneInfo
 
 from ..mod_sheet_contract import ModSheetRecord
@@ -16,15 +14,13 @@ from .contract import (
 
 class ResultingService:
     def __init__(self, repository, source, writer, settings_repository, timezone,
-                 pdf_exporter=None, output_directory=None,
-                 allow_salesforce_writes=False):
+                 pdf_exporter=None, allow_salesforce_writes=False):
         self.repository = repository
         self.source = source
         self.writer = writer
         self.settings_repository = settings_repository
         self.zone = ZoneInfo(timezone)
         self.pdf_exporter = pdf_exporter
-        self.output_directory = Path(output_directory) if output_directory else None
         # Safe-by-default: the sandbox can read, edit, and review drafts on main
         # without permitting unverified writes to the live Salesforce org.
         self.allow_salesforce_writes = bool(allow_salesforce_writes)
@@ -212,20 +208,14 @@ class ResultingService:
             final_redlines=final_redline_text(draft),
         )
 
-    def _stage_completed_pdf(self, day, payload):
-        """Build the replacement file durably before touching Salesforce."""
-        if payload is None or self.output_directory is None:
-            return None
-        directory = self.output_directory
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        target = directory / (day + '-completed.pdf')
-        temp = directory / ('.' + day + '-completed.tmp')
-        with temp.open('wb') as stream:
-            os.chmod(temp, 0o600)
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        return temp, target
+    def export_all_pdf(self, day):
+        """On-demand print of every currently imported card, regardless of outcome."""
+        if self.pdf_exporter is None:
+            raise ValueError('MOD PDF renderer is not configured.')
+        sheets = self.repository.print_sheets(day)
+        if not sheets:
+            raise LookupError('There are no MOD sheets to print for this day.')
+        return self.pdf_exporter(sheets)
 
     def submit(self, day, work_order_ids=None):
         if not self.allow_salesforce_writes:
@@ -240,7 +230,6 @@ class ResultingService:
         # completed items can re-enter a batch. All other receipts stay locked.
         rows = self.repository.begin_submit(day, work_order_ids)
         sent = 0
-        staged = None
         try:
             if not rows:
                 raise ValueError('No unsubmitted sheets have a disposition.')
@@ -252,11 +241,6 @@ class ResultingService:
             if len(plans) != len(rows):
                 raise ValueError('Salesforce preflight produced an incomplete submission plan.')
 
-            # An actively overridden page is not a completed PDF receipt until
-            # its new Salesforce update succeeds; avoid duplicate/unsent pages.
-            previous = self.repository.submitted_sheets(day)
-            pdf_payload = self.pdf_exporter(previous + rows) if self.pdf_exporter else None
-            staged = self._stage_completed_pdf(day, pdf_payload)
             for row, plan in zip(rows, plans):
                 try:
                     self.writer.apply(plan)
@@ -265,28 +249,8 @@ class ResultingService:
                     raise
                 self.repository.finish_item(day, row['work_order_id'])
                 sent += 1
-            if staged:
-                staged[0].replace(staged[1])
-            return {'submitted': sent, 'day': day, 'pdf': bool(pdf_payload)}
-        except Exception:
-            # A Salesforce operation can fail after earlier Work Orders were
-            # committed. Publish a PDF of ONLY the successful receipts; do not
-            # accidentally include the unsuccessful remainder of the batch.
-            if sent and self.pdf_exporter and self.output_directory:
-                try:
-                    successful = self.repository.submitted_sheets(day)
-                    partial = self.pdf_exporter(successful)
-                    staged = self._stage_completed_pdf(day, partial)
-                    if staged:
-                        staged[0].replace(staged[1])
-                except Exception:
-                    # The original Salesforce failure is authoritative and the
-                    # durable receipt still permits PDF recovery on retry.
-                    pass
-            raise
+            return {'submitted': sent, 'day': day}
         finally:
-            if staged:
-                staged[0].unlink(missing_ok=True)
             self.repository.finish_submit(day)
 
 

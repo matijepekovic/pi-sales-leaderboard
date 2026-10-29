@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 
 from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request, send_file
 
@@ -100,13 +101,16 @@ def blueprint(service, surface, *, color_code=None):
     @bp.get('/pdf')
     def pdf():
         day = service.day()
-        state = service.repository.day(day)
-        target = (service.output_directory / (day + '-completed.pdf')
-                  if service.output_directory else None)
-        if not state or not state['submitted_at'] or target is None or not target.is_file():
+        try:
+            payload = service.export_all_pdf(day)
+        except LookupError:
             abort(404)
-        return send_file(target, mimetype='application/pdf', as_attachment=True,
-                         download_name='MOD-Sheets-' + day + '.pdf')
+        response = send_file(BytesIO(payload), mimetype='application/pdf',
+                             as_attachment=False,
+                             download_name='MOD-Sheets-' + day + '.pdf')
+        response.headers['Cache-Control'] = 'no-store'
+        response.headers['Content-Security-Policy'] = "sandbox; default-src 'none'"
+        return response
 
     @bp.post('/api/refresh')
     def refresh():
