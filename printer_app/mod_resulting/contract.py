@@ -278,7 +278,10 @@ def deposit_payment_text(draft):
     if not sales:
         return ''
     def plain_amount(value):
-        return format_money(value)[1:].replace(',', '')
+        # Decimal(0) is a legitimate deposit. Convert explicitly rather
+        # than allowing the generic money parser's falsey-value shortcut
+        # to treat zero as a blank input.
+        return format_money(str(value))[1:].replace(',', '')
 
     deposit = plain_amount(sum(
         (_money(item['deposit']) for item in sales), Decimal('0')))
