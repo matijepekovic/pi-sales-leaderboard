@@ -363,6 +363,38 @@ def test_override_preserves_raw_checkbox_values_until_explicit_edit():
         _operations(adapter, _payload('pns', checkbox_values=invalid))
 
 
+def test_promotion_text_or_picklist_uses_the_actual_value_when_edited():
+    schemas = _schemas()
+    for field in schemas['WorkOrder']['fields']:
+        if field['name'] == 'Promotion__c':
+            field['type'] = 'picklist'
+            field['picklistValues'] = [
+                {'value': 'Not Started', 'label': 'Not Started', 'active': True},
+                {'value': 'Approved', 'label': 'Approved', 'active': True},
+            ]
+    adapter, _ = _adapter(schemas=schemas)
+
+    saved = {'promotion': {'value':'Not Started', 'edited':False}}
+    unedited = _single(_operations(adapter, _payload(
+        'pns', checkbox_values=saved, promotion=True)), 'WorkOrder')[3]
+    assert 'Promotion__c' not in unedited
+
+    changed = {'promotion': {'value':'Approved', 'edited':True}}
+    result = _single(_operations(adapter, _payload(
+        'pns', checkbox_values=changed, promotion=True)), 'WorkOrder')[3]
+    assert result['Promotion__c'] == 'Approved'
+    with pytest.raises(ResultingSalesforceError, match='does not allow'):
+        _operations(adapter, _payload('pns', checkbox_values={
+            'promotion': {'value': 'Yes', 'edited': True},
+        }))
+
+    # Legacy drafts can still check Promotion if the picklist actually has
+    # "Yes". A blank checkbox must never be guessed into the text "False".
+    unchecked = _single(_operations(adapter, _payload(
+        'pns', promotion=False)), 'WorkOrder')[3]
+    assert 'Promotion__c' not in unchecked
+
+
 def test_legacy_manual_choices_cannot_override_automatic_status_or_history():
     draft = clean_draft({
         'dispo':'pns','numbers':'25000\n17000',
