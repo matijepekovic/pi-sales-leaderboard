@@ -233,6 +233,33 @@ def test_raw_checkbox_text_hydrates_visually_and_survives_refresh_without_conver
     }
 
 
+def test_mixed_product_checkbox_values_are_visible_without_guessing_one():
+    from zoneinfo import ZoneInfo
+    from printer_app.mod_resulting.salesforce_drafts import project_salesforce_drafts
+
+    works = {WORK: {'Id': WORK, 'Dispo__c': 'PNS'}}
+    products = {WORK: [
+        {
+            'Product_Interest__c': 'Roofing', 'Result__c': 'Pitch No Sale',
+            'Free_Product_Lead__c': True, 'CXL_Per_Redline__c': False,
+        },
+        {
+            'Product_Interest__c': 'Siding', 'Result__c': 'Pitch No Sale',
+            'Free_Product_Lead__c': False, 'CXL_Per_Redline__c': False,
+        },
+    ]}
+    draft = clean_draft(project_salesforce_drafts(
+        ZoneInfo('America/Los_Angeles'), {WORK:''}, works, {}, products,
+    )[WORK])
+    assert draft['free_lead'] is True
+    assert draft['checkbox_values']['free_lead'] == {
+        'value': 'True / False', 'edited': False,
+    }
+    assert draft['checkbox_values']['cxl_at_lead'] == {
+        'value': False, 'edited': False,
+    }
+
+
 def test_remote_unresulted_notes_stay_black():
     from printer_app.mod_resulting.salesforce_drafts import project_salesforce_drafts
     from zoneinfo import ZoneInfo
