@@ -34,8 +34,7 @@
     return !!text && !['false', 'no', '0', 'off', 'unchecked', 'none', 'null'].includes(text);
   }
   function readableCheckbox(value) {
-    if (value === undefined) return 'Not available';
-    if (value === null || value === '') return 'Empty';
+    if (value === undefined || value === null || value === '') return '—';
     if (value === true) return 'True';
     if (value === false) return 'False';
     return String(value);
