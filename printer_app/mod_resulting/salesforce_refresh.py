@@ -39,7 +39,9 @@ def read_result_drafts(adapter, records):
             linked_lead = str(works[key].get(WO_LEAD) or '').strip()
             if linked_lead:
                 linked_lead = _require_id(linked_lead)
-                if identities[key] and _require_id(identities[key]) != linked_lead:
+                # Salesforce may return 15- or 18-character representations
+                # of the same Lead ID. Compare the case-sensitive core first.
+                if identities[key] and _require_id(identities[key])[:15] != linked_lead[:15]:
                     raise ResultingSalesforceError('Work Order Lead changed during Refresh.')
                 identities[key] = linked_lead
 
