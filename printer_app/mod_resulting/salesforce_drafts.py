@@ -173,12 +173,21 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
                 product_flags[key].append(value)
                 if _checked(value):
                     draft[key] = True
-        # Multiple product rows can have different checkboxes. Show the raw
-        # source value only when there is one unambiguous value for the sheet.
+        # When products disagree, show the values together rather than
+        # guessing which one owns this sheet-level checkmark. Preserve every
+        # original product checkbox by omitting it from Override writes until
+        # the user deliberately edits that checkmark.
         for key, values in product_flags.items():
-            if values and all(value == values[0] for value in values):
+            if values:
+                display = (
+                    values[0] if all(value == values[0] for value in values)
+                    else ' / '.join(
+                        'Empty' if value is None else str(value)
+                        for value in values
+                    )
+                )
                 draft['checkbox_values'][key] = {
-                    'value': values[0], 'edited': False,
+                    'value': display, 'edited': False,
                 }
         # Product-specific explanations must never become the reason for a
         # Lead-authoritative CXL if their results contradict cancellation.
