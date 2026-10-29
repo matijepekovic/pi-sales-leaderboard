@@ -217,7 +217,38 @@ class ResultingService:
             raise LookupError('There are no MOD sheets to print for this day.')
         return self.pdf_exporter(sheets)
 
+    def _apply_batch(self, day, mod_id, rows, *, job_id=None):
+        """Single Salesforce write path for direct and background submissions."""
+        batch = [self.submission_payload(dict(row, day=day), mod_id)
+                 for row in rows]
+        # Preflight the entire batch before any Salesforce write.
+        plans = self.writer.prepare(batch)
+        if len(plans) != len(rows):
+            raise ValueError('Salesforce preflight produced an incomplete submission plan.')
+        sent = 0
+        for row, plan in zip(rows, plans):
+            ident = row['work_order_id']
+            if job_id is not None:
+                self.repository.submission_item(job_id, ident, 'processing')
+            try:
+                self.writer.apply(plan)
+                # A local receipt is recorded only after every planned write
+                # for this Work Order returns successfully.
+                self.repository.finish_item(day, ident)
+            except Exception as exc:
+                self.repository.error_item(day, ident, str(exc))
+                if job_id is not None:
+                    # CLI timeout or crash can occur after a remote write.
+                    # Do not report a safe failure or blindly resend.
+                    self.repository.submission_item(job_id, ident, 'uncertain', str(exc))
+                raise
+            if job_id is not None:
+                self.repository.submission_item(job_id, ident, 'submitted')
+            sent += 1
+        return {'submitted': sent, 'day': day}
+
     def submit(self, day, work_order_ids=None):
+        """Synchronous workflow contract retained for callers and tests."""
         if not self.allow_salesforce_writes:
             raise ValueError(
                 'Live Salesforce submission is disabled in the MOD sandbox '
@@ -225,33 +256,38 @@ class ResultingService:
         day_state = self.repository.day(day)
         if not day_state or not day_state['mod_user_id']:
             raise ValueError('Select a MOD from Salesforce first.')
-
-        # A day can have multiple submissions; only explicitly overridden
-        # completed items can re-enter a batch. All other receipts stay locked.
         rows = self.repository.begin_submit(day, work_order_ids)
-        sent = 0
         try:
-            if not rows:
-                raise ValueError('No unsubmitted sheets have a disposition.')
-            batch = [self.submission_payload(dict(row, day=day),
-                                              day_state['mod_user_id'])
-                     for row in rows]
-            # Preflight the complete selected batch before the first write.
-            plans = self.writer.prepare(batch)
-            if len(plans) != len(rows):
-                raise ValueError('Salesforce preflight produced an incomplete submission plan.')
-
-            for row, plan in zip(rows, plans):
-                try:
-                    self.writer.apply(plan)
-                except Exception as exc:
-                    self.repository.error_item(day, row['work_order_id'], str(exc))
-                    raise
-                self.repository.finish_item(day, row['work_order_id'])
-                sent += 1
-            return {'submitted': sent, 'day': day}
+            return self._apply_batch(day, day_state['mod_user_id'], rows)
         finally:
             self.repository.finish_submit(day)
+
+    def enqueue(self, day, work_order_ids=None):
+        """Browser request only reserves the batch; never calls Salesforce."""
+        if not self.allow_salesforce_writes:
+            raise ValueError(
+                'Live Salesforce submission is disabled in the MOD sandbox '
+                'until field mappings and write behavior are verified.')
+        return self.repository.enqueue_submit(day, work_order_ids)
+
+    def process_next_submission(self):
+        """Worker executes one queued job, independently of browser connections."""
+        if not self.allow_salesforce_writes:
+            return None
+        job = self.repository.claim_submission()
+        if job is None:
+            return None
+        try:
+            result = self._apply_batch(
+                job['day'], job['mod_id'], job['rows'], job_id=job['job_id'])
+            self.repository.finish_submission_job(job['job_id'])
+            return {'ok': True, **result}
+        except Exception as exc:
+            self.repository.finish_submission_job(job['job_id'], str(exc))
+            return {'ok': False, 'day': job['day'], 'error': str(exc)[:500]}
+        finally:
+            self.repository.finish_submit(job['day'])
+
 
 
 class ResultingDailyPull:

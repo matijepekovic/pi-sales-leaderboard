@@ -163,6 +163,10 @@ def blueprint(service, surface, *, color_code=None):
             return jsonify(ok=False, error=str(exc)), 409
         return jsonify(ok=True, revision=result)
 
+    @bp.get('/api/submission-status')
+    def submission_status():
+        return jsonify(ok=True, submission=service.repository.latest_submission(service.day()))
+
     @bp.post('/api/submit')
     def submit():
         try:
@@ -180,12 +184,12 @@ def blueprint(service, surface, *, color_code=None):
                     raise ValueError('Choose a list of Work Orders.')
             else:
                 raise ValueError('Choose Submit All or Submit Selected.')
-            result = service.submit(service.day(), selected)
+            result = service.enqueue(service.day(), selected)
         except (ValueError, TypeError, LookupError, json.JSONDecodeError) as exc:
             return jsonify(ok=False, error=str(exc)), 422
         except Exception as exc:
             # No partial-success claim on remote errors. Stored receipts survive retries.
             return jsonify(ok=False, error=str(exc)[:500]), 502
-        return jsonify(ok=True, **result)
+        return jsonify(ok=True, **result), 202
 
     return bp
