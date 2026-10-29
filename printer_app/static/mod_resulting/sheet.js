@@ -276,7 +276,7 @@
         sheet.dataset.name.includes(needle) ||
         (sheet.dataset.reps || '').includes(needle)
       );
-      const complete = !!sheet.dataset.dispo;
+      const complete = !!sheet.dataset.dispo && sheet.dataset.overrideActive !== 'yes';
       // Keep the edited sheet visible until its dialog is closed, even if
       // "Hide completed" is enabled and selecting a dispo completes the sheet.
       const editorOpen = sheet.dataset.dialogPending === 'yes' ||
@@ -437,8 +437,25 @@
       dialog?.addEventListener('close', syncPricePreviews);
     }
     syncSaleRows();
+    const overrideButton = sheet.querySelector('.override-sheet');
+    overrideButton?.addEventListener('click', async () => {
+      overrideButton.hidden = true;
+      try {
+        await post(root.dataset.override, {
+          work_order_id:sheet.dataset.id, revision:sheet.dataset.revision
+        });
+        // Rebuild listeners in their normal editable state, with no stale
+        // completed-sheet controls or dangling delayed saves.
+        location.reload();
+      } catch (error) {
+        overrideButton.hidden = false;
+        message('Override failed: ' + error.message, sheet);
+      }
+    });
     if (sheet.dataset.submitted === 'yes') {
-      for (const input of sheet.querySelectorAll('input,select,textarea,button')) input.disabled = true;
+      for (const input of sheet.querySelectorAll('input,select,textarea,button')) {
+        if (input !== overrideButton) input.disabled = true;
+      }
       return;
     }
     const reasonSelect = sheet.querySelector('[data-key="dnr_reason"]');
