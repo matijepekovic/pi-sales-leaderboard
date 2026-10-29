@@ -210,6 +210,104 @@ def test_saved_product_colors_keep_multiselect_controls_in_same_sheet_cells(mod_
 
 
 @pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
+def test_long_press_reads_completed_checkmarks_and_edits_unresulted_source_values(mod_browser, viewport):
+    from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import clean_draft
+
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width':viewport[0], 'height':viewport[1]})
+    records = service.source.records_data
+    writer.checkbox_fields = lambda: {
+        'docs': {'kind':'string','editable':True,'nullable':True,
+                 'length':100,'choices':[]},
+        'ninety_min': {'kind':'picklist','editable':True,'nullable':True,
+                       'length':100,'choices':[
+                           {'label':'No','value':'No'},
+                           {'label':'Scheduled','value':'Scheduled'},
+                       ]},
+        'promotion': {'kind':'boolean','editable':True,'nullable':False,
+                      'length':1,'choices':[]},
+    }
+    remote = {
+        records[0].source_id: clean_draft({
+            'dispo':'pns', 'docs':True,
+            'checkbox_values': {
+                'docs':{'value':'Signed in Salesforce','edited':False},
+            },
+        }),
+        records[1].source_id: clean_draft({
+            'docs':True, 'ninety_min':False,
+            'checkbox_values': {
+                'docs':{'value':'Waiting for docs','edited':False},
+                'ninety_min':{'value':'No','edited':False},
+            },
+        }),
+    }
+    writer.read_results = lambda records: remote
+    service.refresh(service.day())
+    page.goto(origin + '/mod-resulting')
+    done = page.locator('.mod-sheet').first
+    waiting = page.locator('.mod-sheet').nth(1)
+
+    def hold(label):
+        label.scroll_into_view_if_needed()
+        bounds = label.bounding_box()
+        assert bounds is not None
+        page.mouse.move(bounds['x'] + bounds['width'] / 2,
+                        bounds['y'] + bounds['height'] / 2)
+        page.mouse.down()
+        page.wait_for_timeout(720)
+        page.mouse.up()
+
+    expect(done.locator('[data-key=docs]')).to_be_disabled()
+    expect(done.locator('[data-key=docs]')).to_be_checked()
+    hold(done.locator('.field-docs label'))
+    popup = page.locator('#checkboxDialog')
+    expect(popup).to_be_visible()
+    expect(popup.locator('#checkboxCurrent')).to_have_text('Signed in Salesforce')
+    expect(popup.locator('#checkboxApply')).to_be_hidden()
+    assert 'Work Order' not in popup.inner_text()
+    assert 'Docs__c' not in popup.inner_text()
+    popup.locator('.editor-secondary').click()
+    expect(done.locator('[data-key=docs]')).to_be_checked()
+    assert service.repository.sheets(service.day())[0]['override_active'] == 0
+
+    expect(waiting.locator('[data-key=docs]')).to_be_enabled()
+    expect(waiting.locator('[data-key=docs]')).to_be_checked()
+    hold(waiting.locator('.field-docs label'))
+    expect(popup).to_be_visible()
+    expect(popup.locator('#checkboxCurrent')).to_have_text('Waiting for docs')
+    expect(popup.locator('#checkboxText')).to_have_value('Waiting for docs')
+    popup.locator('#checkboxText').fill('Approved by MOD')
+    popup.locator('#checkboxApply').click()
+    expect(popup).to_be_hidden()
+    expect(waiting.locator('[data-key=docs]')).to_be_checked()
+    page.wait_for_timeout(800)
+    draft = service.repository.sheets(service.day())[1]['draft']
+    assert draft['checkbox_values']['docs'] == {
+        'value':'Approved by MOD','edited':True,
+    }
+    assert draft['dispo'] == ''  # The popup alone never results a Work Order.
+
+    hold(waiting.locator('.field-ninety label').first)
+    expect(popup.locator('#checkboxCurrent')).to_have_text('No')
+    expect(popup.locator('#checkboxChoice')).to_have_value('No')
+    popup.locator('#checkboxChoice').select_option('Scheduled')
+    popup.locator('#checkboxApply').click()
+    expect(waiting.locator('[data-key=ninety_min]')).to_be_checked()
+    page.wait_for_timeout(800)
+    draft = service.repository.sheets(service.day())[1]['draft']
+    assert draft['checkbox_values']['ninety_min'] == {
+        'value':'Scheduled','edited':True,
+    }
+
+    page.reload(wait_until='domcontentloaded')
+    expect(page.locator('.mod-sheet').nth(1).locator('[data-key=docs]')).to_be_checked()
+    assert writer.applied == []
+    evidence('checkbox-long-press')
+
+
+@pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
 def test_completed_override_button_unlocks_one_sheet_and_refresh_restores_salesforce(mod_browser, viewport):
     from playwright.sync_api import expect
     from printer_app.mod_resulting.contract import clean_draft
