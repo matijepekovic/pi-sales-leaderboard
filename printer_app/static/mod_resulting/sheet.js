@@ -812,6 +812,7 @@
   const progressDialog = document.getElementById('submissionProgress');
   const progressButton = document.getElementById('viewSubmissionProgress');
   let currentSubmission = null;
+  let progressJobId = null;
   let progressTimer = null;
   let submissionActive = false;
   let autoOpenedProgress = false;
@@ -869,6 +870,7 @@
   });
   function renderSubmission(submission) {
     currentSubmission = submission;
+    if (submission) progressJobId = submission.id;
     progressButton.hidden = !submission;
     if (!submission) return;
     submissionActive = ['queued', 'running'].includes(submission.state);
@@ -910,7 +912,9 @@
   }
   async function refreshSubmission(openWhenActive = false) {
     try {
-      const response = await fetch(root.dataset.submissionStatus, {
+      const url = root.dataset.submissionStatus +
+        (progressJobId ? '?job_id=' + encodeURIComponent(progressJobId) : '');
+      const response = await fetch(url, {
         headers: {'Accept':'application/json'}, cache:'no-store'
       });
       const data = await response.json();
@@ -944,7 +948,9 @@
       await flushAll();
       const fields = selected === null ? {mode:'all'} :
         {mode:'selected',work_order_ids:JSON.stringify(selected)};
-      await post(root.dataset.submit, fields);
+      const queued = await post(root.dataset.submit, fields);
+      progressJobId = queued.job_id;
+      autoOpenedProgress = false;
       closeDialog(methodDialog);
       closeDialog(selectionDialog);
       await refreshSubmission(true);

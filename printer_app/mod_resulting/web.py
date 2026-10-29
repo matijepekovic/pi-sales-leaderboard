@@ -165,7 +165,9 @@ def blueprint(service, surface, *, color_code=None):
 
     @bp.get('/api/submission-status')
     def submission_status():
-        return jsonify(ok=True, submission=service.repository.latest_submission(service.day()))
+        job_id = request.args.get('job_id', type=int)
+        return jsonify(ok=True, submission=service.repository.latest_submission(
+            service.day(), job_id=job_id))
 
     @bp.post('/api/submit')
     def submit():

@@ -348,9 +348,20 @@ class ResultingRepository:
                 state=?,finished_at=?,error=? WHERE id=? AND state='running' ''',
                 ('failed' if error else 'completed', time.time(), str(error)[:500], job_id))
 
-    def latest_submission(self, day):
-        job = self.db.one('''SELECT id,day,state,created_at,started_at,finished_at,error
-            FROM mod_result_submission_jobs WHERE day=? ORDER BY id DESC LIMIT 1''', (day,))
+    def latest_submission(self, day, job_id=None):
+        fields = 'id,day,state,created_at,started_at,finished_at,error'
+        if job_id is not None:
+            job = self.db.one('SELECT ' + fields +
+                              ' FROM mod_result_submission_jobs WHERE id=?', (job_id,))
+        else:
+            # A long-running End of Day may cross local midnight. Show that
+            # active batch before showing a completed batch for the new day.
+            job = self.db.one('SELECT ' + fields + ''' FROM mod_result_submission_jobs
+                WHERE state IN ('queued','running') ORDER BY id DESC LIMIT 1''')
+            if job is None:
+                job = self.db.one('SELECT ' + fields +
+                                  ' FROM mod_result_submission_jobs WHERE day=? '
+                                  'ORDER BY id DESC LIMIT 1', (day,))
         if not job:
             return None
         items = self.db.rows('''SELECT work_order_number,state,error
