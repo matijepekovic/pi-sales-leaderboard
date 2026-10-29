@@ -22,7 +22,6 @@
   const checkboxChoice = document.getElementById('checkboxChoice');
   const checkboxBoolean = document.getElementById('checkboxBoolean');
   const checkboxApply = document.getElementById('checkboxApply');
-  const checkboxReadOnly = document.getElementById('checkboxReadOnly');
   let checkboxSpecs = {};
   try { checkboxSpecs = JSON.parse(root.dataset.checkboxSpecs || '{}'); }
   catch (_) { checkboxSpecs = {}; }
@@ -35,8 +34,7 @@
     return !!text && !['false', 'no', '0', 'off', 'unchecked', 'none', 'null'].includes(text);
   }
   function readableCheckbox(value) {
-    if (value === undefined) return 'Not available';
-    if (value === null || value === '') return 'Empty';
+    if (value === undefined || value === null || value === '') return '—';
     if (value === true) return 'True';
     if (value === false) return 'False';
     return String(value);
@@ -50,18 +48,13 @@
       info?.editable === true && ['boolean', 'string', 'textarea', 'picklist'].includes(info.kind);
     checkboxTarget = null;
     checkboxCurrent.textContent = readableCheckbox(raw);
+    // Editable fields display their source value inside their actual input.
+    checkboxCurrent.hidden = canEdit;
     for (const id of ['checkboxTextEditor', 'checkboxTextareaEditor', 'checkboxChoiceEditor', 'checkboxBooleanEditor']) {
       document.getElementById(id).hidden = true;
     }
-    checkboxReadOnly.hidden = true;
     checkboxApply.hidden = true;
-    if (!canEdit) {
-      checkboxReadOnly.textContent = sheet.dataset.submitted === 'yes'
-        ? 'Press Override to change this value.'
-        : (info ? 'Salesforce does not allow editing this value.'
-                : 'No editable Salesforce value is available for this checkmark.');
-      checkboxReadOnly.hidden = false;
-    } else {
+    if (canEdit) {
       const kind = info.kind;
       if (kind === 'boolean') {
         checkboxBoolean.value = hasCheckmark(raw) ? 'true' : 'false';
@@ -104,7 +97,7 @@
       ? (info.kind === 'boolean' ? '#checkboxBoolean' :
          info.kind === 'picklist' ? '#checkboxChoice' :
          info.kind === 'textarea' ? '#checkboxTextarea' : '#checkboxText')
-      : '.editor-close');
+      : '.editor-secondary');
   }
   checkboxApply.addEventListener('click', () => {
     if (!checkboxTarget) return;

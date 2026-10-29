@@ -62,7 +62,8 @@
     const wide = active.classList.contains('sale-panel') ||
       active.classList.contains('product-panel');
     const preferredWidth = wide ? 600 :
-      active.classList.contains('price-panel') ? 440 : 420;
+      active.classList.contains('price-panel') ? 440 :
+      active.classList.contains('checkbox-dialog') ? 310 : 420;
     // Size text in device pixels, not zoomed page pixels. A 3x pinched page
     // still gets an approximately 16px dialog input, not an unusable 48px one.
     // Never force a minimum wider/taller than the real visible viewport.
