@@ -173,6 +173,62 @@ def mod_browser(tmp_path, request):
         thread.join(timeout=5)
 
 
+@pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
+def test_completed_override_button_unlocks_one_sheet_and_refresh_restores_salesforce(mod_browser, viewport):
+    from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import clean_draft
+
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width':viewport[0], 'height':viewport[1]})
+    day = service.day()
+    first_id = service.source.records_data[0].source_id
+    authoritative = clean_draft({
+        'dispo':'cxl', 'lead_status':'Canceled', 'notes':'Salesforce note'
+    })
+    writer.read_results = lambda records: {first_id:authoritative}
+    service.refresh(day)
+
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+    second = page.locator('.mod-sheet').nth(1)
+    expect(first).to_have_attribute('data-submitted','yes')
+    expect(first.locator('[data-key=dispo]')).to_be_disabled()
+    expect(second.locator('[data-key=dispo]')).to_be_enabled()
+    expect(page.locator('.override-sheet')).to_have_count(1)
+    override = first.locator('.override-sheet')
+    expect(override).to_be_visible()
+    assert override.bounding_box()['height'] >= 44
+
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        override.click()
+    first = page.locator('.mod-sheet').first
+    expect(first).to_have_attribute('data-submitted','no')
+    expect(first.locator('.override-sheet')).to_have_count(0)
+    expect(first.locator('[data-key=dispo]')).to_be_enabled()
+    expect(first.locator('[data-key=dispo]')).to_have_value('cxl')
+    expect(second.locator('[data-key=dispo]')).to_be_enabled()
+    sheet = service.repository.sheets(day)[0]
+    assert sheet['override_active'] == 1
+    assert sheet['draft'] == authoritative
+
+    page.locator('#hideCompleted').check()
+    # An explicitly overridden CXL is still editable/visible.
+    expect(page.locator('.mod-sheet:visible')).to_have_count(2)
+    page.locator('#hideCompleted').uncheck()
+    first.locator('[data-key=dispo]').select_option('pns')
+    first.locator('[data-key=notes]').fill('Local note survives refresh')
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    first = page.locator('.mod-sheet').first
+    expect(first).to_have_attribute('data-submitted','yes')
+    expect(first.locator('.override-sheet')).to_be_visible()
+    expect(first.locator('[data-key=dispo]')).to_have_value('cxl')
+    expect(first.locator('[data-key=notes]')).to_have_value(
+        'Local note survives refresh')
+    assert service.repository.sheets(day)[0]['override_active'] == 0
+    assert writer.applied == []
+
+
 def test_mod_sheets_search_customers_and_assigned_reps_only(mod_browser):
     from playwright.sync_api import expect
 

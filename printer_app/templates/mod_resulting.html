@@ -10,6 +10,7 @@
 </head><body data-csrf="{{ session.csrf }}"
  data-refresh="{{ url_for('mod_resulting.refresh') }}"
  data-clear="{{ url_for('mod_resulting.clear_local') }}"
+ data-override="{{ url_for('mod_resulting.override') }}"
  data-save="{{ url_for('mod_resulting.save') }}"
  data-mod="{{ url_for('mod_resulting.choose_mod') }}"
  data-submit="{{ url_for('mod_resulting.submit') }}">
@@ -37,14 +38,19 @@
 <div class="sheets" id="sheets">
 {% for item in data.sheets %}
 {% set sheet=item.snapshot %}{% set d=item.draft %}{% set xs=sheet.product_interest.split(';') %}
-<section class="mod-sheet{% if item.submitted_at %} submitted{% endif %}" aria-label="MOD sheet for {{ sheet.lead_name }}"
+{% set locked = item.submitted_at and not item.override_active %}
+<section class="mod-sheet{% if locked %} submitted{% endif %}" aria-label="MOD sheet for {{ sheet.lead_name }}"
  data-id="{{ item.work_order_id }}" data-revision="{{ item.revision }}"
  data-name="{{ sheet.lead_name|lower }}" data-customer="{{ sheet.lead_name }}" data-work-number="{{ sheet.work_order_number }}" data-reps="{{ sheet.assigned_service_resources|join(' ')|lower }}" data-dispo="{{ d.dispo }}"
- data-submitted="{{ 'yes' if item.submitted_at else 'no' }}"
+ data-submitted="{{ 'yes' if locked else 'no' }}"
+ data-override-active="{{ 'yes' if item.override_active else 'no' }}"
  data-initial='{{ d|tojson|forceescape }}'>
  <img class="printer-sheet" src="{{ url_for('mod_resulting.sheet_image', day=data.day, work_order_id=item.work_order_id) }}"
   alt="Printer MOD sheet for {{ sheet.lead_name }}, work order {{ sheet.work_order_number }}"
   loading="{{ 'eager' if loop.first else 'lazy' }}" decoding="async" draggable="false">
+ {% if locked %}
+ <button type="button" class="override-sheet" aria-label="Override completed work order {{ sheet.work_order_number }}">Override</button>
+ {% endif %}
  <dl class="sr-only">
   <dt>Work Order Number:</dt><dd>{{ sheet.work_order_number }}</dd>
   <dt>Lead Name:</dt><dd>{{ sheet.lead_name }}</dd>

@@ -565,3 +565,134 @@ def test_submit_api_rejects_unselected_and_malformed_scope_before_live_write(tmp
                            headers={'Origin':'http://localhost'})
         assert result.status_code==422
     assert app.extensions['mod_resulting'].allow_salesforce_writes is False
+
+
+def test_completed_override_unlocks_one_sheet_and_resubmits_with_other_jobs(tmp_path):
+    service, repo, source, writer = _service(tmp_path)
+    second = ModSheetRecord(
+        source_id='0WO000000000002AAA', lead_source_id=LEAD,
+        lead_name='Second Customer', work_order_number='00001235',
+        product_interest='Bath'
+    )
+    source.records = lambda **kwargs: [RECORD, second]
+    authoritative = clean_draft({
+        'dispo':'cxl', 'lead_status':'Canceled', 'notes':'Salesforce note'
+    })
+    writer.read_results = lambda records: {WORK:authoritative}
+    service.refresh(DAY)
+    service.set_mod(DAY, USER)
+    rows = repo.sheets(DAY)
+    first, other = rows
+    assert first['submitted_at'] == -1.0
+    assert other['submitted_at'] is None
+    with pytest.raises(ValueError, match='Reload'):
+        service.save(DAY, WORK, clean_draft({'dispo':'pns'}), first['revision'])
+
+    # A deliberate Override changes only this sheet; completed siblings stay
+    # locked and the previous Salesforce values remain in its editable draft.
+    revision = service.override(DAY, WORK, first['revision'])
+    active = repo.sheets(DAY)[0]
+    assert active['override_active'] == 1
+    assert active['draft'] == authoritative
+    assert active['revision'] == revision
+    with pytest.raises(ValueError, match='not completed'):
+        service.override(DAY, WORK, revision)
+    new_revision = service.save(DAY, WORK, clean_draft({
+        'dispo':'pns', 'notes':'Changed after Override'
+    }), revision)
+    service.save(DAY, second.source_id, clean_draft({'dispo':'np'}), other['revision'])
+
+    pages = []
+    service.pdf_exporter = lambda sheets: (
+        pages.append([s['work_order_id'] for s in sheets]) or b'%PDF mocked'
+    )
+    assert service.submit(DAY) == {'submitted':2, 'day':DAY, 'pdf':True}
+    assert len(writer.applied) == 2
+    assert {p['work_order_id'] for p in writer.plans} == {
+        WORK, second.source_id
+    }
+    first, other = repo.sheets(DAY)
+    assert first['override_active'] == 0
+    assert first['submitted_at'] > 0 and other['submitted_at'] > 0
+    assert sorted(pages[0]) == sorted([WORK, second.source_id])
+    with pytest.raises(ValueError, match='not completed'):
+        service.override(DAY, second.source_id, other['revision'] - 1)
+
+    # A real local submission can be overridden again. The replacement page
+    # appears once in the PDF; it is never duplicated beside its old receipt.
+    revision = service.override(DAY, WORK, first['revision'])
+    service.save(DAY, WORK, clean_draft({'dispo':'cxl'}), revision)
+    assert service.submit(DAY, [WORK]) == {'submitted':1, 'day':DAY, 'pdf':True}
+    assert pages[1].count(WORK) == 1
+    assert pages[1].count(second.source_id) == 1
+    assert repo.sheets(DAY)[0]['override_active'] == 0
+    assert len(writer.applied) == 3
+    with pytest.raises(ValueError, match='already submitted'):
+        repo.save_draft(DAY, WORK, clean_draft({'dispo':'pns'}),
+                        repo.sheets(DAY)[0]['revision'])
+
+
+def test_refresh_revokes_override_and_only_keeps_locally_edited_notes(tmp_path):
+    service, repo, source, writer = _service(tmp_path)
+    remote = clean_draft({'dispo':'cxl', 'lead_status':'Canceled',
+                          'notes':'Salesforce original', 'need':'From Salesforce'})
+    writer.read_results = lambda records: {WORK:remote}
+    service.refresh(DAY)
+    first = repo.sheets(DAY)[0]
+    revision = service.override(DAY, WORK, first['revision'])
+    service.save(DAY, WORK, clean_draft({
+        'dispo':'sale', 'notes':'My locally edited notes', 'need':'Local only',
+        'sale_products':{'Roofing':{'price':'12000','deposit':'0'}}
+    }), revision)
+
+    service.refresh(DAY)
+    sheet = repo.sheets(DAY)[0]
+    assert sheet['submitted_at'] == -1.0
+    assert sheet['override_active'] == 0
+    assert sheet['draft'] == dict(remote, notes='My locally edited notes')
+    with pytest.raises(ValueError, match='Reload'):
+        service.save(DAY, WORK, clean_draft({'dispo':'sale'}), sheet['revision'])
+    assert writer.applied == []
+
+    service.override(DAY, WORK, sheet['revision'])
+    assert service.clear_local(DAY) == 1
+    reset = repo.sheets(DAY)[0]
+    assert reset['draft'] == remote
+    assert reset['override_active'] == 0
+    assert reset['submitted_at'] == -1.0
+    assert writer.applied == []
+
+
+def test_existing_sqlite_version_one_migrates_override_flag_without_data_loss(tmp_path):
+    import sqlite3
+
+    path = tmp_path / 'old-printer.sqlite'
+    with sqlite3.connect(path) as conn:
+        conn.executescript("""
+            CREATE TABLE mod_result_days (day TEXT PRIMARY KEY);
+            CREATE TABLE mod_result_sheets (
+                day TEXT NOT NULL, work_order_id TEXT NOT NULL,
+                snapshot TEXT NOT NULL, draft TEXT NOT NULL DEFAULT '{}',
+                revision INTEGER NOT NULL DEFAULT 0,
+                current INTEGER NOT NULL DEFAULT 1,
+                display_order INTEGER NOT NULL DEFAULT 0,
+                submitted_at REAL,
+                submit_error TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY(day, work_order_id));
+            PRAGMA user_version=1;
+        """)
+        conn.execute('INSERT INTO mod_result_days(day) VALUES(?)', (DAY,))
+        conn.execute(
+            'INSERT INTO mod_result_sheets(day,work_order_id,snapshot,draft,submitted_at) '
+            'VALUES(?,?,?,?,?)',
+            (DAY, WORK, '{}', '{"dispo":"cxl"}', -1.0)
+        )
+
+    db = Database(path)
+    first = db.one('SELECT draft,submitted_at,override_active FROM mod_result_sheets')
+    assert first == {'draft':'{"dispo":"cxl"}',
+                     'submitted_at':-1.0, 'override_active':0}
+    assert db.one('PRAGMA user_version')['user_version'] == 2
+    assert Database(path).one('SELECT override_active FROM mod_result_sheets') == {
+        'override_active':0
+    }

@@ -464,8 +464,9 @@ class ResultingSalesforceAdapter:
                         'Sold Product Interest Result requires its own positive Price Given.'
                     )
                 fields[PR['price']] = self._value(price_field, entry['price'])
-            elif entry['result'] in ('pns', 'np') and old_id:
-                # Explicitly clear a stale sale price when a current result is PNS/No Pitch.
+            elif old_id:
+                # Re-resulting an earlier Sale as any non-sale outcome must not
+                # retain the previous sold price in Salesforce.
                 fields[PR['price']] = None
 
             if old_id:

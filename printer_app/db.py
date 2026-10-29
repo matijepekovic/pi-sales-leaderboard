@@ -1,4 +1,4 @@
-"""Private, durable SQLite inbox, job queue and print outbox (schema version 1)."""
+"""Private, durable SQLite inbox, job queue and print outbox (schema version 2)."""
 from __future__ import annotations
 
 import json
@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS mod_result_sheets (
  current INTEGER NOT NULL DEFAULT 1,
  display_order INTEGER NOT NULL DEFAULT 0,
  submitted_at REAL,
+ override_active INTEGER NOT NULL DEFAULT 0 CHECK(override_active IN (0,1)),
  submit_error TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(day, work_order_id));
 CREATE INDEX IF NOT EXISTS mod_result_pending
@@ -132,10 +133,18 @@ class Database:
         with self.connect() as conn:
             conn.execute('PRAGMA journal_mode=WAL')
             version = conn.execute('PRAGMA user_version').fetchone()[0]
-            if version > 1:
+            if version > 2:
                 raise RuntimeError('Database is newer than this printer-app release')
             conn.executescript(SCHEMA)
-            conn.execute('PRAGMA user_version=1')
+            # Existing version-1 printer databases gain one local override flag;
+            # no Salesforce record or draft payload is migrated or rewritten.
+            columns = {row[1] for row in conn.execute('PRAGMA table_info(mod_result_sheets)')}
+            if 'override_active' not in columns:
+                conn.execute(
+                    'ALTER TABLE mod_result_sheets ADD COLUMN override_active '
+                    'INTEGER NOT NULL DEFAULT 0 CHECK(override_active IN (0,1))'
+                )
+            conn.execute('PRAGMA user_version=2')
 
     @contextmanager
     def connect(self):
