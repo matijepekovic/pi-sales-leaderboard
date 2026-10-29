@@ -456,7 +456,7 @@ def test_selected_submissions_keep_remaining_work_orders_editable_and_print_ever
     repo.save_draft(DAY, second.source_id, clean_draft({'dispo':'np','notes':'Second'}), 0)
     service.pdf_exporter = render_resulting_pdf
     assert service.submit(DAY,[WORK])['submitted'] == 1
-    assert [item['work_order_id'] for item in repo.submitted_sheets(DAY)] == [WORK]
+    assert [item['work_order_id'] for item in repo.sheets(DAY) if item['submitted_at'] and item['submitted_at'] > 0] == [WORK]
     # Print All is independent: include already submitted and still pending.
     first_pdf=PdfReader(BytesIO(service.export_all_pdf(DAY))).pages[0].extract_text()
     assert '00001234' in first_pdf and '00001235' in first_pdf
@@ -476,7 +476,7 @@ def test_selected_submissions_keep_remaining_work_orders_editable_and_print_ever
 
     assert service.submit(DAY,[second.source_id])['submitted']==1
     assert len(writer.applied)==2
-    assert len(repo.submitted_sheets(DAY))==2
+    assert sum(row['submitted_at'] is not None for row in repo.sheets(DAY))==2
     combined=PdfReader(BytesIO(service.export_all_pdf(DAY))).pages[0].extract_text()
     assert '00001234' in combined and '00001235' in combined
     assert 'Second edited' in combined
@@ -515,7 +515,7 @@ def test_partial_failure_preserves_receipts_and_never_generates_pdf(tmp_path):
     writer.apply=fail_second
     with pytest.raises(RuntimeError,match='Salesforce outage'):
         service.submit(DAY)
-    assert [row['work_order_id'] for row in repo.submitted_sheets(DAY)]==[WORK]
+    assert [row['work_order_id'] for row in repo.sheets(DAY) if row['submitted_at'] and row['submitted_at'] > 0]==[WORK]
     pending=next(row for row in repo.sheets(DAY) if row['work_order_id']==second.source_id)
     assert 'Salesforce outage' in pending['submit_error']
     assert pending['submitted_at'] is None
