@@ -17,6 +17,12 @@ CHECKBOXES = (
     'free_lead', 'power_questions', 't_close', 'ninety_min',
     'dnr', 'cxl_at_lead', 'additional_products',
 )
+# Normalized, source-backed checkbox keys. Source-specific field identifiers
+# and allowed input types belong exclusively to the Salesforce adapter.
+SOURCE_CHECKBOXES = frozenset((
+    'docs', 'ninety_min', 'promotion', 'review', 'dnr', 'one_leg',
+    'free_lead', 'cxl_at_lead',
+))
 TEXT_FIELDS = (
     'numbers', 'notes', 'redlines', 'call_1', 'call_2', 'need', 'want',
     'result_detail', 'dnr_reason', 'dispo', 'primary_product',
@@ -91,7 +97,7 @@ def dnr_reasons(value):
 def clean_draft(raw):
     if not isinstance(raw, dict):
         raise ValueError('Invalid MOD draft.')
-    if set(raw) - set(TEXT_FIELDS) - set(CHECKBOXES) - {'product_results', 'sale_products', 'note_runs'}:
+    if set(raw) - set(TEXT_FIELDS) - set(CHECKBOXES) - {'product_results', 'sale_products', 'note_runs', 'checkbox_values'}:
         raise ValueError('Unknown MOD draft fields.')
     data = {}
     for key in TEXT_FIELDS:
@@ -104,6 +110,23 @@ def clean_draft(raw):
         if type(value) is not bool:
             raise ValueError(key + ' must be a checkbox.')
         data[key] = value
+    # Store the exact source scalar separately from its visual checkmark. An
+    # unedited original is never replaced with a guessed "Yes" on Override.
+    source_values = raw.get('checkbox_values', {})
+    if not isinstance(source_values, dict) or set(source_values) - SOURCE_CHECKBOXES:
+        raise ValueError('Invalid source checkbox values.')
+    normalized_values = {}
+    for key, entry in source_values.items():
+        if (not isinstance(entry, dict) or set(entry) != {'value', 'edited'}
+                or type(entry['edited']) is not bool):
+            raise ValueError('Invalid source checkbox value.')
+        value = entry['value']
+        if value is not None and type(value) is not bool and (
+            not isinstance(value, str) or len(value) > 3000
+        ):
+            raise ValueError('Invalid source checkbox value.')
+        normalized_values[key] = {'value': value, 'edited': entry['edited']}
+    data['checkbox_values'] = normalized_values
     runs = raw.get('note_runs', [])
     if not isinstance(runs, list) or len(runs) > 256:
         raise ValueError('Invalid MOD Notes formatting.')

@@ -269,6 +269,191 @@ def test_checked_training_flags_send_yes_and_unchecked_flags_do_not_overwrite():
     }
 
 
+def test_checkbox_metadata_is_normalized_and_uses_salesforce_field_types():
+    schemas = _schemas()
+    for field in schemas['WorkOrder']['fields']:
+        if field['name'] == 'Docs__c':
+            field['type'] = 'string'
+            field['length'] = 120
+        elif field['name'] == 'X90_Min__c':
+            field['type'] = 'picklist'
+            field['picklistValues'] = [
+                {'value': 'No', 'label': 'No', 'active': True},
+                {'value': 'Completed', 'label': 'Completed', 'active': True},
+            ]
+    adapter, _ = _adapter(schemas=schemas)
+    info = adapter.checkbox_fields()
+    assert info['docs']['kind'] == 'string'
+    assert info['docs']['length'] == 120
+    assert info['ninety_min']['kind'] == 'picklist'
+    assert [option['value'] for option in info['ninety_min']['choices']] == ['No', 'Completed']
+    assert info['promotion']['kind'] == 'boolean'
+    assert info['dnr']['kind'] == 'boolean'
+    assert 'Docs__c' not in str(info)
+    assert 'WorkOrder' not in str(info)
+
+
+def test_override_preserves_raw_checkbox_values_until_explicit_edit():
+    schemas = _schemas()
+    for field in schemas['WorkOrder']['fields']:
+        if field['name'] == 'Docs__c':
+            field['type'] = 'string'
+            field['length'] = 100
+        elif field['name'] == 'X90_Min__c':
+            field['type'] = 'picklist'
+            field['picklistValues'] = [
+                {'value': 'No', 'label': 'No', 'active': True},
+                {'value': 'Scheduled', 'label': 'Scheduled', 'active': True},
+            ]
+    adapter, _ = _adapter(schemas=schemas)
+    original = {
+        'docs': {'value': 'Already Completed', 'edited': False},
+        'ninety_min': {'value': 'No', 'edited': False},
+        'promotion': {'value': True, 'edited': False},
+        'dnr': {'value': False, 'edited': False},
+        'one_leg': {'value': True, 'edited': False},
+    }
+    # End of Day still writes the resulting workflow; only an intentionally
+    # edited checkbox is included in the Work Order/Lead patch.
+    untouched = _operations(adapter, _payload('pns',
+        checkbox_values=original,
+        docs=True, ninety_min=False, promotion=True, dnr=False, one_leg=True
+    ))
+    work = _single(untouched, 'WorkOrder')[3]
+    lead = _single(untouched, 'Lead')[3]
+    assert 'Docs__c' not in work
+    assert 'X90_Min__c' not in work
+    assert 'Promotion__c' not in work
+    assert 'DNR_Do_Not_Reset__c' not in lead
+    assert 'X1_Leg_Appointment__c' not in lead
+    assert 'Dispo__c' in work
+
+    edited = {
+        **original,
+        'docs': {'value': 'Supervisor Signed', 'edited': True},
+        'ninety_min': {'value': 'Scheduled', 'edited': True},
+        'promotion': {'value': False, 'edited': True},
+        'one_leg': {'value': False, 'edited': True},
+    }
+    operations = _operations(adapter, _payload('pns', checkbox_values=edited))
+    work = _single(operations, 'WorkOrder')[3]
+    lead = _single(operations, 'Lead')[3]
+    assert work['Docs__c'] == 'Supervisor Signed'
+    assert work['X90_Min__c'] == 'Scheduled'
+    assert work['Promotion__c'] is False
+    assert lead['X1_Leg_Appointment__c'] is False
+
+    # An explicit checkbox uncheck can clear a nullable text field.
+    cleared = {
+        **original,
+        'docs': {'value': False, 'edited': True},
+    }
+    work = _single(_operations(adapter, _payload('pns', checkbox_values=cleared)),
+                   'WorkOrder')[3]
+    assert work['Docs__c'] is None
+
+    invalid = {**original, 'ninety_min': {'value': 'Not a choice', 'edited': True}}
+    with pytest.raises(ResultingSalesforceError, match='does not allow'):
+        _operations(adapter, _payload('pns', checkbox_values=invalid))
+    invalid = {**original, 'promotion': {'value': 'Yes', 'edited': True}}
+    with pytest.raises(ResultingSalesforceError, match='True or False'):
+        _operations(adapter, _payload('pns', checkbox_values=invalid))
+    invalid = {**original, 'docs': {'value': 'x' * 101, 'edited': True}}
+    with pytest.raises(ResultingSalesforceError, match='limit'):
+        _operations(adapter, _payload('pns', checkbox_values=invalid))
+
+
+def test_promotion_text_or_picklist_uses_the_actual_value_when_edited():
+    schemas = _schemas()
+    for field in schemas['WorkOrder']['fields']:
+        if field['name'] == 'Promotion__c':
+            field['type'] = 'picklist'
+            field['picklistValues'] = [
+                {'value': 'Not Started', 'label': 'Not Started', 'active': True},
+                {'value': 'Approved', 'label': 'Approved', 'active': True},
+            ]
+    adapter, _ = _adapter(schemas=schemas)
+
+    saved = {'promotion': {'value':'Not Started', 'edited':False}}
+    unedited = _single(_operations(adapter, _payload(
+        'pns', checkbox_values=saved, promotion=True)), 'WorkOrder')[3]
+    assert 'Promotion__c' not in unedited
+
+    changed = {'promotion': {'value':'Approved', 'edited':True}}
+    result = _single(_operations(adapter, _payload(
+        'pns', checkbox_values=changed, promotion=True)), 'WorkOrder')[3]
+    assert result['Promotion__c'] == 'Approved'
+    with pytest.raises(ResultingSalesforceError, match='does not allow'):
+        _operations(adapter, _payload('pns', checkbox_values={
+            'promotion': {'value': 'Yes', 'edited': True},
+        }))
+
+    # Legacy drafts can still check Promotion if the picklist actually has
+    # "Yes". A blank checkbox must never be guessed into the text "False".
+    unchecked = _single(_operations(adapter, _payload(
+        'pns', promotion=False)), 'WorkOrder')[3]
+    assert 'Promotion__c' not in unchecked
+
+
+def test_review_raw_value_is_viewable_and_untouched_override_does_not_replace_it():
+    schemas = _schemas()
+    for field in schemas['WorkOrder']['fields']:
+        if field['name'] == REVIEW_FIELD:
+            field['type'] = 'string'
+            field['length'] = 140
+    adapter, _ = _adapter(schemas=schemas)
+    assert adapter.checkbox_fields()['review']['kind'] == 'string'
+    original = {'review': {'value': 'Supervisor Approved', 'edited': False}}
+    work = _single(_operations(adapter, _payload('pns',
+        checkbox_values=original, review=True)), 'WorkOrder')[3]
+    assert REVIEW_FIELD not in work
+
+    changed = {'review': {'value': 'Complete', 'edited': True}}
+    work = _single(_operations(adapter, _payload('pns',
+        checkbox_values=changed, review=True)), 'WorkOrder')[3]
+    assert work[REVIEW_FIELD] == 'Complete'
+
+    cleared = {'review': {'value': None, 'edited': True}}
+    work = _single(_operations(adapter, _payload('pns',
+        checkbox_values=cleared, review=False)), 'WorkOrder')[3]
+    assert work[REVIEW_FIELD] is None
+
+
+def test_override_retains_individual_product_checkbox_values_until_user_changes_them():
+    adapter, _ = _adapter(existing_results=[{
+        'Id': PR1, 'Product_Interest__c': 'Roofing',
+    }])
+    flags = {
+        'one_leg': {'value': True, 'edited': False},
+        'free_lead': {'value': 'True / False', 'edited': False},
+        'cxl_at_lead': {'value': False, 'edited': False},
+    }
+    plan = _operations(adapter, _payload(
+        'pns', checkbox_values=flags, one_leg=True, free_lead=True,
+        cxl_at_lead=False
+    ))
+    existing = next(row[3] for row in plan if row[1] == PRODUCT_RESULT
+                    and row[0] == 'update')
+    added = next(row[3] for row in plan if row[1] == PRODUCT_RESULT
+                 and row[0] == 'create')
+    assert all(key not in existing for key in (
+        PR['one_leg'], PR['free_lead'], PR['cxl_at_lead']
+    ))
+    assert added[PR['one_leg']] is True
+    assert added[PR['free_lead']] is True
+    assert added[PR['cxl_at_lead']] is False
+
+    changed = {**flags, 'free_lead': {'value': False, 'edited': True}}
+    plan = _operations(adapter, _payload(
+        'pns', checkbox_values=changed, one_leg=True, free_lead=False
+    ))
+    existing = next(row[3] for row in plan if row[1] == PRODUCT_RESULT
+                    and row[0] == 'update')
+    assert existing[PR['free_lead']] is False
+    assert PR['one_leg'] not in existing
+    assert PR['cxl_at_lead'] not in existing
+
+
 def test_legacy_manual_choices_cannot_override_automatic_status_or_history():
     draft = clean_draft({
         'dispo':'pns','numbers':'25000\n17000',

@@ -61,6 +61,13 @@ def blueprint(service, surface, *, color_code=None):
             for value in draft.get('sale_products', {}):
                 if value and not any(o['value'] == value for o in choices['products']):
                     choices['products'].append({'value': value, 'label': value})
+        try:
+            checkbox_specs = service.checkbox_fields()
+        except Exception:
+            # The saved raw value remains inspectable when live field metadata
+            # is temporarily unavailable; edits fail closed rather than guess.
+            checkbox_specs = {}
+            current_app.logger.warning('MOD checkbox field metadata unavailable.')
         return render_template(
             'mod_resulting.html',
             data=data, users=users,
@@ -69,6 +76,7 @@ def blueprint(service, surface, *, color_code=None):
             products=choices.get('products', []),
             live_writes_enabled=service.allow_salesforce_writes,
             color_code=bool(color_code()) if color_code else False,
+            checkbox_specs=checkbox_specs,
             notice=notice,
         )
 

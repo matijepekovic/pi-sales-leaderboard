@@ -86,6 +86,11 @@ class ResultingService:
             sheet['result'] = outcome_fields(data)
         return {'day': day, 'state': state, 'sheets': sheets}
 
+    def checkbox_fields(self):
+        """Presentation-only normalized capabilities from the source adapter."""
+        reader = getattr(self.writer, 'checkbox_fields', None)
+        return reader() if callable(reader) else {}
+
     def sheet_record(self, day, work_order_id):
         # Image requests read the saved day snapshot, never Salesforce again.
         datetime.strptime(day, '%Y-%m-%d')

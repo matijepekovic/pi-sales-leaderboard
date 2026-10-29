@@ -3,7 +3,7 @@
 The application never constructs SOQL itself and never writes during Refresh.
 """
 from .salesforce_adapter import (
-    ID_RE, LEAD, LEAD_FIELDS, PR, PRODUCT_RESULT, WORK_ORDER, WO, WO_LEAD,
+    ID_RE, LEAD, LEAD_FIELDS, PR, PRODUCT_RESULT, REVIEW_FIELD, WORK_ORDER, WO, WO_LEAD,
     ResultingSalesforceError, _require_id, _soql,
 )
 from .salesforce_drafts import project_salesforce_drafts
@@ -18,15 +18,44 @@ def read_result_drafts(adapter, records):
         for record in records
     }
     works, leads, products = {}, {}, {}
+    # Review is an optional training field. Inspect metadata once rather than
+    # making it mandatory for orgs where the field is absent or inaccessible.
+    review = False
+    describe = getattr(adapter, '_describe', None)
+    if callable(describe):
+        try:
+            schema = describe(WORK_ORDER)
+            review = any(
+                field.get('name') == REVIEW_FIELD
+                and field.get('type') in ('boolean', 'string', 'textarea', 'picklist')
+                for field in schema.get('fields', ())
+            )
+        except ResultingSalesforceError:
+            pass
     work_keys = sorted(identities)
     for offset in range(0, len(work_keys), 40):
         batch = work_keys[offset:offset + 40]
         ids = ','.join(_soql(key) for key in batch)
-        for item in adapter._query(
+        work_query = (
             'SELECT Id,' + ','.join(WO.values()) + ',' + WO_LEAD
             + ' FROM ' + WORK_ORDER
             + ' WHERE Id IN (' + ids + ') ORDER BY Id LIMIT 2000'
-        ):
+        )
+        if review:
+            optional_query = work_query.replace(
+                ' FROM ' + WORK_ORDER,
+                ',' + REVIEW_FIELD + ' FROM ' + WORK_ORDER,
+                1,
+            )
+            try:
+                work_rows = adapter._query(optional_query)
+            except ResultingSalesforceError:
+                # A field exposed in describe can still be hidden from SOQL.
+                # Never allow an optional training field to block all Refresh.
+                work_rows = adapter._query(work_query)
+        else:
+            work_rows = adapter._query(work_query)
+        for item in work_rows:
             key = _require_id(str(item.get('Id') or ''))
             if key not in batch or key in works:
                 raise ResultingSalesforceError('Work Order refresh returned unexpected records.')

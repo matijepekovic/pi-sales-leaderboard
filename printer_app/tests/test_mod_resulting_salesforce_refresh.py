@@ -121,9 +121,17 @@ def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
 
     def runner(command, **kwargs):
         calls.append(command)
+        if command[1:3] == ['sobject', 'describe']:
+            assert command[command.index('--sobject')+1] == 'WorkOrder'
+            return SimpleNamespace(stdout=json.dumps({'status':0,'result':{
+                'name':'WorkOrder','fields':[
+                    {'name':'Review__c','type':'string','updateable':True},
+                ],
+            }}), stderr='', returncode=0)
         assert command[1:3] == ['data','query']
         query = command[command.index('--query') + 1]
         if ' FROM WorkOrder ' in query:
+            assert 'Review__c' in query
             assert 'MOD_Notes__c' in query
             assert 'Call_1__c' in query and 'Call_2__c' in query
             rows = [{
@@ -132,7 +140,8 @@ def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
                 'Call_1__c':'10:15:00.000Z',
                 'Call_2__c':'13:27:00.000Z',
                 'Docs__c':True, 'X90_Min__c':True,
-                'Promotion__c':False, 'Need__c':'Security',
+                'Promotion__c':False, 'Review__c':'Manager Approved',
+                'Need__c':'Security',
                 'Want__c':'Value', 'Start_Price__c':25000,
                 'Price__c':17000, 'Deposit_Payment__c':'0/159.50',
             }]
@@ -168,10 +177,101 @@ def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
     assert draft['numbers'] == '25000\n17000'
     assert draft['deposit_override'] == '0/159.50'
     assert draft['docs'] is True and draft['ninety_min'] is True
+    assert draft['review'] is True
+    assert draft['checkbox_values']['review'] == {
+        'value': 'Manager Approved', 'edited': False,
+    }
     assert draft['dnr'] is True and draft['dnr_reason'] == 'Roofing'
     assert draft['product_results']['Roofing']['detail'] == 'Price Objection'
-    assert len(calls) == 3
-    assert all(command[1:3] == ['data', 'query'] for command in calls)
+    assert len(calls) == 4
+    assert sum(command[1:3] == ['data', 'query'] for command in calls) == 3
+    assert sum(command[1:3] == ['sobject', 'describe'] for command in calls) == 1
+
+
+def test_raw_checkbox_text_hydrates_visually_and_survives_refresh_without_conversion(tmp_path):
+    from zoneinfo import ZoneInfo
+    from printer_app.mod_resulting.salesforce_drafts import project_salesforce_drafts
+
+    work = {
+        WORK: {
+            'Id': WORK, 'Dispo__c': None, 'Docs__c': '  Completed  ',
+            'X90_Min__c': 'No', 'Promotion__c': True,
+            'MOD_Notes__c': '',
+        },
+    }
+    leads = {LEAD: {
+        'DNR_Do_Not_Reset__c': False,
+        'X1_Leg_Appointment__c': True,
+    }}
+    remote = clean_draft(project_salesforce_drafts(
+        ZoneInfo('America/Los_Angeles'), {WORK: LEAD}, work, leads, {}
+    )[WORK])
+    assert remote['docs'] is True
+    assert remote['ninety_min'] is False
+    assert remote['promotion'] is True
+    assert remote['checkbox_values']['docs'] == {
+        'value': '  Completed  ', 'edited': False
+    }
+    assert remote['checkbox_values']['ninety_min'] == {
+        'value': 'No', 'edited': False
+    }
+    assert remote['checkbox_values']['promotion'] == {
+        'value': True, 'edited': False
+    }
+    assert remote['checkbox_values']['dnr'] == {
+        'value': False, 'edited': False
+    }
+    assert remote['checkbox_values']['one_leg'] == {
+        'value': True, 'edited': False
+    }
+
+    repo = ResultingRepository(Database(tmp_path / 'printer.sqlite'))
+    repo.refresh(DAY, [RECORD], external_drafts={WORK: remote})
+    sheet = repo.sheets(DAY)[0]
+    assert sheet['submitted_at'] is None
+    assert sheet['draft']['checkbox_values'] == remote['checkbox_values']
+
+    # Saving other fields must never mark an untouched raw value as edited.
+    edited = clean_draft(dict(remote, notes='MOD note only'))
+    repo.save_draft(DAY, WORK, edited, sheet['revision'])
+    assert repo.sheets(DAY)[0]['draft']['checkbox_values']['docs']['edited'] is False
+    # Salesforce still wins on Refresh, including after a local popup edit.
+    changed = clean_draft(dict(edited, checkbox_values={
+        **edited['checkbox_values'],
+        'docs': {'value': 'Checked in office', 'edited': True},
+    }))
+    repo.save_draft(DAY, WORK, changed, repo.sheets(DAY)[0]['revision'])
+    repo.refresh(DAY, [RECORD], external_drafts={WORK: remote})
+    assert repo.sheets(DAY)[0]['draft']['checkbox_values']['docs'] == {
+        'value': '  Completed  ', 'edited': False
+    }
+
+
+def test_mixed_product_checkbox_values_are_visible_without_guessing_one():
+    from zoneinfo import ZoneInfo
+    from printer_app.mod_resulting.salesforce_drafts import project_salesforce_drafts
+
+    works = {WORK: {'Id': WORK, 'Dispo__c': 'PNS'}}
+    products = {WORK: [
+        {
+            'Product_Interest__c': 'Roofing', 'Result__c': 'Pitch No Sale',
+            'Free_Product_Lead__c': True, 'CXL_Per_Redline__c': False,
+        },
+        {
+            'Product_Interest__c': 'Siding', 'Result__c': 'Pitch No Sale',
+            'Free_Product_Lead__c': False, 'CXL_Per_Redline__c': False,
+        },
+    ]}
+    draft = clean_draft(project_salesforce_drafts(
+        ZoneInfo('America/Los_Angeles'), {WORK:''}, works, {}, products,
+    )[WORK])
+    assert draft['free_lead'] is True
+    assert draft['checkbox_values']['free_lead'] == {
+        'value': 'True / False', 'edited': False,
+    }
+    assert draft['checkbox_values']['cxl_at_lead'] == {
+        'value': False, 'edited': False,
+    }
 
 
 def test_remote_unresulted_notes_stay_black():
