@@ -289,7 +289,11 @@ def test_long_press_reads_completed_checkmarks_and_edits_unresulted_source_value
     popup.locator('#checkboxApply').click()
     expect(popup).to_be_hidden()
     expect(waiting.locator('[data-key=docs]')).to_be_checked()
-    page.wait_for_timeout(800)
+    page.wait_for_function("""({key, value}) => {
+        const sheet = document.querySelectorAll('.mod-sheet')[1];
+        const saved = JSON.parse(sheet.dataset.initial || '{}').checkbox_values?.[key];
+        return saved?.value === value && saved.edited === true && sheet.dataset.dirty === 'no';
+    }""", arg={'key':'docs','value':'Approved by MOD'}, timeout=8000)
     draft = service.repository.sheets(service.day())[1]['draft']
     assert draft['checkbox_values']['docs'] == {
         'value':'Approved by MOD','edited':True,
@@ -302,7 +306,11 @@ def test_long_press_reads_completed_checkmarks_and_edits_unresulted_source_value
     popup.locator('#checkboxChoice').select_option('Scheduled')
     popup.locator('#checkboxApply').click()
     expect(waiting.locator('[data-key=ninety_min]')).to_be_checked()
-    page.wait_for_timeout(800)
+    page.wait_for_function("""({key, value}) => {
+        const sheet = document.querySelectorAll('.mod-sheet')[1];
+        const saved = JSON.parse(sheet.dataset.initial || '{}').checkbox_values?.[key];
+        return saved?.value === value && saved.edited === true && sheet.dataset.dirty === 'no';
+    }""", arg={'key':'ninety_min','value':'Scheduled'}, timeout=8000)
     draft = service.repository.sheets(service.day())[1]['draft']
     assert draft['checkbox_values']['ninety_min'] == {
         'value':'Scheduled','edited':True,
@@ -349,7 +357,12 @@ def test_long_press_textarea_preserves_multiline_source_value_on_phone(mod_brows
     expect(popup.locator('#checkboxTextarea')).to_have_value('Reviewed\nPending upload')
     popup.locator('#checkboxTextarea').fill('Reviewed\nApproved\nFiled')
     popup.locator('#checkboxApply').click()
-    page.wait_for_timeout(800)
+    page.wait_for_function("""() => {
+        const sheet = document.querySelectorAll('.mod-sheet')[1];
+        const saved = JSON.parse(sheet.dataset.initial || '{}').checkbox_values?.docs;
+        return saved?.value === 'Reviewed\\nApproved\\nFiled' &&
+            saved.edited === true && sheet.dataset.dirty === 'no';
+    }""", timeout=8000)
     draft = service.repository.sheets(service.day())[1]['draft']
     assert draft['docs'] is True
     assert draft['checkbox_values']['docs'] == {
@@ -390,9 +403,11 @@ def test_completed_override_button_unlocks_one_sheet_and_refresh_restores_salesf
     content = first.locator('.field-notes .notes-content').bounding_box()
     assert 22 <= button['height'] < 36
     assert notes['x'] <= button['x']
-    assert notes['y'] + notes['height'] * .75 < button['y']
+    assert notes['y'] + notes['height'] * .5 < button['y']
     assert button['x'] + button['width'] <= notes['x'] + notes['width']
+    assert 0 <= notes['x'] + notes['width'] - (button['x'] + button['width']) < 10
     assert button['y'] + button['height'] <= notes['y'] + notes['height']
+    assert 0 <= notes['y'] + notes['height'] - (button['y'] + button['height']) < 10
     assert content['y'] + content['height'] <= button['y'] + .6
     initial_notes_bounds = notes
 
