@@ -65,7 +65,7 @@
   <label class="below-label"><span class="sr-only">T Close</span><input type="checkbox" data-key="t_close" {% if d.t_close %}checked{% endif %}></label>
  </div>
  {% if xs|length > 1 %}
- <div class="cell field-product replacement">
+ <div class="cell field-product replacement{% if color_code %} color-coded-product{% endif %}">
   <div class="product-summary"><b>Product Interest:</b> {{ sheet.product_interest }}</div>
   <label class="small-checkbox separate-products"><input type="checkbox" data-key="additional_products" {% if d.additional_products %}checked{% endif %}> Result individually</label>
   <button type="button" class="edit-product-results" {% if not d.additional_products or d.dispo=='sale' %}hidden{% endif %}>Edit products</button>
