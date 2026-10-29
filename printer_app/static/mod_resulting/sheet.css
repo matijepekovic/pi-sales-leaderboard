@@ -14,6 +14,10 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .mod-sheet .cell{position:absolute;min-width:0;min-height:0;padding:0;line-height:1.1;font-size:1.57cqw;visibility:hidden}
 .mod-sheet.surface-ready .cell{visibility:visible}
 .mod-sheet .replacement{background:#fff}
+/* Color Code uses Printer's original highlights. The hidden summary still
+   reserves space, so multi-product editor controls keep their positions. */
+.mod-sheet .field-product.color-coded-product{background:transparent}
+.mod-sheet .field-product.color-coded-product .product-summary{visibility:hidden}
 .mod-sheet .cell b,.mod-sheet .checklist span,.mod-sheet .field-ninety span{font-weight:700}
 .mod-sheet input,.mod-sheet select,.mod-sheet textarea{font-family:inherit;color:#000;font-size:inherit;min-width:0;max-width:100%}
 .mod-sheet input:not([type=checkbox]),.mod-sheet textarea,.mod-sheet select{border:0;background:transparent;border-radius:0;box-shadow:none;padding:0}
