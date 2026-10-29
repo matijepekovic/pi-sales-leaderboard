@@ -120,6 +120,10 @@ class ResultingService:
         self.repository.select_mod(day, *matches[0])
         return matches[0][1]
 
+    def override(self, day, work_order_id, revision):
+        """Unlock an explicitly selected completed sheet; never write yet."""
+        return self.repository.override(day, work_order_id, revision)
+
     def save(self, day, work_order_id, data, revision):
         data = clean_draft(data)
         row = next((s for s in self.repository.sheets(day)
@@ -227,8 +231,8 @@ class ResultingService:
         if not day_state or not day_state['mod_user_id']:
             raise ValueError('Select a MOD from Salesforce first.')
 
-        # A day can have multiple submissions; the repository locks one batch,
-        # validates exact selected IDs, and excludes previously submitted items.
+        # A day can have multiple submissions; only explicitly overridden
+        # completed items can re-enter a batch. All other receipts stay locked.
         rows = self.repository.begin_submit(day, work_order_ids)
         sent = 0
         staged = None
@@ -243,8 +247,8 @@ class ResultingService:
             if len(plans) != len(rows):
                 raise ValueError('Salesforce preflight produced an incomplete submission plan.')
 
-            # Preserve all earlier submitted pages when a selected batch is
-            # published; never replace the PDF with only the latest selection.
+            # An actively overridden page is not a completed PDF receipt until
+            # its new Salesforce update succeeds; avoid duplicate/unsent pages.
             previous = self.repository.submitted_sheets(day)
             pdf_payload = self.pdf_exporter(previous + rows) if self.pdf_exporter else None
             staged = self._stage_completed_pdf(day, pdf_payload)
