@@ -108,7 +108,7 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
         elif raw_dispo and not dispo:
             raise ResultingSalesforceError('Unknown Salesforce Work Order disposition.')
 
-        per_product, sales, details, seen = {}, {}, set()
+        per_product, sales, details, seen = {}, {}, set(), set()
         ranked_results = []
         for item in products.get(work_id, ()):
             product = str(item.get(PR['product']) or '').strip()
