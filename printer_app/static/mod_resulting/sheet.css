@@ -159,7 +159,7 @@ body.dialog-open{overflow:hidden}
 .submitted .cell{pointer-events:none}
 /* Reserve a narrow bottom strip within completed Notes, not a new row
    outside the PDF or an overlay over existing MOD Notes/redline text. */
-.submitted .field-notes .notes-content{bottom:clamp(25px,2.4cqw,32px)}
+.submitted .field-notes .notes-content{bottom:clamp(32px,2.8cqw,40px)}
 /* A locked checkmark remains inspectable through its parent label. The input
    itself stays disabled and cannot be edited until explicit Override. */
 .submitted .cell[data-checkbox-inspect="yes"]{pointer-events:auto}
