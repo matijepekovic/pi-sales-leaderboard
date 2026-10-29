@@ -8,7 +8,7 @@ from flask import Blueprint, Response, abort, current_app, jsonify, render_templ
 from .surface import SheetSurfaceError, overlay_css
 
 
-def blueprint(service, surface):
+def blueprint(service, surface, *, color_code=None):
     bp = Blueprint('mod_resulting', __name__, url_prefix='/mod-resulting')
 
     @bp.get('')
@@ -68,6 +68,7 @@ def blueprint(service, surface):
             dnr_reasons=choices['dnr_reasons'],
             products=choices.get('products', []),
             live_writes_enabled=service.allow_salesforce_writes,
+            color_code=bool(color_code()) if color_code else False,
             notice=notice,
         )
 
@@ -82,7 +83,8 @@ def blueprint(service, surface):
         except (LookupError, ValueError):
             abort(404)
         try:
-            payload = surface.image(record)
+            payload = (surface.image(record, color_code=bool(color_code()))
+                       if color_code else surface.image(record))
         except SheetSurfaceError as exc:
             return Response(str(exc), status=503, mimetype='text/plain')
         return Response(payload, mimetype='image/png')

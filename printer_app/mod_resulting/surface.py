@@ -92,14 +92,16 @@ class ModSheetSurface:
         self._slots = BoundedSemaphore(2)
 
     @lru_cache(maxsize=16)
-    def image(self, record: ModSheetRecord) -> bytes:
+    def image(self, record: ModSheetRecord, *, color_code=False) -> bytes:
         """Render one original sheet, crop it losslessly, and return its PNG.
 
         Small bounded in-memory cache; no customer image files are persisted.
         Lazy browser loading limits work for a day containing many leads.
         """
         with self._slots:
-            original = PdfReader(BytesIO(self.renderer([record])))
+            payload = (self.renderer([record], color_code=True) if color_code
+                       else self.renderer([record]))
+            original = PdfReader(BytesIO(payload))
             if len(original.pages) != 1:
                 raise SheetSurfaceError('The MOD renderer did not produce one sheet page.')
             writer = PdfWriter()

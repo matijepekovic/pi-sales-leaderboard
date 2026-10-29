@@ -153,6 +153,15 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         mod_sheet_settings, mod_sheet_test_print, mod_sheet_manual_gallery
     ))
 
+    # MOD Resulting uses the same saved Color Code choice as printed MOD sheets.
+    # Both renderers remain independent of settings storage and Salesforce.
+    def resulting_color_code():
+        saved = mod_sheet_repository.settings()
+        return bool(saved and saved.color_code)
+
+    def resulting_pdf(sheets):
+        return render_resulting_pdf(sheets, color_code=resulting_color_code())
+
     # Independently replaceable digital MOD resulting sandbox.
     # The existing printer PDF generator and read-only source remain unchanged.
     mod_resulting = ResultingService(
@@ -160,12 +169,15 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         ResultingSalesforceAdapter(
             executable='/usr/bin/sf', target_org='work', timezone_name=cfg.timezone),
         mod_sheet_repository, cfg.timezone,
-        pdf_exporter=render_resulting_pdf,
+        pdf_exporter=resulting_pdf,
         output_directory=cfg.data_dir / 'mod-resulting',
         allow_salesforce_writes=cfg.mod_resulting_live_writes,
     )
     app.extensions['mod_resulting'] = mod_resulting
-    app.register_blueprint(mod_resulting_blueprint(mod_resulting, ModSheetSurface(render_mod_pdf)))
+    app.register_blueprint(mod_resulting_blueprint(
+        mod_resulting, ModSheetSurface(render_mod_pdf),
+        color_code=resulting_color_code,
+    ))
 
     @app.template_filter('localtime')
     def localtime(value):

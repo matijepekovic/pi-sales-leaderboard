@@ -1,5 +1,6 @@
 """Literal-template regressions: keep Printer as the sole owner of the form."""
-from dataclasses import replace
+from dataclasses import asdict, replace
+from types import SimpleNamespace
 from io import BytesIO
 from pathlib import Path
 import shutil
@@ -52,6 +53,30 @@ def test_background_is_pixel_identical_to_original_printer_pdf(tmp_path):
     assert len(received) == 2  # Routing refresh cannot reuse a stale image.
 
 
+@pytest.mark.skipif(not shutil.which('pdftoppm'), reason='Poppler required for color rendering')
+def test_color_code_reuses_printer_renderer_and_separate_image_cache():
+    calls = []
+
+    def renderer(records, *, color_code=False):
+        calls.append(color_code)
+        return render_mod_pdf(records, color_code=color_code)
+
+    surface = ModSheetSurface(renderer)
+    plain = surface.image(RECORD, color_code=False)
+    colored = surface.image(RECORD, color_code=True)
+    assert plain != colored
+    assert calls == [False, True]
+    assert surface.image(RECORD, color_code=True) == colored
+    assert surface.image(RECORD, color_code=False) == plain
+    assert calls == [False, True]
+
+    with Image.open(BytesIO(colored)) as image:
+        # Roofing's cyan and Siding's green come solely from Printer's
+        # existing PRODUCT_COLORS palette, not a second MOD Resulting palette.
+        assert any(r < 40 and g > 140 and b > 200
+                   for r, g, b in image.convert('RGB').getdata())
+
+
 def test_coordinates_use_the_original_mod_notes_cell_and_allow_only_overlays():
     notes = BOXES['notes']
     assert notes.x == pytest.approx(1 + 571.65 * .4)
@@ -76,6 +101,66 @@ def test_render_failure_never_substitutes_a_rebuilt_form():
     renderer = ModSheetSurface(render_mod_pdf, rasterizer='/missing-pdftoppm')
     with pytest.raises(SheetSurfaceError, match='could not render'):
         renderer.image(RECORD)
+
+
+@pytest.mark.skipif(not shutil.which('pdftoppm'), reason='Poppler required for color verification')
+def test_mod_resulting_preview_and_completed_pdf_follow_saved_mod_color_setting(tmp_path):
+    from printer_app.app import create_app
+    from printer_app.config import Config
+    from printer_app.mod_sheets.policy import ModSheetAutomationSettings
+    from printer_app.tests.auth_helpers import login_admin
+
+    env = tmp_path / 'env'
+    env.write_text('EMAIL_ENABLED=0\n')
+    app = create_app(Config(data_dir=tmp_path / 'data', env_file=env,
+                            secret_key='s' * 64, email_enabled=False))
+    app.testing = True
+    service = app.extensions['mod_resulting']
+    service.repository.refresh(service.day(), [RECORD], market_segment='Olympia')
+    service.writer = SimpleNamespace(
+        mod_users=lambda market: [],
+        dropdowns=lambda: {'result_details': [], 'dnr_reasons': [], 'products': []},
+    )
+    client = app.test_client()
+    login_admin(client)
+    image_url = '/mod-resulting/sheet/' + service.day() + '/' + RECORD.source_id + '.png'
+
+    plain = client.get(image_url)
+    assert plain.status_code == 200
+    page = client.get('/mod-resulting')
+    assert page.status_code == 200
+    assert b'class="cell field-product replacement color-coded-product"' not in page.data
+    rows = [{'snapshot': asdict(RECORD), 'draft': {}}]
+    plain_pdf = service.pdf_exporter(rows)
+
+    settings = app.extensions['mod_sheet_settings']
+    settings.save(ModSheetAutomationSettings(market_segment='Olympia', color_code=True))
+    colored = client.get(image_url)
+    assert colored.status_code == 200 and colored.data != plain.data
+    colored_page = client.get('/mod-resulting')
+    assert b'class="cell field-product replacement color-coded-product"' in colored_page.data
+    colored_pdf = service.pdf_exporter(rows)
+
+    # Check the actual completed PDF pixels, not only PDF metadata or API flags.
+    for label, payload in (('plain', plain_pdf), ('color', colored_pdf)):
+        target = tmp_path / label
+        target.with_suffix('.pdf').write_bytes(payload)
+        subprocess.run([
+            'pdftoppm', '-f', '1', '-singlefile', '-r', '90', '-png',
+            str(target.with_suffix('.pdf')), str(target),
+        ], check=True, capture_output=True, timeout=30)
+    with Image.open(tmp_path / 'plain.png') as plain_image, \
+         Image.open(tmp_path / 'color.png') as colored_image:
+        assert ImageChops.difference(
+            plain_image.convert('RGB'), colored_image.convert('RGB')
+        ).getbbox() is not None
+        assert any(r < 40 and g > 140 and b > 200
+                   for r, g, b in colored_image.convert('RGB').getdata())
+
+    settings.save(ModSheetAutomationSettings(market_segment='Olympia', color_code=False))
+    assert client.get(image_url).data == plain.data
+    assert b'class="cell field-product replacement color-coded-product"' not in client.get('/mod-resulting').data
+    assert service.allow_salesforce_writes is False
 
 
 def test_surface_endpoints_require_printer_login_and_a_saved_day(tmp_path):
