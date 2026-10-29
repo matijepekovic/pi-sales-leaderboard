@@ -13,7 +13,8 @@
  data-override="{{ url_for('mod_resulting.override') }}"
  data-save="{{ url_for('mod_resulting.save') }}"
  data-mod="{{ url_for('mod_resulting.choose_mod') }}"
- data-submit="{{ url_for('mod_resulting.submit') }}">
+ data-submit="{{ url_for('mod_resulting.submit') }}"
+ data-checkbox-specs='{{ checkbox_specs|tojson|forceescape }}'>
 <div class="floating-controls" aria-label="MOD sheet controls">
  <input id="nameSearch" type="search" placeholder="Search customer or rep" aria-label="Search customer or assigned service resource">
  <label class="mod-choice">MOD
@@ -277,6 +278,35 @@
 <p class="no-sheets">No MOD sheets loaded for today. Use Refresh to pull from Salesforce.</p>
 {% endfor %}
 </div>
+<dialog class="editor-dialog checkbox-dialog" id="checkboxDialog" aria-label="Checkbox value">
+  <div class="editor-heading">
+    <h2>Value</h2>
+    <button type="button" class="close-popover editor-close" aria-label="Close checkbox value">×</button>
+  </div>
+  <div class="editor-body">
+    <div id="checkboxCurrent" class="checkbox-current" aria-live="polite"></div>
+    <label id="checkboxTextEditor" hidden>
+      <span class="sr-only">New value</span>
+      <input id="checkboxText" type="text" aria-label="New checkbox value">
+    </label>
+    <label id="checkboxChoiceEditor" hidden>
+      <span class="sr-only">New value</span>
+      <select id="checkboxChoice" aria-label="Choose checkbox value"></select>
+    </label>
+    <label id="checkboxBooleanEditor" hidden>
+      <span class="sr-only">New value</span>
+      <select id="checkboxBoolean" aria-label="Choose checked value">
+        <option value="true">True</option>
+        <option value="false">False</option>
+      </select>
+    </label>
+    <p id="checkboxReadOnly" class="editor-hint" hidden></p>
+  </div>
+  <div class="editor-footer">
+    <button type="button" class="close-popover editor-secondary">Close</button>
+    <button type="button" id="checkboxApply" class="editor-primary" hidden>Save value</button>
+  </div>
+</dialog>
 <dialog class="editor-dialog time-dialog" id="timeDialog" aria-label="Choose call time">
  <div class="editor-heading">
   <div><h2 id="timeTitle">Call time</h2><p>Choose hour, minute and AM or PM.</p></div>
