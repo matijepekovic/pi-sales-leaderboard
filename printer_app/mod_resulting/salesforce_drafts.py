@@ -48,6 +48,24 @@ def _clock(value, zone):
         ' PM' if hour >= 12 else ' AM')
 
 
+def _checked(value):
+    """Project a source scalar to an indicator without discarding the source."""
+    if value is None or value is False:
+        return False
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return bool(value.strip()) and value.strip().casefold() not in (
+            'false', 'no', '0', 'off', 'unchecked', 'none', 'null',
+        )
+    return bool(value)
+
+
+def _source_value(value):
+    """Keep the exact supported Salesforce scalar; never invent a yes/no label."""
+    return value if value is None or isinstance(value, (str, bool)) else str(value)
+
+
 def project_salesforce_drafts(zone, identities, works, leads, products):
     dispositions = {name.casefold(): key for key, name in WORK_ORDER_DISPO.items()}
     results = {name.casefold(): key for key, name in PRODUCT_RESULT_VALUE.items()
@@ -69,12 +87,12 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             'call_2': _clock(work.get(WO['call_2']), zone),
             'need': str(work.get(WO['need']) or ''),
             'want': str(work.get(WO['want']) or ''),
+            'checkbox_values': {},
         }
         for field in ('docs', 'ninety_min', 'promotion'):
-            value = work.get(WO[field])
-            if value is not None and not isinstance(value, bool):
-                raise ResultingSalesforceError('Invalid Salesforce checkbox value.')
-            draft[field] = value is True
+            value = _source_value(work.get(WO[field]))
+            draft['checkbox_values'][field] = {'value': value, 'edited': False}
+            draft[field] = _checked(value)
         prices = [_money(work.get(WO[key])) for key in ('start_price', 'final_price')]
         draft['numbers'] = '\n'.join(price for price in prices if price)
         # Salesforce's existing Deposit/Payment field is text and can contain
@@ -87,13 +105,15 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             lead = leads[lead_id]
             dnr = lead.get(LEAD_FIELDS['dnr'])
             one_leg = lead.get(LEAD_FIELDS['one_leg'])
-            if (dnr is not None and not isinstance(dnr, bool)) or (
-                one_leg is not None and not isinstance(one_leg, bool)
-            ):
-                raise ResultingSalesforceError('Invalid Salesforce Lead checkbox.')
-            draft['dnr'] = dnr is True
+            draft['checkbox_values']['dnr'] = {
+                'value': _source_value(dnr), 'edited': False,
+            }
+            draft['checkbox_values']['one_leg'] = {
+                'value': _source_value(one_leg), 'edited': False,
+            }
+            draft['dnr'] = _checked(dnr)
             draft['dnr_reason'] = str(lead.get(LEAD_FIELDS['dnr_reason']) or '')
-            draft['one_leg'] = one_leg is True
+            draft['one_leg'] = _checked(one_leg)
             # These are independent Salesforce fields, not conditional on
             # WorkOrder.Dispo__c being populated.
             draft['lead_status'] = str(lead.get(LEAD_FIELDS['status']) or '')
@@ -110,6 +130,7 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
 
         per_product, sales, details, seen = {}, {}, set(), set()
         ranked_results = []
+        product_flags = {'free_lead': [], 'cxl_at_lead': []}
         for item in products.get(work_id, ()):
             product = str(item.get(PR['product']) or '').strip()
             if not product:
@@ -148,8 +169,17 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             if result == 'sale' and price and Decimal(price) > 0:
                 sales[product] = {'price': price, 'deposit': ''}
             for key in ('free_lead', 'cxl_at_lead'):
-                if item.get(PR[key]) is True:
+                value = _source_value(item.get(PR[key]))
+                product_flags[key].append(value)
+                if _checked(value):
                     draft[key] = True
+        # Multiple product rows can have different checkboxes. Show the raw
+        # source value only when there is one unambiguous value for the sheet.
+        for key, values in product_flags.items():
+            if values and all(value == values[0] for value in values):
+                draft['checkbox_values'][key] = {
+                    'value': values[0], 'edited': False,
+                }
         # Product-specific explanations must never become the reason for a
         # Lead-authoritative CXL if their results contradict cancellation.
         chosen_details = set() if lead_canceled else details
