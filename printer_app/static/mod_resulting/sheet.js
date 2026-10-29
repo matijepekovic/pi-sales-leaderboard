@@ -18,6 +18,7 @@
   const checkboxDialog = document.getElementById('checkboxDialog');
   const checkboxCurrent = document.getElementById('checkboxCurrent');
   const checkboxText = document.getElementById('checkboxText');
+  const checkboxTextarea = document.getElementById('checkboxTextarea');
   const checkboxChoice = document.getElementById('checkboxChoice');
   const checkboxBoolean = document.getElementById('checkboxBoolean');
   const checkboxApply = document.getElementById('checkboxApply');
@@ -49,7 +50,7 @@
       info?.editable === true && ['boolean', 'string', 'textarea', 'picklist'].includes(info.kind);
     checkboxTarget = null;
     checkboxCurrent.textContent = readableCheckbox(raw);
-    for (const id of ['checkboxTextEditor', 'checkboxChoiceEditor', 'checkboxBooleanEditor']) {
+    for (const id of ['checkboxTextEditor', 'checkboxTextareaEditor', 'checkboxChoiceEditor', 'checkboxBooleanEditor']) {
       document.getElementById(id).hidden = true;
     }
     checkboxReadOnly.hidden = true;
@@ -81,6 +82,10 @@
         }
         checkboxChoice.value = raw == null ? '' : String(raw);
         document.getElementById('checkboxChoiceEditor').hidden = false;
+      } else if (kind === 'textarea') {
+        checkboxTextarea.value = raw == null ? '' : String(raw);
+        checkboxTextarea.maxLength = Math.min(Number(info.length) || 3000, 3000);
+        document.getElementById('checkboxTextareaEditor').hidden = false;
       } else {
         checkboxText.value = raw == null ? '' : String(raw);
         checkboxText.maxLength = Math.min(Number(info.length) || 3000, 3000);
@@ -97,7 +102,8 @@
     }
     openDialog(checkboxDialog, canEdit
       ? (info.kind === 'boolean' ? '#checkboxBoolean' :
-         info.kind === 'picklist' ? '#checkboxChoice' : '#checkboxText')
+         info.kind === 'picklist' ? '#checkboxChoice' :
+         info.kind === 'textarea' ? '#checkboxTextarea' : '#checkboxText')
       : '.editor-close');
   }
   checkboxApply.addEventListener('click', () => {
@@ -108,7 +114,8 @@
     else if (kind === 'picklist') {
       if (checkboxChoice.selectedOptions[0]?.disabled) return;
       value = checkboxChoice.value || null;
-    } else value = checkboxText.value || null;
+    } else if (kind === 'textarea') value = checkboxTextarea.value || null;
+    else value = checkboxText.value || null;
     if (value === null && !info.nullable) return;
     checkboxTarget = null;
     closeDialog(checkboxDialog);
