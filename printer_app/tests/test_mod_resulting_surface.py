@@ -52,6 +52,30 @@ def test_background_is_pixel_identical_to_original_printer_pdf(tmp_path):
     assert len(received) == 2  # Routing refresh cannot reuse a stale image.
 
 
+@pytest.mark.skipif(not shutil.which('pdftoppm'), reason='Poppler required for color rendering')
+def test_color_code_reuses_printer_renderer_and_separate_image_cache():
+    calls = []
+
+    def renderer(records, *, color_code=False):
+        calls.append(color_code)
+        return render_mod_pdf(records, color_code=color_code)
+
+    surface = ModSheetSurface(renderer)
+    plain = surface.image(RECORD, color_code=False)
+    colored = surface.image(RECORD, color_code=True)
+    assert plain != colored
+    assert calls == [False, True]
+    assert surface.image(RECORD, color_code=True) == colored
+    assert surface.image(RECORD, color_code=False) == plain
+    assert calls == [False, True]
+
+    with Image.open(BytesIO(colored)) as image:
+        # Roofing's cyan and Siding's green come solely from Printer's
+        # existing PRODUCT_COLORS palette, not a second MOD Resulting palette.
+        assert any(r < 40 and g > 140 and b > 200
+                   for r, g, b in image.convert('RGB').getdata())
+
+
 def test_coordinates_use_the_original_mod_notes_cell_and_allow_only_overlays():
     notes = BOXES['notes']
     assert notes.x == pytest.approx(1 + 571.65 * .4)
