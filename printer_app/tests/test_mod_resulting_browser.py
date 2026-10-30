@@ -1280,3 +1280,47 @@ def test_calculated_amount_placeholders_update_and_clear_to_automatic(mod_browse
     expect(sheet.locator('[data-price-display=deposit_override]')).to_have_text('500/239.50')
     popup.locator('.editor-primary').click()
     assert not writer.applied
+
+
+@pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
+def test_primary_product_selected_in_existing_popups_without_resizing_sheet(mod_browser, viewport):
+    from playwright.sync_api import expect
+
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width':viewport[0], 'height':viewport[1]})
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+    original = first.bounding_box()
+    first.locator('[data-key="dispo"]').select_option('pns')
+    # The product popup must remain accessible without Result individually.
+    expect(first.locator('.edit-product-results')).to_be_visible()
+    first.locator('.edit-product-results').click()
+    popup = first.locator('.product-panel')
+    expect(popup).to_be_visible()
+    popup.locator('[data-primary-selection]').select_option('Siding')
+    popup.locator('.editor-primary').click()
+    page.wait_for_function("""() => {
+        const sheet = document.querySelector('.mod-sheet');
+        return JSON.parse(sheet.dataset.initial || '{}').primary_product === 'Siding'
+            && sheet.dataset.dirty === 'no';
+    }""", timeout=8000)
+    assert service.repository.sheets(service.day())[0]['draft']['primary_product'] == 'Siding'
+
+    # Sale pivots select the primary from the existing Sold products popup.
+    first.locator('[data-key="dispo"]').select_option('sale')
+    sold = first.locator('.sale-panel')
+    expect(sold).to_be_visible()
+    sold.locator('[data-primary-selection]').select_option('Roofing')
+    sold.locator('[data-sale-product="Roofing"] [data-sale-selected]').check()
+    sold.locator('[data-sale-product="Roofing"] [data-sale-price]').fill('17000')
+    sold.locator('[data-sale-product="Roofing"] [data-sale-deposit]').fill('0')
+    sold.locator('.sale-done').click()
+    page.wait_for_function("""() => {
+        const sheet = document.querySelector('.mod-sheet');
+        const draft = JSON.parse(sheet.dataset.initial || '{}');
+        return draft.primary_product === 'Roofing' && draft.dispo === 'sale'
+            && sheet.dataset.dirty === 'no';
+    }""", timeout=8000)
+    assert service.repository.sheets(service.day())[0]['draft']['primary_product'] == 'Roofing'
+    assert first.bounding_box()['width'] == original['width']
+    assert writer.applied == []

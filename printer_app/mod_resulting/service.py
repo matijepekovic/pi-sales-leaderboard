@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from ..mod_sheet_contract import ModSheetRecord
 from .contract import (
     clean_draft, final_redline_text, outcome_fields, sold_products,
-    individual_product_sales, deposit_payment_text,
+    individual_product_sales, deposit_payment_text, product_result_context,
 )
 
 
@@ -141,7 +141,8 @@ class ResultingService:
         return self.repository.save_draft(day, work_order_id, data, revision)
 
     @staticmethod
-    def submission_payload(sheet, mod_id):
+    def submission_payload(sheet, mod_id, *, resulted_on=None,
+                           lead_appointment_date=''):
         draft = clean_draft(sheet['draft'])
         fields = outcome_fields(draft)
         if fields is None:
@@ -198,12 +199,19 @@ class ResultingService:
                     })
             individual_sales = individual_product_sales(draft)
 
+        context = product_result_context(
+            draft, results,
+            lead_appointment_date=lead_appointment_date,
+            resulted_on=resulted_on or sheet['day'],
+        )
+
         return dict(
             day=sheet['day'], work_order_id=sheet['work_order_id'],
             work_order_number=sheet['snapshot']['work_order_number'],
             lead_id=sheet['snapshot'].get('lead_source_id', ''),
             mod_id=mod_id, dispo=draft['dispo'], fields=fields,
             draft=draft, product_results=results,
+            product_result_context=context,
             deposit_payment=deposit_payment_text(draft),
             final_redlines=final_redline_text(draft),
         )
@@ -217,10 +225,19 @@ class ResultingService:
             raise LookupError('There are no MOD sheets to print for this day.')
         return self.pdf_exporter(sheets)
 
-    def _apply_batch(self, day, mod_id, rows, *, job_id=None):
+    def _apply_batch(self, day, mod_id, rows, *, job_id=None, resulted_on=None):
         """Single Salesforce write path for direct and background submissions."""
-        batch = [self.submission_payload(dict(row, day=day), mod_id)
-                 for row in rows]
+        resulting_date = resulted_on or self.day()
+        date_reader = getattr(self.writer, 'lead_appointment_dates', None)
+        leads = sorted({row['snapshot'].get('lead_source_id', '')
+                        for row in rows if row['snapshot'].get('lead_source_id')})
+        dates = date_reader(leads) if callable(date_reader) else {}
+        if not isinstance(dates, dict):
+            raise ValueError('Lead appointment date lookup returned invalid data.')
+        batch = [self.submission_payload(
+            dict(row, day=day), mod_id, resulted_on=resulting_date,
+            lead_appointment_date=dates.get(row['snapshot'].get('lead_source_id', ''), ''),
+        ) for row in rows]
         # Preflight the entire batch before any Salesforce write.
         plans = self.writer.prepare(batch)
         if len(plans) != len(rows):
@@ -279,7 +296,9 @@ class ResultingService:
             return None
         try:
             result = self._apply_batch(
-                job['day'], job['mod_id'], job['rows'], job_id=job['job_id'])
+                job['day'], job['mod_id'], job['rows'], job_id=job['job_id'],
+                resulted_on=datetime.fromtimestamp(
+                    job['queued_at'], self.zone).date().isoformat())
             self.repository.finish_submission_job(job['job_id'])
             return {'ok': True, **result}
         except Exception as exc:

@@ -66,13 +66,21 @@
  <div class="cell field-product replacement{% if color_code %} color-coded-product{% endif %}">
   <div class="product-summary"><b>Product Interest:</b> {{ sheet.product_interest }}</div>
   <label class="small-checkbox separate-products"><input type="checkbox" data-key="additional_products" {% if d.additional_products %}checked{% endif %}> Result individually</label>
-  <button type="button" class="edit-product-results" {% if not d.additional_products or d.dispo=='sale' %}hidden{% endif %}>Edit products</button>
+  <button type="button" class="edit-product-results" {% if d.dispo=='sale' %}hidden{% endif %}>Products</button>
   <dialog class="editor-dialog product-panel" aria-label="Individual product results">
    <div class="editor-heading">
-    <div><h2>Results by product</h2><p>Set a different outcome for each original product.</p></div>
+    <div><h2>Results by product</h2><p>Choose the primary product. Check Result individually to change individual outcomes.</p></div>
     <button type="button" class="close-popover editor-close" aria-label="Close individual product results">×</button>
    </div>
    <div class="editor-body">
+   <label>Primary product
+    <select data-primary-selection aria-label="Primary issued-lead product">
+     <option value="">Select primary product</option>
+     {% for product in xs %}{% if product.strip() %}
+     <option value="{{ product.strip() }}" {% if d.primary_product==product.strip() %}selected{% endif %}>{{ product.strip() }}</option>
+     {% endif %}{% endfor %}
+    </select>
+   </label>
    {% for product in xs %}{% if product.strip() %}
    <div class="product-result-row" data-product="{{ product.strip() }}">
     <strong>{{ product.strip() }}</strong>
@@ -211,6 +219,14 @@
   </div>
   <div class="editor-body">
    {% if products %}
+   <label>Primary product
+    <select data-primary-selection aria-label="Primary sold product">
+     <option value="">Select primary product</option>
+     {% for product in products %}
+     <option value="{{ product.value }}" {% if d.primary_product==product.value %}selected{% endif %}>{{ product.label }}</option>
+     {% endfor %}
+    </select>
+   </label>
    {% for product in products %}
    {% set sold = d.sale_products.get(product.value) %}
    <div class="sale-product-row" data-sale-product="{{ product.value }}">

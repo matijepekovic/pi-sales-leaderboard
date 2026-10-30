@@ -138,6 +138,7 @@ def _adapter(*, existing_results=(), lead_interest='Roofing;Siding', schemas=Non
             elif ' FROM Lead ' in query:
                 result = {'records':[{
                     'Id': LEAD, 'Product_Interest_lead__c': lead_interest,
+                    'Appointment_Date__c': '2026-10-27',
                 }], 'done':True}
             else:
                 raise AssertionError('Unexpected query: '+query)
@@ -803,3 +804,22 @@ def test_numeric_salesforce_deposit_field_is_rejected_before_any_write():
             'Roofing': {'price':'18000', 'deposit':'0', 'payment':'159'},
         }))
     assert all(command[1:3] != ['data', 'update'] for command in calls)
+
+
+def test_phase2_salesforce_date_reader_batches_authoritative_lead_dates_only():
+    adapter, calls = _adapter()
+    assert adapter.lead_appointment_dates([LEAD]) == {LEAD:'2026-10-27'}
+    queries = [command[command.index('--query') + 1] for command in calls
+               if command[1:3] == ['data', 'query']]
+    assert len(queries) == 1
+    assert 'SELECT Id,Appointment_Date__c FROM Lead WHERE Id IN (' in queries[0]
+    assert 'WorkOrder' not in queries[0]
+    assert not any(command[1:3] == ['data', 'record'] for command in calls)
+
+    with pytest.raises(ResultingSalesforceError, match='record identity'):
+        adapter.lead_appointment_dates(['invalid-id'])
+    original = adapter._query
+    adapter._query = lambda query: ([] if 'Appointment_Date__c' in query else
+                                    original(query))
+    with pytest.raises(ResultingSalesforceError, match='unavailable'):
+        adapter.lead_appointment_dates([LEAD])

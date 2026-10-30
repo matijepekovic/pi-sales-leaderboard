@@ -24,6 +24,8 @@ WO_APPOINTMENT_DATETIME = 'Appointment_Date_Time__c'
 WO_APPOINTMENT_DATE = 'Appointment_Date__c'
 SERVICE_APPOINTMENT = 'ServiceAppointment'
 PRODUCT_RESULT = 'Product_Interest_Result__c'
+# Read-only Flow identity until the Phase 3 write mapping is implemented.
+PR_ISSUED_COUNT = 'Include_in_Issued_Lead_Count__c'
 # Review exists as a training field, but its live API metadata must be
 # verified on checked submissions; do not require it for unrelated jobs.
 REVIEW_FIELD = 'Review__c'
@@ -445,6 +447,49 @@ class ResultingSalesforceAdapter:
                 )
             result[key] = ident
         return result
+
+    def lead_appointment_dates(self, lead_ids):
+        """Read current Lead dates for the Flow's branch decisions, in batches.
+
+        A separate, replaceable source lookup keeps this Salesforce field out
+        of the shared MOD sheet contract and Gallery. Never derive the date
+        from a Work Order's scheduled start or from a stale local draft.
+        """
+        if isinstance(lead_ids, str):
+            raise ResultingSalesforceError('Lead date lookup requires record identities.')
+        lead_ids = tuple(lead_ids)
+        requested = {}
+        for raw in lead_ids:
+            ident = _require_id(raw)
+            requested.setdefault(ident[:15], ident)
+        if not requested:
+            return {}
+
+        dates = {}
+        keys = list(requested)
+        for offset in range(0, len(keys), 40):
+            batch = keys[offset:offset + 40]
+            query = (
+                'SELECT Id,Appointment_Date__c FROM ' + LEAD
+                + ' WHERE Id IN ('
+                + ','.join(_soql(requested[key]) for key in batch)
+                + ') ORDER BY Id LIMIT 2000'
+            )
+            for row in self._query(query):
+                ident = _require_id(str(row.get('Id') or ''))[:15]
+                if ident not in batch or ident in dates:
+                    raise ResultingSalesforceError(
+                        'Lead appointment date lookup returned unexpected records.'
+                    )
+                value = row.get('Appointment_Date__c')
+                if value is not None and not isinstance(value, str):
+                    raise ResultingSalesforceError('Salesforce Lead appointment date is invalid.')
+                dates[ident] = value or ''
+            if any(key not in dates for key in batch):
+                raise ResultingSalesforceError(
+                    'A Lead is unavailable for appointment date lookup.'
+                )
+        return {raw: dates[_require_id(raw)[:15]] for raw in lead_ids}
 
     def _lead_product_interest(self, lead_id):
         rows = self._query(

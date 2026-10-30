@@ -1,6 +1,7 @@
 """Normalized MOD resulting inputs. No Salesforce field names belong here."""
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal, InvalidOperation
 import re
 
@@ -34,7 +35,7 @@ MAX_LENGTHS = {
     'numbers': 1800, 'notes': 9000, 'redlines': 4500,
     'call_1': 8, 'call_2': 8, 'need': 1000, 'want': 1000,
     'result_detail': 120, 'dnr_reason': 500, 'dispo': 8,
-    'primary_product': 60, 'lead_status': 120, 'previous_result': 120,
+    'primary_product': 80, 'lead_status': 120, 'previous_result': 120,
     'start_price_override': 30, 'final_price_override': 30,
     'deposit_override': 30,
 }
@@ -221,6 +222,70 @@ def clean_draft(raw):
 def dnr_redline(reason):
     values = dnr_reasons(reason)
     return 'DNR - ' + '; '.join(values) if values else ''
+
+
+def product_result_context(draft, results, *, lead_appointment_date, resulted_on):
+    """Plan primary/additional identities and date sources without vendor fields.
+
+    Existing Result Appointment Flow: the first selected product is the
+    primary issued lead, other selected products are additional (not issued).
+    Canceled primary outcomes do not count as issued. The primary result uses
+    today's date only for an appointment dated today; historical results use
+    the Lead's date. The future/other Flow path copies the existing PIR input
+    date and must be resolved by the source adapter during write preflight.
+
+    Missing source dates or an unselected multi-product primary remain
+    explicitly unresolved. Phase 3 must not write those fields by guessing.
+    """
+    try:
+        submitted = date.fromisoformat(resulted_on)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('The resulting date must be an ISO calendar date.') from exc
+    lead_day = None
+    if lead_appointment_date:
+        try:
+            lead_day = date.fromisoformat(lead_appointment_date)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('The Lead appointment date is invalid. Refresh Salesforce.') from exc
+
+    canonical = {}
+    for result in results:
+        product = result['product']
+        key = product.casefold()
+        if key in canonical:
+            raise ValueError('A product cannot have two resulting entries.')
+        canonical[key] = product
+
+    selected = draft.get('primary_product', '').strip()
+    if selected and selected.casefold() not in canonical:
+        raise ValueError('The primary product must be one of the resulted products.')
+    primary = (canonical[selected.casefold()] if selected else
+               results[0]['product'] if len(results) == 1 else '')
+    planned = {}
+    for result in results:
+        product = result['product']
+        is_primary = bool(primary) and product.casefold() == primary.casefold()
+        # An explicit choice is required for multi-product writes in Phase 3;
+        # do not silently treat list order as a business decision.
+        role = ('primary' if is_primary else
+                'additional' if primary else 'unresolved')
+        if lead_day is None:
+            source, appointment_day = 'unresolved', ''
+        elif is_primary and lead_day == submitted:
+            source, appointment_day = 'today', submitted.isoformat()
+        elif is_primary and lead_day > submitted:
+            source, appointment_day = 'existing_result_input', ''
+        else:
+            source, appointment_day = 'lead', lead_day.isoformat()
+
+        planned[product] = {
+            'role': role,
+            'counts_as_issued_lead': (is_primary and result['result'] not in ('cxl', 'oos')
+                                      if primary else None),
+            'appointment_date_source': source,
+            'appointment_date': appointment_day,
+        }
+    return planned
 
 
 def sold_products(draft):

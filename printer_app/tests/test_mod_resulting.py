@@ -14,7 +14,9 @@ import pytest
 
 from printer_app.db import Database
 from printer_app.mod_sheet_contract import ModSheetRecord
-from printer_app.mod_resulting.contract import clean_draft, prices, outcome_fields
+from printer_app.mod_resulting.contract import (
+    clean_draft, prices, outcome_fields, product_result_context,
+)
 from printer_app.mod_resulting.repository import ResultingRepository
 from printer_app.mod_resulting.service import ResultingService, ResultingDailyPull
 from printer_app.mod_resulting.pdf_export import render_resulting_pdf
@@ -859,3 +861,136 @@ def test_print_all_http_and_submission_http_are_independent(tmp_path):
     current = client.get('/mod-resulting/api/submission-status').json['submission']
     assert current['state'] == 'queued' and current['total'] == 1
     assert service.repository.day(day)['submitting'] == 1
+
+
+@pytest.mark.parametrize('lead_day,resulted_on,primary_source,primary_date', [
+    ('2026-10-29', '2026-10-29', 'today', '2026-10-29'),
+    ('2026-10-26', '2026-10-29', 'lead', '2026-10-26'),
+    ('2026-10-30', '2026-10-29', 'existing_result_input', ''),
+])
+def test_phase2_product_roles_and_original_flow_appointment_dates(
+        lead_day, resulted_on, primary_source, primary_date):
+    draft = clean_draft({'dispo':'pns', 'primary_product':'Siding'})
+    results = [
+        {'product':'Roofing', 'result':'pns'},
+        {'product':'Siding', 'result':'sale'},
+    ]
+    context = product_result_context(
+        draft, results, lead_appointment_date=lead_day, resulted_on=resulted_on)
+    assert context['Siding'] == {
+        'role':'primary', 'counts_as_issued_lead':True,
+        'appointment_date_source':primary_source, 'appointment_date':primary_date,
+    }
+    assert context['Roofing'] == {
+        'role':'additional', 'counts_as_issued_lead':False,
+        'appointment_date_source':'lead', 'appointment_date':lead_day,
+    }
+
+
+def test_phase2_canceled_primary_and_single_product_are_not_guessed():
+    results = [
+        {'product':'Roofing', 'result':'cxl'},
+        {'product':'Siding', 'result':'np'},
+    ]
+    context = product_result_context(
+        clean_draft({'primary_product':'Roofing'}), results,
+        lead_appointment_date='2026-10-29', resulted_on='2026-10-29')
+    assert context['Roofing']['role'] == 'primary'
+    assert context['Roofing']['counts_as_issued_lead'] is False
+    assert context['Siding']['counts_as_issued_lead'] is False
+
+    unresolved = product_result_context(
+        clean_draft({}), results,
+        lead_appointment_date='2026-10-29', resulted_on='2026-10-29')
+    assert all(x['role'] == 'unresolved' and
+               x['counts_as_issued_lead'] is None for x in unresolved.values())
+
+    single = product_result_context(
+        clean_draft({}), [results[1]], lead_appointment_date='2026-10-29',
+        resulted_on='2026-10-29')
+    assert single['Siding']['role'] == 'primary'
+    assert single['Siding']['counts_as_issued_lead'] is True
+
+
+def test_phase2_does_not_invent_dates_or_pick_a_missing_product():
+    rows = [{'product':'Roofing', 'result':'pns'}]
+    unknown = product_result_context(
+        clean_draft({}), rows, lead_appointment_date='',
+        resulted_on='2026-10-29')
+    assert unknown['Roofing']['appointment_date_source'] == 'unresolved'
+    assert unknown['Roofing']['appointment_date'] == ''
+
+    with pytest.raises(ValueError, match='primary product'):
+        product_result_context(
+            clean_draft({'primary_product':'Bath'}), rows,
+            lead_appointment_date='2026-10-29', resulted_on='2026-10-29')
+    with pytest.raises(ValueError, match='appointment date is invalid'):
+        product_result_context(
+            clean_draft({}), rows, lead_appointment_date='bad-date',
+            resulted_on='2026-10-29')
+    with pytest.raises(ValueError, match='two resulting entries'):
+        product_result_context(
+            clean_draft({}), rows + [{'product':'roofing', 'result':'np'}],
+            lead_appointment_date='2026-10-29', resulted_on='2026-10-29')
+
+
+def test_phase2_submission_payload_keeps_existing_products_and_adds_normalized_context():
+    source = ModSheetRecord(
+        source_id=WORK, lead_source_id=LEAD, work_order_number='00012345',
+        product_interest='Roofing;Siding',
+    )
+    sheet = {
+        'day':'2026-10-25', 'work_order_id':WORK, 'snapshot':asdict(source),
+        'draft':clean_draft({'dispo':'pns', 'primary_product':'Siding'}),
+    }
+    payload = ResultingService.submission_payload(
+        sheet, USER, resulted_on='2026-10-29',
+        lead_appointment_date='2026-10-25')
+    assert len(payload['product_results']) == 2
+    assert payload['product_result_context']['Siding'] == {
+        'role':'primary', 'counts_as_issued_lead':True,
+        'appointment_date_source':'lead', 'appointment_date':'2026-10-25',
+    }
+    assert payload['product_result_context']['Roofing']['role'] == 'additional'
+    assert payload['day'] == '2026-10-25'
+
+
+def test_phase2_primary_product_only_lives_in_existing_product_dialogs():
+    root = Path(__file__).parents[1]
+    template = (root/'templates/mod_resulting.html').read_text()
+    runtime = (root/'static/mod_resulting/sheet.js').read_text()
+    service = (root/'mod_resulting/service.py').read_text()
+    contract = (root/'mod_resulting/contract.py').read_text()
+    assert template.count('data-primary-selection') == 2
+    assert 'draft.primary_product = primary?.value' in runtime
+    assert 'data-primary-selection' in runtime
+    assert 'PR_Appointment_Date__c' not in contract
+    assert 'Include_in_Issued_Lead_Count__c' not in contract
+    assert 'PR_Appointment_Date__c' not in service
+    assert 'Include_in_Issued_Lead_Count__c' not in service
+
+
+def test_phase2_background_resulting_date_is_frozen_at_enqueue(tmp_path, monkeypatch):
+    service, repo, source, writer = _service(tmp_path)
+    day = '2026-10-29'
+    source.records = lambda **kwargs: [ModSheetRecord(
+        source_id=WORK, lead_source_id=LEAD, work_order_number='00012345',
+        product_interest='Roofing',
+    )]
+    service.refresh(DAY)
+    service.set_mod(DAY, USER)
+    repo.save_draft(DAY, WORK, clean_draft({'dispo':'pns'}), 0)
+
+    request_time = datetime(2026, 10, 29, 12, 0, tzinfo=ZoneInfo('America/Los_Angeles'))
+    monkeypatch.setattr('printer_app.mod_resulting.repository.time.time',
+                        lambda: request_time.timestamp())
+    writer.lead_appointment_dates = lambda leads: {LEAD: day}
+    service.enqueue(DAY)
+    # The worker can resume on a later calendar day; Flow TODAY must remain
+    # the day the user actually submitted, not the worker's execution date.
+    service.day = lambda: '2026-10-30'
+    outcome = service.process_next_submission()
+    assert outcome['ok'] is True
+    context = writer.plans[0]['product_result_context']['Roofing']
+    assert context['appointment_date_source'] == 'today'
+    assert context['appointment_date'] == day

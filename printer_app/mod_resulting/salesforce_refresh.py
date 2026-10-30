@@ -3,7 +3,8 @@
 The application never constructs SOQL itself and never writes during Refresh.
 """
 from .salesforce_adapter import (
-    ID_RE, LEAD, LEAD_FIELDS, PR, PRODUCT_RESULT, REVIEW_FIELD, WORK_ORDER, WO, WO_LEAD,
+    ID_RE, LEAD, LEAD_FIELDS, PR, PR_ISSUED_COUNT, PRODUCT_RESULT, REVIEW_FIELD,
+    WORK_ORDER, WO, WO_LEAD,
     ResultingSalesforceError, _require_id, _soql,
 )
 from .salesforce_drafts import project_salesforce_drafts
@@ -97,7 +98,7 @@ def read_result_drafts(adapter, records):
         result_fields = (
             PR['work_order'], PR['lead'], PR['product'], PR['result'],
             PR['detail'], PR['price'], PR['one_leg'], PR['free_lead'],
-            PR['cxl_at_lead'],
+            PR['cxl_at_lead'], PR_ISSUED_COUNT,
         )
         for item in adapter._query(
             'SELECT Id,' + ','.join(result_fields) + ' FROM ' + PRODUCT_RESULT
