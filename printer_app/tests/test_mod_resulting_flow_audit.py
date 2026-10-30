@@ -74,7 +74,7 @@ def test_allowlist_blocks_data_writes_even_when_live_writes_are_on(monkeypatch):
 def test_select_exact_version_and_refuse_ambiguity_or_unknown_product():
     assert select_flow(FLOW_VERSIONS, 30)["name"] == "Result_Appointment"
     assert select_flow(FLOW_VERSIONS, 30, "Result_Appointment")["id"] == FLOW_ID
-    with pytest.raises(FlowAuditError, match="version 30"):
+    with pytest.raises(FlowAuditError, match="version 29"):
         select_flow(FLOW_VERSIONS, 29)
     with pytest.raises(FlowAuditError, match="version 30"):
         select_flow(FLOW_VERSIONS, 30, "Not_The_Flow")
