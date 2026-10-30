@@ -179,6 +179,21 @@ def inspect_flow(path):
         'start': (metadata.get('start') or {}).get('connector', {}).get(
             'targetReference', '') if isinstance(metadata.get('start'), dict) else '',
         'elements': elements,
+        # Preserve every original section name in the audit inventory. A new
+        # Flow element type must be visible, not silently ignored by parsing.
+        'metadata_sections': {
+            key: len(value) if isinstance(value, list) else
+                 1 if value is not None else 0
+            for key, value in sorted(metadata.items())
+        },
+        'unmodeled_element_types': sorted(
+            key for key, value in metadata.items()
+            if key not in FLOW_ELEMENTS and isinstance(value, list)
+            and any(isinstance(item, dict) and
+                    any(name in item for name in
+                        ('connector', 'defaultConnector', 'rules'))
+                    for item in value)
+        ),
         'referenced_custom_fields': flow_fields,
         'element_counts': dict(sorted(Counter(
             item['kind'] for item in elements).items())),
@@ -358,6 +373,8 @@ def _format_report(report):
             or 'no mapped graph elements'),
         'Flow custom fields referenced: ' +
             (', '.join(flow['referenced_custom_fields']) or '(none)'),
+        'Unmodeled Flow element types: ' +
+            (', '.join(flow['unmodeled_element_types']) or '(none)'),
         f"Adapter field metadata present: {len(schema['fields'])}; "
         f"missing: {len(schema['missing'])}; incompatible: {len(schema['incompatible'])}",
     ]
