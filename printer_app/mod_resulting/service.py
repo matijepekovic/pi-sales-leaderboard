@@ -224,10 +224,11 @@ class ResultingService:
             raise LookupError('There are no MOD sheets to print for this day.')
         return self.pdf_exporter(sheets)
 
-    def _apply_batch(self, day, mod_id, rows, *, job_id=None):
+    def _apply_batch(self, day, mod_id, rows, *, job_id=None, resulted_on=None):
         """Single Salesforce write path for direct and background submissions."""
+        resulting_date = resulted_on or self.day()
         batch = [self.submission_payload(dict(row, day=day), mod_id,
-                                         resulted_on=self.day())
+                                         resulted_on=resulting_date)
                  for row in rows]
         # Preflight the entire batch before any Salesforce write.
         plans = self.writer.prepare(batch)
@@ -287,7 +288,9 @@ class ResultingService:
             return None
         try:
             result = self._apply_batch(
-                job['day'], job['mod_id'], job['rows'], job_id=job['job_id'])
+                job['day'], job['mod_id'], job['rows'], job_id=job['job_id'],
+                resulted_on=datetime.fromtimestamp(
+                    job['queued_at'], self.zone).date().isoformat())
             self.repository.finish_submission_job(job['job_id'])
             return {'ok': True, **result}
         except Exception as exc:
