@@ -222,3 +222,18 @@ def test_cli_offline_summary_never_initializes_salesforce(monkeypatch, tmp_path,
     assert 'version 30' in printed
     assert 'No create/update/delete commands were executed.' in printed
     assert 'NOT proof' in printed
+
+
+def test_export_script_only_uses_read_commands_and_syntax_is_valid():
+    import subprocess
+    script = Path(__file__).resolve().parents[2] / 'scripts' / 'mod-flow-v30-export.sh'
+    assert subprocess.run(['bash', '-n', str(script)], capture_output=True).returncode == 0
+    source = script.read_text(encoding='utf-8')
+    assert 'sf data query --use-tooling-api' in source
+    assert 'sf api request rest' in source and '--method GET' in source
+    assert 'sf sobject describe' in source
+    assert 'VersionNumber = 30' in source
+    assert 'sf data update' not in source
+    assert 'sf data create' not in source
+    assert 'sf project deploy' not in source
+    assert 'sf logic run' not in source
