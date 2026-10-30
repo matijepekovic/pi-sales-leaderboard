@@ -135,7 +135,7 @@ def readonly_resulting_runner(command, **kwargs):
             query = command[command.index('--query') + 1]
         except (ValueError, IndexError) as exc:
             raise ResultingSalesforceError('Read-only audit requires an explicit SOQL query.') from exc
-        if not isinstance(query, str) or not re.match(r'^\\s*SELECT\\s+', query, re.IGNORECASE):
+        if not isinstance(query, str) or not re.match(r'^\s*SELECT\s+', query, re.IGNORECASE):
             raise ResultingSalesforceError('Read-only audit only permits SELECT queries.')
     return subprocess.run(command, **kwargs)
 
