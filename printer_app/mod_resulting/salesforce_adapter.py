@@ -457,6 +457,7 @@ class ResultingSalesforceAdapter:
         """
         if isinstance(lead_ids, str):
             raise ResultingSalesforceError('Lead date lookup requires record identities.')
+        lead_ids = tuple(lead_ids)
         requested = {}
         for raw in lead_ids:
             ident = _require_id(raw)
