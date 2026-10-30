@@ -117,6 +117,29 @@ def _split_multi(value):
     return result
 
 
+
+def readonly_resulting_runner(command, **kwargs):
+    """Hard execution boundary for Flow audits, independent of live-write settings.
+
+    An audit can call describe/query and construct planned updates, but it
+    cannot send a Salesforce mutation even if the regular adapter's apply()
+    is accidentally invoked. Only direct SOQL SELECT reads are accepted.
+    """
+    if not isinstance(command, (list, tuple)) or len(command) < 3:
+        raise ResultingSalesforceError('Read-only audit refused an invalid CLI command.')
+    operation = tuple(command[1:3])
+    if operation not in (('data', 'query'), ('sobject', 'describe')):
+        raise ResultingSalesforceError('Read-only audit refused a Salesforce write command.')
+    if operation == ('data', 'query'):
+        try:
+            query = command[command.index('--query') + 1]
+        except (ValueError, IndexError) as exc:
+            raise ResultingSalesforceError('Read-only audit requires an explicit SOQL query.') from exc
+        if not isinstance(query, str) or not re.match(r'^\\s*SELECT\\s+', query, re.IGNORECASE):
+            raise ResultingSalesforceError('Read-only audit only permits SELECT queries.')
+    return subprocess.run(command, **kwargs)
+
+
 class ResultingSalesforceAdapter:
     def __init__(self, executable='/usr/bin/sf', target_org='work',
                  timezone_name='America/Los_Angeles', runner=subprocess.run):
