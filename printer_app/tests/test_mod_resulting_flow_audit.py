@@ -108,13 +108,20 @@ def test_full_audit_only_reads_metadata_and_retrieves_explicit_version(tmp_path,
         assert "--json" in command
         if command[1:4] == ["data","query","--query"]:
             query = command[command.index("--query") + 1]
-            assert "FROM FlowDefinitionView" in query
-            result = {"records":[{
-                "Id":"301000000000001AAA",
-                "ApiName":"Result_Appointment", "Label":"Result Appointment",
-                "ActiveVersionId":"301000000000030AAA",
-                "LatestVersionId":"301000000000030AAA", "VersionNumber":30,
-            }], "done":True}
+            if "FROM FlowDefinitionView" in query:
+                result = {"records":[{
+                    "Id":"301000000000001AAA",
+                    "ApiName":"Result_Appointment", "Label":"Result Appointment",
+                    "ActiveVersionId":"301000000000030AAA",
+                    "LatestVersionId":"301000000000030AAA",
+                    "VersionNumber":30,
+                }], "done":True}
+            elif "FROM FlowVersionView" in query:
+                assert "VersionNumber = 30" in query
+                result = {"records":[{"VersionNumber":30,"Status":"Active"}],
+                          "done":True}
+            else:
+                raise AssertionError("Unexpected read-only SOQL")
         elif command[1:4] == ["org","list","metadata"]:
             result = [{"fullName":"Result_Appointment",
                        "fileName":"flows/Result_Appointment.flow"}]
@@ -151,6 +158,9 @@ def test_full_audit_only_reads_metadata_and_retrieves_explicit_version(tmp_path,
     assert summary["salesforce_records_modified"] == 0
     assert summary["parity_verified"] is False
     assert summary["flow_version_requested"] == 30
+    assert summary["version_30_active"] is True
+    assert summary["flow_version_confirmation"] == (
+        "version_query_and_metadata_selector")
     assert summary["phase3_critical_fields"][PR_ISSUED_COUNT]["writable"] is True
     assert bundle.exists() and bundle.stat().st_size > 100
     assert not (destination / "_temporary_salesforce_project").exists()
