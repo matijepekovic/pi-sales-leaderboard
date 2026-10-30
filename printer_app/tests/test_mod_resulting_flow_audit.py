@@ -237,3 +237,56 @@ def test_export_script_only_uses_read_commands_and_syntax_is_valid():
     assert 'sf data create' not in source
     assert 'sf project deploy' not in source
     assert 'sf logic run' not in source
+
+
+def test_bash_export_runs_end_to_end_against_fake_read_only_sf(tmp_path):
+    import os
+    import subprocess
+
+    mock = tmp_path / 'sf'
+    mock.write_text('''#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["SF_MOCK_CALLS"], "a", encoding="utf-8") as log:
+    log.write(" ".join(args) + "\\n")
+if args[:2] == ["data", "query"]:
+    payload = {"status":0, "result":{"records":[{
+        "Id":"301000000000001AAA", "MasterLabel":"Result Appointment",
+        "VersionNumber":30, "Status":"Active"}], "done":True}}
+elif args[:3] == ["api", "request", "rest"] and "--method" in args and (
+        args[args.index("--method")+1] == "GET"):
+    payload = {"status":0, "result":{
+        "Id":"301000000000001AAA",
+        "MasterLabel":"Result Appointment", "Status":"Active",
+        "VersionNumber":30,
+        "Metadata":{"decisions":[{"name":"Check","rules":[]}]},
+    }}
+elif args[:2] == ["sobject", "describe"]:
+    obj = args[args.index("--sobject")+1]
+    payload = {"status":0,"result":{"name":obj,"fields":[]}}
+else:
+    raise SystemExit("Forbidden Salesforce mutation attempt")
+print(json.dumps(payload))
+''')
+    mock.chmod(0o700)
+    script = Path(__file__).resolve().parents[2] / 'scripts' / 'mod-flow-v30-export.sh'
+    env = dict(os.environ, HOME=str(tmp_path),
+               SF_MOCK_CALLS=str(tmp_path/'sf-calls.txt'),
+               PATH=str(tmp_path) + os.pathsep + os.environ.get('PATH',''))
+    result = subprocess.run(['bash', str(script), 'work'],
+                            capture_output=True, text=True,
+                            cwd=script.parents[1], env=env, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'Confirmed: Result Appointment version 30' in result.stdout
+    assert 'No create/update/delete commands were executed.' in result.stdout
+    calls = (tmp_path/'sf-calls.txt').read_text().splitlines()
+    assert len(calls) == 6
+    assert calls[0].startswith('data query --use-tooling-api')
+    assert 'api request rest' in calls[1] and '--method GET' in calls[1]
+    assert all(line.startswith('sobject describe') for line in calls[2:])
+    exports = list(tmp_path.glob('stats-flow-v30.*'))
+    assert len(exports) == 1
+    assert (exports[0]/'flow-v30.json').exists()
+    assert (exports[0]/'audit-summary.txt').is_file()
+    assert (exports[0]/'audit-report.json').is_file()
+    assert exports[0].stat().st_mode & 0o077 == 0
