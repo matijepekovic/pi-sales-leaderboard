@@ -104,7 +104,7 @@ def test_full_audit_only_reads_metadata_and_retrieves_explicit_version(tmp_path,
     def runner(command, **kwargs):
         commands.append(command)
         assert command[:1] == ["sf"]
-        assert command[-4:] == ["--target-org","work","--json"][-4:]
+        assert command[-3:] == ["--target-org", "work", "--json"]
         assert "--json" in command
         if command[1:4] == ["data","query","--query"]:
             query = command[command.index("--query") + 1]
