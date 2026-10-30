@@ -271,6 +271,9 @@
         draft[input.dataset.key] = input.type === 'checkbox' ? input.checked : input.value;
       }
     }
+    const primary = sheet.querySelector(draft.dispo === 'sale' ?
+      '.sale-panel [data-primary-selection]' : '.product-panel [data-primary-selection]');
+    draft.primary_product = primary?.value || '';
     // Preserve raw source values independently from the visible checkboxes.
     // Only explicit changes set edited=true; an unmodified value stays exact.
     draft.checkbox_values = sheet.checkboxValues || draft.checkbox_values || {};
@@ -568,7 +571,7 @@
     const dnrButton = sheet.querySelector('.edit-dnr-reasons');
     const separate = sheet.querySelector('.separate-products');
     if (separate) separate.hidden = init.dispo === 'sale';
-    if (productButton) productButton.hidden = init.dispo === 'sale' || !init.additional_products;
+    if (productButton) productButton.hidden = init.dispo === 'sale';
     if (cxlButton) cxlButton.hidden = init.dispo !== 'cxl';
     if (dnrButton) dnrButton.hidden = !init.dnr;
     function syncPricePreviews() {
@@ -679,7 +682,7 @@
     function showRelated(input) {
       const draft = serialize(sheet);
       if (separate) separate.hidden = draft.dispo === 'sale';
-      if (productButton) productButton.hidden = draft.dispo === 'sale' || !draft.additional_products;
+      if (productButton) productButton.hidden = draft.dispo === 'sale';
       if (cxlButton) cxlButton.hidden = draft.dispo !== 'cxl';
       if (dnrButton) dnrButton.hidden = !draft.dnr;
       if (input.dataset.key === 'dispo') {
@@ -714,7 +717,7 @@
       if (input.matches('[data-reason-choice]')) {
         syncReasonSelect();
         redraw();
-      } else if (input.matches('[data-key],[data-product-result],[data-product-detail],[data-sale-selected]')) {
+      } else if (input.matches('[data-key],[data-primary-selection],[data-product-result],[data-product-detail],[data-sale-selected]')) {
         if (input.matches('input[type="checkbox"][data-key]') &&
             checkboxSpecs[input.dataset.key]) {
           sheet.checkboxValues[input.dataset.key] = {
