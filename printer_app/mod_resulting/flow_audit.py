@@ -1,23 +1,20 @@
-"""Read-only Salesforce Flow v30 audit collector, isolated from resulting writes.
+"""Read-only inspection of an exact Salesforce Result Appointment Flow version.
 
-Run: python3 -m printer_app.mod_resulting.flow_audit --org work
-
-Only approved Salesforce CLI READ operations are permitted. The separate
-temporary Salesforce project receives downloaded metadata locally; neither
-End of Day nor ResultingService/ResultingSalesforceAdapter.apply is invoked.
+This standalone adapter never calls MOD Resulting submission, deploys metadata,
+or changes Salesforce records. Salesforce Tooling API Flow records identify
+historical versions by record ID; the Metadata API's Flow:<name>-30 selector
+is not valid for modern Salesforce Flow retrieval.
 """
 from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
 import sys
 import zipfile
-import xml.etree.ElementTree as ET
 
 from .salesforce_adapter import (
     LEAD, LEAD_FIELDS, PR, PR_APPOINTMENT_DATE, PR_ISSUED_COUNT,
@@ -31,53 +28,46 @@ class FlowAuditError(RuntimeError):
 
 
 NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,254}\Z")
-READ_COMMANDS = {
-    ("org", "list", "metadata"),
-    ("data", "query"),
-    ("sobject", "describe"),
-    ("project", "retrieve", "start"),
-}
+ID = re.compile(r"[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?\Z")
+READ_COMMANDS = {("data", "query"), ("sobject", "describe")}
 FLOW_ELEMENTS = {
     "actionCalls", "apexPluginCalls", "assignments", "collectionProcessors",
     "decisions", "formulas", "loops", "recordCreates", "recordDeletes",
-    "recordLookups", "recordUpdates", "screens", "stages", "start", "subflows",
-    "transforms", "variables", "waits",
+    "recordLookups", "recordUpdates", "screens", "stages", "start",
+    "subflows", "transforms", "variables", "waits",
 }
 FLOW_REFERENCES = {
-    "assignToReference", "elementReference", "field",
-    "fieldReference", "leftValueReference", "object",
-    "outputReference", "targetReference", "inputReference",
+    "assignToReference", "elementReference", "field", "fieldReference",
+    "leftValueReference", "object", "outputReference", "targetReference",
+    "inputReference",
 }
 
 
-def _tag(node):
-    return node.tag.rsplit("}", 1)[-1]
-
-
-def _children(node, name):
-    return [child for child in node if _tag(child) == name]
-
-
-def _first(node, name):
-    for child in node:
-        if _tag(child) == name:
-            return child
-    return None
-
-
-def _text(node, name):
-    child = _first(node, name)
-    return (child.text or "").strip() if child is not None else ""
-
-
-def _json_result(result, purpose):
-    if not isinstance(result, dict) or result.get("status") not in (0, None):
-        raise FlowAuditError("Salesforce did not return a successful " + purpose + ".")
-    return result.get("result")
+def _safe_error(data):
+    """Return a useful Salesforce failure without copying credentials or JSON."""
+    if not isinstance(data, dict):
+        return "Salesforce returned an unexpected error."
+    parts = []
+    name = data.get("name") or data.get("errorCode") or data.get("error")
+    if isinstance(name, str) and len(name) < 120:
+        parts.append(name)
+    message = data.get("message")
+    if not isinstance(message, str):
+        detail = data.get("result")
+        if isinstance(detail, dict):
+            message = detail.get("message")
+    if isinstance(message, str):
+        message = re.sub(
+            r"(?i)(access_token|refresh_token|authorization|password)\s*[:=]\s*\S+",
+            r"\1=[REDACTED]", message,
+        )
+        message = re.sub(r"(?i)\bBearer\s+\S+", "Bearer [REDACTED]", message)
+        parts.append(message[:400])
+    return ": ".join(parts) or "Salesforce did not report a reason."
 
 
 class ReadOnlySalesforceCLI:
-    """Allowlist applies to every subprocess call, irrespective of live-write settings."""
+    """Every executed process is checked against an explicit read-only allowlist."""
 
     def __init__(self, *, executable="sf", org="work", runner=subprocess.run):
         if not org or org.startswith("-") or any(c.isspace() for c in org):
@@ -86,54 +76,80 @@ class ReadOnlySalesforceCLI:
         self.org = org
         self.runner = runner
 
-    def call(self, args, *, cwd=None, timeout=180):
-        if not any(tuple(args[:len(prefix)]) == prefix for prefix in READ_COMMANDS):
+    def call(self, args, *, timeout=75):
+        if tuple(args[:2]) not in READ_COMMANDS:
             raise FlowAuditError("Forbidden Salesforce CLI operation in read-only audit.")
         command = [
             self.executable, *args, "--target-org", self.org, "--json",
         ]
         try:
             completed = self.runner(
-                command, cwd=cwd, capture_output=True, text=True,
+                command, capture_output=True, text=True,
                 check=False, timeout=timeout,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise FlowAuditError(
-                "Salesforce CLI read failed or timed out: " + " ".join(args[:3])
+                "Salesforce CLI read failed or timed out: " + " ".join(args[:2])
             ) from exc
         try:
-            payload = json.loads(completed.stdout)
-        except (ValueError, TypeError) as exc:
+            response = json.loads(completed.stdout)
+        except (TypeError, ValueError) as exc:
             raise FlowAuditError(
-                "Salesforce CLI produced no usable JSON for " + " ".join(args[:3])
-                + "; check authentication and metadata permissions."
+                "Salesforce CLI returned invalid JSON for " + " ".join(args[:2])
+                + ". Confirm the 'work' alias is authenticated."
             ) from exc
-        if completed.returncode or payload.get("status") not in (0, None):
+        if (not isinstance(response, dict) or completed.returncode
+                or response.get("status") not in (0, None)):
             raise FlowAuditError(
-                "Salesforce rejected read-only " + " ".join(args[:3])
-                + "; check the org alias and metadata permissions."
+                "Salesforce read-only " + " ".join(args[:2]) + " failed: "
+                + _safe_error(response)
             )
-        return payload.get("result")
+        return response.get("result")
 
-    def list_flows(self):
-        rows = self.call(["org", "list", "metadata", "--metadata-type", "Flow"])
-        if isinstance(rows, dict):
-            rows = rows.get("files", rows.get("items", []))
-        if not isinstance(rows, list):
-            raise FlowAuditError("Salesforce Flow metadata list is incomplete.")
-        return [
-            {"fullName": str(item.get("fullName", "")).strip(),
-             "fileName": str(item.get("fileName", "")).strip()}
-            for item in rows if isinstance(item, dict)
-        ]
+    def query(self, soql, *, tooling=False):
+        args = ["data", "query", "--query", soql]
+        if tooling:
+            args.append("--use-tooling-api")
+        result = self.call(args)
+        if not isinstance(result, dict) or not isinstance(result.get("records"), list):
+            raise FlowAuditError("Salesforce returned an invalid query result.")
+        if result.get("done") is False:
+            raise FlowAuditError("Salesforce query is incomplete; no partial data accepted.")
+        return result["records"]
 
-    def query(self, soql):
-        rows = self.call(["data", "query", "--query", soql])
-        if not isinstance(rows, dict) or not isinstance(rows.get("records"), list):
-            raise FlowAuditError("Salesforce returned an invalid read-only query.")
-        if rows.get("done") is False:
-            raise FlowAuditError("Salesforce query is incomplete.")
-        return rows["records"]
+    def flow_versions(self, version):
+        if type(version) is not int or not 1 <= version <= 9999:
+            raise FlowAuditError("Flow version must be a positive integer.")
+        # Unlike Metadata API, the Tooling API stores each Flow version as a
+        # separately addressable record. Query names/status only; no interviews.
+        soql = (
+            "SELECT Id, Definition.DeveloperName, MasterLabel, VersionNumber, Status "
+            "FROM Flow WHERE VersionNumber = " + str(version) + " LIMIT 2000"
+        )
+        records = self.query(soql, tooling=True)
+        if len(records) == 2000:
+            raise FlowAuditError("Flow version query may be truncated.")
+        return records
+
+    def flow_metadata(self, record_id):
+        if not isinstance(record_id, str) or not ID.fullmatch(record_id):
+            raise FlowAuditError("Invalid Flow version identity.")
+        # Metadata field requires a query restricted to one Flow ID.
+        rows = self.query(
+            "SELECT Id, Metadata FROM Flow WHERE Id = '" + record_id + "' LIMIT 1",
+            tooling=True,
+        )
+        if len(rows) != 1 or rows[0].get("Id") != record_id:
+            raise FlowAuditError("Exact Flow version metadata could not be retrieved.")
+        value = rows[0].get("Metadata")
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError as exc:
+                raise FlowAuditError("Flow metadata is not valid JSON.") from exc
+        if not isinstance(value, dict) or not value:
+            raise FlowAuditError("Flow version metadata is unavailable.")
+        return value
 
     def describe(self, name):
         result = self.call(["sobject", "describe", "--sobject", name])
@@ -143,75 +159,52 @@ class ReadOnlySalesforceCLI:
             raise FlowAuditError("Salesforce field list is incomplete: " + name)
         return result
 
-    def retrieve_flow(self, api_name, version, project):
-        if not NAME.fullmatch(api_name) or not 1 <= version <= 9999:
-            raise FlowAuditError("Invalid Flow API name or version.")
-        # Explicit -30 ensures this audit does NOT silently use latest Flow.
-        retrieval = project / "retrieved"
-        self.call(
-            ["project", "retrieve", "start", "--metadata",
-             "Flow:" + api_name + "-" + str(version),
-             "--output-dir", str(retrieval), "--wait", "6"],
-            cwd=project, timeout=420,
-        )
-        matches = list(retrieval.rglob("*.flow-meta.xml"))
-        expected = {api_name + ".flow-meta.xml",
-                    api_name + "-" + str(version) + ".flow-meta.xml"}
-        matches = [path for path in matches if path.name in expected]
-        if len(matches) != 1:
-            raise FlowAuditError(
-                "Flow version " + str(version) + " was not uniquely retrieved. "
-                "No substitute/latest Flow will be used."
-            )
-        return matches[0]
 
-
-def select_flow(flows, definitions, explicit_name=""):
-    all_names = {
-        name for row in flows if (name := row.get("fullName", ""))
-        and NAME.fullmatch(name)
-    }
-    names = set(all_names)
-    for row in definitions:
-        name = str(row.get("ApiName") or "")
-        if NAME.fullmatch(name):
-            names.add(name)
-    if explicit_name:
-        if not NAME.fullmatch(explicit_name):
-            raise FlowAuditError("Invalid explicit Flow API name.")
-        if explicit_name not in names:
-            raise FlowAuditError(
-                "Requested Flow not found; possible matches: "
-                + ", ".join(sorted(names)[:30])
-            )
-        return explicit_name
-    candidates = set()
-    for name in names:
-        if "result" in name.lower() and "appoint" in name.lower():
-            candidates.add(name)
-    for row in definitions:
-        label = str(row.get("Label") or "")
-        name = str(row.get("ApiName") or "")
-        if "result" in label.lower() and "appoint" in label.lower() and name in names:
-            candidates.add(name)
-    if len(candidates) == 1:
-        return next(iter(candidates))
-    # Do not substitute an arbitrary Flow if name discovery is ambiguous.
-    if not candidates:
+def select_flow(versions, version, explicit_name=""):
+    """Return only a uniquely identified, exact-version Flow record."""
+    matches = []
+    for row in versions:
+        if not isinstance(row, dict) or row.get("VersionNumber") != version:
+            continue
+        definition = row.get("Definition")
+        name = (definition or {}).get("DeveloperName") if isinstance(definition, dict) else ""
+        label = row.get("MasterLabel") or ""
+        if not isinstance(name, str) or not NAME.fullmatch(name):
+            continue
+        if explicit_name:
+            if name != explicit_name:
+                continue
+        elif not (
+            ("result" in name.casefold() and "appoint" in name.casefold())
+            or ("result" in str(label).casefold()
+                and "appoint" in str(label).casefold())
+        ):
+            continue
+        if not isinstance(row.get("Id"), str) or not ID.fullmatch(row["Id"]):
+            raise FlowAuditError("Flow version has no valid record identity.")
+        matches.append({"id": row["Id"], "name": name, "label": label,
+                        "version": row["VersionNumber"], "status": row.get("Status")})
+    if explicit_name and not NAME.fullmatch(explicit_name):
+        raise FlowAuditError("Invalid Flow API name.")
+    if len(matches) != 1:
+        candidate_names = sorted({
+            (row.get("Definition") or {}).get("DeveloperName", "")
+            for row in versions if isinstance(row, dict)
+            and isinstance(row.get("Definition"), dict)
+            and row.get("VersionNumber") == version
+        })
         raise FlowAuditError(
-            "Result Appointment Flow was not found. Available Flow names: "
-            + ", ".join(sorted(names)[:40])
-            + ". Supply --flow-name with the exact API name."
+            "Expected one Result Appointment Flow version " + str(version)
+            + "; found " + str(len(matches)) + ". "
+            + ("Candidates: " + ", ".join(candidate_names[:30]) + ". "
+               if candidate_names else "No accessible Flow versions. ")
+            + "Use --flow-name with the exact API name if needed."
         )
-    raise FlowAuditError(
-        "Multiple Result Appointment flows found: "
-        + ", ".join(sorted(candidates))
-        + ". Supply --flow-name with the exact API name."
-    )
+    return matches[0]
 
 
 def field_requirements():
-    """Use the actual adapter's API mappings, never a parallel field map."""
+    """Derive field names from the real adapter; no parallel API field mapping."""
     return {
         WORK_ORDER: set(WO.values()) | {
             WO_LEAD, WO_APPOINTMENT_DATE, WO_APPOINTMENT_DATETIME, REVIEW_FIELD,
@@ -247,66 +240,66 @@ def relevant_fields(schema, required):
     return selected
 
 
-def flow_inventory(contents):
-    if len(contents) > 16_000_000:
-        raise FlowAuditError("Flow XML is too large to parse safely.")
-    if b"<!DOCTYPE" in contents.upper() or b"<!ENTITY" in contents.upper():
-        raise FlowAuditError("Flow metadata must not contain DTD or entities.")
-    try:
-        root = ET.fromstring(contents)
-    except ET.ParseError as exc:
-        raise FlowAuditError("Retrieved Salesforce Flow XML is invalid.") from exc
-    if _tag(root) != "Flow":
-        raise FlowAuditError("Retrieved metadata is not a Salesforce Flow.")
+def _references(value):
+    found = set()
 
+    def visit(node):
+        if isinstance(node, dict):
+            for key, item in node.items():
+                if key in FLOW_REFERENCES and isinstance(item, str) and item:
+                    found.add(item)
+                visit(item)
+        elif isinstance(node, list):
+            for item in node:
+                visit(item)
+
+    visit(value)
+    return sorted(found)
+
+
+def flow_inventory(metadata):
+    """Inventory only real Flow Tooling API metadata, never guessed steps."""
+    if not isinstance(metadata, dict):
+        raise FlowAuditError("Flow version metadata must be an object.")
     elements = []
-    for node in root:
-        kind = _tag(node)
-        if kind not in FLOW_ELEMENTS:
+    for kind in sorted(FLOW_ELEMENTS):
+        raw = metadata.get(kind)
+        if raw is None:
             continue
-        references = sorted({
-            (child.text or "").strip()
-            for child in node.iter()
-            if _tag(child) in FLOW_REFERENCES and (child.text or "").strip()
-        })
-        connectors = sorted({
-            (child.text or "").strip()
-            for child in node.iter()
-            if _tag(child) == "targetReference" and (child.text or "").strip()
-        })
-        entry = {
-            "type": kind, "name": _text(node, "name"),
-            "label": _text(node, "label"),
-            "object": _text(node, "object"),
-            "references": references,
-            "connectors": connectors,
-        }
-        if kind == "decisions":
-            entry["rules"] = []
-            for rule in _children(node, "rules"):
-                entry["rules"].append({
-                    "name": _text(rule, "name"),
-                    "conditionLogic": _text(rule, "conditionLogic"),
-                    "conditions": [
-                        {"left": _text(cond, "leftValueReference"),
-                         "operator": _text(cond, "operator"),
-                         "right": ET.tostring(_first(cond, "rightValue"),
-                                             encoding="unicode")
-                           if _first(cond, "rightValue") is not None else ""}
-                        for cond in _children(rule, "conditions")
-                    ],
+        nodes = raw if isinstance(raw, list) else [raw]
+        for node in nodes:
+            if not isinstance(node, dict):
+                raise FlowAuditError("Flow metadata element has invalid structure.")
+            element = {
+                "type": kind,
+                "name": node.get("name") or "",
+                "label": node.get("label") or "",
+                "object": node.get("object") or "",
+                "references": _references(node),
+            }
+            if kind == "decisions":
+                rules = node.get("rules") or []
+                if not isinstance(rules, list):
+                    rules = [rules]
+                element["rules"] = [
+                    {"name": rule.get("name"),
+                     "conditionLogic": rule.get("conditionLogic"),
+                     "conditions": rule.get("conditions") or []}
+                    for rule in rules if isinstance(rule, dict)
+                ]
+            if kind in ("recordCreates", "recordUpdates", "recordDeletes"):
+                entries = node.get("inputAssignments") or []
+                if not isinstance(entries, list):
+                    entries = [entries]
+                element["assigned_fields"] = sorted({
+                    entry["field"] for entry in entries
+                    if isinstance(entry, dict) and isinstance(entry.get("field"), str)
                 })
-        if kind in ("recordCreates", "recordUpdates", "recordDeletes"):
-            entry["assigned_fields"] = sorted({
-                _text(field, "field")
-                for field in _children(node, "inputAssignments")
-                if _text(field, "field")
-            })
-        elements.append(entry)
+            elements.append(element)
     return {
-        "flow_status": _text(root, "status"),
-        "process_type": _text(root, "processType"),
-        "api_version": _text(root, "apiVersion"),
+        "flow_status": metadata.get("status"),
+        "process_type": metadata.get("processType"),
+        "api_version": metadata.get("apiVersion"),
         "elements": elements,
         "element_counts": {
             kind: sum(item["type"] == kind for item in elements)
@@ -323,92 +316,29 @@ def _write_json(path, value):
 
 def collect(*, org="work", flow_name="", version=30, output=None,
             executable="sf", runner=subprocess.run):
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     folder = Path(output).expanduser().resolve() if output else (
         Path.home() / ("stats-flow30-audit-" + stamp)
     )
     folder.mkdir(mode=0o700, parents=True, exist_ok=False)
-    project = folder / "_temporary_salesforce_project"
-    project.mkdir(mode=0o700)
-    (project / "sfdx-project.json").write_text(
-        json.dumps({"packageDirectories": [{"path":"force-app","default":True}],
-                    "namespace": "", "name": "stats-flow30-read-only-audit"}),
-        encoding="utf-8",
-    )
     cli = ReadOnlySalesforceCLI(executable=executable, org=org, runner=runner)
 
-    warnings = []
-    definitions = []
-    try:
-        definitions = cli.query(
-            "SELECT Id, ApiName, Label, ActiveVersionId, LatestVersionId, "
-            "VersionNumber FROM FlowDefinitionView WHERE ApiName LIKE '%Result%'"
-        )
-    except FlowAuditError:
-        warnings.append(
-            "FlowDefinitionView read unavailable; version activation "
-            "must be verified separately."
-        )
-    flows = cli.list_flows()
-    name = select_flow(flows, definitions, flow_name)
-    _write_json(folder / "flow_identity.json", {
-        "selected_api_name": name, "requested_flow_version": version,
-        "definition": [
-            {key: row.get(key) for key in (
-                "ApiName", "Label", "ActiveVersionId", "LatestVersionId",
-                "VersionNumber",
-            )}
-            for row in definitions if row.get("ApiName") == name
-        ],
-    })
-    # A Flow can have version 30 saved while a newer/older version is live.
-    # Read version status separately; the version-specific retrieve alone does
-    # not prove that version 30 is currently activated.
-    version_rows = []
-    definitions_for_flow = [
-        row for row in definitions if row.get("ApiName") == name
-    ]
-    if len(definitions_for_flow) == 1:
-        view_id = str(definitions_for_flow[0].get("Id") or "")
-        if re.fullmatch(r"[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?", view_id):
-            try:
-                version_rows = cli.query(
-                    "SELECT VersionNumber, Status FROM FlowVersionView "
-                    "WHERE FlowDefinitionViewId = '" + view_id + "' "
-                    "AND VersionNumber = " + str(version)
-                )
-            except FlowAuditError:
-                warnings.append(
-                    "FlowVersionView read unavailable; verify whether v30 "
-                    "is active in Salesforce Setup."
-                )
-        else:
-            warnings.append("Flow definition identity not available for version check.")
-    else:
-        warnings.append("Flow definition not uniquely identified for version check.")
-    _write_json(folder / "flow_version_status.json", {
-        "version_requested": version,
-        "version_rows": [
-            {"VersionNumber": row.get("VersionNumber"),
-             "Status": row.get("Status")}
-            for row in version_rows
-        ],
-    })
-    retrieved_path = cli.retrieve_flow(name, version, project)
-    data = retrieved_path.read_bytes()
-    inventory = flow_inventory(data)
-    flow_file = folder / ("flow_version_" + str(version) + ".xml")
-    flow_file.write_bytes(data)
-    flow_file.chmod(0o600)
+    # The previous Metadata API list/Flow:name-30 retrieval was invalid for
+    # modern Flow versions. Tooling API binds the selected version to its ID.
+    identity = select_flow(cli.flow_versions(version), version, flow_name)
+    metadata = cli.flow_metadata(identity["id"])
+    inventory = flow_inventory(metadata)
+    _write_json(folder / "flow_identity.json", identity)
+    _write_json(folder / ("flow_version_" + str(version) + ".json"), metadata)
     _write_json(folder / "flow_inventory.json", inventory)
 
-    # Metadata reads only; no customer records, and no data DML.
     schemas = {}
-    for object_name, field_names in field_requirements().items():
+    for object_name, names in field_requirements().items():
         schemas[object_name] = relevant_fields(
-            cli.describe(object_name), field_names,
+            cli.describe(object_name), names,
         )
     _write_json(folder / "stats_field_metadata.json", schemas)
+
     issued = schemas[PRODUCT_RESULT].get(PR_ISSUED_COUNT, {})
     appointment = schemas[PRODUCT_RESULT].get(PR_APPOINTMENT_DATE, {})
     checks = {
@@ -427,53 +357,42 @@ def collect(*, org="work", flow_name="", version=30, output=None,
     }
     report = {
         "mode": "read_only",
-        "salesforce_records_read": 0,
+        "salesforce_customer_records_read": 0,
         "salesforce_records_modified": 0,
-        "flow_api_name": name,
+        "flow_api_name": identity["name"],
         "flow_version_requested": version,
-        "flow_version_confirmation": (
-            "version_query_and_metadata_selector"
-            if len(version_rows) == 1
-            and version_rows[0].get("VersionNumber") == version
-            else "version_specific_metadata_selector_only"
-        ),
-        "version_30_active": (
-            version_rows[0].get("Status") == "Active"
-            if len(version_rows) == 1
-            and version_rows[0].get("VersionNumber") == version else None
-        ),
-        "flow_status_in_xml": inventory["flow_status"],
+        "flow_version_confirmed": identity["version"] == version,
+        "flow_version_record_id": identity["id"],
+        "version_30_active": identity["status"] == "Active" if version == 30 else None,
+        "version_status": identity["status"],
+        "source": "Tooling_API_Flow_by_exact_version_id",
         "flow_element_counts": inventory["element_counts"],
         "phase3_critical_fields": checks,
-        "warnings": warnings,
         "parity_verified": False,
-        "parity_note": "Flow XML and live field metadata were collected. "
-                       "A field-by-field parity review is still required. "
-                       "No Flow was executed.",
+        "parity_note": "Metadata for an exact Flow version and live field "
+                       "definitions were collected. Compare decisions and assignments "
+                       "against Stats before claiming parity; no Flow was executed.",
     }
     _write_json(folder / "summary.json", report)
     bundle = folder / ("flow_v" + str(version) + "_readonly_bundle.zip")
     with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in (
-            flow_file, folder / "flow_identity.json",
-            folder / "flow_version_status.json", folder / "flow_inventory.json",
-            folder / "stats_field_metadata.json", folder / "summary.json",
+            folder / "flow_identity.json",
+            folder / ("flow_version_" + str(version) + ".json"),
+            folder / "flow_inventory.json", folder / "stats_field_metadata.json",
+            folder / "summary.json",
         ):
             archive.write(path, arcname=path.name)
     bundle.chmod(0o600)
-    # Avoid leaving a second copy of retrieved metadata in the temporary
-    # project (which can be large); keep just the output archive and reports.
-    import shutil
-    shutil.rmtree(project)
     return report, bundle
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Read-only Salesforce Flow v30 and Stats field audit.")
+        description="Read-only Salesforce Flow version and Stats field audit.")
     parser.add_argument("--org", default="work")
     parser.add_argument("--flow-name", default="",
-                        help="Exact API name if multiple flows match.")
+                        help="Exact API name if multiple matching Flows exist.")
     parser.add_argument("--version", type=int, default=30)
     parser.add_argument("--output", help="New private output directory.")
     parser.add_argument("--sf", default="sf", help="Salesforce CLI executable.")
@@ -484,7 +403,7 @@ def main(argv=None):
             version=args.version, output=args.output,
             executable=args.sf,
         )
-    except FlowAuditError as exc:
+    except (FlowAuditError, OSError) as exc:
         print("Flow audit failed (no Salesforce writes): " + str(exc),
               file=sys.stderr)
         return 1

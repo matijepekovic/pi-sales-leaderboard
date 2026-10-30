@@ -151,29 +151,32 @@ keep the shared statuses current. The printed MOD sheet layout is unchanged.
 
 ## Result Appointment Flow v30 — read-only verification
 
-From a Stats source checkout on the machine where the Salesforce CLI alias
-`work` is authenticated:
+From a Stats checkout on the Raspberry Pi, with Salesforce CLI alias
+`work` authenticated:
 
 ```bash
 python3 -m printer_app.mod_resulting.flow_audit --org work
 ```
 
-The collector uses only Salesforce metadata listing, read-only SOQL,
-`sobject describe`, and `project retrieve start` for the **explicit Flow
-version 30**. It creates its own temporary Salesforce project and never
-changes any records, executes the Flow, deploys metadata, calls the MOD
-resulting submission service, or changes `MOD_RESULTING_LIVE_WRITES`.
-It does not read customer Work Orders or Leads.
+The collector uses only Tooling API `sf data query --use-tooling-api` and
+`sf sobject describe`. It identifies the **exact Flow version 30 record**,
+reads its Metadata JSON by ID, and reads field types/permissions using the
+existing Stats Salesforce adapter mappings. It neither retrieves a
+version-suffixed Metadata API Flow (which is unreliable in modern Salesforce)
+nor deploys anything, calls End of Day, invokes resulting, or changes
+`MOD_RESULTING_LIVE_WRITES`. No customer Lead/Work Order records are read.
 
-The command prints the new private ZIP location under the user's home
-directory. The ZIP contains Flow XML, a decision/field inventory, an active
-version check (if accessible), and required field types/writability from
-Salesforce. If multiple Result Appointment Flows exist, rerun with
-`--flow-name Exact_API_Name`. Metadata permissions may be required.
+The private ZIP is saved under the current user's home directory. It contains
+the exact version's Flow metadata, a decision/assignment inventory, the Flow
+version's status, and required field types/writability. If more than one Flow
+matches the Result Appointment name, add `--flow-name Exact_API_Name`.
+Salesforce Tooling API access and Flow metadata read permissions may be
+required. If access is denied, the collector prints the Salesforce error
+name/message without revealing credentials.
 
-**A successful retrieval is evidence for a field-by-field audit, not a
-certification of behavioral equivalence or downstream Salesforce effects.**
-Treat the ZIP as confidential company metadata and share it privately.
+**A successful audit is evidence for comparison, not proof of Flow parity.**
+The ZIP contains company metadata; share it privately and do not put it in
+GitHub, issue comments, or public logs.
 
 ## Salesforce Object Explorer
 

@@ -1,4 +1,4 @@
-"""Read-only Flow v30 evidence collection must never submit MOD results."""
+"""Flow v30 audit reads Tooling metadata without executing any resulting writes."""
 from __future__ import annotations
 
 import json
@@ -17,35 +17,53 @@ from printer_app.mod_resulting.salesforce_adapter import (
 )
 
 
-FLOW_XML = b"""<?xml version="1.0"?>
-<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
-  <apiVersion>68.0</apiVersion><status>Active</status>
-  <processType>Flow</processType>
-  <decisions><name>Choose_Primary</name><label>Choose Primary</label>
-    <rules><name>IsToday</name><conditionLogic>and</conditionLogic>
-      <conditions><leftValueReference>Lead.Appointment_Date__c</leftValueReference>
-        <operator>EqualTo</operator><rightValue><stringValue>today</stringValue></rightValue>
-      </conditions>
-    </rules>
-  </decisions>
-  <recordUpdates><name>Update_Result</name>
-    <object>Product_Interest_Result__c</object>
-    <inputAssignments><field>Include_in_Issued_Lead_Count__c</field>
-      <value><booleanValue>true</booleanValue></value></inputAssignments>
-  </recordUpdates>
-</Flow>"""
+FLOW_ID = "301000000000030AAA"
+FLOW_VERSIONS = [{
+    "Id": FLOW_ID,
+    "Definition": {"DeveloperName": "Result_Appointment"},
+    "MasterLabel": "Result Appointment",
+    "VersionNumber": 30,
+    "Status": "Active",
+}]
+FLOW_METADATA = {
+    "apiVersion": 68.0,
+    "status": "Active",
+    "processType": "Flow",
+    "decisions": [{
+        "name": "Choose_Primary",
+        "label": "Choose Primary",
+        "rules": [{
+            "name": "IsToday",
+            "conditionLogic": "and",
+            "conditions": [{
+                "leftValueReference": "Lead.Appointment_Date__c",
+                "operator": "EqualTo",
+                "rightValue": {"stringValue": "today"},
+            }],
+        }],
+    }],
+    "recordUpdates": [{
+        "name": "Update_Result",
+        "object": PRODUCT_RESULT,
+        "inputAssignments": [{
+            "field": PR_ISSUED_COUNT,
+            "value": {"booleanValue": True},
+        }],
+    }],
+}
 
 
-def test_readonly_cli_rejects_every_write_family_even_if_live_writes_enabled(monkeypatch):
+def test_allowlist_blocks_data_writes_even_when_live_writes_are_on(monkeypatch):
     monkeypatch.setenv("MOD_RESULTING_LIVE_WRITES", "1")
     invoked = []
-    def fail_if_called(*_args, **_kwargs):
-        invoked.append(1)
-        raise AssertionError("No Salesforce process should have started")
-    cli = ReadOnlySalesforceCLI(runner=fail_if_called)
+    def impossible(*_args, **_kwargs):
+        invoked.append(True)
+        raise AssertionError("No shell command should run")
+    cli = ReadOnlySalesforceCLI(runner=impossible)
     for operation in (
         ["data", "update", "record"], ["data", "create", "record"],
         ["data", "delete", "record"], ["project", "deploy", "start"],
+        ["project", "retrieve", "start"], ["org", "list", "metadata"],
         ["apex", "run"], ["flow", "run"], ["org", "open"],
     ):
         with pytest.raises(FlowAuditError, match="Forbidden"):
@@ -53,143 +71,159 @@ def test_readonly_cli_rejects_every_write_family_even_if_live_writes_enabled(mon
     assert invoked == []
 
 
-def test_pick_exact_result_appointment_flow_and_refuse_ambiguous_names():
-    rows = [{"fullName":"Result_Appointment"}]
-    assert select_flow(rows, [], "") == "Result_Appointment"
-    assert select_flow(rows, [], "Result_Appointment") == "Result_Appointment"
-    with pytest.raises(FlowAuditError, match="Multiple"):
-        select_flow(rows + [{"fullName":"Result_Appointment_v2"}], [], "")
-    with pytest.raises(FlowAuditError, match="not found"):
-        select_flow(rows, [], "Not_The_Flow")
-    with pytest.raises(FlowAuditError, match="Invalid"):
-        select_flow(rows, [], "Flow:Other*")
-    assert select_flow([], [{"ApiName":"X30", "Label":"Result Appointment Flow"}]) == "X30"
+def test_select_exact_version_and_refuse_ambiguity_or_unknown_product():
+    assert select_flow(FLOW_VERSIONS, 30)["name"] == "Result_Appointment"
+    assert select_flow(FLOW_VERSIONS, 30, "Result_Appointment")["id"] == FLOW_ID
+    with pytest.raises(FlowAuditError, match="version 29"):
+        select_flow(FLOW_VERSIONS, 29)
+    with pytest.raises(FlowAuditError, match="version 30"):
+        select_flow(FLOW_VERSIONS, 30, "Not_The_Flow")
+    with pytest.raises(FlowAuditError, match="Invalid Flow"):
+        select_flow(FLOW_VERSIONS, 30, "Flow:Other*")
+    with pytest.raises(FlowAuditError, match="found 2"):
+        select_flow(FLOW_VERSIONS + [{
+            **FLOW_VERSIONS[0], "Id": "301000000000031AAA",
+            "Definition": {"DeveloperName": "Result_Appointment_v2"},
+        }], 30)
+    assert select_flow([{
+        **FLOW_VERSIONS[0], "Definition": {"DeveloperName": "X30"},
+    }], 30, "X30")["name"] == "X30"
 
 
-def test_flow_inventory_includes_actual_branches_and_fields():
-    inventory = flow_inventory(FLOW_XML)
+def test_inventory_reads_actual_tooling_decision_and_field_assignment():
+    inventory = flow_inventory(FLOW_METADATA)
     assert inventory["flow_status"] == "Active"
-    assert inventory["api_version"] == "68.0"
-    assert inventory["element_counts"] == {"decisions":1, "recordUpdates":1}
+    assert inventory["process_type"] == "Flow"
+    assert inventory["api_version"] == 68.0
+    assert inventory["element_counts"] == {
+        "decisions": 1, "recordUpdates": 1
+    }
     decision, update = inventory["elements"]
-    assert decision["rules"][0]["conditions"][0]["left"] == (
-        "Lead.Appointment_Date__c")
-    assert decision["rules"][0]["conditions"][0]["operator"] == "EqualTo"
+    assert decision["rules"][0]["conditions"][0]["leftValueReference"] == (
+        "Lead.Appointment_Date__c"
+    )
     assert update["assigned_fields"] == [PR_ISSUED_COUNT]
     assert update["object"] == PRODUCT_RESULT
-    with pytest.raises(FlowAuditError, match="DTD"):
-        flow_inventory(b"<!DOCTYPE Flow><Flow />")
-    with pytest.raises(FlowAuditError, match="not a Salesforce Flow"):
-        flow_inventory(b"<AnotherObject />")
+    with pytest.raises(FlowAuditError, match="must be an object"):
+        flow_inventory("not-a-metadata-object")
 
 
-def test_field_inventory_uses_existing_salesforce_adapter_contract():
+def test_relevant_fields_derive_from_existing_salesforce_adapter():
     requirements = field_requirements()
-    assert PR_ISSUED_COUNT in requirements[PRODUCT_RESULT]
-    assert PR_APPOINTMENT_DATE in requirements[PRODUCT_RESULT]
-    field_data = relevant_fields({"fields":[
+    assert {PR_ISSUED_COUNT, PR_APPOINTMENT_DATE} <= requirements[PRODUCT_RESULT]
+    f = relevant_fields({"fields":[
         {"name":PR_ISSUED_COUNT, "type":"boolean",
          "createable":False, "updateable":True, "picklistValues":[]},
     ]}, requirements[PRODUCT_RESULT])
-    assert field_data[PR_ISSUED_COUNT] == {
-        "present": True, "type":"boolean", "createable":False,
-        "updateable":True, "referenceTo":[], "picklistValues":[],
+    assert f[PR_ISSUED_COUNT] == {
+        "present": True, "type": "boolean", "createable": False,
+        "updateable": True, "referenceTo": [], "picklistValues": [],
     }
-    assert field_data[PR_APPOINTMENT_DATE] == {"present":False}
+    assert f[PR_APPOINTMENT_DATE] == {"present":False}
 
 
-def test_full_audit_only_reads_metadata_and_retrieves_explicit_version(tmp_path, monkeypatch):
-    monkeypatch.setenv("MOD_RESULTING_LIVE_WRITES", "1")
-    commands = []
+def _fake_runner(commands, *, missing=False, bad_version=False):
     def runner(command, **kwargs):
         commands.append(command)
-        assert command[:1] == ["sf"]
+        assert command[0] == "sf"
         assert command[-3:] == ["--target-org", "work", "--json"]
-        assert "--json" in command
-        if command[1:4] == ["data","query","--query"]:
-            query = command[command.index("--query") + 1]
-            if "FROM FlowDefinitionView" in query:
-                result = {"records":[{
-                    "Id":"301000000000001AAA",
-                    "ApiName":"Result_Appointment", "Label":"Result Appointment",
-                    "ActiveVersionId":"301000000000030AAA",
-                    "LatestVersionId":"301000000000030AAA",
-                    "VersionNumber":30,
-                }], "done":True}
-            elif "FROM FlowVersionView" in query:
-                assert "VersionNumber = 30" in query
-                result = {"records":[{"VersionNumber":30,"Status":"Active"}],
+        assert not any(
+            command[1:3] == operation
+            for operation in (
+                ["data","update"], ["data","create"], ["data","delete"],
+                ["project","deploy"], ["project","retrieve"],
+            )
+        )
+        if command[1:3] == ["data","query"]:
+            assert "--use-tooling-api" in command
+            soql = command[command.index("--query") + 1]
+            if "VersionNumber = 30" in soql:
+                result = {"records": [] if bad_version else FLOW_VERSIONS,
+                          "done": True}
+            elif "WHERE Id = '" + FLOW_ID + "'" in soql:
+                assert "SELECT Id, Metadata" in soql
+                result = {"records":[{"Id":FLOW_ID,"Metadata":FLOW_METADATA}],
                           "done":True}
             else:
-                raise AssertionError("Unexpected read-only SOQL")
-        elif command[1:4] == ["org","list","metadata"]:
-            result = [{"fullName":"Result_Appointment",
-                       "fileName":"flows/Result_Appointment.flow"}]
-        elif command[1:4] == ["sobject","describe","--sobject"]:
-            object_name = command[command.index("--sobject") + 1]
-            fields = []
-            for name in field_requirements()[object_name]:
-                fields.append({"name":name,
-                               "type": ("boolean" if name == PR_ISSUED_COUNT
-                                        else "date" if name == PR_APPOINTMENT_DATE
-                                        else "string"),
-                               "updateable":True, "createable":True,
-                               "picklistValues":[]})
-            result = {"name":object_name, "fields":fields}
-        elif command[1:4] == ["project","retrieve","start"]:
-            assert command[command.index("--metadata") + 1] == (
-                "Flow:Result_Appointment-30")
-            base = Path(command[command.index("--output-dir") + 1])
-            flow = base/"force-app/main/default/flows/Result_Appointment-30.flow-meta.xml"
-            flow.parent.mkdir(parents=True)
-            flow.write_bytes(FLOW_XML)
-            result = {"files":[{"fullName":"Result_Appointment-30"}]}
+                raise AssertionError("Unexpected read-only Tooling query")
+        elif command[1:3] == ["sobject","describe"]:
+            name = command[command.index("--sobject") + 1]
+            fields = [{
+                "name":field_name,
+                "type": ("boolean" if field_name == PR_ISSUED_COUNT
+                         else "date" if field_name == PR_APPOINTMENT_DATE
+                         else "string"),
+                "updateable":True, "createable":True,
+                "picklistValues":[],
+            } for field_name in field_requirements()[name]]
+            result = {"name":name,"fields":fields}
         else:
-            raise AssertionError("Unexpected Salesforce operation: " + str(command))
-        return SimpleNamespace(
-            stdout=json.dumps({"status":0,"result":result}),
-            returncode=0, stderr="",
+            raise AssertionError("Unexpected Salesforce operation")
+        response = (
+            {"status":1,"name":"INSUFFICIENT_ACCESS",
+             "message":"Your user cannot read Tooling Flow metadata"}
+            if missing else {"status":0,"result":result}
         )
+        return SimpleNamespace(
+            stdout=json.dumps(response),
+            returncode=1 if missing else 0,
+            stderr="",
+        )
+    return runner
 
-    destination = tmp_path / "audit"
-    summary, bundle = collect(output=destination, runner=runner)
+
+def test_full_audit_uses_exact_flow_id_and_only_read_commands(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOD_RESULTING_LIVE_WRITES", "1")
+    calls = []
+    summary, bundle = collect(
+        output=tmp_path/"flow-audit", runner=_fake_runner(calls))
     assert summary["mode"] == "read_only"
-    assert summary["salesforce_records_read"] == 0
+    assert summary["salesforce_customer_records_read"] == 0
     assert summary["salesforce_records_modified"] == 0
     assert summary["parity_verified"] is False
     assert summary["flow_version_requested"] == 30
+    assert summary["flow_version_confirmed"] is True
+    assert summary["flow_version_record_id"] == FLOW_ID
     assert summary["version_30_active"] is True
-    assert summary["flow_version_confirmation"] == (
-        "version_query_and_metadata_selector")
+    assert summary["source"] == "Tooling_API_Flow_by_exact_version_id"
     assert summary["phase3_critical_fields"][PR_ISSUED_COUNT]["writable"] is True
     assert bundle.exists() and bundle.stat().st_size > 100
-    assert not (destination / "_temporary_salesforce_project").exists()
-    assert not any(
-        command[1:3] in (["data","update"], ["data","create"], ["data","delete"],
-                          ["project","deploy"]) for command in commands)
-    assert len([command for command in commands if command[1:3] ==
-                ["sobject","describe"]]) == 4
+    assert len(calls) == 6
+    assert len([c for c in calls if c[1:3] == ["sobject","describe"]]) == 4
+    assert len([c for c in calls if c[1:3] == ["data","query"]]) == 2
+    assert not any("Flow:" in " ".join(c) for c in calls)
     with zipfile.ZipFile(bundle) as z:
-        assert z.read("flow_version_30.xml") == FLOW_XML
-        assert "stats_field_metadata.json" in z.namelist()
+        assert json.loads(z.read("flow_version_30.json")) == FLOW_METADATA
         assert json.loads(z.read("summary.json"))["parity_verified"] is False
 
 
-def test_missing_explicit_version_never_uses_latest_flow(tmp_path):
+def test_bad_version_and_tooling_permission_error_are_explicit(tmp_path):
+    calls = []
+    with pytest.raises(FlowAuditError, match="version 30"):
+        collect(output=tmp_path/"missing",runner=_fake_runner(calls,bad_version=True))
+    assert all(c[1:3] not in (["data","create"],["data","update"])
+               for c in calls)
+
+    calls = []
+    with pytest.raises(FlowAuditError, match="INSUFFICIENT_ACCESS"):
+        collect(output=tmp_path/"denied",runner=_fake_runner(calls,missing=True))
+    assert all(c[1:3] not in (["data","create"],["data","update"])
+               for c in calls)
+
+
+def test_tooling_metadata_can_not_fall_back_to_another_flow_version():
+    commands = []
     def runner(command, **kwargs):
-        if command[1:3] == ["project","retrieve"]:
-            # Salesforce provided only a nonmatching component.
-            bad = Path(command[command.index("--output-dir")+1]) / (
-                "force-app/main/default/flows/Another_Flow.flow-meta.xml")
-            bad.parent.mkdir(parents=True)
-            bad.write_bytes(FLOW_XML)
-            result = {}
+        commands.append(command)
+        if "VersionNumber = 30" in " ".join(command):
+            result = {"records":FLOW_VERSIONS,"done":True}
         else:
-            result = []
+            result = {"records":[{
+                "Id":"301000000000032AAA","Metadata":FLOW_METADATA
+            }],"done":True}
         return SimpleNamespace(stdout=json.dumps({"status":0,"result":result}),
-                               returncode=0, stderr="")
-    project = tmp_path / "project"
-    project.mkdir()
+                               returncode=0,stderr="")
     cli = ReadOnlySalesforceCLI(runner=runner)
-    with pytest.raises(FlowAuditError, match="not uniquely retrieved"):
-        cli.retrieve_flow("Result_Appointment", 30, project)
+    with pytest.raises(FlowAuditError, match="Exact Flow version"):
+        cli.flow_metadata(FLOW_ID)
+    assert len(commands) == 1
