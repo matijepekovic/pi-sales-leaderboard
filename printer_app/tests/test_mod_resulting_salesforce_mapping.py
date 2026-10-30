@@ -271,10 +271,21 @@ def test_ghost_fields_and_comment_are_never_written(review,redlines):
         assert 'Price_Given__c' not in fields
     assert all(fields.get('PR_Appointment_Time__c') == '11:00:00.000Z'
                for action, obj, ident, fields in results if action == 'create')
-    assert all(fields.get('PR_Set_By__c') == MOD
-               for action, obj, ident, fields in results if action == 'create')
-    assert all(fields.get('Original_Disposition__c') == 'Pitch No Sale'
-               for action, obj, ident, fields in results if action == 'create')
+    expected_creation = {
+        'PR_Appointment_Time__c': '11:00:00.000Z',
+        'PR_Approved_By_Supervisor__c': MOD,
+        'PR_Canvass_Set_By__c': MOD,
+        'PR_Confirmed_By__c': MOD,
+        'PR_Lead_Source__c': 'Salesforce Import',
+        'PR_Reset_By__c': MOD,
+        'PR_Set_By__c': MOD,
+        'PR_Sub_Source__c': 'Direct',
+        'Original_Disposition__c': 'Pitch No Sale',
+        'Comment__c': None,
+    }
+    for action, obj, ident, fields in results:
+        if action == 'create':
+            assert {key: fields[key] for key in expected_creation} == expected_creation
     appointments=[row for row in plan if row[1]=='ServiceAppointment']
     assert {row[2] for row in appointments}=={SA1,SA2}
     assert all(row[3]=={'Status':'Completed'} for row in appointments)
