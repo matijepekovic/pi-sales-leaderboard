@@ -141,7 +141,8 @@ class ResultingService:
         return self.repository.save_draft(day, work_order_id, data, revision)
 
     @staticmethod
-    def submission_payload(sheet, mod_id, *, resulted_on=None):
+    def submission_payload(sheet, mod_id, *, resulted_on=None,
+                           lead_appointment_date=''):
         draft = clean_draft(sheet['draft'])
         fields = outcome_fields(draft)
         if fields is None:
@@ -200,7 +201,7 @@ class ResultingService:
 
         context = product_result_context(
             draft, results,
-            lead_appointment_date=sheet['snapshot'].get('lead_appointment_date', ''),
+            lead_appointment_date=lead_appointment_date,
             resulted_on=resulted_on or sheet['day'],
         )
 
@@ -227,9 +228,16 @@ class ResultingService:
     def _apply_batch(self, day, mod_id, rows, *, job_id=None, resulted_on=None):
         """Single Salesforce write path for direct and background submissions."""
         resulting_date = resulted_on or self.day()
-        batch = [self.submission_payload(dict(row, day=day), mod_id,
-                                         resulted_on=resulting_date)
-                 for row in rows]
+        date_reader = getattr(self.writer, 'lead_appointment_dates', None)
+        leads = sorted({row['snapshot'].get('lead_source_id', '')
+                        for row in rows if row['snapshot'].get('lead_source_id')})
+        dates = date_reader(leads) if callable(date_reader) else {}
+        if not isinstance(dates, dict):
+            raise ValueError('Lead appointment date lookup returned invalid data.')
+        batch = [self.submission_payload(
+            dict(row, day=day), mod_id, resulted_on=resulting_date,
+            lead_appointment_date=dates.get(row['snapshot'].get('lead_source_id', ''), ''),
+        ) for row in rows]
         # Preflight the entire batch before any Salesforce write.
         plans = self.writer.prepare(batch)
         if len(plans) != len(rows):
