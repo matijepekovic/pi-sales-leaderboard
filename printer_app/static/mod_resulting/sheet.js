@@ -216,11 +216,81 @@
     timePeriod.value = match ? match[3] : 'PM';
     openDialog(timeDialog, '#timeHour');
   }
+  function setCallTime(input, value) {
+    if (!input || input.disabled) return;
+    input.value = value;
+    // Use the existing draft/redraw/autosave path for either gesture.
+    input.dispatchEvent(new Event('input', {bubbles:true}));
+  }
   function writeTime(value) {
     if (!timeTarget) return;
-    timeTarget.value = value;
-    timeTarget.dispatchEvent(new Event('input', {bubbles:true}));
+    setCallTime(timeTarget, value);
     closeDialog(timeDialog);
+  }
+  function recordCallNow(sheet, key) {
+    const input = sheet.querySelector('[data-key="' + key + '"]');
+    if (!input || input.disabled) return;
+    const now = new Date();
+    const hour = now.getHours();
+    setCallTime(input, (hour % 12 || 12) + ':' +
+      String(now.getMinutes()).padStart(2, '0') + ' ' +
+      (hour >= 12 ? 'PM' : 'AM'));
+  }
+  function setupCallTrigger(sheet, button) {
+    let holdTimer = null;
+    let origin = null;
+    let held = false;
+    let moved = false;
+    let suppressClick = false;
+    const key = button.dataset.timeTrigger;
+    function cancel() {
+      if (holdTimer !== null) clearTimeout(holdTimer);
+      holdTimer = null;
+      origin = null;
+      held = false;
+    }
+    button.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || event.isPrimary === false) return;
+      cancel();
+      moved = false;
+      suppressClick = false;
+      origin = {x:event.clientX, y:event.clientY};
+      // Open on release so the pointer cannot land on the dialog backdrop.
+      holdTimer = setTimeout(() => { held = true; }, 600);
+    });
+    button.addEventListener('pointermove', event => {
+      if (origin && Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > 12) {
+        moved = true;
+        cancel();
+      }
+    });
+    button.addEventListener('pointerup', event => {
+      const wasHeld = held;
+      cancel();
+      if (wasHeld) {
+        event.preventDefault();
+        suppressClick = true;
+        openTimePicker(sheet, key);
+      }
+    });
+    button.addEventListener('pointercancel', () => { moved = true; cancel(); });
+    button.addEventListener('pointerleave', () => { if (origin) moved = true; cancel(); });
+    button.addEventListener('click', event => {
+      if (suppressClick || moved) {
+        event.preventDefault();
+        suppressClick = false;
+        moved = false;
+        return;
+      }
+      recordCallNow(sheet, key);
+    });
+    button.addEventListener('contextmenu', event => {
+      event.preventDefault();
+      // Mobile contextmenu can fire before pointerup on a long press.
+      if (origin) { held = true; return; }
+      suppressClick = true;
+      openTimePicker(sheet, key);
+    });
   }
   for (const dialog of document.querySelectorAll('.editor-dialog')) {
     dialog.addEventListener('close', () => {
@@ -778,7 +848,7 @@
     productButton?.addEventListener('click', () => openDialog(product, '[data-product-result]'));
     dnrButton?.addEventListener('click', () => openDialog(dnr, '[data-reason-choice]'));
     for (const button of sheet.querySelectorAll('[data-time-trigger]')) {
-      button.addEventListener('click', () => openTimePicker(sheet, button.dataset.timeTrigger));
+      setupCallTrigger(sheet, button);
     }
   }
   for (const sheet of sheets) setup(sheet);

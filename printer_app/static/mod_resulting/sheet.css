@@ -70,7 +70,7 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .field-extras{display:flex;align-items:center;justify-content:space-around;gap:.2cqw;border-left:1px solid #000}
 .field-extras label{display:flex;align-items:center;gap:.4cqw;font-size:1.3cqw;white-space:nowrap}
 .time-entry{position:absolute;left:4.1cqw;top:.1cqw;width:4.2cqw;font-size:1.05cqw!important;line-height:1.2}
-.mod-sheet .time-picker-button{position:absolute;top:0;right:0;min-width:1.9cqw;min-height:2.1cqw;border:0;background:#fff;color:#222;font-size:max(12px,1.4cqw);line-height:1;cursor:pointer}
+.mod-sheet .time-picker-button{position:absolute;inset:0;z-index:4;width:100%;height:100%;border:0;background:transparent;color:transparent;font-size:0;cursor:pointer;touch-action:manipulation;-webkit-touch-callout:none;user-select:none}
 .mod-sheet .time-picker-button:focus-visible{outline:2px solid #2563eb;outline-offset:-2px}
 .box-text{position:absolute;inset:1.85cqw .2cqw .1cqw;width:calc(100% - .4cqw);height:calc(100% - 1.95cqw);resize:none}
 .field-ninety{display:flex;flex-direction:column}
@@ -198,13 +198,6 @@ body.dialog-open{overflow:hidden}
  .floating-controls button,.floating-controls .completed-pdf{min-height:44px;padding:8px;font-size:12px}
  .sheets{width:100%;padding:12px 8px calc(24px + env(safe-area-inset-bottom));
   gap:20px;align-items:flex-start;overflow-x:auto;overscroll-behavior-x:contain}
- /* On phones the existing call row itself is the tap target. No external
-    buttons or second navigation strip: zoom the MOD sheet for precision. */
- .mod-sheet .time-picker-button{
-  display:block;inset:0;width:100%;height:100%;min-width:0;min-height:0;
-  z-index:4;background:transparent;color:transparent;font-size:0;
-  border:0;border-radius:0;cursor:pointer;
- }
  .mod-sheet{width:calc(100vw - 16px);-webkit-text-size-adjust:100%;text-size-adjust:100%}
  .notification{flex:1 1 100%;max-width:100%;padding:2px 0;color:#983721}
  .editor-dialog{width:calc(100vw - 20px);max-width:calc(100vw - 20px);max-height:calc(100dvh - 16px);border-radius:10px}
