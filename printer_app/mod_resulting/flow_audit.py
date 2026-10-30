@@ -47,6 +47,44 @@ def _unwrap(value):
     return value
 
 
+# Safe enum literals for a shareable graph report. Other Salesforce Flow
+# literals can contain customer-specific identifiers or internal secrets.
+SAFE_FLOW_LITERALS = frozenset({
+    '', 'Sale', 'PNS', 'Pitch No Sale', 'No Pitch', 'CXL',
+    'Canceled', 'Cancelled', 'Completed', 'NRA', 'No Rep Available',
+    'Out of Scope', 'OOS', 'Nurturing', 'Sale Pending',
+    'Do Not Call', 'true', 'false', 'null', 'Today',
+})
+
+
+def _flow_value(value):
+    if not isinstance(value, dict):
+        return {'kind': 'redacted_literal'}
+    reference = value.get('elementReference')
+    if isinstance(reference, str):
+        return {'kind': 'reference', 'value': reference[:140]}
+    for attribute in ('stringValue', 'booleanValue', 'numberValue', 'dateValue'):
+        if attribute in value:
+            raw = value[attribute]
+            if isinstance(raw, bool) or (isinstance(raw, str) and raw in SAFE_FLOW_LITERALS):
+                return {'kind': attribute, 'value': raw}
+            return {'kind': attribute, 'value': '[literal redacted]'}
+    return {'kind': 'redacted_literal'}
+
+
+def _flow_conditions(conditions):
+    if not isinstance(conditions, list):
+        return []
+    return [
+        {
+            'left': str(condition.get('leftValueReference', ''))[:140],
+            'operator': str(condition.get('operator', ''))[:60],
+            'right': _flow_value(condition.get('rightValue')),
+        }
+        for condition in conditions if isinstance(condition, dict)
+    ]
+
+
 def inspect_flow(path):
     """Inventory exact version and graph elements without invoking any Flow."""
     record = _unwrap(json.loads(Path(path).read_text(encoding='utf-8')))
@@ -99,17 +137,37 @@ def inspect_flow(path):
             for name in ('connector', 'defaultConnector', 'rules',
                          'nextValueConnector', 'noMoreValuesConnector'):
                 collect_connectors(node.get(name))
-            rule_names = [
-                rule['name'] for rule in (node.get('rules') or [])
-                if isinstance(rule, dict) and isinstance(rule.get('name'), str)
+            rules = [
+                {
+                    'name': str(rule.get('name', ''))[:140],
+                    'condition_logic': str(rule.get('conditionLogic', ''))[:80],
+                    'conditions': _flow_conditions(rule.get('conditions')),
+                }
+                for rule in (node.get('rules') or [])
+                if isinstance(rule, dict)
             ] if isinstance(node.get('rules'), list) else []
+            statements = []
+            for key in ('assignmentItems', 'inputAssignments', 'filters'):
+                rows = node.get(key) or []
+                if isinstance(rows, dict):
+                    rows = [rows]
+                for item in rows if isinstance(rows, list) else []:
+                    if not isinstance(item, dict):
+                        continue
+                    statements.append({
+                        'kind': key,
+                        'field': str(item.get('field', item.get('assignToReference', '')))[:140],
+                        'operator': str(item.get('operator', ''))[:60],
+                        'value': _flow_value(item.get('value')),
+                    })
             elements.append({
                 'kind': kind,
-                'name': str(node.get('name', '')),
-                'object': str(node.get('object') or ''),
+                'name': str(node.get('name', ''))[:140],
+                'object': str(node.get('object') or '')[:140],
                 'fields': sorted(fields),
                 'targets': sorted(connectors),
-                'rules': rule_names,
+                'rules': rules,
+                'statements': statements,
             })
     raw = json.dumps(metadata, ensure_ascii=True)
     flow_fields = sorted(set(FLOW_FIELDS.findall(raw)))
