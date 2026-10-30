@@ -6,7 +6,8 @@ import re
 from .contract import deposit_payment_value
 
 from .salesforce_adapter import (
-    LEAD_FIELDS, PR, WO, REVIEW_FIELD, PRODUCT_RESULT_VALUE, WORK_ORDER_DISPO,
+    LEAD_FIELDS, PR, PR_ISSUED_COUNT, WO, REVIEW_FIELD, PRODUCT_RESULT_VALUE,
+    WORK_ORDER_DISPO,
     ResultingSalesforceError,
 )
 
@@ -137,6 +138,7 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
         per_product, sales, details, seen = {}, {}, set(), set()
         ranked_results = []
         product_flags = {'free_lead': [], 'cxl_at_lead': []}
+        issued_primary = []
         for item in products.get(work_id, ()):
             product = str(item.get(PR['product']) or '').strip()
             if not product:
@@ -144,6 +146,8 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             if product.casefold() in seen:
                 raise ResultingSalesforceError('Duplicate Salesforce product result.')
             seen.add(product.casefold())
+            if item.get(PR_ISSUED_COUNT) is True:
+                issued_primary.append(product)
             raw_result = str(item.get(PR['result']) or '').strip()
             result = results.get(raw_result.casefold(), '')
             if raw_result and not result:
@@ -179,6 +183,10 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
                 product_flags[key].append(value)
                 if _checked(value):
                     draft[key] = True
+        # Salesforce's issued-lead flag is authoritative on Refresh. More than
+        # one flagged product is ambiguous; never choose a primary by order.
+        if len(issued_primary) == 1:
+            draft['primary_product'] = issued_primary[0]
         # When products disagree, show the values together rather than
         # guessing which one owns this sheet-level checkmark. Preserve every
         # original product checkbox by omitting it from Override writes until
