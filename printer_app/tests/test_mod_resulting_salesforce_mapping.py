@@ -71,6 +71,14 @@ def _schemas():
         _field('Product_Interest_lead__c','multipicklist',[
             'Roofing','Siding','Windows','Bath','Doors',
         ]),
+        _field('Appointment_Time__c','time'),
+        _field('Approved_By_Supervisor__c','reference',refs=['User']),
+        _field('Canvass_Set_By__c','reference',refs=['User']),
+        _field('Confirmed_By__c','reference',refs=['User']),
+        _field('LeadSource','picklist',['Salesforce Import']),
+        _field('Reset_By__c','reference',refs=['User']),
+        _field('Set_By__c','reference',refs=['User']),
+        _field('Sub_Source__c','string'),
     ]
     sa = [
         _field('Status','picklist',[
@@ -96,7 +104,14 @@ def _schemas():
         _field('PR_Appointment_Date__c','date'),
         _field('Comment__c','textarea'),
         _field('Original_Disposition__c','string'),
-        _field('PR_Set_By__c','string'),
+        _field('PR_Set_By__c','reference',refs=['User']),
+        _field('PR_Appointment_Time__c','time'),
+        _field('PR_Approved_By_Supervisor__c','reference',refs=['User']),
+        _field('PR_Canvass_Set_By__c','reference',refs=['User']),
+        _field('PR_Confirmed_By__c','reference',refs=['User']),
+        _field('PR_Lead_Source__c','picklist',['Salesforce Import']),
+        _field('PR_Reset_By__c','reference',refs=['User']),
+        _field('PR_Sub_Source__c','string'),
     ]
     return {
         'WorkOrder':{'name':'WorkOrder','fields':wo},
@@ -141,6 +156,14 @@ def _adapter(*, existing_results=(), lead_interest='Roofing;Siding', schemas=Non
                 result = {'records':[{
                     'Id': LEAD, 'Product_Interest_lead__c': lead_interest,
                     'Appointment_Date__c': '2026-10-27',
+                    'Appointment_Time__c': '11:00:00.000Z',
+                    'Approved_By_Supervisor__c': MOD,
+                    'Canvass_Set_By__c': MOD,
+                    'Confirmed_By__c': MOD,
+                    'LeadSource': 'Salesforce Import',
+                    'Reset_By__c': MOD,
+                    'Set_By__c': MOD,
+                    'Sub_Source__c': 'Direct',
                 }], 'done':True}
             else:
                 raise AssertionError('Unexpected query: '+query)
@@ -181,8 +204,7 @@ def _single(plan,name):
 def _assert_no_protected_fields(plan):
     forbidden={
         'Pictures__c','Power_Questions__c','T_Close__c',
-        'Bid_Sheet_Submitted__c','Comment__c','Original_Disposition__c',
-        'PR_Set_By__c',
+        'Bid_Sheet_Submitted__c',
     }
     for op,obj,ident,values in plan:
         assert not set(values).intersection(forbidden), (obj,values)
@@ -192,7 +214,12 @@ def _assert_no_protected_fields(plan):
         'Lead':set(LEAD_FIELDS.values()),
         'ServiceAppointment':{SA['status']},
         'Product_Interest_Result__c':set(PR.values()) |
-            {PR_ISSUED_COUNT, PR_APPOINTMENT_DATE},
+            {PR_ISSUED_COUNT, PR_APPOINTMENT_DATE,
+             'Comment__c', 'Original_Disposition__c',
+             'PR_Appointment_Time__c', 'PR_Approved_By_Supervisor__c',
+             'PR_Canvass_Set_By__c', 'PR_Confirmed_By__c',
+             'PR_Lead_Source__c', 'PR_Reset_By__c',
+             'PR_Set_By__c', 'PR_Sub_Source__c'},
     }
     for op,obj,ident,values in plan:
         assert set(values).issubset(allowed[obj]), (obj,values)
@@ -242,6 +269,12 @@ def test_ghost_fields_and_comment_are_never_written(review,redlines):
         assert fields['Free_Product_Lead__c'] is True
         assert fields['CXL_Per_Redline__c'] is False
         assert 'Price_Given__c' not in fields
+    assert all(fields.get('PR_Appointment_Time__c') == '11:00:00.000Z'
+               for action, obj, ident, fields in results if action == 'create')
+    assert all(fields.get('PR_Set_By__c') == MOD
+               for action, obj, ident, fields in results if action == 'create')
+    assert all(fields.get('Original_Disposition__c') == 'Pitch No Sale'
+               for action, obj, ident, fields in results if action == 'create')
     appointments=[row for row in plan if row[1]=='ServiceAppointment']
     assert {row[2] for row in appointments}=={SA1,SA2}
     assert all(row[3]=={'Status':'Completed'} for row in appointments)
