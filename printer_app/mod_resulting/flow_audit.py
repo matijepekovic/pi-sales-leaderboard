@@ -361,6 +361,39 @@ def collect(*, org="work", flow_name="", version=30, output=None,
             for row in definitions if row.get("ApiName") == name
         ],
     })
+    # A Flow can have version 30 saved while a newer/older version is live.
+    # Read version status separately; the version-specific retrieve alone does
+    # not prove that version 30 is currently activated.
+    version_rows = []
+    definitions_for_flow = [
+        row for row in definitions if row.get("ApiName") == name
+    ]
+    if len(definitions_for_flow) == 1:
+        view_id = str(definitions_for_flow[0].get("Id") or "")
+        if re.fullmatch(r"[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?", view_id):
+            try:
+                version_rows = cli.query(
+                    "SELECT VersionNumber, Status FROM FlowVersionView "
+                    "WHERE FlowDefinitionViewId = '" + view_id + "' "
+                    "AND VersionNumber = " + str(version)
+                )
+            except FlowAuditError:
+                warnings.append(
+                    "FlowVersionView read unavailable; verify whether v30 "
+                    "is active in Salesforce Setup."
+                )
+        else:
+            warnings.append("Flow definition identity not available for version check.")
+    else:
+        warnings.append("Flow definition not uniquely identified for version check.")
+    _write_json(folder / "flow_version_status.json", {
+        "version_requested": version,
+        "version_rows": [
+            {"VersionNumber": row.get("VersionNumber"),
+             "Status": row.get("Status")}
+            for row in version_rows
+        ],
+    })
     retrieved_path = cli.retrieve_flow(name, version, project)
     data = retrieved_path.read_bytes()
     inventory = flow_inventory(data)
@@ -398,7 +431,17 @@ def collect(*, org="work", flow_name="", version=30, output=None,
         "salesforce_records_modified": 0,
         "flow_api_name": name,
         "flow_version_requested": version,
-        "flow_version_confirmation": "version_specific_metadata_selector",
+        "flow_version_confirmation": (
+            "version_query_and_metadata_selector"
+            if len(version_rows) == 1
+            and version_rows[0].get("VersionNumber") == version
+            else "version_specific_metadata_selector_only"
+        ),
+        "version_30_active": (
+            version_rows[0].get("Status") == "Active"
+            if len(version_rows) == 1
+            and version_rows[0].get("VersionNumber") == version else None
+        ),
         "flow_status_in_xml": inventory["flow_status"],
         "flow_element_counts": inventory["element_counts"],
         "phase3_critical_fields": checks,
@@ -413,7 +456,7 @@ def collect(*, org="work", flow_name="", version=30, output=None,
     with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in (
             flow_file, folder / "flow_identity.json",
-            folder / "flow_inventory.json",
+            folder / "flow_version_status.json", folder / "flow_inventory.json",
             folder / "stats_field_metadata.json", folder / "summary.json",
         ):
             archive.write(path, arcname=path.name)
