@@ -1155,6 +1155,6 @@ class SalesforceCliAdapter:
                 lead_description=_nested(lead, 'Description'),
                 sales_lead_status=_nested(lead, 'Status'),
                 lead_source_id=_nested(lead, 'Id'),
-                lead_appointment_date=str(lead.get('Appointment_Date__c') or ''),
+                lead_appointment_date=_nested(lead, 'Appointment_Date__c'),
             ))
         return normalized
