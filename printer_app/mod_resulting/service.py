@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from ..mod_sheet_contract import ModSheetRecord
 from .contract import (
     clean_draft, final_redline_text, outcome_fields, sold_products,
-    individual_product_sales, deposit_payment_text,
+    individual_product_sales, deposit_payment_text, product_result_context,
 )
 
 
@@ -141,7 +141,7 @@ class ResultingService:
         return self.repository.save_draft(day, work_order_id, data, revision)
 
     @staticmethod
-    def submission_payload(sheet, mod_id):
+    def submission_payload(sheet, mod_id, *, resulted_on=None):
         draft = clean_draft(sheet['draft'])
         fields = outcome_fields(draft)
         if fields is None:
@@ -198,12 +198,19 @@ class ResultingService:
                     })
             individual_sales = individual_product_sales(draft)
 
+        context = product_result_context(
+            draft, results,
+            lead_appointment_date=sheet['snapshot'].get('lead_appointment_date', ''),
+            resulted_on=resulted_on or sheet['day'],
+        )
+
         return dict(
             day=sheet['day'], work_order_id=sheet['work_order_id'],
             work_order_number=sheet['snapshot']['work_order_number'],
             lead_id=sheet['snapshot'].get('lead_source_id', ''),
             mod_id=mod_id, dispo=draft['dispo'], fields=fields,
             draft=draft, product_results=results,
+            product_result_context=context,
             deposit_payment=deposit_payment_text(draft),
             final_redlines=final_redline_text(draft),
         )
@@ -219,7 +226,8 @@ class ResultingService:
 
     def _apply_batch(self, day, mod_id, rows, *, job_id=None):
         """Single Salesforce write path for direct and background submissions."""
-        batch = [self.submission_payload(dict(row, day=day), mod_id)
+        batch = [self.submission_payload(dict(row, day=day), mod_id,
+                                         resulted_on=self.day())
                  for row in rows]
         # Preflight the entire batch before any Salesforce write.
         plans = self.writer.prepare(batch)
