@@ -22,6 +22,16 @@ class ResultingRepository:
     def day(self, day):
         return self.db.one('SELECT * FROM mod_result_days WHERE day=?', (day,))
 
+    def latest_day(self):
+        """Most recent imported day containing MOD sheets, read-only."""
+        row = self.db.one(
+            'SELECT day FROM mod_result_days WHERE EXISTS '
+            '(SELECT 1 FROM mod_result_sheets '
+            'WHERE mod_result_sheets.day = mod_result_days.day) '
+            'ORDER BY day DESC LIMIT 1'
+        )
+        return row['day'] if row else ''
+
     def imported_market(self, day):
         """Market used for this day's imported sheets, not current Settings."""
         value = self.db.get('mod_result_market:' + day, '')
