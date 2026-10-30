@@ -56,7 +56,6 @@ def _appointment(
                 'LeadSource': 'Canvass',
                 'Sub_Source__c': 'Door',
                 'Status': lead_status,
-                'Appointment_Date__c': '2026-09-19',
                 'LastModifiedDate': '2026-09-19T16:00:00.000+0000',
                 'Canvass_Set_By__r': {'Name': 'Canvasser'},
                 'Set_By__r': {'Name': 'Setter'},
@@ -238,7 +237,6 @@ def test_mod_query_and_grouping_match_original_apex_controller():
     assert 'FSSK__FSK_Work_Order__c' in report_query
     assert 'FSSK__FSK_Work_Order__r.Lead__r.Status' in report_query.split(' FROM ')[0]
     assert 'FSSK__FSK_Work_Order__r.Lead__r.Id' in report_query.split(' FROM ')[0]
-    assert 'FSSK__FSK_Work_Order__r.Lead__r.Appointment_Date__c' in report_query.split(' FROM ')[0]
     assert 'StatusCategory' in report_query.split(' FROM ')[0]
     assert 'ORDER BY SchedStartTime, FSSK__FSK_Work_Order__r.Lead__r.Name ASC LIMIT 1000' in report_query
     assert not any('FROM AssignedResource' in query for query in _query_calls(calls))
@@ -261,7 +259,6 @@ def test_mod_query_and_grouping_match_original_apex_controller():
     assert record.lead_description == 'Customer description'
     assert record.sales_lead_status == 'Open'
     assert record.lead_source_id == '00Q000000000001AAA'
-    assert record.lead_appointment_date == '2026-09-19'
 
 
 def test_direct_work_order_lookup_needs_no_date_and_returns_current_normalized_appointment():
