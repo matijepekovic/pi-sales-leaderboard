@@ -937,14 +937,15 @@ def test_phase2_does_not_invent_dates_or_pick_a_missing_product():
 def test_phase2_submission_payload_keeps_existing_products_and_adds_normalized_context():
     source = ModSheetRecord(
         source_id=WORK, lead_source_id=LEAD, work_order_number='00012345',
-        product_interest='Roofing;Siding', lead_appointment_date='2026-10-25',
+        product_interest='Roofing;Siding',
     )
     sheet = {
         'day':'2026-10-25', 'work_order_id':WORK, 'snapshot':asdict(source),
         'draft':clean_draft({'dispo':'pns', 'primary_product':'Siding'}),
     }
     payload = ResultingService.submission_payload(
-        sheet, USER, resulted_on='2026-10-29')
+        sheet, USER, resulted_on='2026-10-29',
+        lead_appointment_date='2026-10-25')
     assert len(payload['product_results']) == 2
     assert payload['product_result_context']['Siding'] == {
         'role':'primary', 'counts_as_issued_lead':True,
@@ -974,7 +975,7 @@ def test_phase2_background_resulting_date_is_frozen_at_enqueue(tmp_path, monkeyp
     day = '2026-10-29'
     source.records = lambda **kwargs: [ModSheetRecord(
         source_id=WORK, lead_source_id=LEAD, work_order_number='00012345',
-        product_interest='Roofing', lead_appointment_date=day,
+        product_interest='Roofing',
     )]
     service.refresh(DAY)
     service.set_mod(DAY, USER)
@@ -983,6 +984,7 @@ def test_phase2_background_resulting_date_is_frozen_at_enqueue(tmp_path, monkeyp
     request_time = datetime(2026, 10, 29, 12, 0, tzinfo=ZoneInfo('America/Los_Angeles'))
     monkeypatch.setattr('printer_app.mod_resulting.repository.time.time',
                         lambda: request_time.timestamp())
+    writer.lead_appointment_dates = lambda leads: {LEAD: day}
     service.enqueue(DAY)
     # The worker can resume on a later calendar day; Flow TODAY must remain
     # the day the user actually submitted, not the worker's execution date.
