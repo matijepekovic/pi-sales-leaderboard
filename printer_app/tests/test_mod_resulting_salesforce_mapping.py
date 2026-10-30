@@ -12,7 +12,7 @@ from printer_app.mod_resulting.contract import clean_draft, outcome_fields
 from printer_app.mod_resulting.service import ResultingService
 from printer_app.mod_resulting.salesforce_adapter import (
     ResultingSalesforceAdapter, ResultingSalesforceError, WO, SA, LEAD_FIELDS, PR,
-    PRODUCT_RESULT, REVIEW_FIELD,
+    PRODUCT_RESULT, REVIEW_FIELD, PR_ISSUED_COUNT, PR_APPOINTMENT_DATE,
 )
 
 DAY = '2026-10-27'
@@ -92,6 +92,8 @@ def _schemas():
         _field('PR_1_Leg_Appointment__c','boolean'),
         _field('Free_Product_Lead__c','boolean'),
         _field('CXL_Per_Redline__c','boolean'),
+        _field('Include_in_Issued_Lead_Count__c','boolean'),
+        _field('PR_Appointment_Date__c','date'),
         _field('Comment__c','textarea'),
         _field('Original_Disposition__c','string'),
         _field('PR_Set_By__c','string'),
@@ -157,12 +159,13 @@ def _payload(dispo='pns', interest='Roofing;Siding', **draft):
     source=ModSheetRecord(
         source_id=WORK,lead_source_id=LEAD,
         work_order_number='00012345',product_interest=interest,
+        work_type='Sales - Roofing',
     )
     values=clean_draft(dict(draft,dispo=dispo))
     return ResultingService.submission_payload({
         'day':DAY,'work_order_id':WORK,
         'snapshot':asdict(source),'draft':values,
-    },MOD)
+    },MOD,lead_appointment_date=DAY)
 
 
 def _operations(adapter,payload):
@@ -188,7 +191,8 @@ def _assert_no_protected_fields(plan):
         'WorkOrder':set(WO.values()) | {REVIEW_FIELD},
         'Lead':set(LEAD_FIELDS.values()),
         'ServiceAppointment':{SA['status']},
-        'Product_Interest_Result__c':set(PR.values()),
+        'Product_Interest_Result__c':set(PR.values()) |
+            {PR_ISSUED_COUNT, PR_APPOINTMENT_DATE},
     }
     for op,obj,ident,values in plan:
         assert set(values).issubset(allowed[obj]), (obj,values)
@@ -823,3 +827,95 @@ def test_phase2_salesforce_date_reader_batches_authoritative_lead_dates_only():
                                     original(query))
     with pytest.raises(ResultingSalesforceError, match='unavailable'):
         adapter.lead_appointment_dates([LEAD])
+
+
+def test_phase3_sales_pivot_marks_only_sold_primary_and_clears_old_issued_flag():
+    adapter, calls = _adapter(existing_results=[{
+        'Id': PR1, 'Product_Interest__c': 'Roofing',
+        PR_ISSUED_COUNT: True, PR_APPOINTMENT_DATE: DAY,
+    }])
+    payload = _payload('sale', sale_products={
+        'Siding': {'price':'18000','deposit':'0'},
+        'Roofing': {'price':'0','deposit':''},
+    }, sale_selection_order=['Siding','Roofing'])
+    plan = _operations(adapter, payload)
+    pir = [item for item in plan if item[1] == PRODUCT_RESULT]
+    assert len(pir) == 2
+    created = next(item for item in pir if item[0] == 'create')
+    cleared = next(item for item in pir if item[0] == 'update')
+    assert created[3]['Product_Interest__c'] == 'Siding'
+    assert created[3]['Result__c'] == 'Sale'
+    assert created[3]['Price_Given__c'] == '18000'
+    assert created[3][PR_ISSUED_COUNT] is True
+    assert created[3][PR_APPOINTMENT_DATE] == DAY
+    assert cleared[2] == PR1
+    assert cleared[3] == {PR_ISSUED_COUNT:False}
+    assert not any(item[3].get('Result__c') == 'Pitch No Sale' for item in pir)
+    assert any('SELECT Id,Product_Interest__c,' + PR_ISSUED_COUNT in
+               command[command.index('--query')+1] for command in calls
+               if command[1:3] == ['data','query'] and
+               '--query' in command)
+
+
+def test_phase3_result_together_uses_work_type_and_additional_flags_are_false():
+    source = ModSheetRecord(
+        source_id=WORK, lead_source_id=LEAD, work_order_number='00012345',
+        product_interest='Roofing;Gutters', work_type='Sales - Gutters',
+    )
+    draft = clean_draft({'dispo':'pns'})
+    payload = ResultingService.submission_payload({
+        'day':DAY,'work_order_id':WORK,
+        'snapshot':asdict(source),'draft':draft,
+    }, MOD, lead_appointment_date=DAY)
+    assert payload['product_result_context']['Gutters']['role'] == 'primary'
+    assert payload['product_result_context']['Roofing']['role'] == 'additional'
+    adapter,_ = _adapter()
+    schemas = _schemas()
+    product = next(field for field in schemas[PRODUCT_RESULT]['fields']
+                   if field['name'] == 'Product_Interest__c')
+    product['picklistValues'].append(
+        {'value':'Gutters','label':'Gutters','active':True})
+    adapter,_ = _adapter(schemas=schemas)
+    ops = [item for item in _operations(adapter,payload)
+           if item[1] == PRODUCT_RESULT]
+    flags = {item[3]['Product_Interest__c']:item[3][PR_ISSUED_COUNT]
+             for item in ops}
+    assert flags == {'Roofing':False,'Gutters':True}
+    assert all(item[3][PR_APPOINTMENT_DATE] == DAY for item in ops)
+
+
+def test_phase3_existing_future_date_is_copied_and_missing_input_blocks_write():
+    source = ModSheetRecord(
+        source_id=WORK, lead_source_id=LEAD, work_order_number='00012345',
+        product_interest='Roofing', work_type='Sales - Roofing',
+    )
+    payload = ResultingService.submission_payload({
+        'day':DAY,'work_order_id':WORK,
+        'snapshot':asdict(source),'draft':clean_draft({'dispo':'pns'}),
+    }, MOD, lead_appointment_date='2026-10-30', resulted_on=DAY)
+    assert payload['product_result_context']['Roofing']['appointment_date_source'] == (
+        'existing_result_input')
+    adapter,_ = _adapter(existing_results=[{
+        'Id':PR1,'Product_Interest__c':'Roofing',
+        PR_ISSUED_COUNT:True,PR_APPOINTMENT_DATE:'2026-10-26',
+    }])
+    existing = _single(_operations(adapter,payload), PRODUCT_RESULT)
+    assert existing[3][PR_APPOINTMENT_DATE] == '2026-10-26'
+    adapter,calls = _adapter()
+    with pytest.raises(ResultingSalesforceError, match='appointment date is unavailable'):
+        _operations(adapter,payload)
+    assert all(command[1:3] not in (['data','update'],['data','create'])
+               for command in calls)
+
+
+def test_phase3_missing_flow_metadata_rejects_batch_before_writes():
+    schema = _schemas()
+    schema[PRODUCT_RESULT]['fields'] = [
+        field for field in schema[PRODUCT_RESULT]['fields']
+        if field['name'] != PR_ISSUED_COUNT
+    ]
+    adapter,calls = _adapter(schemas=schema)
+    with pytest.raises(ResultingSalesforceError, match=PR_ISSUED_COUNT):
+        _operations(adapter,_payload('pns'))
+    assert all(command[1:3] not in (['data','update'],['data','create'])
+               for command in calls)
