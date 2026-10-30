@@ -148,8 +148,15 @@ CREATE TABLE IF NOT EXISTS mod_result_submission_items (
 
 
 class Database:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, read_only=False):
         self.path = Path(path)
+        self.read_only = bool(read_only)
+        if self.read_only:
+            # Audit readers must never initialize, migrate or mutate the
+            # production printer database.
+            if not self.path.is_file():
+                raise FileNotFoundError(self.path)
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self.connect() as conn:
             conn.execute('PRAGMA journal_mode=WAL')
@@ -169,10 +176,17 @@ class Database:
 
     @contextmanager
     def connect(self):
-        conn = sqlite3.connect(self.path, timeout=15)
+        if self.read_only:
+            conn = sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro',
+                                   uri=True, timeout=15)
+        else:
+            conn = sqlite3.connect(self.path, timeout=15)
         conn.row_factory = sqlite3.Row
         conn.execute('PRAGMA foreign_keys=ON')
-        conn.execute('PRAGMA synchronous=FULL')
+        if self.read_only:
+            conn.execute('PRAGMA query_only=ON')
+        else:
+            conn.execute('PRAGMA synchronous=FULL')
         try:
             with conn:
                 yield conn
