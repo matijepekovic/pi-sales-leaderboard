@@ -914,6 +914,7 @@ class SalesforceCliAdapter:
             'FSSK__FSK_Work_Order__r.Lead__r.Name',
             'FSSK__FSK_Work_Order__r.Lead__r.Id',
             'FSSK__FSK_Work_Order__r.Lead__r.Status',
+            'FSSK__FSK_Work_Order__r.Lead__r.Appointment_Date__c',
             'FSSK__FSK_Work_Order__r.Lead__r.Phone',
             'FSSK__FSK_Work_Order__r.Lead__r.Phone_3__c',
             'SchedStartTime',
@@ -1154,5 +1155,6 @@ class SalesforceCliAdapter:
                 lead_description=_nested(lead, 'Description'),
                 sales_lead_status=_nested(lead, 'Status'),
                 lead_source_id=_nested(lead, 'Id'),
+                lead_appointment_date=str(lead.get('Appointment_Date__c') or ''),
             ))
         return normalized
