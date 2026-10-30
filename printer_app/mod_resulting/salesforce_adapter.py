@@ -24,8 +24,9 @@ WO_APPOINTMENT_DATETIME = 'Appointment_Date_Time__c'
 WO_APPOINTMENT_DATE = 'Appointment_Date__c'
 SERVICE_APPOINTMENT = 'ServiceAppointment'
 PRODUCT_RESULT = 'Product_Interest_Result__c'
-# Read-only Flow identity until the Phase 3 write mapping is implemented.
+# Result Appointment Flow fields, owned and validated by this adapter only.
 PR_ISSUED_COUNT = 'Include_in_Issued_Lead_Count__c'
+PR_APPOINTMENT_DATE = 'PR_Appointment_Date__c'
 # Review exists as a training field, but its live API metadata must be
 # verified on checked submissions; do not require it for unrelated jobs.
 REVIEW_FIELD = 'Review__c'
@@ -430,8 +431,9 @@ class ResultingSalesforceAdapter:
         return ids
 
     def _existing_product_results(self, lead_id, work_order_id):
+        fields = 'Id,' + PR['product'] + ',' + PR_ISSUED_COUNT + ',' + PR_APPOINTMENT_DATE
         rows = self._query(
-            'SELECT Id,' + PR['product'] + ' FROM ' + PRODUCT_RESULT
+            'SELECT ' + fields + ' FROM ' + PRODUCT_RESULT
             + ' WHERE ' + PR['lead'] + ' = ' + _soql(lead_id)
             + ' AND ' + PR['work_order'] + ' = ' + _soql(work_order_id)
             + ' LIMIT 2000'
@@ -445,7 +447,24 @@ class ResultingSalesforceAdapter:
                 raise ResultingSalesforceError(
                     'Product Interest Result identity is missing or ambiguous.'
                 )
-            result[key] = ident
+            issued = row.get(PR_ISSUED_COUNT)
+            day = row.get(PR_APPOINTMENT_DATE)
+            if issued is not None and type(issued) is not bool:
+                raise ResultingSalesforceError('Salesforce issued-lead flag is invalid.')
+            if day:
+                if not isinstance(day, str):
+                    raise ResultingSalesforceError('Salesforce result appointment date is invalid.')
+                try:
+                    date.fromisoformat(day)
+                except ValueError as exc:
+                    raise ResultingSalesforceError(
+                        'Salesforce result appointment date is invalid.'
+                    ) from exc
+            result[key] = {
+                'id': ident,
+                'issued': issued is True,
+                'appointment_date': day or '',
+            }
         return result
 
     def lead_appointment_dates(self, lead_ids):
@@ -541,13 +560,57 @@ class ResultingSalesforceAdapter:
         cxl_field = self._field(
             schema, PR['cxl_at_lead'], create=True, types=('boolean',)
         )
+        # These two fields were read-only in Phase 2. Verify their metadata
+        # before planning any writes; a missing or read-only field aborts
+        # preflight rather than silently losing Flow parity.
+        issued_field = self._field(
+            schema, PR_ISSUED_COUNT, types=('boolean',)
+        )
+        appointment_field = self._field(
+            schema, PR_APPOINTMENT_DATE, types=('date',)
+        )
+        context = payload.get('product_result_context')
+        if not isinstance(context, dict) or set(context) != {
+                item['product'] for item in payload['product_results']}:
+            raise ResultingSalesforceError('Product result context is incomplete.')
+        primary = [product for product, planned in context.items()
+                   if planned.get('role') == 'primary']
+        if len(primary) > 1:
+            raise ResultingSalesforceError('Multiple primary product results are not valid.')
 
         existing = self._existing_product_results(
             payload['lead_id'], payload['work_order_id']
         )
-        operations = []
+        operations, included = [], set()
         for entry in payload['product_results']:
             product = self._choice(product_field, entry['product'])
+            key = str(product).casefold()
+            planned = context[entry['product']]
+            if planned.get('role') not in ('primary', 'additional'):
+                raise ResultingSalesforceError('Primary product cannot be resolved.')
+            if type(planned.get('counts_as_issued_lead')) is not bool:
+                raise ResultingSalesforceError('Issued-lead eligibility is unresolved.')
+            old = existing.get(key)
+            old_id = old['id'] if old else None
+            source = planned.get('appointment_date_source')
+            appointment_day = planned.get('appointment_date')
+            if source == 'existing_result_input':
+                # The Flow copies the existing PIR date for future appointments.
+                # Do not substitute the Lead/Work Order date or the worker date.
+                appointment_day = old['appointment_date'] if old else ''
+            elif source not in ('today', 'lead'):
+                raise ResultingSalesforceError('Result appointment date is unresolved.')
+            if not appointment_day or not isinstance(appointment_day, str):
+                raise ResultingSalesforceError(
+                    'Result appointment date is unavailable; no Salesforce writes were made.'
+                )
+            try:
+                date.fromisoformat(appointment_day)
+            except ValueError as exc:
+                raise ResultingSalesforceError('Result appointment date is invalid.') from exc
+            if not old:
+                self._field(schema, PR_ISSUED_COUNT, create=True, types=('boolean',))
+                self._field(schema, PR_APPOINTMENT_DATE, create=True, types=('date',))
             result = self._choice(
                 result_field, PRODUCT_RESULT_VALUE[entry['result']]
             )
@@ -555,23 +618,26 @@ class ResultingSalesforceAdapter:
                 self._choice(detail_field, entry['detail'])
                 if entry.get('detail') else None
             )
-            old_id = existing.get(str(product).casefold())
-            fields = {PR['result']: result}
+            fields = {
+                PR['result']: result,
+                PR_ISSUED_COUNT: self._value(
+                    issued_field, planned['counts_as_issued_lead']),
+                PR_APPOINTMENT_DATE: self._value(
+                    appointment_field, appointment_day),
+            }
             raw_checks = payload['draft'].get('checkbox_values') or {}
-            for key, field in (
+            for name, field in (
                 ('one_leg', one_leg_field),
                 ('free_lead', free_field),
                 ('cxl_at_lead', cxl_field),
             ):
-                value = raw_checks.get(key)
-                # Existing product rows already have an authoritative value.
-                # Do not silently stamp the sheet's aggregate checkmark over
-                # each product during Override. New rows still need values.
+                value = raw_checks.get(name)
+                # An unchanged existing product's checkboxes are authoritative.
                 if old_id and value is not None and not value['edited']:
                     continue
                 entered = (value['value'] if value is not None and value['edited']
-                           else payload['draft'][key])
-                fields[PR[key]] = self._value(field, entered)
+                           else payload['draft'][name])
+                fields[PR[name]] = self._value(field, entered)
             if detail is not None:
                 fields[PR['detail']] = detail
             elif old_id:
@@ -584,8 +650,6 @@ class ResultingSalesforceAdapter:
                     )
                 fields[PR['price']] = self._value(price_field, entry['price'])
             elif old_id:
-                # Re-resulting an earlier Sale as any non-sale outcome must not
-                # retain the previous sold price in Salesforce.
                 fields[PR['price']] = None
 
             if old_id:
@@ -597,6 +661,16 @@ class ResultingSalesforceAdapter:
                     PR['product']: product,
                 })
                 operations.append(('create', PRODUCT_RESULT, '', fields))
+            included.add(key)
+
+        # An older primary can be outside the newly selected products (a sale
+        # pivot). Clear only its issued flag; do not invent a result for it.
+        if context:
+            for key, old in existing.items():
+                if key not in included and old['issued']:
+                    operations.append(('update', PRODUCT_RESULT, old['id'], {
+                        PR_ISSUED_COUNT: self._value(issued_field, False),
+                    }))
         return operations
 
     def prepare(self, payloads):

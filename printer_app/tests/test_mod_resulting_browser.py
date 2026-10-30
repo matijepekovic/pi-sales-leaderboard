@@ -1283,7 +1283,7 @@ def test_calculated_amount_placeholders_update_and_clear_to_automatic(mod_browse
 
 
 @pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
-def test_primary_product_selected_in_existing_popups_without_resizing_sheet(mod_browser, viewport):
+def test_phase3_primary_is_manual_only_when_individual_and_sale_order_is_saved(mod_browser, viewport):
     from playwright.sync_api import expect
 
     page, service, writer, origin, evidence = mod_browser
@@ -1292,11 +1292,17 @@ def test_primary_product_selected_in_existing_popups_without_resizing_sheet(mod_
     first = page.locator('.mod-sheet').first
     original = first.bounding_box()
     first.locator('[data-key="dispo"]').select_option('pns')
-    # The product popup must remain accessible without Result individually.
     expect(first.locator('.edit-product-results')).to_be_visible()
     first.locator('.edit-product-results').click()
     popup = first.locator('.product-panel')
     expect(popup).to_be_visible()
+    expect(popup.locator('.primary-product-choice')).to_be_hidden()
+    popup.locator('.editor-primary').click()
+
+    # Explicit individual resulting is the only path to a manual primary.
+    first.locator('[data-key="additional_products"]').check()
+    expect(popup).to_be_visible()
+    expect(popup.locator('.primary-product-choice')).to_be_visible()
     popup.locator('[data-primary-selection]').select_option('Siding')
     popup.locator('.editor-primary').click()
     page.wait_for_function("""() => {
@@ -1304,23 +1310,33 @@ def test_primary_product_selected_in_existing_popups_without_resizing_sheet(mod_
         return JSON.parse(sheet.dataset.initial || '{}').primary_product === 'Siding'
             && sheet.dataset.dirty === 'no';
     }""", timeout=8000)
-    assert service.repository.sheets(service.day())[0]['draft']['primary_product'] == 'Siding'
 
-    # Sale pivots select the primary from the existing Sold products popup.
+    # Sale does not expose manual primary selection. The first checked Sold
+    # product is persisted independently of the fixed product popup order.
     first.locator('[data-key="dispo"]').select_option('sale')
     sold = first.locator('.sale-panel')
     expect(sold).to_be_visible()
-    sold.locator('[data-primary-selection]').select_option('Roofing')
+    expect(sold.locator('[data-primary-selection]')).to_have_count(0)
+    sold.locator('[data-sale-product="Siding"] [data-sale-selected]').check()
+    sold.locator('[data-sale-product="Siding"] [data-sale-price]').fill('17000')
+    sold.locator('[data-sale-product="Siding"] [data-sale-deposit]').fill('0')
     sold.locator('[data-sale-product="Roofing"] [data-sale-selected]').check()
-    sold.locator('[data-sale-product="Roofing"] [data-sale-price]').fill('17000')
+    sold.locator('[data-sale-product="Roofing"] [data-sale-price]').fill('10000')
     sold.locator('[data-sale-product="Roofing"] [data-sale-deposit]').fill('0')
     sold.locator('.sale-done').click()
     page.wait_for_function("""() => {
         const sheet = document.querySelector('.mod-sheet');
         const draft = JSON.parse(sheet.dataset.initial || '{}');
-        return draft.primary_product === 'Roofing' && draft.dispo === 'sale'
+        return draft.dispo === 'sale'
+            && JSON.stringify(draft.sale_selection_order) === '["Siding","Roofing"]'
             && sheet.dataset.dirty === 'no';
     }""", timeout=8000)
-    assert service.repository.sheets(service.day())[0]['draft']['primary_product'] == 'Roofing'
+    record = service.repository.sheets(service.day())[0]
+    assert record['draft']['sale_selection_order'] == ['Siding', 'Roofing']
+    payload = service.submission_payload(
+        dict(record, day=service.day()), '005000000000001AAA',
+        lead_appointment_date=service.day())
+    assert payload['product_result_context']['Siding']['role'] == 'primary'
+    assert payload['product_result_context']['Roofing']['role'] == 'additional'
     assert first.bounding_box()['width'] == original['width']
     assert writer.applied == []

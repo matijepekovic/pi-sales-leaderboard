@@ -271,9 +271,10 @@
         draft[input.dataset.key] = input.type === 'checkbox' ? input.checked : input.value;
       }
     }
-    const primary = sheet.querySelector(draft.dispo === 'sale' ?
-      '.sale-panel [data-primary-selection]' : '.product-panel [data-primary-selection]');
-    draft.primary_product = primary?.value || '';
+    const primary = sheet.querySelector('.product-panel [data-primary-selection]');
+    if (draft.dispo !== 'sale' && draft.additional_products) {
+      draft.primary_product = primary?.value || '';
+    }
     // Preserve raw source values independently from the visible checkboxes.
     // Only explicit changes set edited=true; an unmodified value stays exact.
     draft.checkbox_values = sheet.checkboxValues || draft.checkbox_values || {};
@@ -296,9 +297,11 @@
       }
     }
     draft.sale_products = {};
+    const checkedSaleProducts = [];
     for (const row of sheet.querySelectorAll('[data-sale-product]')) {
       const selected = row.querySelector('[data-sale-selected]');
       if (!selected?.checked) continue;
+      checkedSaleProducts.push(row.dataset.saleProduct);
       const payment = row.querySelector('[data-sale-payment]').value;
       draft.sale_products[row.dataset.saleProduct] = {
         price: row.querySelector('[data-sale-price]').value,
@@ -306,6 +309,14 @@
         ...(payment ? {payment} : {})
       };
     }
+    // Preserve the chronological checkbox order, not the static popup order.
+    // Do not infer a sold product merely because an amount was typed.
+    const priorOrder = sheet.saleSelectionOrder || [];
+    draft.sale_selection_order = [
+      ...priorOrder.filter(product => checkedSaleProducts.includes(product)),
+      ...checkedSaleProducts.filter(product => !priorOrder.includes(product)),
+    ];
+    sheet.saleSelectionOrder = draft.sale_selection_order;
     return draft;
   }
   function manualRedlinePreview(sheet, draft) {
@@ -521,6 +532,13 @@
     if (background.complete) showSurface();
     const init = JSON.parse(sheet.dataset.initial || '{}');
     sheet.checkboxValues = JSON.parse(JSON.stringify(init.checkbox_values || {}));
+    sheet.saleSelectionOrder = Array.isArray(init.sale_selection_order)
+      ? [...init.sale_selection_order] : [];
+    // Older Salesforce drafts have a flagged primary but no click chronology.
+    if (!sheet.saleSelectionOrder.length && init.primary_product &&
+        init.sale_products?.[init.primary_product]) {
+      sheet.saleSelectionOrder.push(init.primary_product);
+    }
     for (const row of sheet.querySelectorAll('[data-product]')) {
       const selected = init.product_results?.[row.dataset.product];
       if (selected) {
@@ -570,6 +588,13 @@
     const productButton = sheet.querySelector('.edit-product-results');
     const dnrButton = sheet.querySelector('.edit-dnr-reasons');
     const separate = sheet.querySelector('.separate-products');
+    function syncPrimaryChoice() {
+      const choice = product?.querySelector('.primary-product-choice');
+      if (choice) choice.hidden =
+        !sheet.querySelector('[data-key="additional_products"]')?.checked ||
+        sheet.querySelector('[data-key="dispo"]')?.value === 'sale';
+    }
+    syncPrimaryChoice();
     if (separate) separate.hidden = init.dispo === 'sale';
     if (productButton) productButton.hidden = init.dispo === 'sale';
     if (cxlButton) cxlButton.hidden = init.dispo !== 'cxl';
@@ -709,6 +734,7 @@
         else closeDialog(product);
       }
       if (input.matches?.('[data-sale-selected]')) syncSaleRows();
+      syncPrimaryChoice();
       if (input.matches?.('[data-key="dnr_reason"]')) syncReasonChoices();
     }
     sheet.addEventListener('change', event => {
@@ -718,6 +744,14 @@
         syncReasonSelect();
         redraw();
       } else if (input.matches('[data-key],[data-primary-selection],[data-product-result],[data-product-detail],[data-sale-selected]')) {
+        if (input.matches('[data-sale-selected]')) {
+          const product = input.closest('[data-sale-product]')?.dataset.saleProduct;
+          if (product) {
+            sheet.saleSelectionOrder = (sheet.saleSelectionOrder || [])
+              .filter(value => value !== product);
+            if (input.checked) sheet.saleSelectionOrder.push(product);
+          }
+        }
         if (input.matches('input[type="checkbox"][data-key]') &&
             checkboxSpecs[input.dataset.key]) {
           sheet.checkboxValues[input.dataset.key] = {

@@ -203,6 +203,7 @@ class ResultingService:
             draft, results,
             lead_appointment_date=lead_appointment_date,
             resulted_on=resulted_on or sheet['day'],
+            work_type=sheet['snapshot'].get('work_type', ''),
         )
 
         return dict(
