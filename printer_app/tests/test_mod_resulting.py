@@ -941,7 +941,8 @@ def test_phase2_submission_payload_keeps_existing_products_and_adds_normalized_c
     )
     sheet = {
         'day':'2026-10-25', 'work_order_id':WORK, 'snapshot':asdict(source),
-        'draft':clean_draft({'dispo':'pns', 'primary_product':'Siding'}),
+        'draft':clean_draft({'dispo':'pns', 'additional_products':True,
+                             'primary_product':'Siding'}),
     }
     payload = ResultingService.submission_payload(
         sheet, USER, resulted_on='2026-10-29',
@@ -961,7 +962,8 @@ def test_phase2_primary_product_only_lives_in_existing_product_dialogs():
     runtime = (root/'static/mod_resulting/sheet.js').read_text()
     service = (root/'mod_resulting/service.py').read_text()
     contract = (root/'mod_resulting/contract.py').read_text()
-    assert template.count('data-primary-selection') == 2
+    assert template.count('data-primary-selection') == 1
+    assert 'class="primary-product-choice"' in template
     assert 'draft.primary_product = primary?.value' in runtime
     assert 'data-primary-selection' in runtime
     assert 'PR_Appointment_Date__c' not in contract
@@ -994,3 +996,81 @@ def test_phase2_background_resulting_date_is_frozen_at_enqueue(tmp_path, monkeyp
     context = writer.plans[0]['product_result_context']['Roofing']
     assert context['appointment_date_source'] == 'today'
     assert context['appointment_date'] == day
+
+
+def test_phase3_primary_uses_first_selected_sale_not_work_type_or_popup_order():
+    from printer_app.mod_resulting.contract import product_result_context
+    draft = clean_draft({
+        'dispo':'sale', 'sale_products':{
+            'Roofing':{'price':'17000','deposit':'0'},
+            'Gutters':{'price':'4000','deposit':'0'},
+            'Siding':{'price':'0','deposit':''},
+        },
+        'sale_selection_order':['Gutters','Roofing','Siding'],
+    })
+    results = [
+        {'product':'Roofing','result':'sale'},
+        {'product':'Gutters','result':'sale'},
+    ]
+    ctx = product_result_context(
+        draft, results, work_type='Sales - Roofing',
+        lead_appointment_date='2026-10-29', resulted_on='2026-10-29',
+    )
+    assert ctx['Gutters']['role'] == 'primary'
+    assert ctx['Gutters']['counts_as_issued_lead'] is True
+    assert ctx['Roofing']['role'] == 'additional'
+    assert ctx['Roofing']['counts_as_issued_lead'] is False
+
+
+def test_phase3_work_type_automatically_resolves_result_together():
+    from printer_app.mod_resulting.contract import product_result_context
+    for work_type, product in (
+        ('Sales - Roofing','Roofing'), ('Sales - Siding','Siding'),
+        ('Sales - Windows','Windows'), ('Sales - Bath','Bath'),
+        ('Sales - Gutters','Gutters'),
+    ):
+        draft = clean_draft({'dispo':'pns'})
+        results = [
+            {'product':'Roofing','result':'pns'},
+            {'product':product,'result':'pns'},
+        ] if product != 'Roofing' else [
+            {'product':'Gutters','result':'pns'},
+            {'product':'Roofing','result':'pns'},
+        ]
+        context = product_result_context(
+            draft, results, work_type=work_type,
+            lead_appointment_date='2026-10-29', resulted_on='2026-10-29',
+        )
+        assert context[product]['role'] == 'primary'
+    # No manual selection for Result together; selected primary is ignored.
+    draft = clean_draft({'dispo':'pns','primary_product':'Siding'})
+    context = product_result_context(
+        draft, [{'product':'Roofing','result':'pns'},
+                {'product':'Siding','result':'pns'}],
+        work_type='Sales - Roofing',
+        lead_appointment_date='2026-10-29', resulted_on='2026-10-29',
+    )
+    assert context['Roofing']['role'] == 'primary'
+
+
+def test_phase3_sale_order_is_validated_without_implicit_sale_detection():
+    draft = clean_draft({'dispo':'sale','sale_products':{
+        'Roofing':{'price':'','deposit':''},
+        'Siding':{'price':'15000','deposit':'0'},
+    },'sale_selection_order':['Roofing','Siding']})
+    assert draft['sale_selection_order'] == ['Roofing','Siding']
+    payload = ResultingService.submission_payload({
+        'day':'2026-10-29','work_order_id':WORK,
+        'snapshot':asdict(ModSheetRecord(
+            source_id=WORK, lead_source_id=LEAD, work_order_number='00012345',
+            work_type='Sales - Roofing', product_interest='Roofing;Siding',
+        )),
+        'draft':draft,
+    },USER,lead_appointment_date='2026-10-29')
+    assert [item['product'] for item in payload['product_results']] == ['Siding']
+    assert payload['product_result_context']['Siding']['role'] == 'primary'
+    for order in (['Siding','Siding'], ['Bath']):
+        with pytest.raises(ValueError, match='selection order'):
+            clean_draft({'dispo':'sale','sale_products':{
+                'Siding':{'price':'15000','deposit':'0'},
+            },'sale_selection_order':order})
