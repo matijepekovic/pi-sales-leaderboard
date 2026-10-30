@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sqlite3
 from zoneinfo import ZoneInfo
 
 from ..config import environment_file, parse_env
@@ -337,7 +338,7 @@ def build_report(flow_path, *, schema_dir=None, db_path=None, org='work',
         try:
             report['dry_run'] = preview_local_day(
                 db_path, org=org, day=day, max_work_orders=max_work_orders)
-        except (ValueError, RuntimeError, OSError) as exc:
+        except (ValueError, RuntimeError, OSError, sqlite3.Error) as exc:
             report['dry_run'] = {'status': 'blocked', 'reason': str(exc)[:240]}
     else:
         report['dry_run'] = {
