@@ -855,16 +855,22 @@ def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, vi
     popup.locator('.editor-primary').click()
     expect(page.locator('.editor-dialog[open]')).to_have_count(0)
 
-    # On every screen, the existing Call 1 cell is the tappable control.
+    # The existing Call cells are the gesture targets on every screen.
     expect(first.locator('.mobile-call-actions')).to_have_count(0)
-    call_one = first.locator('.field-call1 [data-time-trigger="call_1"]')
-    if viewport[0] <= 900:
-        cell=first.locator('.field-call1').bounding_box()
-        target=call_one.bounding_box()
+    def hold_call(button):
+        cell = button.locator('xpath=..').bounding_box()
+        target = button.bounding_box()
         assert cell and target
         assert abs(cell['x'] - target['x']) <= 2
         assert abs(cell['y'] - target['y']) <= 2
-    call_one.click()
+        page.mouse.move(target['x'] + target['width']/2,
+                        target['y'] + target['height']/2)
+        page.mouse.down()
+        page.wait_for_timeout(700)
+        page.mouse.up()
+
+    call_one = first.locator('.field-call1 [data-time-trigger="call_1"]')
+    hold_call(call_one)
     popup = visible_popup('#timeDialog[open]')
     expect(popup.locator('#timeTitle')).to_have_text('Call 1 time')
     popup.locator('#timeHour').select_option('10')
@@ -875,13 +881,7 @@ def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, vi
     expect(page.locator('.editor-dialog[open]')).to_have_count(0)
 
     call_two = first.locator('.field-call2 [data-time-trigger="call_2"]')
-    if viewport[0] <= 900:
-        cell=first.locator('.field-call2').bounding_box()
-        target=call_two.bounding_box()
-        assert cell and target
-        assert abs(cell['x'] - target['x']) <= 2
-        assert abs(cell['y'] - target['y']) <= 2
-    call_two.click()
+    hold_call(call_two)
     popup = visible_popup('#timeDialog[open]')
     popup.locator('#timeHour').select_option('1')
     popup.locator('#timeMinute').select_option('27')
@@ -902,6 +902,49 @@ def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, vi
     assert saved['dispo'] == ''
     assert not writer.applied
     evidence('editor-dialogs-' + str(viewport[0]))
+
+
+
+@pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
+def test_call_tap_records_local_time_without_picker_and_hold_does_not_overwrite(mod_browser, viewport):
+    from datetime import datetime, timezone
+    from playwright.sync_api import expect
+
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width': viewport[0], 'height': viewport[1]})
+    page.goto(origin + '/mod-resulting')
+    page.clock.set_fixed_time(datetime(2026, 10, 30, 17, 4, tzinfo=timezone.utc))
+    first = page.locator('.mod-sheet').first
+    expected = page.evaluate("""() => {
+        const now = new Date();
+        const hour = now.getHours();
+        return (hour % 12 || 12) + ':' +
+            String(now.getMinutes()).padStart(2, '0') + ' ' +
+            (hour >= 12 ? 'PM' : 'AM');
+    }""")
+    for key, cell in [('call_1', 'field-call1'), ('call_2', 'field-call2')]:
+        first.locator('.' + cell + ' [data-time-trigger]').click()
+        expect(first.locator('[data-key="' + key + '"]')).to_have_value(expected)
+        expect(page.locator('#timeDialog[open]')).to_have_count(0)
+
+    trigger = first.locator('.field-call1 [data-time-trigger]')
+    box = trigger.bounding_box()
+    assert box
+    page.mouse.move(box['x'] + box['width']/2, box['y'] + box['height']/2)
+    page.mouse.down()
+    page.wait_for_timeout(700)
+    page.mouse.up()
+    expect(page.locator('#timeDialog[open]')).to_be_visible()
+    expect(first.locator('[data-key="call_1"]')).to_have_value(expected)
+    page.locator('#timeClear').click()
+    expect(first.locator('[data-key="call_1"]')).to_have_value('')
+    expect(page.locator('#timeDialog[open]')).to_have_count(0)
+
+    page.wait_for_timeout(650)
+    draft = service.repository.sheets(service.day())[0]['draft']
+    assert draft['call_1'] == ''
+    assert draft['call_2'] == expected
+    assert not writer.applied
 
 
 def test_opening_another_sheet_dialog_closes_the_previous(mod_browser):
