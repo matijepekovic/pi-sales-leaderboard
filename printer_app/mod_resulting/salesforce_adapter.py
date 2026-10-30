@@ -27,6 +27,19 @@ PRODUCT_RESULT = 'Product_Interest_Result__c'
 # Result Appointment Flow fields, owned and validated by this adapter only.
 PR_ISSUED_COUNT = 'Include_in_Issued_Lead_Count__c'
 PR_APPOINTMENT_DATE = 'PR_Appointment_Date__c'
+# Exact creation-time source mappings from Result Appointment Flow v30.
+# Kept vendor-specific in the replaceable Salesforce adapter.
+PIR_LEAD_COPY = {
+    'PR_Appointment_Time__c': 'Appointment_Time__c',
+    'PR_Approved_By_Supervisor__c': 'Approved_By_Supervisor__c',
+    'PR_Canvass_Set_By__c': 'Canvass_Set_By__c',
+    'PR_Confirmed_By__c': 'Confirmed_By__c',
+    'PR_Lead_Source__c': 'LeadSource',
+    'PR_Reset_By__c': 'Reset_By__c',
+    'PR_Set_By__c': 'Set_By__c',
+    'PR_Sub_Source__c': 'Sub_Source__c',
+}
+
 # Review exists as a training field, but its live API metadata must be
 # verified on checked submissions; do not require it for unrelated jobs.
 REVIEW_FIELD = 'Review__c'
@@ -532,7 +545,47 @@ class ResultingSalesforceAdapter:
                 added = True
         return ';'.join(result), added
 
-    def _product_operations(self, payload, schema):
+    def _flow_pir_create_values(self, lead_id, lead_schema, pir_schema, result, comment):
+        """Resolve v30 PIR creation-only fields from their actual Lead sources.
+
+        Never copy MOD notes into a PIR comment or overwrite existing PIR
+        attribution during Override. Every required mapping is preflighted.
+        """
+        source_fields = sorted(set(PIR_LEAD_COPY.values()))
+        # Describe both sides to fail before any live Salesforce updates.
+        destination_fields = {
+            dest: self._field(pir_schema, dest, update=False, create=True)
+            for dest in PIR_LEAD_COPY
+        }
+        for name in ('Original_Disposition__c', 'Comment__c'):
+            destination_fields[name] = self._field(
+                pir_schema, name, update=False, create=True
+            )
+        for name in source_fields:
+            self._field(lead_schema, name, update=False)
+        rows = self._query(
+            'SELECT Id,' + ','.join(source_fields) + ' FROM ' + LEAD
+            + ' WHERE Id = ' + _soql(lead_id) + ' LIMIT 2'
+        )
+        if len(rows) != 1 or str(rows[0].get('Id') or '') != lead_id:
+            raise ResultingSalesforceError(
+                'Lead attribution is unavailable for Flow v30 PIR creation.'
+            )
+        row = rows[0]
+        result_fields = {}
+        for dest, source in PIR_LEAD_COPY.items():
+            if source not in row:
+                raise ResultingSalesforceError('Missing Lead Flow source: ' + source)
+            result_fields[dest] = self._value(destination_fields[dest], row[source])
+        result_fields['Original_Disposition__c'] = self._value(
+            destination_fields['Original_Disposition__c'], result
+        )
+        result_fields['Comment__c'] = self._value(
+            destination_fields['Comment__c'], comment
+        )
+        return result_fields
+
+    def _product_operations(self, payload, schema, lead_schema=None):
         lead_field = self._field(
             schema, PR['lead'], update=False, create=True, types=('reference',)
         )
@@ -581,7 +634,10 @@ class ResultingSalesforceAdapter:
         existing = self._existing_product_results(
             payload['lead_id'], payload['work_order_id']
         )
+        lead_schema = lead_schema or self._describe(LEAD)
+
         operations, included = [], set()
+        flow_create_cache = None
         for entry in payload['product_results']:
             product = self._choice(product_field, entry['product'])
             key = str(product).casefold()
@@ -655,6 +711,24 @@ class ResultingSalesforceAdapter:
             if old_id:
                 operations.append(('update', PRODUCT_RESULT, old_id, fields))
             else:
+                # Only new PIRs receive v30 creation-time attribution.
+                # Existing Override fields are intentionally preserved.
+                if flow_create_cache is None:
+                    flow_create_cache = self._flow_pir_create_values(
+                        payload['lead_id'], lead_schema, schema, result,
+                        entry.get('comment'),
+                    )
+                flow_values = dict(flow_create_cache)
+                # Original disposition and PIR comment are per-product.
+                original = self._field(
+                    schema, 'Original_Disposition__c', update=False, create=True
+                )
+                comment = self._field(
+                    schema, 'Comment__c', update=False, create=True
+                )
+                flow_values['Original_Disposition__c'] = self._value(original, result)
+                flow_values['Comment__c'] = self._value(comment, entry.get('comment'))
+                fields.update(flow_values)
                 fields.update({
                     PR['lead']: self._value(lead_field, payload['lead_id']),
                     PR['work_order']: self._value(wo_field, payload['work_order_id']),
@@ -925,7 +999,7 @@ class ResultingSalesforceAdapter:
                         lead_fields['product_interest'], merged
                     ) if lead_fields['product_interest'].get('type') == 'multipicklist' else merged
             plan.append(('update', LEAD, lead_id, lead_values))
-            plan.extend(self._product_operations(payload, pr_schema))
+            plan.extend(self._product_operations(payload, pr_schema, lead_schema))
             operations.append(plan)
         return operations
 
