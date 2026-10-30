@@ -585,7 +585,7 @@ class ResultingSalesforceAdapter:
         )
         return result_fields
 
-    def _product_operations(self, payload, schema):
+    def _product_operations(self, payload, schema, lead_schema=None):
         lead_field = self._field(
             schema, PR['lead'], update=False, create=True, types=('reference',)
         )
@@ -634,9 +634,10 @@ class ResultingSalesforceAdapter:
         existing = self._existing_product_results(
             payload['lead_id'], payload['work_order_id']
         )
-        lead_schema = self._describe(LEAD)
+        lead_schema = lead_schema or self._describe(LEAD)
 
         operations, included = [], set()
+        flow_create_cache = None
         for entry in payload['product_results']:
             product = self._choice(product_field, entry['product'])
             key = str(product).casefold()
@@ -712,10 +713,22 @@ class ResultingSalesforceAdapter:
             else:
                 # Only new PIRs receive v30 creation-time attribution.
                 # Existing Override fields are intentionally preserved.
-                fields.update(self._flow_pir_create_values(
-                    payload['lead_id'], lead_schema, schema, result,
-                    entry.get('comment'),
-                ))
+                if flow_create_cache is None:
+                    flow_create_cache = self._flow_pir_create_values(
+                        payload['lead_id'], lead_schema, schema, result,
+                        entry.get('comment'),
+                    )
+                flow_values = dict(flow_create_cache)
+                # Original disposition and PIR comment are per-product.
+                original = self._field(
+                    schema, 'Original_Disposition__c', update=False, create=True
+                )
+                comment = self._field(
+                    schema, 'Comment__c', update=False, create=True
+                )
+                flow_values['Original_Disposition__c'] = self._value(original, result)
+                flow_values['Comment__c'] = self._value(comment, entry.get('comment'))
+                fields.update(flow_values)
                 fields.update({
                     PR['lead']: self._value(lead_field, payload['lead_id']),
                     PR['work_order']: self._value(wo_field, payload['work_order_id']),
@@ -986,7 +999,7 @@ class ResultingSalesforceAdapter:
                         lead_fields['product_interest'], merged
                     ) if lead_fields['product_interest'].get('type') == 'multipicklist' else merged
             plan.append(('update', LEAD, lead_id, lead_values))
-            plan.extend(self._product_operations(payload, pr_schema))
+            plan.extend(self._product_operations(payload, pr_schema, lead_schema))
             operations.append(plan)
         return operations
 
