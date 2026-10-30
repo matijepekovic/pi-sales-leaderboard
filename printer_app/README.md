@@ -149,6 +149,32 @@ name. The same-day lookup includes canceled appointments as fallback matches.
 Existing cards are linked once after this update; hourly and manual refreshes
 keep the shared statuses current. The printed MOD sheet layout is unchanged.
 
+## Result Appointment Flow v30 — read-only verification
+
+From a Stats source checkout on the machine where the Salesforce CLI alias
+`work` is authenticated:
+
+```bash
+python3 -m printer_app.mod_resulting.flow_audit --org work
+```
+
+The collector uses only Salesforce metadata listing, read-only SOQL,
+`sobject describe`, and `project retrieve start` for the **explicit Flow
+version 30**. It creates its own temporary Salesforce project and never
+changes any records, executes the Flow, deploys metadata, calls the MOD
+resulting submission service, or changes `MOD_RESULTING_LIVE_WRITES`.
+It does not read customer Work Orders or Leads.
+
+The command prints the new private ZIP location under the user's home
+directory. The ZIP contains Flow XML, a decision/field inventory, an active
+version check (if accessible), and required field types/writability from
+Salesforce. If multiple Result Appointment Flows exist, rerun with
+`--flow-name Exact_API_Name`. Metadata permissions may be required.
+
+**A successful retrieval is evidence for a field-by-field audit, not a
+certification of behavioral equivalence or downstream Salesforce effects.**
+Treat the ZIP as confidential company metadata and share it privately.
+
 ## Salesforce Object Explorer
 
 Open **Object Explorer** from MOD Sheets to inspect the connected Salesforce
