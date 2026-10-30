@@ -1,3 +1,43 @@
+## Read-only MOD Result Appointment Flow v30 audit
+
+To inspect the **exact Flow version 30** and Salesforce field permissions
+without running the Flow or resulting a customer, use:
+
+```bash
+bash scripts/mod-flow-v30-export.sh work
+```
+
+Run this from the Stats repository root with an authenticated Salesforce CLI
+alias named \`work\`. The script uses **SOQL Tooling SELECT**, **Tooling GET**
+and **sobject describe** only. It rejects missing or ambiguous version-30 Flow
+matches rather than retrieving another version. Private exports are stored
+outside the repository under \`~/stats-flow-v30.*\`, with restrictive permissions.
+
+The optional \`python3 -m printer_app.mod_resulting.flow_audit\` command checks
+Flow graph nodes, exact adapter field metadata and, if an existing local
+printer database is readable, prepares synthetic PNS/CXL/Sale scenarios.
+For example:
+
+```bash
+python3 -m printer_app.mod_resulting.flow_audit \
+  --flow "$HOME/stats-flow-v30.XXXXXXXX/flow-v30.json" \
+  --schema-dir "$HOME/stats-flow-v30.XXXXXXXX" --org work
+```
+
+
+Replace the example directory with the one printed by the export script.
+The script reads SQLite using \`mode=ro\` and \`PRAGMA query_only=ON\`, skips
+migrations, and routes every Salesforce CLI call through a read-only
+SELECT/describe guard. It never calls \`apply()\`, \`submit()\`, \`enqueue()\`,
+or a Salesforce Flow execution endpoint, **regardless of whether live writes
+are enabled in Printer Settings**. The report lists planned field updates,
+not customer records or raw Flow literal values.
+
+Passing this audit does **not** prove that downstream Salesforce triggers
+will accept the writes or establish complete Flow v30 parity. Review the
+full private Flow metadata before enabling new write behavior. Do not share
+raw Flow exports, org describe JSON or tokens in public issue threads.
+
 # Independent Raspberry Pi printer automation
 
 ## Outlook sandbox (does not replace Gmail)
