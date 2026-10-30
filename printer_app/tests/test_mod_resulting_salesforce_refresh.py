@@ -153,12 +153,14 @@ def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
                 'X1_Leg_Appointment__c':False,
             }]
         elif ' FROM Product_Interest_Result__c ' in query:
+            assert 'Include_in_Issued_Lead_Count__c' in query
             rows = [{
                 'Id':PRODUCT, 'Work_Order__c':WORK, 'Lead__c':LEAD,
                 'Product_Interest__c':'Roofing',
                 'Result__c':'Pitch No Sale', 'Result_Detail__c':'Price Objection',
                 'Price_Given__c':None, 'PR_1_Leg_Appointment__c':False,
                 'Free_Product_Lead__c':False, 'CXL_Per_Redline__c':False,
+                'Include_in_Issued_Lead_Count__c':True,
             }]
         else:
             raise AssertionError('Unexpected read query: ' + query)
@@ -183,6 +185,7 @@ def test_salesforce_refresh_reads_exact_mapped_objects_without_writes():
     }
     assert draft['dnr'] is True and draft['dnr_reason'] == 'Roofing'
     assert draft['product_results']['Roofing']['detail'] == 'Price Objection'
+    assert draft['primary_product'] == 'Roofing'
     assert len(calls) == 4
     assert sum(command[1:3] == ['data', 'query'] for command in calls) == 3
     assert sum(command[1:3] == ['sobject', 'describe'] for command in calls) == 1
