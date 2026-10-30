@@ -590,7 +590,8 @@
     const separate = sheet.querySelector('.separate-products');
     function syncPrimaryChoice() {
       const choice = product?.querySelector('.primary-product-choice');
-      if (choice) choice.hidden = !separate?.checked ||
+      if (choice) choice.hidden =
+        !sheet.querySelector('[data-key="additional_products"]')?.checked ||
         sheet.querySelector('[data-key="dispo"]')?.value === 'sale';
     }
     syncPrimaryChoice();
