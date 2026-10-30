@@ -967,3 +967,28 @@ def test_phase2_primary_product_only_lives_in_existing_product_dialogs():
     assert 'Include_in_Issued_Lead_Count__c' not in contract
     assert 'PR_Appointment_Date__c' not in service
     assert 'Include_in_Issued_Lead_Count__c' not in service
+
+
+def test_phase2_background_resulting_date_is_frozen_at_enqueue(tmp_path, monkeypatch):
+    service, repo, source, writer = _service(tmp_path)
+    day = '2026-10-29'
+    source.records = lambda **kwargs: [ModSheetRecord(
+        source_id=WORK, lead_source_id=LEAD, work_order_number='00012345',
+        product_interest='Roofing', lead_appointment_date=day,
+    )]
+    service.refresh(DAY)
+    service.set_mod(DAY, USER)
+    repo.save_draft(DAY, WORK, clean_draft({'dispo':'pns'}), 0)
+
+    request_time = datetime(2026, 10, 29, 12, 0, tzinfo=ZoneInfo('America/Los_Angeles'))
+    monkeypatch.setattr('printer_app.mod_resulting.repository.time.time',
+                        lambda: request_time.timestamp())
+    service.enqueue(DAY)
+    # The worker can resume on a later calendar day; Flow TODAY must remain
+    # the day the user actually submitted, not the worker's execution date.
+    service.day = lambda: '2026-10-30'
+    outcome = service.process_next_submission()
+    assert outcome['ok'] is True
+    context = writer.plans[0]['product_result_context']['Roofing']
+    assert context['appointment_date_source'] == 'today'
+    assert context['appointment_date'] == day
