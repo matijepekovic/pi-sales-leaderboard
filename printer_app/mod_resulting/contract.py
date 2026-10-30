@@ -98,7 +98,7 @@ def dnr_reasons(value):
 def clean_draft(raw):
     if not isinstance(raw, dict):
         raise ValueError('Invalid MOD draft.')
-    if set(raw) - set(TEXT_FIELDS) - set(CHECKBOXES) - {'product_results', 'sale_products', 'note_runs', 'checkbox_values'}:
+    if set(raw) - set(TEXT_FIELDS) - set(CHECKBOXES) - {'product_results', 'sale_products', 'sale_selection_order', 'note_runs', 'checkbox_values'}:
         raise ValueError('Unknown MOD draft fields.')
     data = {}
     for key in TEXT_FIELDS:
@@ -216,6 +216,22 @@ def clean_draft(raw):
             **({'payment': payment.strip()} if 'payment' in info else {}),
         }
     data['sale_products'] = sales
+    # The UI records checkbox selection chronology separately from the product
+    # fields, whose order is fixed by the Salesforce product picklist.
+    order = raw.get('sale_selection_order', [])
+    if not isinstance(order, list) or len(order) > 40:
+        raise ValueError('Invalid sold product selection order.')
+    choices = {product.casefold(): product for product in sales}
+    clean_order, seen_order = [], set()
+    for product in order:
+        if not isinstance(product, str) or product.casefold() not in choices:
+            raise ValueError('Sold product selection order does not match selected products.')
+        key = product.casefold()
+        if key in seen_order:
+            raise ValueError('Sold product selection order contains duplicates.')
+        seen_order.add(key)
+        clean_order.append(choices[key])
+    data['sale_selection_order'] = clean_order
     return data
 
 
@@ -224,7 +240,8 @@ def dnr_redline(reason):
     return 'DNR - ' + '; '.join(values) if values else ''
 
 
-def product_result_context(draft, results, *, lead_appointment_date, resulted_on):
+def product_result_context(draft, results, *, lead_appointment_date, resulted_on,
+                           work_type=None):
     """Plan primary/additional identities and date sources without vendor fields.
 
     Existing Result Appointment Flow: the first selected product is the
@@ -257,10 +274,45 @@ def product_result_context(draft, results, *, lead_appointment_date, resulted_on
         canonical[key] = product
 
     selected = draft.get('primary_product', '').strip()
-    if selected and selected.casefold() not in canonical:
+    # Only explicitly individual resulting uses a manual primary. Retain
+    # Phase 2's direct-contract behavior for callers without source context.
+    manual = (draft.get('additional_products') and draft.get('dispo') != 'sale'
+              or work_type is None)
+    if manual and selected and selected.casefold() not in canonical:
         raise ValueError('The primary product must be one of the resulted products.')
-    primary = (canonical[selected.casefold()] if selected else
-               results[0]['product'] if len(results) == 1 else '')
+    primary = canonical.get(selected.casefold(), '') if manual else ''
+
+    if not primary:
+        sold = {item['product'].casefold(): item['product'] for item in results
+                if item['result'] == 'sale'}
+        # A checkbox selection order is an explicit user action. A price alone
+        # never selects a sold product. Sales already filter out zero/blank.
+        for product in draft.get('sale_selection_order', ()):
+            if product.casefold() in sold:
+                primary = sold[product.casefold()]
+                break
+        if not primary and len(sold) == 1:
+            primary = next(iter(sold.values()))
+        if not primary and len(sold) > 1 and work_type is not None:
+            # A refreshed Salesforce primary survives older drafts without a
+            # saved click order; otherwise use the results' stable source order.
+            primary = sold.get(selected.casefold(), '') if selected else ''
+            if not primary:
+                primary = next(item['product'] for item in results
+                               if item['result'] == 'sale')
+        if not primary and len(results) == 1:
+            primary = results[0]['product']
+        if not primary and work_type is not None and results:
+            # Work Type retains the originally assigned appointment product.
+            # Match its Salesforce "Sales - Product" suffix only to actual
+            # resulted product identities, never to an invented product name.
+            kind = str(work_type).strip().casefold()
+            if kind.startswith('sales - '):
+                primary = canonical.get(kind.split(' - ', 1)[1].strip(), '')
+            if not primary and not draft.get('additional_products'):
+                # Result together follows the incoming product order if a
+                # Work Type does not identify one of the resulting products.
+                primary = results[0]['product']
     planned = {}
     for result in results:
         product = result['product']
