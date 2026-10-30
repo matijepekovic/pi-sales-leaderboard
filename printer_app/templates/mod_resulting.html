@@ -73,7 +73,7 @@
     <button type="button" class="close-popover editor-close" aria-label="Close individual product results">×</button>
    </div>
    <div class="editor-body">
-   <label>Primary product
+   <label class="primary-product-choice" {% if not d.additional_products %}hidden{% endif %}>Primary product
     <select data-primary-selection aria-label="Primary issued-lead product">
      <option value="">Select primary product</option>
      {% for product in xs %}{% if product.strip() %}
@@ -219,14 +219,6 @@
   </div>
   <div class="editor-body">
    {% if products %}
-   <label>Primary product
-    <select data-primary-selection aria-label="Primary sold product">
-     <option value="">Select primary product</option>
-     {% for product in products %}
-     <option value="{{ product.value }}" {% if d.primary_product==product.value %}selected{% endif %}>{{ product.label }}</option>
-     {% endfor %}
-    </select>
-   </label>
    {% for product in products %}
    {% set sold = d.sale_products.get(product.value) %}
    <div class="sale-product-row" data-sale-product="{{ product.value }}">
