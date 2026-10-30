@@ -197,6 +197,7 @@ def test_optional_local_preflight_uses_real_contract_but_read_only_runner(tmp_pa
             raise AssertionError('Audit must not call apply')
 
     monkeypatch.setattr(flow_audit, 'ResultingSalesforceAdapter', SafeAdapter)
+    before_draft = repository.sheets(day)[0]['draft']
     result = flow_audit.preview_local_day(
         db_path, day=day, org='work', resulted_on=day)
     assert result['status'] == 'read_only'
@@ -208,7 +209,7 @@ def test_optional_local_preflight_uses_real_contract_but_read_only_runner(tmp_pa
     assert repository.day(day)['mod_user_id'] == '005000000000001AAA'
     # No submitted receipt or changed draft.
     assert repository.sheets(day)[0]['submitted_at'] is None
-    assert repository.sheets(day)[0]['draft']['dispo'] == ''
+    assert repository.sheets(day)[0]['draft'] == before_draft
 
 
 def test_cli_offline_summary_never_initializes_salesforce(monkeypatch, tmp_path, capsys):
