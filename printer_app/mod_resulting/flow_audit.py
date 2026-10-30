@@ -87,7 +87,7 @@ class ReadOnlySalesforceCLI:
         self.runner = runner
 
     def call(self, args, *, cwd=None, timeout=180):
-        if tuple(args[:3]) not in READ_COMMANDS:
+        if not any(tuple(args[:len(prefix)]) == prefix for prefix in READ_COMMANDS):
             raise FlowAuditError("Forbidden Salesforce CLI operation in read-only audit.")
         command = [
             self.executable, *args, "--target-org", self.org, "--json",
