@@ -430,10 +430,8 @@ class ResultingSalesforceAdapter:
             )
         return ids
 
-    def _existing_product_results(self, lead_id, work_order_id, *, flow_values=False):
-        fields = 'Id,' + PR['product']
-        if flow_values:
-            fields += ',' + PR_ISSUED_COUNT + ',' + PR_APPOINTMENT_DATE
+    def _existing_product_results(self, lead_id, work_order_id):
+        fields = 'Id,' + PR['product'] + ',' + PR_ISSUED_COUNT + ',' + PR_APPOINTMENT_DATE
         rows = self._query(
             'SELECT ' + fields + ' FROM ' + PRODUCT_RESULT
             + ' WHERE ' + PR['lead'] + ' = ' + _soql(lead_id)
@@ -449,9 +447,6 @@ class ResultingSalesforceAdapter:
                 raise ResultingSalesforceError(
                     'Product Interest Result identity is missing or ambiguous.'
                 )
-            if not flow_values:
-                result[key] = ident
-                continue
             issued = row.get(PR_ISSUED_COUNT)
             day = row.get(PR_APPOINTMENT_DATE)
             if issued is not None and type(issued) is not bool:
@@ -584,7 +579,7 @@ class ResultingSalesforceAdapter:
             raise ResultingSalesforceError('Multiple primary product results are not valid.')
 
         existing = self._existing_product_results(
-            payload['lead_id'], payload['work_order_id'], flow_values=True
+            payload['lead_id'], payload['work_order_id']
         )
         operations, included = [], set()
         for entry in payload['product_results']:
