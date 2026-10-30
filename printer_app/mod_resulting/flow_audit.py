@@ -452,7 +452,7 @@ def collect(*, org="work", flow_name="", version=30, output=None,
                        "No Flow was executed.",
     }
     _write_json(folder / "summary.json", report)
-    bundle = folder / "flow_v30_readonly_bundle.zip"
+    bundle = folder / ("flow_v" + str(version) + "_readonly_bundle.zip")
     with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in (
             flow_file, folder / "flow_identity.json",
