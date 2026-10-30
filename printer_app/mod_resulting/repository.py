@@ -305,7 +305,7 @@ class ResultingRepository:
         """Claim one queued batch; the worker is the only executor."""
         with self.db.connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
-            job = conn.execute('''SELECT id,day FROM mod_result_submission_jobs
+            job = conn.execute('''SELECT id,day,created_at FROM mod_result_submission_jobs
                 WHERE state='queued' ORDER BY id LIMIT 1''').fetchone()
             if job is None:
                 return None
@@ -330,7 +330,7 @@ class ResultingRepository:
             if len(rows) != expected:
                 raise ValueError('Queued MOD sheet records changed. Submission was not started.')
             return {'job_id': job['id'], 'day': day, 'mod_id': state['mod_user_id'],
-                    'rows': rows}
+                    'queued_at': job['created_at'], 'rows': rows}
 
     def submission_item(self, job_id, work_order_id, state, error=''):
         if state not in ('pending','processing','submitted','uncertain'):
