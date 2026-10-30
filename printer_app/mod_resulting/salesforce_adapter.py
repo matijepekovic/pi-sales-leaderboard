@@ -24,6 +24,8 @@ WO_APPOINTMENT_DATETIME = 'Appointment_Date_Time__c'
 WO_APPOINTMENT_DATE = 'Appointment_Date__c'
 SERVICE_APPOINTMENT = 'ServiceAppointment'
 PRODUCT_RESULT = 'Product_Interest_Result__c'
+# Read-only Flow identity until the Phase 3 write mapping is implemented.
+PR_ISSUED_COUNT = 'Include_in_Issued_Lead_Count__c'
 # Review exists as a training field, but its live API metadata must be
 # verified on checked submissions; do not require it for unrelated jobs.
 REVIEW_FIELD = 'Review__c'
