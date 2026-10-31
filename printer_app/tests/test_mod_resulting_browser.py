@@ -334,12 +334,13 @@ def test_long_press_textarea_preserves_multiline_source_value_on_phone(mod_brows
                  'length':3000,'choices':[]},
     }
     writer.read_results = lambda rows: {
-        record.source_id: clean_draft({
+        r.source_id: (clean_draft({
             'docs':True,
             'checkbox_values': {
                 'docs':{'value':'Reviewed\nPending upload','edited':False},
             },
-        }),
+        }) if r.source_id == record.source_id else clean_draft({}))
+        for r in rows
     }
     service.refresh(service.day())
     page.goto(origin + '/mod-resulting')
