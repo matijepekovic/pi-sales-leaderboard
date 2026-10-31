@@ -64,7 +64,7 @@ def test_times_are_am_pm_and_disallow_unexpected_draft_fields():
         clean_draft({'salesforce_api_field':'Status'})
 
 
-def test_refresh_preserves_only_local_notes_and_updates_routing(tmp_path):
+def test_refresh_updates_changed_sf_fields_and_keeps_unrelated_local_work(tmp_path):
     repo = ResultingRepository(Database(tmp_path/'printer.sqlite'))
     repo.refresh(DAY, [RECORD], external_drafts={WORK:clean_draft({})})
     revision = repo.save_draft(
@@ -79,7 +79,9 @@ def test_refresh_preserves_only_local_notes_and_updates_routing(tmp_path):
                       'notes':'Salesforce note'})
     repo.refresh(DAY, [changed], external_drafts={WORK:sf})
     row = repo.sheets(DAY)[0]
-    assert row['draft'] == dict(sf, notes='Do not lose')
+    # Salesforce changed Dispo, Numbers and Need; unchanged Review keeps its
+    # local value, while local MOD Notes remain protected.
+    assert row['draft'] == dict(sf, notes='Do not lose', review=True)
     assert row['submitted_at'] == -1.0  # Already resulted in Salesforce.
     assert row['snapshot']['assigned_service_resources'] == ['Reassigned Rep']
     assert row['revision'] == 2
