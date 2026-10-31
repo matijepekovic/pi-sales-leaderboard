@@ -188,7 +188,10 @@ class ResultingRepository:
                 # A canceled Lead always takes precedence, including over a
                 # locally drafted Dispo or an old unmatched product result.
                 canceled = str(incoming.get('lead_status') or '').strip().casefold() == 'canceled'
-                if canceled:
+                new_cancellation = canceled and (
+                    baseline is None or str(baseline.get('lead_status') or '').strip().casefold() != 'canceled'
+                )
+                if new_cancellation:
                     merged['dispo'] = 'cxl'
                     merged['lead_status'] = incoming['lead_status']
 
@@ -216,7 +219,7 @@ class ResultingRepository:
                 remote_result_changed = (baseline is not None and any(
                     baseline.get(key) != incoming.get(key)
                     for key in ('dispo', 'product_results', 'lead_status')))
-                if canceled:
+                if new_cancellation:
                     remote_result_changed = True
                 receipt = old['submitted_at'] if old else None
                 if remote_resulted:
