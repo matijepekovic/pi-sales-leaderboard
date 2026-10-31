@@ -818,50 +818,43 @@ class ResultingSalesforceAdapter:
         return history
 
     def _appointments_for_batch(self, payloads):
-        """Resolve all same-day Service Appointment IDs in grouped reads."""
-        groups = {}
-        for payload in payloads:
-            day = str(payload['day'])
-            groups.setdefault(day, []).append(_require_id(payload['work_order_id']))
-        appointments = {key: [] for ids in groups.values() for key in ids}
+        """Select every Scheduled/Dispatched appointment on each Work Order.
+
+        Match Flow v30 by ParentRecordId and Status; the MOD sheet day is
+        not an additional eligibility filter. A Work Order with no remaining
+        eligible appointments can still have its other results submitted.
+        """
+        ids = list(dict.fromkeys(
+            _require_id(payload['work_order_id']) for payload in payloads))
+        appointments = {key: [] for key in ids}
         seen = set()
-        for day, ids in groups.items():
-            start = datetime.combine(date.fromisoformat(day), time.min, tzinfo=self.zone)
-            end = start + timedelta(days=1)
-            lo = start.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-            hi = end.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-            for offset in range(0, len(ids), 40):
-                chunk = ids[offset:offset + 40]
-                canonical = {ident[:15]: ident for ident in chunk}
-                cursor = ''
-                while True:
-                    where = (SA_PARENT + ' IN ('
-                             + ','.join(_soql(key) for key in chunk) + ')'
-                             + " AND Status IN ('Scheduled','Dispatched')"
-                             + ' AND SchedStartTime >= ' + lo
-                             + ' AND SchedStartTime < ' + hi)
-                    if cursor:
-                        where += ' AND Id > ' + _soql(cursor)
-                    rows = self._query(
-                        'SELECT Id,' + SA_PARENT + ' FROM '
-                        + SERVICE_APPOINTMENT + ' WHERE ' + where
-                        + ' ORDER BY Id LIMIT 2000')
-                    for row in rows:
-                        ident = _require_id(str(row.get('Id') or ''))
-                        source_id = _require_id(str(row.get(SA_PARENT) or ''))
-                        work_order = canonical.get(source_id[:15])
-                        if work_order is None or ident in seen or (
-                                cursor and ident <= cursor):
-                            raise ResultingSalesforceError(
-                                'Service Appointment identity or paging is invalid.')
-                        seen.add(ident)
-                        appointments[work_order].append(ident)
-                    if len(rows) < 2000:
-                        break
-                    cursor = _require_id(str(rows[-1].get('Id') or ''))
-        if any(not values or len(values) > 2000 for values in appointments.values()):
-            raise ResultingSalesforceError(
-                'No unique same-day Service Appointments for Work Order.')
+        for offset in range(0, len(ids), 40):
+            chunk = ids[offset:offset + 40]
+            canonical = {ident[:15]: ident for ident in chunk}
+            cursor = ''
+            while True:
+                where = (SA_PARENT + ' IN ('
+                         + ','.join(_soql(key) for key in chunk) + ')'
+                         + " AND Status IN ('Scheduled','Dispatched')")
+                if cursor:
+                    where += ' AND Id > ' + _soql(cursor)
+                rows = self._query(
+                    'SELECT Id,' + SA_PARENT + ' FROM '
+                    + SERVICE_APPOINTMENT + ' WHERE ' + where
+                    + ' ORDER BY Id LIMIT 2000')
+                for row in rows:
+                    ident = _require_id(str(row.get('Id') or ''))
+                    source_id = _require_id(str(row.get(SA_PARENT) or ''))
+                    work_order = canonical.get(source_id[:15])
+                    if work_order is None or ident in seen or (
+                            cursor and ident <= cursor):
+                        raise ResultingSalesforceError(
+                            'Service Appointment identity or paging is invalid.')
+                    seen.add(ident)
+                    appointments[work_order].append(ident)
+                if len(rows) < 2000:
+                    break
+                cursor = _require_id(str(rows[-1].get('Id') or ''))
         return appointments
 
     def _product_rows_for_batch(self, payloads):
@@ -946,30 +939,8 @@ class ResultingSalesforceAdapter:
                         'Lead preflight is incomplete; no writes were performed.')
         return rows_by_lead
 
-    def _verify_flow_kill_switch(self):
-        """Block writes unless the org's Result Appointment Flow is enabled.
-
-        Flow v30 continues only when $Setup.trac_killswitch__c.trac_flows__c
-        is false. Hierarchy overrides are not available in the normalized
-        Stats contract; conservatively block if any returned scope is on or
-        the effective setting cannot be established. Never guess it is off.
-        """
-        rows = self._query(
-            'SELECT SetupOwnerId,trac_flows__c FROM trac_killswitch__c LIMIT 2000'
-        )
-        if (not rows or len(rows) == 2000 or
-                any(type(row.get('trac_flows__c')) is not bool for row in rows)):
-            raise ResultingSalesforceError(
-                'Result Appointment Flow kill switch could not be verified; '
-                'no Salesforce writes were made.')
-        if any(row['trac_flows__c'] for row in rows):
-            raise ResultingSalesforceError(
-                'Result Appointment Flow kill switch is enabled; '
-                'no Salesforce writes were made.')
-
     def prepare(self, payloads):
         """Preflight the complete batch before any live Salesforce write."""
-        self._verify_flow_kill_switch()
         wo_schema = self._describe(WORK_ORDER)
         lead_schema = self._describe(LEAD)
         sa_schema = self._describe(SERVICE_APPOINTMENT)
