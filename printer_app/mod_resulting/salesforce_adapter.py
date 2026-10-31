@@ -767,6 +767,7 @@ class ResultingSalesforceAdapter:
         seen = set()
         for offset in range(0, len(leads), 40):
             group = leads[offset:offset + 40]
+            canonical = {ident[:15]: ident for ident in group}
             cursor = ''
             while True:
                 where = WO_LEAD + ' IN (' + ','.join(_soql(lead) for lead in group) + ')'
@@ -780,8 +781,9 @@ class ResultingSalesforceAdapter:
                 )
                 for row in rows:
                     ident = _require_id(str(row.get('Id') or ''))
-                    lead = _require_id(str(row.get(WO_LEAD) or ''))
-                    if lead not in group or ident in seen or (cursor and ident <= cursor):
+                    lead_id = _require_id(str(row.get(WO_LEAD) or ''))
+                    lead = canonical.get(lead_id[:15])
+                    if lead is None or ident in seen or (cursor and ident <= cursor):
                         raise ResultingSalesforceError(
                             'Historical Work Order identity or paging is invalid.')
                     seen.add(ident)
@@ -806,6 +808,7 @@ class ResultingSalesforceAdapter:
             hi = end.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
             for offset in range(0, len(ids), 40):
                 chunk = ids[offset:offset + 40]
+                canonical = {ident[:15]: ident for ident in chunk}
                 cursor = ''
                 while True:
                     where = (SA['work_order'] + ' IN ('
@@ -820,8 +823,9 @@ class ResultingSalesforceAdapter:
                         + ' ORDER BY Id LIMIT 2000')
                     for row in rows:
                         ident = _require_id(str(row.get('Id') or ''))
-                        work_order = _require_id(str(row.get(SA['work_order']) or ''))
-                        if work_order not in chunk or ident in seen or (
+                        source_id = _require_id(str(row.get(SA['work_order']) or ''))
+                        work_order = canonical.get(source_id[:15])
+                        if work_order is None or ident in seen or (
                                 cursor and ident <= cursor):
                             raise ResultingSalesforceError(
                                 'Service Appointment identity or paging is invalid.')
@@ -846,6 +850,7 @@ class ResultingSalesforceAdapter:
         ids = list(expected)
         for offset in range(0, len(ids), 40):
             chunk = ids[offset:offset + 40]
+            canonical = {ident[:15]: ident for ident in chunk}
             cursor = ''
             while True:
                 where = PR['work_order'] + ' IN (' + ','.join(
@@ -860,9 +865,10 @@ class ResultingSalesforceAdapter:
                     + ' ORDER BY Id LIMIT 2000')
                 for row in rows:
                     ident = _require_id(str(row.get('Id') or ''))
-                    work_id = _require_id(str(row.get(PR['work_order']) or ''))
+                    source_id = _require_id(str(row.get(PR['work_order']) or ''))
+                    work_id = canonical.get(source_id[:15])
                     lead_id = _require_id(str(row.get(PR['lead']) or ''))
-                    if (work_id not in chunk or
+                    if (work_id is None or
                             expected[work_id][:15] != lead_id[:15] or
                             ident in seen or (cursor and ident <= cursor)):
                         raise ResultingSalesforceError(
@@ -898,13 +904,15 @@ class ResultingSalesforceAdapter:
         ):
             for offset in range(0, len(leads), 40):
                 chunk = leads[offset:offset + 40]
+                canonical = {ident[:15]: ident for ident in chunk}
                 found = self._query(
                     'SELECT Id,' + ','.join(fields) + ' FROM ' + LEAD
                     + ' WHERE Id IN (' + ','.join(_soql(key) for key in chunk)
                     + ') ORDER BY Id LIMIT 2000')
                 for row in found:
-                    ident = _require_id(str(row.get('Id') or ''))
-                    if ident not in chunk or ident in rows_by_lead:
+                    source_id = _require_id(str(row.get('Id') or ''))
+                    ident = canonical.get(source_id[:15])
+                    if ident is None or ident in rows_by_lead:
                         raise ResultingSalesforceError(
                             'Lead preflight returned unexpected identities.')
                     rows_by_lead[ident] = row
