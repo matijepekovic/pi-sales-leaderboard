@@ -1,4 +1,4 @@
-"""Private, durable SQLite inbox, job queue and print outbox (schema version 3)."""
+"""Private, durable SQLite inbox, job queue and print outbox (schema version 4)."""
 from __future__ import annotations
 
 import json
@@ -126,6 +126,18 @@ CREATE INDEX IF NOT EXISTS mod_result_pending
 
 -- Only the active/latest batch is displayed; older uncertain work orders
 -- remain durable so a new submission cannot blindly resend them.
+-- Local MOD note checkpoints are independent of Salesforce Refresh and drafts.
+CREATE TABLE IF NOT EXISTS mod_result_note_backups (
+  id INTEGER PRIMARY KEY,
+  day TEXT NOT NULL,
+  work_order_id TEXT NOT NULL,
+  saved_at REAL NOT NULL,
+  reason TEXT NOT NULL,
+  notes TEXT NOT NULL,
+  redlines TEXT NOT NULL,
+  note_runs TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS mod_result_note_backups_work_order
+  ON mod_result_note_backups(day,work_order_id,id);
 CREATE TABLE IF NOT EXISTS mod_result_submission_jobs (
  id INTEGER PRIMARY KEY,
  day TEXT NOT NULL REFERENCES mod_result_days(day),
@@ -154,7 +166,7 @@ class Database:
         with self.connect() as conn:
             conn.execute('PRAGMA journal_mode=WAL')
             version = conn.execute('PRAGMA user_version').fetchone()[0]
-            if version > 3:
+            if version > 4:
                 raise RuntimeError('Database is newer than this printer-app release')
             conn.executescript(SCHEMA)
             # Existing version-1 printer databases gain one local override flag;
@@ -165,7 +177,7 @@ class Database:
                     'ALTER TABLE mod_result_sheets ADD COLUMN override_active '
                     'INTEGER NOT NULL DEFAULT 0 CHECK(override_active IN (0,1))'
                 )
-            conn.execute('PRAGMA user_version=3')
+            conn.execute('PRAGMA user_version=4')
 
     @contextmanager
     def connect(self):
