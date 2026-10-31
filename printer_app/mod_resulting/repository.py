@@ -223,7 +223,14 @@ class ResultingRepository:
                 # cancellations. Do not turn a blank, canceled-only card into
                 # an eligible End-of-Day result. If the MOD has written notes,
                 # keep the card visible and make its disposition clearly CXL.
-                if record.appointment_canceled and has_mod_notes(merged):
+                # An explicit Salesforce result remains authoritative. An
+                # appointment canceled after a completed Sale/PNS/etc. is not
+                # permission to rewrite that actual Work Order result.
+                source_resulted = bool(incoming.get('dispo') or any(
+                    item.get('result') for item in
+                    incoming.get('product_results', {}).values()))
+                if (record.appointment_canceled and has_mod_notes(merged)
+                        and not source_resulted):
                     merged['dispo'] = 'cxl'
 
                 # Clear must be explicit, and any note replacement is backed up.
@@ -244,9 +251,7 @@ class ResultingRepository:
                     ON CONFLICT(key) DO UPDATE SET value=excluded.value''',
                     (notes_key, json.dumps(incoming.get('notes', ''))))
 
-                remote_resulted = bool(incoming.get('dispo') or any(
-                    item.get('result') for item in
-                    incoming.get('product_results', {}).values()))
+                remote_resulted = source_resulted
                 remote_result_changed = (baseline is not None and any(
                     baseline.get(key) != incoming.get(key)
                     for key in ('dispo', 'product_results', 'lead_status')))
