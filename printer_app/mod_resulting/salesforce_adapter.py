@@ -443,14 +443,15 @@ class ResultingSalesforceAdapter:
             )
         return ids
 
-    def _existing_product_results(self, lead_id, work_order_id):
+    def _existing_product_results(self, lead_id, work_order_id, *, rows=None):
         fields = 'Id,' + PR['product'] + ',' + PR_ISSUED_COUNT + ',' + PR_APPOINTMENT_DATE
-        rows = self._query(
-            'SELECT ' + fields + ' FROM ' + PRODUCT_RESULT
-            + ' WHERE ' + PR['lead'] + ' = ' + _soql(lead_id)
-            + ' AND ' + PR['work_order'] + ' = ' + _soql(work_order_id)
-            + ' LIMIT 2000'
-        )
+        if rows is None:
+            rows = self._query(
+                'SELECT ' + fields + ' FROM ' + PRODUCT_RESULT
+                + ' WHERE ' + PR['lead'] + ' = ' + _soql(lead_id)
+                + ' AND ' + PR['work_order'] + ' = ' + _soql(work_order_id)
+                + ' LIMIT 2000'
+            )
         result = {}
         for row in rows:
             ident = _require_id(str(row.get('Id') or ''))
@@ -585,7 +586,8 @@ class ResultingSalesforceAdapter:
         )
         return result_fields
 
-    def _product_operations(self, payload, schema, lead_schema=None):
+    def _product_operations(self, payload, schema, lead_schema=None,
+                            *, existing_rows=None):
         lead_field = self._field(
             schema, PR['lead'], update=False, create=True, types=('reference',)
         )
@@ -632,7 +634,7 @@ class ResultingSalesforceAdapter:
             raise ResultingSalesforceError('Multiple primary product results are not valid.')
 
         existing = self._existing_product_results(
-            payload['lead_id'], payload['work_order_id']
+            payload['lead_id'], payload['work_order_id'], rows=existing_rows
         )
         lead_schema = lead_schema or self._describe(LEAD)
 
@@ -823,6 +825,45 @@ class ResultingSalesforceAdapter:
                 'No unique same-day Service Appointments for Work Order.')
         return appointments
 
+    def _product_rows_for_batch(self, payloads):
+        """Read existing PIR identities, dates and issued flags by Work Order."""
+        expected = {
+            _require_id(payload['work_order_id']): _require_id(payload['lead_id'])
+            for payload in payloads
+        }
+        by_work = {key: [] for key in expected}
+        seen = set()
+        ids = list(expected)
+        for offset in range(0, len(ids), 40):
+            chunk = ids[offset:offset + 40]
+            cursor = ''
+            while True:
+                where = PR['work_order'] + ' IN (' + ','.join(
+                    _soql(ident) for ident in chunk) + ')'
+                if cursor:
+                    where += ' AND Id > ' + _soql(cursor)
+                rows = self._query(
+                    'SELECT Id,' + PR['work_order'] + ',' + PR['lead']
+                    + ',' + PR['product'] + ',' + PR_ISSUED_COUNT
+                    + ',' + PR_APPOINTMENT_DATE
+                    + ' FROM ' + PRODUCT_RESULT + ' WHERE ' + where
+                    + ' ORDER BY Id LIMIT 2000')
+                for row in rows:
+                    ident = _require_id(str(row.get('Id') or ''))
+                    work_id = _require_id(str(row.get(PR['work_order']) or ''))
+                    lead_id = _require_id(str(row.get(PR['lead']) or ''))
+                    if (work_id not in chunk or
+                            expected[work_id][:15] != lead_id[:15] or
+                            ident in seen or (cursor and ident <= cursor)):
+                        raise ResultingSalesforceError(
+                            'Product Interest Result identity or paging is invalid.')
+                    seen.add(ident)
+                    by_work[work_id].append(row)
+                if len(rows) < 2000:
+                    break
+                cursor = _require_id(str(rows[-1].get('Id') or ''))
+        return by_work
+
     def prepare(self, payloads):
         """Preflight the complete batch before any live Salesforce write."""
         wo_schema = self._describe(WORK_ORDER)
@@ -901,6 +942,7 @@ class ResultingSalesforceAdapter:
         }
 
         appointment_ids_by_work = self._appointments_for_batch(payloads)
+        product_rows_by_work = self._product_rows_for_batch(payloads)
         operations = []
         # Different Work Orders can refer to the same Lead. Accumulate pivot
         # additions across the whole End of Day batch; never overwrite a pivot
@@ -1061,7 +1103,9 @@ class ResultingSalesforceAdapter:
                         lead_fields['product_interest'], merged
                     ) if lead_fields['product_interest'].get('type') == 'multipicklist' else merged
             plan.append(('update', LEAD, lead_id, lead_values))
-            plan.extend(self._product_operations(payload, pr_schema, lead_schema))
+            plan.extend(self._product_operations(
+                payload, pr_schema, lead_schema,
+                existing_rows=product_rows_by_work[work_order_id]))
             operations.append(plan)
         return operations
 
