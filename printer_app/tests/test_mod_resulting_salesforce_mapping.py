@@ -146,11 +146,7 @@ def _adapter(*, existing_results=(), lead_interest='Roofing;Siding', schemas=Non
             result = schemas[command[command.index('--sobject')+1]]
         elif command[1:3] == ['data','query']:
             query = command[command.index('--query')+1]
-            if ' FROM trac_killswitch__c ' in query:
-                result = {'records': [
-                    {'SetupOwnerId': '00D000000000001AAA', 'trac_flows__c': False},
-                ], 'done': True}
-            elif ' FROM ServiceAppointment ' in query:
+            if ' FROM ServiceAppointment ' in query:
                 assert 'ParentRecordId IN (' in query
                 assert "Status IN ('Scheduled','Dispatched')" in query
                 work_ids = re.findall(r"'(0WO[A-Za-z0-9]{15})'", query)
@@ -886,21 +882,13 @@ def test_numeric_salesforce_deposit_field_is_rejected_before_any_write():
     assert all(command[1:3] != ['data', 'update'] for command in calls)
 
 
-def test_flow_v30_kill_switch_blocks_batch_before_any_write():
+def test_resulting_never_queries_salesforce_flow_kill_switch():
     adapter,calls = _adapter()
-    original=adapter._query
-    adapter._query=lambda soql,**kwargs: (
-        [{'SetupOwnerId':'00D000000000001AAA','trac_flows__c':True}]
-        if ' FROM trac_killswitch__c ' in soql else original(soql,**kwargs))
-    with pytest.raises(ResultingSalesforceError,match='kill switch is enabled'):
-        adapter.prepare([_payload('pns',interest='Roofing')])
-    assert all(command[1:3] not in (['data','update'],['data','create'])
-               for command in calls)
-
-    adapter._query=lambda soql,**kwargs: (
-        [] if ' FROM trac_killswitch__c ' in soql else original(soql,**kwargs))
-    with pytest.raises(ResultingSalesforceError,match='could not be verified'):
-        adapter.prepare([_payload('pns',interest='Roofing')])
+    plan = _operations(adapter, _payload('pns',interest='Roofing'))
+    assert plan
+    queries = [command[command.index('--query')+1] for command in calls
+               if command[1:3] == ['data','query']]
+    assert not any('trac_killswitch__c' in query for query in queries)
 
 
 def test_flow_v30_write_order_and_salesforce_service_appointment_filter():
@@ -922,7 +910,20 @@ def test_flow_v30_write_order_and_salesforce_service_appointment_filter():
     sa_query = next(q for q in queries if ' FROM ServiceAppointment ' in q)
     assert 'ParentRecordId IN (' in sa_query
     assert "Status IN ('Scheduled','Dispatched')" in sa_query
-    assert 'SchedStartTime >=' in sa_query and 'SchedStartTime <' in sa_query
+    assert 'SchedStartTime' not in sa_query
+
+
+def test_no_eligible_service_appointments_does_not_block_other_results():
+    adapter,calls = _adapter()
+    original = adapter._query
+    adapter._query = lambda soql, **kwargs: (
+        [] if ' FROM ServiceAppointment ' in soql
+        else original(soql, **kwargs))
+    plan = _operations(adapter, _payload('pns',interest='Roofing'))
+    assert [entry[1] for entry in plan] == [
+        PRODUCT_RESULT, 'WorkOrder', 'Lead'
+    ]
+    assert all(command[1:3] != ['data', 'update'] for command in calls)
 
 
 def test_pns_without_prior_product_result_creates_pir_before_work_order():
