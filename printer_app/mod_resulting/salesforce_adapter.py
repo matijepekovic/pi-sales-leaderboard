@@ -1321,8 +1321,27 @@ class ResultingSalesforceAdapter:
             '--method', 'POST', '--body', '-',
             '--header', 'Content-Type: application/json',
         ], input_body=request_body, timeout=120)
-        results = response.get('compositeResponse') if isinstance(
-            response, dict) else None
+        # sf api request rest --json returns the HTTP envelope inside its
+        # CLI result: {statusCode, headers, body}. Salesforce puts
+        # compositeResponse in that HTTP body, not at the result's top level.
+        status_code = response.get('statusCode') if isinstance(response, dict) else None
+        if type(status_code) is not int:
+            raise ResultingSalesforceError(
+                'Salesforce CLI returned an invalid Composite HTTP response; '
+                'verify the Work Order before retrying.'
+            )
+        if status_code != 200:
+            raise ResultingSalesforceError(
+                'Salesforce Composite HTTP ' + str(status_code) + ': '
+                + self._rest_error(response.get('body'))
+            )
+        body = response.get('body')
+        if isinstance(body, str):
+            try:
+                body = json.loads(body)
+            except ValueError:
+                body = None
+        results = body.get('compositeResponse') if isinstance(body, dict) else None
         if not isinstance(results, list) or len(results) != len(requests):
             # Unknown transport outcome: the caller records an uncertain
             # receipt and must never blindly replay the Work Order.
@@ -1330,24 +1349,39 @@ class ResultingSalesforceAdapter:
                 'Salesforce Composite returned an incomplete response; '
                 'verify the Work Order before retrying.'
             )
-        seen = set()
+        by_ref = {}
+        expected = {'step_' + str(i) for i in range(1, len(requests) + 1)}
         for item in results:
             if not isinstance(item, dict):
                 raise ResultingSalesforceError(
                     'Salesforce Composite returned an invalid response.')
             reference = item.get('referenceId')
-            if (reference not in {r['referenceId'] for r in requests}
-                    or reference in seen):
+            if reference not in expected or reference in by_ref:
                 raise ResultingSalesforceError(
                     'Salesforce Composite returned mismatched operations.')
-            seen.add(reference)
-            index = int(reference.removeprefix('step_')) - 1
-            step = operations[index]
+            by_ref[reference] = item
+
+        failures = []
+        for index, step in enumerate(operations, 1):
+            item = by_ref['step_' + str(index)]
             status = item.get('httpStatusCode')
             if type(status) is not int or not 200 <= status < 300:
                 detail = self._rest_error(item.get('body'))
-                raise ResultingSalesforceError(
-                    step[1] + ' ' + step[0] + ' rejected: ' + detail
-                )
+                failures.append((step, detail))
+        if failures:
+            # In an allOrNone rollback Salesforce can report a generic
+            # ALL_OR_NONE_OPERATION_ROLLED_BACK/PROCESSING_HALTED for other
+            # steps. Prefer the concrete root rejection if one exists.
+            actual = next(
+                ((step, detail) for step, detail in failures
+                 if not any(code in detail for code in (
+                     'ALL_OR_NONE_OPERATION_ROLLED_BACK',
+                     'PROCESSING_HALTED'))),
+                failures[0],
+            )
+            step, detail = actual
+            raise ResultingSalesforceError(
+                step[1] + ' ' + step[0] + ' rejected: ' + detail
+            )
         # No success receipt can be issued until every expected subrequest
         # succeeds and Salesforce's response is complete.
