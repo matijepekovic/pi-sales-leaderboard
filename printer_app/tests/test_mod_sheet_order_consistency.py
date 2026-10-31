@@ -84,3 +84,32 @@ def test_print_and_digital_use_same_order_after_grouping(monkeypatch):
     assert digital[2].local_scheduled_start_time == '7:00 AM'
     # All co-assigned resources and the active fallback survive regrouping.
     assert digital[2].assigned_service_resources == ('Rep One', 'Rep Two')
+
+
+def test_canceled_only_appointment_is_flagged_but_active_one_is_not(monkeypatch):
+    canceled = _appointment(
+        '08p000000000006AAA', A, 'Canceled Customer', '15:00', canceled=True)
+    active = _appointment(
+        '08p000000000007AAA', B, 'Active Customer', '16:00')
+    canceled_fallback = _appointment(
+        '08p000000000008AAA', B, 'Active Customer', '15:30', canceled=True)
+    adapter = SalesforceCliAdapter(runner=lambda *a, **k: None)
+    monkeypatch.setattr(
+        adapter, '_salesforce_timezone',
+        lambda: ZoneInfo('America/Los_Angeles'),
+    )
+    monkeypatch.setattr(
+        adapter, '_appointment_rows',
+        lambda fields, conditions, *, limit=None, **kwargs:
+            [canceled, canceled_fallback, active],
+    )
+    source = SalesforceSandboxService(adapter)
+    for limit in (1000, None):
+        records = source.records(
+            start_date='10/30/2026', end_date='10/30/2026',
+            market_segment='Olympia',
+            product_category='All',
+            remove_canceled=False, remove_unconfirmed=False, limit=limit)
+        by_id = {record.source_id: record for record in records}
+        assert by_id[A].appointment_canceled is True
+        assert by_id[B].appointment_canceled is False
