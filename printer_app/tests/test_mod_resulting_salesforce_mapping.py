@@ -1034,6 +1034,33 @@ def test_phase3_existing_future_date_is_copied_and_missing_input_blocks_write():
                for command in calls)
 
 
+def test_future_primary_new_result_uses_saved_sa_date_and_existing_keeps_pir_date():
+    source=ModSheetRecord(
+        source_id=WORK, lead_source_id=LEAD,
+        work_order_number='00012345', product_interest='Roofing',
+        work_type='Sales - Roofing',
+    )
+    payload=ResultingService.submission_payload({
+        'day':DAY, 'work_order_id':WORK, 'snapshot':asdict(source),
+        'draft':clean_draft({'dispo':'pns'}),
+    }, MOD, lead_appointment_date='2026-10-30',
+       work_order_appointment_date='2026-10-29', resulted_on=DAY)
+    context=payload['product_result_context']['Roofing']
+    assert context['appointment_date_source']=='existing_result_input'
+    assert context['fallback_appointment_date']=='2026-10-29'
+    adapter,_=_adapter()
+    created=_single(_operations(adapter,payload),PRODUCT_RESULT)
+    assert created[0]=='create'
+    assert created[3][PR_APPOINTMENT_DATE]=='2026-10-29'
+    adapter,_=_adapter(existing_results=[{
+        'Id':PR1, 'Product_Interest__c':'Roofing',
+        PR_ISSUED_COUNT:True, PR_APPOINTMENT_DATE:'2026-10-26',
+    }])
+    existing=_single(_operations(adapter,payload),PRODUCT_RESULT)
+    assert existing[0]=='update'
+    assert existing[3][PR_APPOINTMENT_DATE]=='2026-10-26'
+
+
 def test_phase3_missing_flow_metadata_rejects_batch_before_writes():
     schema = _schemas()
     schema[PRODUCT_RESULT]['fields'] = [
