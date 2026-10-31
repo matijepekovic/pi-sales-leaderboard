@@ -24,6 +24,8 @@ WO_LEAD = 'Lead__c'
 WO_APPOINTMENT_DATETIME = 'Appointment_Date_Time__c'
 WO_APPOINTMENT_DATE = 'Appointment_Date__c'
 SERVICE_APPOINTMENT = 'ServiceAppointment'
+# The native Result Appointment Flow selects Service Appointments by ParentRecordId.
+SA_PARENT = 'ParentRecordId'
 PRODUCT_RESULT = 'Product_Interest_Result__c'
 # Result Appointment Flow fields, owned and validated by this adapter only.
 PR_ISSUED_COUNT = 'Include_in_Issued_Lead_Count__c'
@@ -849,19 +851,20 @@ class ResultingSalesforceAdapter:
                 canonical = {ident[:15]: ident for ident in chunk}
                 cursor = ''
                 while True:
-                    where = (SA['work_order'] + ' IN ('
+                    where = (SA_PARENT + ' IN ('
                              + ','.join(_soql(key) for key in chunk) + ')'
+                             + " AND Status IN ('Scheduled','Dispatched')"
                              + ' AND SchedStartTime >= ' + lo
                              + ' AND SchedStartTime < ' + hi)
                     if cursor:
                         where += ' AND Id > ' + _soql(cursor)
                     rows = self._query(
-                        'SELECT Id,' + SA['work_order'] + ' FROM '
+                        'SELECT Id,' + SA_PARENT + ' FROM '
                         + SERVICE_APPOINTMENT + ' WHERE ' + where
                         + ' ORDER BY Id LIMIT 2000')
                     for row in rows:
                         ident = _require_id(str(row.get('Id') or ''))
-                        source_id = _require_id(str(row.get(SA['work_order']) or ''))
+                        source_id = _require_id(str(row.get(SA_PARENT) or ''))
                         work_order = canonical.get(source_id[:15])
                         if work_order is None or ident in seen or (
                                 cursor and ident <= cursor):
@@ -968,11 +971,11 @@ class ResultingSalesforceAdapter:
 
         sa_status = self._field(sa_schema, SA['status'], types=('picklist',))
         sa_work_order = self._field(
-            sa_schema, SA['work_order'], update=False, types=('reference',)
+            sa_schema, SA_PARENT, update=False, types=('reference',)
         )
         if WORK_ORDER not in (sa_work_order.get('referenceTo') or []):
             raise ResultingSalesforceError(
-                SERVICE_APPOINTMENT + '.' + SA['work_order']
+                SERVICE_APPOINTMENT + '.' + SA_PARENT
                 + ' does not reference WorkOrder.'
             )
 
@@ -1053,12 +1056,18 @@ class ResultingSalesforceAdapter:
             appointment_status = self._choice(
                 sa_status, payload['fields']['appointment_status']
             )
-            plan = [
+            # Flow v30 writes Product Interest Results before Service
+            # Appointments and Work Orders. Resolve the complete plan during
+            # read-only preflight, then submit all steps atomically.
+            plan = self._product_operations(
+                payload, pr_schema, lead_schema,
+                existing_rows=product_rows_by_work[work_order_id],
+                attribution_row=lead_rows.get(lead_id))
+            plan.extend(
                 ('update', SERVICE_APPOINTMENT, ident, {
                     SA['status']: appointment_status,
-                })
-                for ident in appointment_ids
-            ]
+                }) for ident in appointment_ids
+            )
 
             wo_values = {
                 WO['dispo']: self._value(
@@ -1133,9 +1142,12 @@ class ResultingSalesforceAdapter:
                     wo_fields['start_price'], payload['fields']['price']['highest']
                 )
             if payload['fields']['price']['lowest']:
-                wo_values[WO['final_price']] = self._value(
-                    wo_fields['final_price'], payload['fields']['price']['lowest']
-                )
+                # The Flow updates Price__c in a separate WorkOrder DML step
+                # before its main WorkOrder update. Do not send it twice.
+                plan.append(('update', WORK_ORDER, work_order_id, {
+                    WO['final_price']: self._value(
+                        wo_fields['final_price'], payload['fields']['price']['lowest'])
+                }))
             if payload['deposit_payment'] != '':
                 wo_values[WO['deposit']] = self._value(
                     wo_fields['deposit'], payload['deposit_payment']
@@ -1200,10 +1212,6 @@ class ResultingSalesforceAdapter:
                         lead_fields['product_interest'], merged
                     ) if lead_fields['product_interest'].get('type') == 'multipicklist' else merged
             plan.append(('update', LEAD, lead_id, lead_values))
-            plan.extend(self._product_operations(
-                payload, pr_schema, lead_schema,
-                existing_rows=product_rows_by_work[work_order_id],
-                attribution_row=lead_rows.get(lead_id)))
             operations.append(plan)
         # Reject an oversized Work Order before submitting any earlier
         # Work Orders from this End-of-Day batch. The ordered Composite API
@@ -1280,10 +1288,9 @@ class ResultingSalesforceAdapter:
     def apply(self, operations):
         """Commit one Work Order atomically, in the existing plan order.
 
-        This is the same preflighted SA -> Work Order -> Lead -> PIR sequence.
-        Composite's allOrNone rolls back earlier appointments if a later
-        Work Order or Product Result rejects the request. Its JSON body also
-        preserves MOD Notes containing quotes and multiline text.
+        Follow Flow v30: PIR -> SA -> optional WorkOrder price -> WorkOrder
+        -> Lead. Composite allOrNone rolls back every operation if any step
+        rejects the request. JSON preserves quoted/multiline MOD Notes.
         """
         if not operations or len(operations) > 25:
             raise ResultingSalesforceError(
