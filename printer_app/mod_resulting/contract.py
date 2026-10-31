@@ -260,9 +260,10 @@ def product_result_context(draft, results, *, lead_appointment_date, resulted_on
         submitted = date.fromisoformat(resulted_on)
     except (TypeError, ValueError) as exc:
         raise ValueError('The resulting date must be an ISO calendar date.') from exc
-    # The saved MOD card identifies the Service Appointment being resulted.
-    # That date is authoritative for the Product Interest Results in End of Day;
-    # it must never depend on a PIR that has not yet been created.
+    # The saved MOD card provides a safe input date when the Flow's future
+    # branch relies on a PIR screen value that Stats does not expose, or when
+    # the Lead appointment date is blank. Prefer Salesforce's Lead date for
+    # the Flow's today/past paths.
     appointment_day = None
     if work_order_appointment_date:
         try:
@@ -332,17 +333,19 @@ def product_result_context(draft, results, *, lead_appointment_date, resulted_on
         # do not silently treat list order as a business decision.
         role = ('primary' if is_primary else
                 'additional' if primary else 'unresolved')
-        if appointment_day is not None:
-            # All products on this Work Order share its selected appointment.
-            source, result_day = 'work_order_appointment', appointment_day.isoformat()
-        elif lead_day is None:
-            source, result_day = 'unresolved', ''
-        elif is_primary and lead_day == submitted:
-            source, result_day = 'today', submitted.isoformat()
-        elif is_primary and lead_day > submitted:
-            source, result_day = 'existing_result_input', ''
-        else:
+        if lead_day is None:
+            source, result_day = (
+                ('work_order_appointment', appointment_day.isoformat())
+                if appointment_day is not None else ('unresolved', '')
+            )
+        elif not is_primary or lead_day < submitted:
+            # Flow v30 assigns the Lead appointment date to historical
+            # primary PIRs and every additional product result.
             source, result_day = 'lead', lead_day.isoformat()
+        elif lead_day == submitted:
+            source, result_day = 'today', submitted.isoformat()
+        else:
+            source, result_day = 'existing_result_input', ''
 
         planned[product] = {
             'role': role,
@@ -351,6 +354,10 @@ def product_result_context(draft, results, *, lead_appointment_date, resulted_on
             'appointment_date_source': source,
             'appointment_date': result_day,
         }
+        if source == 'existing_result_input' and appointment_day is not None:
+            # An uncreated PIR has no saved input date. Preserve the previous
+            # approved End-of-Day rule using the selected SA's saved date.
+            planned[product]['fallback_appointment_date'] = appointment_day.isoformat()
     return planned
 
 

@@ -100,8 +100,11 @@ class Source:
 
 
 class Writer:
-    def __init__(self): self.plans=[];self.applied=[]
+    def __init__(self): self.plans=[];self.applied=[];self.date_lookups=[]
     def mod_users(self, market_segment): return [{'id':USER,'name':'MOD Example'}]
+    def lead_appointment_dates(self, lead_ids):
+        self.date_lookups.append(tuple(lead_ids))
+        return {lead_id: DAY for lead_id in lead_ids}
     def prepare(self,batch):
         self.plans.extend(batch)
         return [{'work_order_id':item['work_order_id']} for item in batch]
@@ -115,6 +118,56 @@ def _service(tmp_path):
     service=ResultingService(repo,source,writer,settings,'America/Los_Angeles',
                              allow_salesforce_writes=True)
     return service,repo,source,writer
+
+
+def test_eod_uses_salesforce_lead_date_for_past_flow_branch(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    service.refresh(DAY)
+    service.set_mod(DAY,USER)
+    repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
+    writer.lead_appointment_dates=lambda lead_ids: {LEAD:'2026-10-25'}
+    assert service.submit(DAY)['submitted']==1
+    context=writer.plans[0]['product_result_context']
+    assert all(row['appointment_date_source']=='lead' for row in context.values())
+    assert all(row['appointment_date']=='2026-10-25' for row in context.values())
+
+
+def test_eod_uses_saved_appointment_date_when_lead_date_missing(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    service.refresh(DAY)
+    service.set_mod(DAY,USER)
+    repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
+    writer.lead_appointment_dates=lambda lead_ids: {}
+    assert service.submit(DAY)['submitted']==1
+    context=writer.plans[0]['product_result_context']
+    assert all(row['appointment_date_source']=='work_order_appointment'
+               for row in context.values())
+    assert all(row['appointment_date']==DAY for row in context.values())
+
+
+def test_eod_uses_saved_date_when_lead_query_unavailable(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    service.refresh(DAY)
+    service.set_mod(DAY,USER)
+    repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
+    def unavailable(lead_ids):
+        raise RuntimeError('Lead date query unavailable')
+    writer.lead_appointment_dates=unavailable
+    assert service.submit(DAY)['submitted']==1
+    context=writer.plans[0]['product_result_context']
+    assert all(row['appointment_date']==DAY for row in context.values())
+
+
+def test_eod_lead_date_does_not_require_saved_appointment_date(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    source.records=lambda **kwargs:[ModSheetRecord(
+        source_id=WORK,lead_source_id=LEAD,work_order_number='00001234',
+        product_interest='Roofing',work_type='Sales - Roofing')]
+    service.refresh(DAY)
+    service.set_mod(DAY,USER)
+    repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
+    assert service.submit(DAY)['submitted']==1
+    assert writer.plans[0]['product_result_context']['Roofing']['appointment_date']==DAY
 
 
 def test_clear_local_restores_salesforce_and_never_writes_to_salesforce(tmp_path):
@@ -209,7 +262,8 @@ def test_real_adapter_refuses_guessed_salesforce_identifiers():
     adapter=ResultingSalesforceAdapter(
         executable='/does-not-exist/sf')
     with pytest.raises(ResultingSalesforceError):
-        adapter._appointment_ids('this is not an ID',DAY)
+        adapter._appointments_for_batch([{'day':DAY,
+                                          'work_order_id':'this is not an ID'}])
     with pytest.raises(ResultingSalesforceError):
         adapter._describe('WorkOrder; DROP TABLE')
 
@@ -462,7 +516,7 @@ def test_selected_submissions_keep_remaining_work_orders_editable_and_print_ever
     second = ModSheetRecord(
         source_id='0WO000000000002AAA', lead_source_id=LEAD,
         lead_name='Second Customer', work_order_number='00001235',
-        product_interest='Roofing',
+        product_interest='Roofing', scheduled_start='2026.10.26 ; 11:00:00 AM',
     )
     repo.refresh(DAY, [RECORD, second], market_segment='Olympia')
     service.set_mod(DAY, USER)
@@ -515,7 +569,8 @@ def test_selected_submission_rejects_blank_unknown_and_duplicate_ids(tmp_path):
 def test_partial_failure_preserves_receipts_and_never_generates_pdf(tmp_path):
     service,repo,source,writer=_service(tmp_path)
     second=ModSheetRecord(source_id='0WO000000000002AAA',lead_source_id=LEAD,
-        lead_name='Second Customer',work_order_number='00001235',product_interest='Roofing')
+        lead_name='Second Customer',work_order_number='00001235',
+        product_interest='Roofing', scheduled_start='2026.10.26 ; 11:00:00 AM')
     repo.refresh(DAY,[RECORD,second],market_segment='Olympia')
     service.set_mod(DAY,USER)
     repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
@@ -581,7 +636,7 @@ def test_completed_override_unlocks_one_sheet_and_resubmits_with_other_jobs(tmp_
     second = ModSheetRecord(
         source_id='0WO000000000002AAA', lead_source_id=LEAD,
         lead_name='Second Customer', work_order_number='00001235',
-        product_interest='Bath'
+        product_interest='Bath', scheduled_start='2026.10.26 ; 11:00:00 AM'
     )
     source.records = lambda **kwargs: [RECORD, second]
     authoritative = clean_draft({
@@ -778,7 +833,8 @@ def test_queued_failure_records_uncertain_and_skips_successful_receipts(tmp_path
     service, repo, source, writer = _service(tmp_path)
     other = ModSheetRecord(
         source_id='0WO000000000002AAA', lead_source_id=LEAD,
-        work_order_number='00001235', product_interest='Roofing')
+        work_order_number='00001235', product_interest='Roofing',
+        scheduled_start='2026.10.26 ; 11:00:00 AM')
     source.records = lambda **kwargs: [RECORD, other]
     repo.refresh(DAY, [RECORD, other], market_segment='Olympia')
     service.set_mod(DAY, USER)
@@ -799,12 +855,15 @@ def test_queued_failure_records_uncertain_and_skips_successful_receipts(tmp_path
     assert status['items'][0]['state'] == 'submitted'
     assert status['items'][1]['state'] == 'uncertain'
     assert repo.day(DAY)['submitting'] == 0
-    # A new submit-all attempt must not replay the possibly-written record.
+    # A new explicit Submit All includes the unresulted sheet, not the
+    # already successfully submitted Work Order.
     writer.apply = original
-    with pytest.raises(ValueError, match='requires Salesforce confirmation'):
-        service.enqueue(DAY)
+    queued = service.enqueue(DAY)
+    assert queued['total'] == 1
     assert len(writer.applied) == 1
-    # An authoritative Salesforce Refresh can confirm the uncertain outcome.
+    assert service.process_next_submission()['submitted'] == 1
+    assert len(writer.applied) == 2
+    # Salesforce Refresh remains authoritative over recorded results.
     writer.read_results = lambda records: {
         other.source_id: clean_draft({'dispo': 'np'}),
         WORK: clean_draft({'dispo': 'pns'}),
@@ -830,8 +889,8 @@ def test_worker_restart_marks_only_inflight_item_uncertain(tmp_path):
     assert status['state'] == 'interrupted'
     assert status['failed'] == 1 and status['items'][0]['state'] == 'uncertain'
     assert repo.day(DAY)['submitting'] == 0
-    with pytest.raises(ValueError, match='requires Salesforce confirmation'):
-        service.enqueue(DAY)
+    queued = service.enqueue(DAY)
+    assert queued['total'] == 1
     assert writer.applied == []
 
 
@@ -987,7 +1046,7 @@ def test_phase2_background_resulting_date_is_frozen_at_enqueue(tmp_path, monkeyp
     day = '2026-10-29'
     source.records = lambda **kwargs: [ModSheetRecord(
         source_id=WORK, lead_source_id=LEAD, work_order_number='00012345',
-        product_interest='Roofing',
+        product_interest='Roofing', scheduled_start='2026.10.26 ; 10:00:00 AM',
     )]
     service.refresh(DAY)
     service.set_mod(DAY, USER)

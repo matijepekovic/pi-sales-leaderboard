@@ -204,7 +204,7 @@ def test_remote_checkbox_change_updates_value_and_edited_flag_atomically(tmp_pat
     assert values['review'] == {'value': 'Local review', 'edited': True}
 
 
-def test_failed_submission_requires_explicit_salesforce_verification_before_retry(tmp_path):
+def test_failed_submission_can_be_reselected_without_extra_approval(tmp_path):
     service, repo, _, _ = _service(tmp_path)
     service.refresh(DAY)
     repo.select_mod(DAY, '005000000000001AAA', 'MOD')
@@ -222,28 +222,18 @@ def test_failed_submission_requires_explicit_salesforce_verification_before_retr
         return queued['job_id']
 
     old_failure = fail_submission()
-    with pytest.raises(ValueError, match='requires Salesforce confirmation'):
-        repo.enqueue_submit(DAY, [WORK])
-    # An earlier failed job stays auditable, including its error and state.
+    assert repo.latest_submission(DAY, old_failure)['items'][0]['state'] == 'uncertain'
+    assert repo.sheets(DAY)[0]['draft'] == edited
+    # The user can explicitly resubmit an unresulted Work Order without a
+    # second approval or a mandatory extra Salesforce read.
+    retry = fail_submission()
+    assert retry > old_failure
+    assert repo.latest_submission(DAY, retry)['items'][0]['state'] == 'uncertain'
     assert repo.latest_submission(DAY, old_failure)['items'][0]['state'] == 'uncertain'
     assert repo.sheets(DAY)[0]['draft'] == edited
 
-    # One complete manual Salesforce Refresh confirms the Work Order and all
-    # Product Interest Results are still unresulted; no write occurs here.
-    service.refresh(DAY)
-    assert repo.sheets(DAY)[0]['draft'] == edited
-    retry = fail_submission()  # A second failure has a different generation.
-    assert retry > old_failure
-    with pytest.raises(ValueError, match='requires Salesforce confirmation'):
-        repo.enqueue_submit(DAY, [WORK])
-    # Reconfirm the new failure independently; never reuse stale verification.
-    service.refresh(DAY)
-    eligible = repo.enqueue_submit(DAY, [WORK])
-    assert eligible['total'] == 1
-    assert repo.sheets(DAY)[0]['draft'] == edited
 
-
-def test_clear_does_not_authorize_uncertain_retry(tmp_path):
+def test_clear_does_not_create_or_require_retry_authorization(tmp_path):
     service, repo, _, _ = _service(tmp_path)
     service.refresh(DAY)
     repo.select_mod(DAY, '005000000000001AAA', 'MOD')
@@ -254,9 +244,8 @@ def test_clear_does_not_authorize_uncertain_retry(tmp_path):
     repo.finish_submission_job(job['job_id'], 'write rejected')
     repo.finish_submit(DAY)
     service.clear_local(DAY)
-    # Clear restores the remote blank result and does not authorize retry.
-    # Even if the user later selects a disposition, prior uncertainty remains.
     row = repo.sheets(DAY)[0]
     repo.save_draft(DAY, WORK, _draft(dispo='pns'), row['revision'])
-    with pytest.raises(ValueError, match='requires Salesforce confirmation'):
-        repo.enqueue_submit(DAY, [WORK])
+    eligible = repo.enqueue_submit(DAY, [WORK])
+    assert eligible['total'] == 1
+    assert repo.latest_submission(DAY, job['job_id'])['items'][0]['state'] == 'uncertain'
