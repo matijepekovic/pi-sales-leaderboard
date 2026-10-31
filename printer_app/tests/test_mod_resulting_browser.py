@@ -633,14 +633,17 @@ def test_per_card_result_confirmation_and_notification_bell(mod_browser):
     def fake_submit(route):
         fields = parse_qs(route.request.post_data)
         submitted.append(fields)
+        job_id = 30 + len(submitted)
+        selected_id = json.loads(fields['work_order_ids'][0])[0]
+        number = '00011111' if selected_id.endswith('001AAA') else '00022222'
         state['job'] = {
-            'id': 31, 'day': service.day(), 'state': 'queued', 'total':1,
+            'id': job_id, 'day': service.day(), 'state': 'queued', 'total':1,
             'submitted':0, 'pending':1, 'processing':0, 'failed':0,
-            'items':[{'state':'pending','work_order_number':'00011111','error':''}],
+            'items':[{'state':'pending','work_order_number':number,'error':''}],
             'error':'',
         }
         route.fulfill(status=202, json={
-            'ok':True, 'job_id':31, 'day':service.day(), 'total':1,
+            'ok':True, 'job_id':job_id, 'day':service.day(), 'total':1,
         })
 
     def fake_status(route):
@@ -710,6 +713,40 @@ def test_per_card_result_confirmation_and_notification_bell(mod_browser):
     expect(page.locator('#submissionNotificationList li')).to_contain_text(
         'Work Order 00011111 — Submitted')
     expect(page.locator('#submissionNotificationBadge')).to_be_hidden()
+    page.locator('#submissionProgress .close-popover').click()
+
+    second.locator('.submit-sheet').click()
+    page.locator('#singleResultYes').click()
+    expect(page.locator('#submissionProgress')).to_be_hidden()
+    assert len(submitted) == 2
+    assert submitted[1]['work_order_ids'] == [
+        json.dumps([second.get_attribute('data-id')])
+    ]
+    state['job'] = {
+        'id':32, 'day':service.day(), 'state':'failed', 'total':1,
+        'submitted':0, 'pending':0, 'processing':0, 'failed':1,
+        'items':[{'state':'uncertain','work_order_number':'00022222',
+                  'error':'Validation rule rejected'}],
+        'error':'Validation rule rejected',
+    }
+    state['notifications'].insert(0, {
+        'job_id':32, 'day':service.day(), 'job_state':'failed',
+        'created_at':1761920002, 'finished_at':1761920003,
+        'job_error':'Validation rule rejected',
+        'work_order_id':second.get_attribute('data-id'),
+        'work_order_number':'00022222', 'state':'uncertain',
+        'error':'Validation rule rejected',
+    })
+    expect(page.locator('#submissionToast')).to_contain_text(
+        'Work Order 00022222 — Failed: Validation rule rejected', timeout=9000)
+    expect(second).to_have_attribute('data-submitted', 'no')
+    expect(page.locator('#submissionNotificationBadge')).to_have_text('1')
+    page.locator('#viewSubmissionProgress').click()
+    expect(page.locator('#submissionNotificationList li')).to_have_count(2)
+    expect(page.locator('#submissionNotificationList li').first).to_contain_text(
+        'Work Order 00022222 — Failed')
+    expect(page.locator('#submissionNotificationList li').first).to_contain_text(
+        'Validation rule rejected')
     assert writer.applied == []
     evidence('per-card-result-bell')
 
