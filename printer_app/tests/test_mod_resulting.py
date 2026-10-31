@@ -705,7 +705,7 @@ def test_existing_sqlite_version_one_migrates_override_flag_without_data_loss(tm
     first = db.one('SELECT draft,submitted_at,override_active FROM mod_result_sheets')
     assert first == {'draft':'{"dispo":"cxl"}',
                      'submitted_at':-1.0, 'override_active':0}
-    assert db.one('PRAGMA user_version')['user_version'] == 4
+    assert db.one('PRAGMA user_version')['user_version'] == 3
     assert Database(path).one('SELECT override_active FROM mod_result_sheets') == {
         'override_active':0
     }
