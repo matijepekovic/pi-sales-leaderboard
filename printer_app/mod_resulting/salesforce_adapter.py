@@ -1229,10 +1229,10 @@ class ResultingSalesforceAdapter:
             if detail:
                 details.append(detail)
         result = '; '.join(details) or 'No Salesforce error details returned.'
-        result = re.sub(r'(?i)\\bBearer\\s+[^\\s,;]+', 'Bearer [REDACTED]', result)
+        result = re.sub(r'(?i)\bBearer\s+[^\s,;]+', 'Bearer [REDACTED]', result)
         result = re.sub(
-            r'(?i)\\b(accessToken|sfdxAuthUrl|authorization)\\s*[:=]\\s*\\S+',
-            r'\\1=[REDACTED]', result)
+            r'(?i)\b(accessToken|sfdxAuthUrl|authorization)\s*[:=]\s*\S+',
+            r'\1=[REDACTED]', result)
         return result[:380]
 
     def _rest_values(self, object_name, values):
