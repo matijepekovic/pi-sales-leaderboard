@@ -517,6 +517,7 @@ class SalesforceCliAdapter:
                 lead_description=_nested(lead, 'Description'),
                 sales_lead_status=_nested(lead, 'Status'),
                 lead_source_id=_nested(lead, 'Id'),
+                appointment_canceled=selected['canceled'],
             ))
         return tuple(normalized)
 
@@ -1169,5 +1170,6 @@ class SalesforceCliAdapter:
                 lead_description=_nested(lead, 'Description'),
                 sales_lead_status=_nested(lead, 'Status'),
                 lead_source_id=_nested(lead, 'Id'),
+                appointment_canceled=grouped_item['canceled'],
             ))
         return normalized
