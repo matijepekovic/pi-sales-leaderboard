@@ -1014,8 +1014,7 @@
       const name = document.createElement('strong');
       name.textContent = 'Work Order ' + item.work_order_number;
       const explanation = document.createElement('span');
-      explanation.textContent = 'Salesforce confirmation required' +
-        (item.error ? ': ' + item.error : '');
+      explanation.textContent = item.error || 'Submission failed';
       row.append(name, explanation);
       errors.append(row);
     }
