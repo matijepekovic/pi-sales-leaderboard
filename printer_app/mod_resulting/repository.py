@@ -217,6 +217,18 @@ class ResultingRepository:
                     merged['dispo'] = 'cxl'
                     merged['lead_status'] = incoming['lead_status']
 
+                # Service Appointment cancellations are separate from Lead
+                # cancellations. Do not turn a blank, canceled-only card into
+                # an eligible End-of-Day result. If the MOD has written notes,
+                # keep the card visible and make its disposition clearly CXL.
+                if record.appointment_canceled and (
+                        str(merged.get('notes') or '').strip()
+                        or str(merged.get('redlines') or '').strip()
+                        or any(str(run.get('text') or '').strip()
+                               for run in (merged.get('note_runs') or [])
+                               if isinstance(run, dict))):
+                    merged['dispo'] = 'cxl'
+
                 # Clear must be explicit, and any note replacement is backed up.
                 if old and any(
                     previous_local.get(key) != merged.get(key)
