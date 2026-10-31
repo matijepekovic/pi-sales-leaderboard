@@ -107,7 +107,8 @@ class ResultingRepository:
             (day, work_order_id, day, work_order_id))
 
     def refresh(self, day, records, external_drafts=None, market_segment=None,
-                *, clear_local=False, initial_only=False):
+                *, clear_local=False, initial_only=False,
+                verify_uncertain=False):
         """Reconcile explicit Salesforce Refresh against its last remote baseline.
 
         Unchanged remote fields never overwrite local edits. Salesforce changes
@@ -271,6 +272,24 @@ class ResultingRepository:
                     (notes_key, json.dumps(incoming.get('notes', ''))))
 
                 remote_resulted = source_resulted
+                if verify_uncertain and not remote_resulted and old and (
+                        old['submitted_at'] is None):
+                    # An explicit, complete Salesforce read has confirmed
+                    # neither a Work Order Dispo nor a Product Interest Result.
+                    # Preserve the original failed job for diagnostics; store
+                    # confirmation for that failure generation only. A later
+                    # failed retry gets a new ID and must be verified again.
+                    last_failed = conn.execute('''SELECT MAX(j.id) AS job_id
+                        FROM mod_result_submission_items i
+                        JOIN mod_result_submission_jobs j ON j.id=i.job_id
+                        WHERE j.day=? AND i.work_order_id=? AND i.state='uncertain'
+                        AND j.state IN ('failed','interrupted')''',
+                        (day, ident)).fetchone()['job_id']
+                    if last_failed is not None:
+                        retry_key = 'mod_result_sf_verified_retry:' + day + ':' + ident
+                        conn.execute('''INSERT INTO meta(key,value) VALUES(?,?)
+                            ON CONFLICT(key) DO UPDATE SET value=excluded.value''',
+                            (retry_key, json.dumps(last_failed)))
                 remote_result_changed = (baseline is not None and any(
                     baseline.get(key) != incoming.get(key)
                     for key in ('dispo', 'product_results', 'lead_status')))
@@ -403,16 +422,26 @@ class ResultingRepository:
             raise ValueError('Selected Work Orders changed or were already submitted. Refresh and try again.')
         if not pending:
             raise ValueError('No unsubmitted sheets have a disposition.')
-        # A timed-out CLI operation could have reached Salesforce. Never
-        # silently retry a work order until Salesforce Refresh confirms it.
+        # Failed transport or timeout may have reached Salesforce. Require a
+        # complete, explicit Salesforce Refresh of this exact failure attempt
+        # before the user may select it for a new End-of-Day submission.
         for row in pending:
-            uncertain = conn.execute('''SELECT 1 FROM mod_result_submission_items i
+            last_failed = conn.execute('''SELECT MAX(j.id) AS job_id
+                FROM mod_result_submission_items i
                 JOIN mod_result_submission_jobs j ON j.id=i.job_id
-                WHERE j.day=? AND i.work_order_id=? AND i.state='uncertain'
-                LIMIT 1''', (day, row['work_order_id'])).fetchone()
-            if uncertain:
-                raise ValueError('Work Order ' + row['snapshot'].get('work_order_number', '')
-                                 + ' requires Salesforce confirmation before resubmission.')
+                WHERE j.day=? AND i.work_order_id=? AND i.state='uncertain' ''',
+                (day, row['work_order_id'])).fetchone()['job_id']
+            if last_failed is not None:
+                retry_key = ('mod_result_sf_verified_retry:' + day + ':'
+                             + row['work_order_id'])
+                confirmed = conn.execute(
+                    'SELECT value FROM meta WHERE key=?', (retry_key,)).fetchone()
+                if confirmed is None or json.loads(confirmed['value']) != last_failed:
+                    raise ValueError(
+                        'Work Order ' + row['snapshot'].get('work_order_number', '')
+                        + ' requires Salesforce confirmation before resubmission. '
+                        'Press Refresh to verify the remote result first.'
+                    )
         return pending
 
     def begin_submit(self, day, work_order_ids=None):
