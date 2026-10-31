@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time as wall_time
+import logging
 import time
 from zoneinfo import ZoneInfo
 
@@ -338,7 +339,18 @@ class ResultingDailyPull:
         day = datetime.fromtimestamp(stamp,self.service.zone).date().isoformat()
         self.service.repository.record_auto_attempt(day,stamp)
         try:
-            return {'ok':True,'count':self.service.refresh(day, initial_only=True)}
+            count = self.service.refresh(day, initial_only=True)
+            if count:
+                prepare = getattr(self.service.writer, 'prepare_metadata', None)
+                if callable(prepare):
+                    try:
+                        prepare()
+                    except Exception:
+                        # Warming a cache is optional, never reason to discard
+                        # a verified morning MOD import. EOD revalidates.
+                        logging.getLogger(__name__).warning(
+                            'MOD write metadata prewarm unavailable; preflight will retry')
+            return {'ok':True,'count':count}
         except Exception as exc:
             self.service.repository.record_auto_attempt(day,stamp,str(exc))
             return {'ok':False,'error':str(exc)[:250]}
