@@ -747,6 +747,38 @@ class ResultingSalesforceAdapter:
                     }))
         return operations
 
+    def _historical_by_lead(self, payloads):
+        """Read same-batch Lead history together, with bounded keyset pages."""
+        leads = list(dict.fromkeys(
+            _require_id(payload['lead_id']) for payload in payloads))
+        history = {lead: [] for lead in leads}
+        seen = set()
+        for offset in range(0, len(leads), 40):
+            group = leads[offset:offset + 40]
+            cursor = ''
+            while True:
+                where = WO_LEAD + ' IN (' + ','.join(_soql(lead) for lead in group) + ')'
+                if cursor:
+                    where += ' AND Id > ' + _soql(cursor)
+                rows = self._query(
+                    'SELECT Id,' + WO_LEAD + ',' + WO['dispo']
+                    + ',' + WO_APPOINTMENT_DATETIME + ',' + WO_APPOINTMENT_DATE
+                    + ' FROM ' + WORK_ORDER + ' WHERE ' + where
+                    + ' ORDER BY Id LIMIT 2000'
+                )
+                for row in rows:
+                    ident = _require_id(str(row.get('Id') or ''))
+                    lead = _require_id(str(row.get(WO_LEAD) or ''))
+                    if lead not in group or ident in seen or (cursor and ident <= cursor):
+                        raise ResultingSalesforceError(
+                            'Historical Work Order identity or paging is invalid.')
+                    seen.add(ident)
+                    history[lead].append(row)
+                if len(rows) < 2000:
+                    break
+                cursor = _require_id(str(rows[-1].get('Id') or ''))
+        return history
+
     def prepare(self, payloads):
         """Preflight the complete batch before any live Salesforce write."""
         wo_schema = self._describe(WORK_ORDER)
@@ -818,22 +850,7 @@ class ResultingSalesforceAdapter:
                     types=('datetime',))
         self._field(wo_schema, WO_APPOINTMENT_DATE, update=False,
                     types=('date',))
-        history_by_lead = {}
-        for lead_id in dict.fromkeys(
-            _require_id(payload['lead_id']) for payload in payloads
-        ):
-            rows = self._query(
-                'SELECT Id,' + WO_LEAD + ',' + WO['dispo']
-                + ',' + WO_APPOINTMENT_DATETIME + ',' + WO_APPOINTMENT_DATE
-                + ' FROM ' + WORK_ORDER
-                + ' WHERE ' + WO_LEAD + ' = ' + _soql(lead_id)
-                + ' ORDER BY ' + WO_APPOINTMENT_DATETIME + ' DESC LIMIT 2000'
-            )
-            if any(str(row.get(WO_LEAD) or '') != lead_id for row in rows):
-                raise ResultingSalesforceError(
-                    'Historical Work Order does not match the selected Lead.'
-                )
-            history_by_lead[lead_id] = rows
+        history_by_lead = self._historical_by_lead(payloads)
         pending_dispositions = {
             _require_id(payload['work_order_id']): WORK_ORDER_DISPO[payload['dispo']]
             for payload in payloads
