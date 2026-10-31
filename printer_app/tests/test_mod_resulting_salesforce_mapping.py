@@ -147,7 +147,7 @@ def _adapter(*, existing_results=(), lead_interest='Roofing;Siding', schemas=Non
             if ' FROM ServiceAppointment ' in query:
                 result = {'records':[{'Id':SA1},{'Id':SA2}], 'done':True}
             elif ' FROM WorkOrder ' in query:
-                assert 'WHERE Lead__c = ' in query
+                assert 'WHERE Lead__c IN (' in query
                 assert 'Appointment_Date_Time__c' in query
                 result = {'records':historical_works, 'done':True}
             elif ' FROM Product_Interest_Result__c ' in query:
