@@ -28,7 +28,7 @@ class ResultingService:
     def day(self):
         return datetime.now(self.zone).date().isoformat()
 
-    def refresh(self, day, *, clear_local=False):
+    def refresh(self, day, *, clear_local=False, initial_only=False):
         # The same normalized records and market settings used by Printer;
         # canceled/unconfirmed results are included for live routing changes.
         config = self.settings_repository.settings()
@@ -55,12 +55,12 @@ class ResultingService:
         normalized = {key: clean_draft(value) for key, value in external.items()}
         if clear_local and not callable(reader):
             normalized = {record.source_id: clean_draft({}) for record in records}
-        self.repository.refresh(
+        applied = self.repository.refresh(
             day, records, external_drafts=normalized,
             market_segment=kwargs['market_segment'],
-            clear_local=clear_local,
+            clear_local=clear_local, initial_only=initial_only,
         )
-        return len(records)
+        return len(records) if applied is not False else 0
 
     def clear_local(self, day):
         """Discard local drafts and restore verified Salesforce values.
@@ -338,7 +338,7 @@ class ResultingDailyPull:
         day = datetime.fromtimestamp(stamp,self.service.zone).date().isoformat()
         self.service.repository.record_auto_attempt(day,stamp)
         try:
-            return {'ok':True,'count':self.service.refresh(day)}
+            return {'ok':True,'count':self.service.refresh(day, initial_only=True)}
         except Exception as exc:
             self.service.repository.record_auto_attempt(day,stamp,str(exc))
             return {'ok':False,'error':str(exc)[:250]}
