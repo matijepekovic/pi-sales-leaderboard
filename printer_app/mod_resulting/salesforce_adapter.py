@@ -165,6 +165,11 @@ class ResultingSalesforceAdapter:
             raise ResultingSalesforceError('Salesforce query is incomplete; refusing partial results.')
         return records
 
+    def prepare_metadata(self):
+        """Warm the four write schemas on the worker before End of Day."""
+        for name in (WORK_ORDER, LEAD, SERVICE_APPOINTMENT, PRODUCT_RESULT):
+            self._describe(name)
+
     def _describe(self, name):
         if not NAME_RE.fullmatch(name):
             raise ResultingSalesforceError('Invalid Salesforce object name.')
