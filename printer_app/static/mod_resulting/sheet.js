@@ -590,6 +590,17 @@
     }
     throw new Error('An unsaved sheet is still changing; retry after editing.');
   }
+  async function flushSheet(sheet) {
+    const id = sheet.dataset.id;
+    clearTimeout(timers.get(id));
+    timers.delete(id);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (sheet.dataset.dirty === 'yes') await queueSave(sheet);
+      else await (pending.get(id) || Promise.resolve());
+      if (sheet.dataset.dirty !== 'yes') return;
+    }
+    throw new Error('Work Order has unsaved changes; retry after editing.');
+  }
   function setup(sheet) {
     const background = sheet.querySelector('.printer-sheet');
     const showSurface = () => {
@@ -700,6 +711,9 @@
     }
     syncSaleRows();
     const overrideButton = sheet.querySelector('.override-sheet');
+    sheet.querySelector('.submit-sheet')?.addEventListener('click', () => {
+      if (sheet.dataset.submitted !== 'yes') openSingleResult(sheet);
+    });
     // Inspectors are installed before completed-sheet inputs are disabled:
     // locked sheets still support reading, but never saving raw values.
     for (const input of sheet.querySelectorAll('input[type="checkbox"][data-key]')) {
@@ -920,7 +934,21 @@
   let progressJobId = null;
   let progressTimer = null;
   let submissionActive = false;
-  let autoOpenedProgress = false;
+  let activeNotices = [];
+  let noticesInitialized = false;
+  let knownTerminal = new Set();
+  const notificationStoreKey = 'mod-resulting-read-notifications-v1';
+  let readNotices = new Set();
+  try {
+    const stored = JSON.parse(localStorage.getItem(notificationStoreKey) || '[]');
+    if (Array.isArray(stored)) readNotices = new Set(stored.filter(key => typeof key === 'string'));
+  } catch (_) { readNotices = new Set(); }
+  const bellCount = document.getElementById('submissionNotificationBadge');
+  const toast = document.getElementById('submissionToast');
+  let toastTimer = null;
+  const singleDialog = document.getElementById('singleResultConfirm');
+  const singleYes = document.getElementById('singleResultYes');
+  let selectedSingleSheet = null;
 
   function eligibleSheets() {
     return sheets.filter(sheet =>
@@ -973,14 +1001,124 @@
     for (const input of inputs) input.checked = !allSelected;
     updateSelection();
   });
+  function noticeStatus(item) {
+    if (item.state === 'submitted') return 'Submitted';
+    if (item.state === 'uncertain') return 'Failed';
+    if (['failed', 'interrupted'].includes(item.job_state)) return 'Not submitted';
+    if (item.state === 'processing') return 'In progress';
+    return 'Queued';
+  }
+  function terminalNoticeKey(item) {
+    const status = noticeStatus(item);
+    return ['Submitted', 'Failed', 'Not submitted'].includes(status)
+      ? item.job_id + ':' + item.work_order_id + ':' + status : '';
+  }
+  function noticeError(item) {
+    return item.error || ((item.job_state === 'failed' || item.job_state === 'interrupted')
+      ? item.job_error : '') || '';
+  }
+  function saveReadNotices() {
+    try {
+      localStorage.setItem(notificationStoreKey, JSON.stringify([...readNotices].slice(-250)));
+    } catch (_) { /* Notifications still work when storage is unavailable. */ }
+  }
+  function updateNotificationBadge() {
+    const unread = activeNotices.filter(item => {
+      const key = terminalNoticeKey(item);
+      return key && !readNotices.has(key);
+    }).length;
+    bellCount.hidden = unread === 0;
+    bellCount.textContent = unread > 99 ? '99+' : String(unread);
+    progressButton.setAttribute('aria-label',
+      unread ? 'Resulting notifications, ' + unread + ' unread' : 'Resulting notifications');
+  }
+  function markNotificationsRead() {
+    for (const item of activeNotices) {
+      const key = terminalNoticeKey(item);
+      if (key) readNotices.add(key);
+    }
+    saveReadNotices();
+    updateNotificationBadge();
+  }
+  function showSubmissionToast(text) {
+    toast.textContent = text;
+    toast.hidden = !text;
+    clearTimeout(toastTimer);
+    if (text) toastTimer = setTimeout(() => { toast.hidden = true; }, 8000);
+  }
+  function markWorkOrderSubmitted(item) {
+    if (item.day !== root.dataset.day || item.state !== 'submitted') return;
+    const sheet = sheets.find(current => current.dataset.id === item.work_order_id);
+    if (!sheet || sheet.dataset.submitted === 'yes') return;
+    sheet.dataset.submitted = 'yes';
+    sheet.dataset.overrideActive = 'no';
+    sheet.classList.add('submitted');
+    const button = sheet.querySelector('.submit-sheet');
+    if (button) button.hidden = true;
+    for (const input of sheet.querySelectorAll('input,select,textarea,button')) {
+      input.disabled = true;
+    }
+    applyVisibility();
+  }
+  function renderNotifications(items) {
+    activeNotices = Array.isArray(items) ? items : [];
+    const list = document.getElementById('submissionNotificationList');
+    list.replaceChildren();
+    document.getElementById('noSubmissionNotifications').hidden = activeNotices.length > 0;
+    const fresh = [];
+    const terminal = new Set();
+    for (const item of activeNotices) {
+      const status = noticeStatus(item);
+      const key = terminalNoticeKey(item);
+      if (key) {
+        terminal.add(key);
+        if (noticesInitialized && !knownTerminal.has(key) && !readNotices.has(key)) {
+          fresh.push(item);
+        }
+      }
+      markWorkOrderSubmitted(item);
+      const row = document.createElement('li');
+      row.className = status === 'Failed' || status === 'Not submitted' ? 'failed' : '';
+      const label = document.createElement('strong');
+      label.textContent = 'Work Order ' + item.work_order_number + ' — ' + status;
+      const detail = document.createElement('span');
+      const when = new Date(Number(item.created_at) * 1000);
+      const timeLabel = Number.isFinite(when.getTime()) ? when.toLocaleString() : '';
+      const error = noticeError(item);
+      detail.textContent = (timeLabel ? timeLabel + ' · ' : '') +
+        (error || (status === 'Submitted' ? 'Salesforce submission completed' : ''));
+      row.append(label, detail);
+      list.append(row);
+    }
+    if (fresh.length === 1) {
+      const item = fresh[0];
+      showSubmissionToast('Work Order ' + item.work_order_number + ' — ' +
+        noticeStatus(item) + (noticeError(item) ? ': ' + noticeError(item) : ''));
+    } else if (fresh.length > 1) {
+      const completed = fresh.filter(item => item.state === 'submitted').length;
+      showSubmissionToast(completed + ' submitted, ' +
+        (fresh.length - completed) + ' failed or not submitted. Open notifications for details.');
+    }
+    knownTerminal = terminal;
+    noticesInitialized = true;
+    if (progressDialog.open) markNotificationsRead();
+    else updateNotificationBadge();
+  }
   function renderSubmission(submission) {
     currentSubmission = submission;
-    if (submission) progressJobId = submission.id;
-    progressButton.hidden = !submission;
-    if (!submission) return;
-    submissionActive = ['queued', 'running'].includes(submission.state);
+    const details = document.getElementById('submissionProgressDetails');
+    const state = document.getElementById('submissionState');
+    details.hidden = !submission;
+    state.hidden = !submission;
+    submissionActive = !!submission && ['queued', 'running'].includes(submission.state);
     submitButton.disabled = submissionActive || submitButton.dataset.liveWrites !== 'yes';
+    for (const sheet of sheets) {
+      const button = sheet.querySelector('.submit-sheet');
+      if (button) button.disabled = submissionActive ||
+        sheet.dataset.submitted === 'yes';
+    }
     updateSelection();
+    if (!submission) return;
     const completed = submission.submitted;
     document.getElementById('submissionCompleted').textContent =
       completed + ' / ' + submission.total;
@@ -993,8 +1131,7 @@
     document.getElementById('submissionFailed').textContent = submission.failed;
     const labels = {queued:'Queued', running:'In progress', completed:'Completed',
                     failed:'Stopped', interrupted:'Interrupted'};
-    document.getElementById('submissionState').textContent =
-      labels[submission.state] || submission.state;
+    state.textContent = labels[submission.state] || submission.state;
     const processing = submission.items.find(item => item.state === 'processing');
     const current = document.getElementById('submissionCurrent');
     const preparing = !processing && submission.state === 'running';
@@ -1019,7 +1156,7 @@
       errors.append(row);
     }
   }
-  async function refreshSubmission(openWhenActive = false) {
+  async function refreshSubmission(openForBatch = false) {
     try {
       const url = root.dataset.submissionStatus +
         (progressJobId ? '?job_id=' + encodeURIComponent(progressJobId) : '');
@@ -1029,26 +1166,57 @@
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || 'Progress unavailable');
       renderSubmission(data.submission);
-      if (data.submission && (openWhenActive || (submissionActive && !autoOpenedProgress))) {
-        autoOpenedProgress = true;
-        openDialog(progressDialog);
-      }
+      renderNotifications(data.notifications);
+      if (data.submission && openForBatch) openDialog(progressDialog);
+      if (!submissionActive) progressJobId = null;
     } catch (error) {
-      message('Could not read submission progress: ' + error.message);
+      message('Could not read submission notifications: ' + error.message);
     } finally {
       clearTimeout(progressTimer);
-      if (submissionActive) {
-        progressTimer = setTimeout(() => refreshSubmission(), 2000);
-      }
+      progressTimer = setTimeout(() => refreshSubmission(),
+        submissionActive ? 2000 : 10000);
     }
   }
   progressButton.addEventListener('click', () => {
-    if (currentSubmission) openDialog(progressDialog);
+    openDialog(progressDialog);
+    markNotificationsRead();
     refreshSubmission();
   });
-  progressDialog.addEventListener('close', () => {
-    if (currentSubmission && !submissionActive && currentSubmission.submitted > 0) {
-      location.reload(); // Reflect the durable Salesforce receipts on the cards.
+  document.getElementById('singleResultNo').addEventListener('click',
+    () => closeDialog(singleDialog));
+  singleDialog.addEventListener('close', () => {
+    selectedSingleSheet = null;
+    singleYes.disabled = false;
+  });
+  function openSingleResult(sheet) {
+    selectedSingleSheet = sheet;
+    document.getElementById('singleResultWorkOrder').textContent =
+      'Work Order ' + sheet.dataset.workNumber;
+    openDialog(singleDialog, '#singleResultNo');
+  }
+  singleYes.addEventListener('click', async () => {
+    const sheet = selectedSingleSheet;
+    if (!sheet || singleYes.disabled) return;
+    singleYes.disabled = true;
+    try {
+      if (!dayMod.value) throw new Error('Select a MOD before resulting.');
+      if (!serialize(sheet).dispo) throw new Error('Select a disposition for this Work Order.');
+      await flushSheet(sheet);
+      const queued = await post(root.dataset.submit, {
+        mode:'selected',
+        work_order_ids:JSON.stringify([sheet.dataset.id]),
+      });
+      progressJobId = queued.job_id;
+      closeDialog(singleDialog);
+      message('Work Order ' + sheet.dataset.workNumber + ' queued for resulting.', sheet);
+      await refreshSubmission();
+    } catch (error) {
+      closeDialog(singleDialog);
+      message('Resulting not queued: ' + error.message, sheet);
+      showSubmissionToast('Work Order ' + sheet.dataset.workNumber +
+        ' — not queued: ' + error.message);
+    } finally {
+      singleYes.disabled = false;
     }
   });
   async function submitBatch(button, selected) {
@@ -1059,7 +1227,6 @@
         {mode:'selected',work_order_ids:JSON.stringify(selected)};
       const queued = await post(root.dataset.submit, fields);
       progressJobId = queued.job_id;
-      autoOpenedProgress = false;
       closeDialog(methodDialog);
       closeDialog(selectionDialog);
       await refreshSubmission(true);
