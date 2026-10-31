@@ -546,7 +546,8 @@ class ResultingSalesforceAdapter:
                 added = True
         return ';'.join(result), added
 
-    def _flow_pir_create_values(self, lead_id, lead_schema, pir_schema, result, comment):
+    def _flow_pir_create_values(self, lead_id, lead_schema, pir_schema, result, comment,
+                                *, source_row=None):
         """Resolve v30 PIR creation-only fields from their actual Lead sources.
 
         Never copy MOD notes into a PIR comment or overwrite existing PIR
@@ -564,15 +565,19 @@ class ResultingSalesforceAdapter:
             )
         for name in source_fields:
             self._field(lead_schema, name, update=False)
-        rows = self._query(
-            'SELECT Id,' + ','.join(source_fields) + ' FROM ' + LEAD
-            + ' WHERE Id = ' + _soql(lead_id) + ' LIMIT 2'
-        )
-        if len(rows) != 1 or str(rows[0].get('Id') or '') != lead_id:
-            raise ResultingSalesforceError(
-                'Lead attribution is unavailable for Flow v30 PIR creation.'
+        if source_row is None:
+            rows = self._query(
+                'SELECT Id,' + ','.join(source_fields) + ' FROM ' + LEAD
+                + ' WHERE Id = ' + _soql(lead_id) + ' LIMIT 2'
             )
-        row = rows[0]
+            if len(rows) != 1:
+                raise ResultingSalesforceError(
+                    'Lead attribution is unavailable for Flow v30 PIR creation.')
+            source_row = rows[0]
+        if _require_id(str(source_row.get('Id') or ''))[:15] != lead_id[:15]:
+            raise ResultingSalesforceError(
+                'Lead attribution identity does not match the submitted Lead.')
+        row = source_row
         result_fields = {}
         for dest, source in PIR_LEAD_COPY.items():
             if source not in row:
@@ -587,7 +592,7 @@ class ResultingSalesforceAdapter:
         return result_fields
 
     def _product_operations(self, payload, schema, lead_schema=None,
-                            *, existing_rows=None):
+                            *, existing_rows=None, attribution_row=None):
         lead_field = self._field(
             schema, PR['lead'], update=False, create=True, types=('reference',)
         )
@@ -718,7 +723,7 @@ class ResultingSalesforceAdapter:
                 if flow_create_cache is None:
                     flow_create_cache = self._flow_pir_create_values(
                         payload['lead_id'], lead_schema, schema, result,
-                        entry.get('comment'),
+                        entry.get('comment'), source_row=attribution_row,
                     )
                 flow_values = dict(flow_create_cache)
                 # Original disposition and PIR comment are per-product.
@@ -864,6 +869,45 @@ class ResultingSalesforceAdapter:
                 cursor = _require_id(str(rows[-1].get('Id') or ''))
         return by_work
 
+    def _lead_rows_for_batch(self, payloads, product_rows_by_work):
+        """Load Lead attribution only for new PIRs; interests only for sales."""
+        needs_attribution, needs_interest = set(), set()
+        for payload in payloads:
+            lead_id = _require_id(payload['lead_id'])
+            work_id = _require_id(payload['work_order_id'])
+            existing = {
+                str(row.get(PR['product']) or '').casefold()
+                for row in product_rows_by_work[work_id]
+            }
+            if any(str(item['product']).casefold() not in existing
+                   for item in payload['product_results']):
+                needs_attribution.add(lead_id)
+            if any(item['result'] == 'sale' for item in payload['product_results']):
+                needs_interest.add(lead_id)
+        rows_by_lead = {}
+        for leads, fields in (
+            (sorted(needs_attribution),
+             sorted(set(PIR_LEAD_COPY.values())) + [LEAD_FIELDS['product_interest']]),
+            (sorted(needs_interest - needs_attribution),
+             [LEAD_FIELDS['product_interest']]),
+        ):
+            for offset in range(0, len(leads), 40):
+                chunk = leads[offset:offset + 40]
+                found = self._query(
+                    'SELECT Id,' + ','.join(fields) + ' FROM ' + LEAD
+                    + ' WHERE Id IN (' + ','.join(_soql(key) for key in chunk)
+                    + ') ORDER BY Id LIMIT 2000')
+                for row in found:
+                    ident = _require_id(str(row.get('Id') or ''))
+                    if ident not in chunk or ident in rows_by_lead:
+                        raise ResultingSalesforceError(
+                            'Lead preflight returned unexpected identities.')
+                    rows_by_lead[ident] = row
+                if any(key not in rows_by_lead for key in chunk):
+                    raise ResultingSalesforceError(
+                        'Lead preflight is incomplete; no writes were performed.')
+        return rows_by_lead
+
     def prepare(self, payloads):
         """Preflight the complete batch before any live Salesforce write."""
         wo_schema = self._describe(WORK_ORDER)
@@ -943,6 +987,7 @@ class ResultingSalesforceAdapter:
 
         appointment_ids_by_work = self._appointments_for_batch(payloads)
         product_rows_by_work = self._product_rows_for_batch(payloads)
+        lead_rows = self._lead_rows_for_batch(payloads, product_rows_by_work)
         operations = []
         # Different Work Orders can refer to the same Lead. Accumulate pivot
         # additions across the whole End of Day batch; never overwrite a pivot
@@ -1095,7 +1140,8 @@ class ResultingSalesforceAdapter:
             if sold:
                 current = lead_interest_in_batch.get(lead_id)
                 if current is None:
-                    current = self._lead_product_interest(lead_id)
+                    current = str(
+                        lead_rows[lead_id].get(LEAD_FIELDS['product_interest']) or '')
                 merged, changed = self._merge_products(current, sold)
                 lead_interest_in_batch[lead_id] = merged
                 if changed:
@@ -1105,7 +1151,8 @@ class ResultingSalesforceAdapter:
             plan.append(('update', LEAD, lead_id, lead_values))
             plan.extend(self._product_operations(
                 payload, pr_schema, lead_schema,
-                existing_rows=product_rows_by_work[work_order_id]))
+                existing_rows=product_rows_by_work[work_order_id],
+                attribution_row=lead_rows.get(lead_id)))
             operations.append(plan)
         return operations
 
