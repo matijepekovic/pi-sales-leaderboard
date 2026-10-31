@@ -160,7 +160,10 @@ def _adapter(*, existing_results=(), lead_interest='Roofing;Siding', schemas=Non
                 assert 'Appointment_Date_Time__c' in query
                 result = {'records':historical_works, 'done':True}
             elif ' FROM Product_Interest_Result__c ' in query:
-                result = {'records':list(existing_results),'done':True}
+                result = {'records':[dict(item,
+                    Work_Order__c=item.get('Work_Order__c', WORK),
+                    Lead__c=item.get('Lead__c', LEAD))
+                    for item in existing_results], 'done':True}
             elif ' FROM Lead ' in query:
                 result = {'records':[{
                     'Id': LEAD, 'Product_Interest_lead__c': lead_interest,
