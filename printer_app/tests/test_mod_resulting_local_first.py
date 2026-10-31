@@ -254,7 +254,9 @@ def test_clear_does_not_authorize_uncertain_retry(tmp_path):
     repo.finish_submission_job(job['job_id'], 'write rejected')
     repo.finish_submit(DAY)
     service.clear_local(DAY)
-    # Clear restores remote draft and never itself authorizes an uncertain
-    # replay or discards the historical error report.
+    # Clear restores the remote blank result and does not authorize retry.
+    # Even if the user later selects a disposition, prior uncertainty remains.
+    row = repo.sheets(DAY)[0]
+    repo.save_draft(DAY, WORK, _draft(dispo='pns'), row['revision'])
     with pytest.raises(ValueError, match='requires Salesforce confirmation'):
         repo.enqueue_submit(DAY, [WORK])
