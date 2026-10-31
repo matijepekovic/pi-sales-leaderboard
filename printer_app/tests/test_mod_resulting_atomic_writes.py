@@ -96,7 +96,8 @@ PLAN = [
     ('update', 'WorkOrder', WO, {'Price__c': '69746'}),
     ('update', 'WorkOrder', WO, {
         'Dispo__c': 'Sale', 'Status': 'Completed',
-        'MOD_Notes__c': NOTES, 'Start_Price__c': '77494.50',
+        'MOD_Notes__c': NOTES, 'Price__c': '69746',
+        'Start_Price__c': '77494.50',
         'X90_Min__c': 'Yes', 'Deposit_Payment__c': '23000',
     }),
     ('update', 'Lead', LEAD, {'Status': 'Sale Pending'}),
@@ -119,7 +120,7 @@ def test_all_or_none_rest_transport_preserves_notes_and_record_order():
     assert operations[0]['url'].endswith('/Product_Interest_Result__c')
     assert operations[3]['body'] == {'Price__c': 69746}
     assert operations[4]['body']['MOD_Notes__c'] == NOTES
-    assert 'Price__c' not in operations[4]['body']
+    assert operations[4]['body']['Price__c'] == 69746
     assert operations[4]['body']['Start_Price__c'] == 77494.5
     assert operations[4]['body']['X90_Min__c'] == 'Yes'
     assert operations[4]['body']['Deposit_Payment__c'] == '23000'
