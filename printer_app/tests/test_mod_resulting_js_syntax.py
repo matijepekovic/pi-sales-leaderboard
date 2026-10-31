@@ -60,7 +60,9 @@ def test_salesforce_refresh_and_clear_keep_explicit_module_boundaries():
     assert 'service.clear_local(service.day())' in web
     assert "def clear_local(self, day)" in svc
     assert "def refresh(self, day, records," in repo
-    assert "local.get('redlines')" in repo
+    assert "previous_local.get('redlines')" in repo
+    assert "mod_result_sf_baseline:" in repo
+    assert "_apply_remote_changes" in repo
     assert "mod_result_sf_notes:" in repo
     assert 'repo.writer' not in repo
 
