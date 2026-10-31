@@ -705,6 +705,7 @@ def test_per_card_result_confirmation_and_notification_bell(mod_browser):
     expect(page.locator('#submissionToast')).to_contain_text(
         'Work Order 00011111 — Submitted', timeout=9000)
     expect(first).to_have_attribute('data-submitted', 'yes')
+    expect(first.locator('.override-sheet')).to_be_visible()
     expect(second).to_have_attribute('data-submitted', 'no')
     expect(page.locator('#submissionNotificationBadge')).to_have_text('1')
     page.locator('#viewSubmissionProgress').click()
