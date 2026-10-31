@@ -10,7 +10,6 @@ from ..mod_sheet_contract import ModSheetRecord
 from .contract import (
     clean_draft, final_redline_text, outcome_fields, sold_products,
     individual_product_sales, deposit_payment_text, product_result_context,
-    canceled_without_notes,
 )
 
 
@@ -81,8 +80,6 @@ class ResultingService:
         for sheet in self.repository.sheets(day):
             data = clean_draft(sheet['draft'])
             sheet['draft'] = data
-            if canceled_without_notes(sheet['snapshot'], data):
-                continue
             sheet['result'] = outcome_fields(data)
             sheets.append(sheet)
         return {'day': day, 'state': state, 'sheets': sheets}
@@ -221,8 +218,7 @@ class ResultingService:
         """On-demand print of every currently imported card, regardless of outcome."""
         if self.pdf_exporter is None:
             raise ValueError('MOD PDF renderer is not configured.')
-        sheets = [sheet for sheet in self.repository.print_sheets(day)
-                  if not canceled_without_notes(sheet['snapshot'], sheet['draft'])]
+        sheets = self.repository.print_sheets(day)
         if not sheets:
             raise LookupError('There are no MOD sheets to print for this day.')
         return self.pdf_exporter(sheets)

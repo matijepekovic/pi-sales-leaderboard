@@ -5,8 +5,6 @@ from dataclasses import asdict
 import json
 import time
 
-from .contract import canceled_without_notes, has_mod_notes
-
 
 def _apply_remote_changes(local, previous, incoming):
     """Three-way update: only fields changed remotely can replace local values."""
@@ -209,29 +207,41 @@ class ResultingRepository:
                     # projected draft. Never discard them on Refresh.
                     merged['redlines'] = previous_local.get('redlines', '')
 
-                # A canceled Lead always takes precedence, including over a
-                # locally drafted Dispo or an old unmatched product result.
-                canceled = str(incoming.get('lead_status') or '').strip().casefold() == 'canceled'
-                new_cancellation = canceled and (
-                    baseline is None or str(baseline.get('lead_status') or '').strip().casefold() != 'canceled'
-                )
-                if new_cancellation:
-                    merged['dispo'] = 'cxl'
-                    merged['lead_status'] = incoming['lead_status']
-
-                # Service Appointment cancellations are separate from Lead
-                # cancellations. Do not turn a blank, canceled-only card into
-                # an eligible End-of-Day result. If the MOD has written notes,
-                # keep the card visible and make its disposition clearly CXL.
-                # An explicit Salesforce result remains authoritative. An
-                # appointment canceled after a completed Sale/PNS/etc. is not
-                # permission to rewrite that actual Work Order result.
+                # Salesforce's recorded disposition is authoritative. Only an
+                # unresulted canceled Service Appointment/Lead infers CXL;
+                # Refresh does not send any Salesforce writes.
                 source_resulted = bool(incoming.get('dispo') or any(
                     item.get('result') for item in
                     incoming.get('product_results', {}).values()))
-                if (record.appointment_canceled and has_mod_notes(merged)
-                        and not source_resulted):
+                lead_canceled = (
+                    str(record.sales_lead_status or '').strip().casefold() == 'canceled'
+                    or str(incoming.get('lead_status') or '').strip().casefold() == 'canceled'
+                )
+                new_cancellation = lead_canceled and (
+                    baseline is None or
+                    str(baseline.get('lead_status') or '').strip().casefold() != 'canceled'
+                )
+                auto_key = 'mod_result_inferred_cxl:' + day + ':' + ident
+                prior_auto = conn.execute(
+                    'SELECT value FROM meta WHERE key=?', (auto_key,)
+                ).fetchone()
+                if (record.appointment_canceled or lead_canceled) and not source_resulted:
+                    # Keep the prior local Dispo for a later reactivation.
+                    if prior_auto is None:
+                        conn.execute('INSERT INTO meta(key,value) VALUES (?,?)',
+                                     (auto_key, json.dumps(merged.get('dispo') or '')))
                     merged['dispo'] = 'cxl'
+                    if lead_canceled:
+                        merged['lead_status'] = (incoming.get('lead_status')
+                                                 or record.sales_lead_status)
+                elif prior_auto is not None:
+                    # Reactivation restores only an inferred, unsent CXL.
+                    # A Salesforce result or completed local write remains intact.
+                    if (not source_resulted and not clear_local
+                            and merged.get('dispo') == 'cxl'
+                            and (old is None or old['submitted_at'] is None)):
+                        merged['dispo'] = json.loads(prior_auto['value'])
+                    conn.execute('DELETE FROM meta WHERE key=?', (auto_key,))
 
                 # Clear must be explicit, and any note replacement is backed up.
                 if old and any(
@@ -374,10 +384,6 @@ class ResultingRepository:
         for row in records:
             draft = json.loads(row['draft'])
             snapshot = json.loads(row['snapshot'])
-            # A canceled card hidden for having no notes is never silently
-            # submitted by Submit All, even if an old local Dispo remains.
-            if canceled_without_notes(snapshot, draft):
-                continue
             if draft.get('dispo') and (selected is None or row['work_order_id'] in selected):
                 pending.append({
                     'work_order_id': row['work_order_id'],
