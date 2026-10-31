@@ -155,3 +155,14 @@ def test_only_real_notes_preserve_canceled_visibility():
         'note_runs': [{'text':'Written locally', 'red': True}],
         'notes': 'Written locally',
     }))
+
+
+def test_canceled_appointment_does_not_replace_a_real_salesforce_sale(tmp_path):
+    service, repo, _, _ = _setup(tmp_path, CANCELED, remote={
+        'dispo': 'sale', 'notes': 'Sale already recorded in Salesforce',
+    })
+    service.refresh(DAY)
+    row = service.snapshot(DAY)['sheets'][0]
+    assert row['draft']['notes'] == 'Sale already recorded in Salesforce'
+    assert row['draft']['dispo'] == 'sale'
+    assert row['submitted_at'] == -1.0
