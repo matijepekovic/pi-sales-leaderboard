@@ -259,8 +259,17 @@ class ResultingService:
         resulting_date = resulted_on or self.day()
         if job_id is not None:
             self.repository.submission_stage(job_id, 'Checking saved MOD appointment dates')
+        # Query authoritative Salesforce Lead dates once for the whole batch.
+        # The normalized Flow contract decides today/historical/future paths;
+        # the saved Service Appointment date remains a safe fallback.
+        lead_ids = [row['snapshot']['lead_source_id'] for row in rows]
+        lead_dates = self.writer.lead_appointment_dates(lead_ids)
+        if (not isinstance(lead_dates, dict)
+                or set(lead_dates) != set(lead_ids)):
+            raise ValueError('Salesforce Lead appointment date lookup is incomplete.')
         batch = [self.submission_payload(
             dict(row, day=day), mod_id, resulted_on=resulting_date,
+            lead_appointment_date=lead_dates[row['snapshot']['lead_source_id']],
             work_order_appointment_date=self._saved_appointment_date(row['snapshot']),
         ) for row in rows]
         # The dashboard must explain preflight before the first Work Order.
