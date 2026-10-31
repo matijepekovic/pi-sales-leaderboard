@@ -98,16 +98,11 @@ class ResultingService:
         day = day or self.day()
         market = self.repository.imported_market(day)
         if not market:
-            # Upgrade legacy days that were imported before market provenance
-            # was stored. Reimport using the saved MOD Settings scope; drafts
-            # are still preserved by the repository.
-            config = self.settings_repository.settings()
-            if not config or not config.market_segment:
-                raise ValueError('Imported MOD sheets have no market. Set the market in MOD Settings and Refresh.')
-            self.refresh(day)
-            market = self.repository.imported_market(day)
-        if not market:
-            raise ValueError('No imported MOD market is available.')
+            # Never refresh existing work implicitly just to populate Select
+            # MOD: only the explicit Refresh button may reconcile remote data.
+            raise ValueError(
+                'Imported MOD sheets have no market. Press Refresh to load the '
+                'Salesforce market before selecting a MOD.')
         return self.writer.mod_users(market)
 
     def dropdowns(self):
@@ -322,11 +317,11 @@ class ResultingDailyPull:
             return False
         day = local.date().isoformat()
         state = self.service.repository.day(day)
-        target = local.replace(hour=8, minute=0, second=0, microsecond=0).timestamp()
         # The 8 AM pull is initial-only; existing drafts cannot be replaced
         # by background work. Explicit Refresh is the only reconciliation.
         if state and (state['submitting'] or state['submitted_at'] or
-                      state['refreshed_at'] > 0):
+                      state['refreshed_at'] > 0 or
+                      self.service.repository.sheets(day)):
             return False
         last = self.service.repository.auto_attempt(day)
         return float(last.get('at') or 0) + 600 <= stamp
