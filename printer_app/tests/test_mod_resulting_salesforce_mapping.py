@@ -146,7 +146,11 @@ def _adapter(*, existing_results=(), lead_interest='Roofing;Siding', schemas=Non
             result = schemas[command[command.index('--sobject')+1]]
         elif command[1:3] == ['data','query']:
             query = command[command.index('--query')+1]
-            if ' FROM ServiceAppointment ' in query:
+            if ' FROM trac_killswitch__c ' in query:
+                result = {'records': [
+                    {'SetupOwnerId': '00D000000000001AAA', 'trac_flows__c': False},
+                ], 'done': True}
+            elif ' FROM ServiceAppointment ' in query:
                 assert 'ParentRecordId IN (' in query
                 assert "Status IN ('Scheduled','Dispatched')" in query
                 work_ids = re.findall(r"'(0WO[A-Za-z0-9]{15})'", query)
@@ -880,6 +884,23 @@ def test_numeric_salesforce_deposit_field_is_rejected_before_any_write():
             'Roofing': {'price':'18000', 'deposit':'0', 'payment':'159'},
         }))
     assert all(command[1:3] != ['data', 'update'] for command in calls)
+
+
+def test_flow_v30_kill_switch_blocks_batch_before_any_write():
+    adapter,calls = _adapter()
+    original=adapter._query
+    adapter._query=lambda soql,**kwargs: (
+        [{'SetupOwnerId':'00D000000000001AAA','trac_flows__c':True}]
+        if ' FROM trac_killswitch__c ' in soql else original(soql,**kwargs))
+    with pytest.raises(ResultingSalesforceError,match='kill switch is enabled'):
+        adapter.prepare([_payload('pns',interest='Roofing')])
+    assert all(command[1:3] not in (['data','update'],['data','create'])
+               for command in calls)
+
+    adapter._query=lambda soql,**kwargs: (
+        [] if ' FROM trac_killswitch__c ' in soql else original(soql,**kwargs))
+    with pytest.raises(ResultingSalesforceError,match='could not be verified'):
+        adapter.prepare([_payload('pns',interest='Roofing')])
 
 
 def test_flow_v30_write_order_and_salesforce_service_appointment_filter():
