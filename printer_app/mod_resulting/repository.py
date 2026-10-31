@@ -277,6 +277,16 @@ class ResultingRepository:
                 raise LookupError('No MOD sheets have been loaded for this day.')
             if day_state['submitting']:
                 raise ValueError('Submission in progress; editing is locked.')
+            before = conn.execute('''SELECT draft FROM mod_result_sheets
+                    WHERE day=? AND work_order_id=? AND revision=?
+                    AND (submitted_at IS NULL OR override_active=1)''',
+                    (day, work_order_id, int(revision))).fetchone()
+            if before is None:
+                raise ValueError('Sheet changed or already submitted. Reload before editing.')
+            prior = json.loads(before['draft'])
+            if any(prior.get(key) != draft.get(key)
+                   for key in ('notes', 'redlines', 'note_runs')):
+                self._archive_notes(conn, day, work_order_id, prior, 'local_edit')
             result = conn.execute('''UPDATE mod_result_sheets SET draft=?,revision=revision+1
                     WHERE day=? AND work_order_id=? AND revision=?
                     AND (submitted_at IS NULL OR override_active=1)''',
