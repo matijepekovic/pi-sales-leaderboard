@@ -462,7 +462,7 @@ def test_selected_submissions_keep_remaining_work_orders_editable_and_print_ever
     second = ModSheetRecord(
         source_id='0WO000000000002AAA', lead_source_id=LEAD,
         lead_name='Second Customer', work_order_number='00001235',
-        product_interest='Roofing',
+        product_interest='Roofing', scheduled_start='2026.10.26 ; 11:00:00 AM',
     )
     repo.refresh(DAY, [RECORD, second], market_segment='Olympia')
     service.set_mod(DAY, USER)
@@ -515,7 +515,8 @@ def test_selected_submission_rejects_blank_unknown_and_duplicate_ids(tmp_path):
 def test_partial_failure_preserves_receipts_and_never_generates_pdf(tmp_path):
     service,repo,source,writer=_service(tmp_path)
     second=ModSheetRecord(source_id='0WO000000000002AAA',lead_source_id=LEAD,
-        lead_name='Second Customer',work_order_number='00001235',product_interest='Roofing')
+        lead_name='Second Customer',work_order_number='00001235',
+        product_interest='Roofing', scheduled_start='2026.10.26 ; 11:00:00 AM')
     repo.refresh(DAY,[RECORD,second],market_segment='Olympia')
     service.set_mod(DAY,USER)
     repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
@@ -581,7 +582,7 @@ def test_completed_override_unlocks_one_sheet_and_resubmits_with_other_jobs(tmp_
     second = ModSheetRecord(
         source_id='0WO000000000002AAA', lead_source_id=LEAD,
         lead_name='Second Customer', work_order_number='00001235',
-        product_interest='Bath'
+        product_interest='Bath', scheduled_start='2026.10.26 ; 11:00:00 AM'
     )
     source.records = lambda **kwargs: [RECORD, second]
     authoritative = clean_draft({
@@ -778,7 +779,8 @@ def test_queued_failure_records_uncertain_and_skips_successful_receipts(tmp_path
     service, repo, source, writer = _service(tmp_path)
     other = ModSheetRecord(
         source_id='0WO000000000002AAA', lead_source_id=LEAD,
-        work_order_number='00001235', product_interest='Roofing')
+        work_order_number='00001235', product_interest='Roofing',
+        scheduled_start='2026.10.26 ; 11:00:00 AM')
     source.records = lambda **kwargs: [RECORD, other]
     repo.refresh(DAY, [RECORD, other], market_segment='Olympia')
     service.set_mod(DAY, USER)
@@ -987,7 +989,7 @@ def test_phase2_background_resulting_date_is_frozen_at_enqueue(tmp_path, monkeyp
     day = '2026-10-29'
     source.records = lambda **kwargs: [ModSheetRecord(
         source_id=WORK, lead_source_id=LEAD, work_order_number='00012345',
-        product_interest='Roofing',
+        product_interest='Roofing', scheduled_start='2026.10.26 ; 10:00:00 AM',
     )]
     service.refresh(DAY)
     service.set_mod(DAY, USER)
