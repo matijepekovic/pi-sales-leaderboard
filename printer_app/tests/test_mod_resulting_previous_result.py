@@ -47,12 +47,20 @@ def test_fresh_lead_has_blank_previous_result_not_todays_dispo():
     assert resolve([work(CURRENT,'2026-10-27T19:00:00Z', 'PNS')]) is None
 
 
-def test_unresulted_work_order_is_skipped_not_marked_previous():
+def test_immediately_previous_unresulted_appointment_clears_previous_result():
     assert resolve([
         work(CURRENT,'2026-10-27T19:00:00Z'),
         work(OLDER,'2026-10-26T19:00:00Z'),
         work(OLDEST,'2026-10-25T19:00:00Z','NRA'),
-    ]) == 'No Rep Available'
+    ]) is None
+
+
+def test_newer_unresulted_appointment_cannot_use_an_older_result():
+    assert resolve([
+        work(CURRENT,'2026-10-27T19:00:00Z'),
+        work(OLDER,'2026-10-26T19:00:00Z',None),
+        work(OLDEST,'2026-10-25T19:00:00Z','PNS'),
+    ]) is None
 
 
 def test_future_result_is_not_previous_even_if_modified_recently():
