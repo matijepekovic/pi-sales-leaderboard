@@ -1132,7 +1132,9 @@
     details.hidden = !submission;
     state.hidden = !submission;
     submissionActive = !!submission && ['queued', 'running'].includes(submission.state);
-    submitButton.disabled = submissionActive || submitButton.dataset.liveWrites !== 'yes';
+    // The End of Day review may open in sandbox mode; only actual writes
+    // remain gated by the existing submit controls.
+    submitButton.disabled = submissionActive;
     for (const sheet of sheets) {
       const button = sheet.querySelector('.submit-sheet');
       if (button) button.disabled = submissionActive ||
