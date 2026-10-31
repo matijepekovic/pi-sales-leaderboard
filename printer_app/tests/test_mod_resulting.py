@@ -577,7 +577,7 @@ def test_completed_override_unlocks_one_sheet_and_resubmits_with_other_jobs(tmp_
     authoritative = clean_draft({
         'dispo':'cxl', 'lead_status':'Canceled', 'notes':'Salesforce note'
     })
-    writer.read_results = lambda records: {WORK:authoritative}
+    writer.read_results = lambda records: {WORK:authoritative, second.source_id:clean_draft({})}
     service.refresh(DAY)
     service.set_mod(DAY, USER)
     rows = repo.sheets(DAY)
@@ -635,7 +635,7 @@ def test_completed_override_unlocks_one_sheet_and_resubmits_with_other_jobs(tmp_
                         repo.sheets(DAY)[0]['revision'])
 
 
-def test_refresh_revokes_override_and_only_keeps_locally_edited_notes(tmp_path):
+def test_unchanged_refresh_preserves_override_and_all_locally_edited_fields(tmp_path):
     service, repo, source, writer = _service(tmp_path)
     remote = clean_draft({'dispo':'cxl', 'lead_status':'Canceled',
                           'notes':'Salesforce original', 'need':'From Salesforce'})
@@ -651,13 +651,13 @@ def test_refresh_revokes_override_and_only_keeps_locally_edited_notes(tmp_path):
     service.refresh(DAY)
     sheet = repo.sheets(DAY)[0]
     assert sheet['submitted_at'] == -1.0
-    assert sheet['override_active'] == 0
-    assert sheet['draft'] == dict(remote, notes='My locally edited notes')
-    with pytest.raises(ValueError, match='Reload'):
-        service.save(DAY, WORK, clean_draft({'dispo':'sale'}), sheet['revision'])
+    assert sheet['override_active'] == 1
+    assert sheet['draft'] == clean_draft({
+        'dispo':'sale', 'notes':'My locally edited notes', 'need':'Local only',
+        'sale_products':{'Roofing':{'price':'12000','deposit':'0'}}
+    })
     assert writer.applied == []
 
-    service.override(DAY, WORK, sheet['revision'])
     assert service.clear_local(DAY) == 1
     reset = repo.sheets(DAY)[0]
     assert reset['draft'] == remote
@@ -695,7 +695,7 @@ def test_existing_sqlite_version_one_migrates_override_flag_without_data_loss(tm
     first = db.one('SELECT draft,submitted_at,override_active FROM mod_result_sheets')
     assert first == {'draft':'{"dispo":"cxl"}',
                      'submitted_at':-1.0, 'override_active':0}
-    assert db.one('PRAGMA user_version')['user_version'] == 3
+    assert db.one('PRAGMA user_version')['user_version'] == 4
     assert Database(path).one('SELECT override_active FROM mod_result_sheets') == {
         'override_active':0
     }
