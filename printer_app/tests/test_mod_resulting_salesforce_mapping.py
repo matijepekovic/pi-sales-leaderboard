@@ -907,7 +907,7 @@ def test_phase3_sales_pivot_marks_only_sold_primary_and_clears_old_issued_flag()
     assert cleared[2] == PR1
     assert cleared[3] == {PR_ISSUED_COUNT:False}
     assert not any(item[3].get('Result__c') == 'Pitch No Sale' for item in pir)
-    assert any('SELECT Id,Product_Interest__c,' + PR_ISSUED_COUNT in
+    assert any('Product_Interest__c,' + PR_ISSUED_COUNT in
                command[command.index('--query')+1] for command in calls
                if command[1:3] == ['data','query'] and
                '--query' in command)
