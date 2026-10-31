@@ -1069,6 +1069,13 @@ def test_future_primary_new_result_uses_saved_sa_date_and_existing_keeps_pir_dat
     existing=_single(_operations(adapter,payload),PRODUCT_RESULT)
     assert existing[0]=='update'
     assert existing[3][PR_APPOINTMENT_DATE]=='2026-10-26'
+    adapter,_=_adapter(existing_results=[{
+        'Id':PR1, 'Product_Interest__c':'Roofing',
+        PR_ISSUED_COUNT:True, PR_APPOINTMENT_DATE:None,
+    }])
+    legacy=_single(_operations(adapter,payload),PRODUCT_RESULT)
+    assert legacy[0]=='update'
+    assert legacy[3][PR_APPOINTMENT_DATE]=='2026-10-29'
 
 
 def test_phase3_missing_flow_metadata_rejects_batch_before_writes():
