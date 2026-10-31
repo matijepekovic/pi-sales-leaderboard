@@ -666,7 +666,7 @@ class ResultingSalesforceAdapter:
                 # The Flow copies the existing PIR date for future appointments.
                 # Do not substitute the Lead/Work Order date or the worker date.
                 appointment_day = old['appointment_date'] if old else ''
-            elif source not in ('today', 'lead'):
+            elif source not in ('today', 'lead', 'work_order_appointment'):
                 raise ResultingSalesforceError('Result appointment date is unresolved.')
             if not appointment_day or not isinstance(appointment_day, str):
                 raise ResultingSalesforceError(
