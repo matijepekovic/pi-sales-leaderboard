@@ -173,10 +173,10 @@ class ResultingSalesforceAdapter:
             # Salesforce error text may contain data values; never surface an
             # access token or authorization header even if one is echoed.
             reason = re.sub(
-                r'(?i)\\bBearer\\s+[^\\s,;]+', 'Bearer [REDACTED]', reason)
+                r'(?i)\bBearer\s+[^\s,;]+', 'Bearer [REDACTED]', reason)
             reason = re.sub(
-                r'(?i)\\b(accessToken|sfdxAuthUrl|authorization)\\s*[:=]\\s*\\S+',
-                r'\\1=[REDACTED]', reason)
+                r'(?i)\b(accessToken|sfdxAuthUrl|authorization)\s*[:=]\s*\S+',
+                r'\1=[REDACTED]', reason)
             object_name = (parts[parts.index('--sobject') + 1]
                            if '--sobject' in parts else 'Salesforce')
             operation = ' '.join(parts[:3])
