@@ -18,8 +18,23 @@ def _apply_remote_changes(local, previous, incoming):
         elif key not in previous:
             merged[key] = incoming[key]
         elif previous[key] != incoming[key]:
-            merged[key] = _apply_remote_changes(
-                local.get(key), previous[key], incoming[key])
+            if (key == 'checkbox_values' and isinstance(previous[key], dict)
+                    and isinstance(incoming[key], dict)):
+                # A changed Salesforce checkbox scalar is one atomic source
+                # observation: its local edited marker must not survive while
+                # replacing just the value. Unchanged remote fields preserve
+                # the entire locally edited checkbox entry.
+                values = dict(local.get(key) or {})
+                for field in set(previous[key]) | set(incoming[key]):
+                    if previous[key].get(field) != incoming[key].get(field):
+                        if field in incoming[key]:
+                            values[field] = incoming[key][field]
+                        else:
+                            values.pop(field, None)
+                merged[key] = values
+            else:
+                merged[key] = _apply_remote_changes(
+                    local.get(key), previous[key], incoming[key])
     return merged
 
 
