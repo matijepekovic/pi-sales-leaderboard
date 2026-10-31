@@ -10,6 +10,7 @@ from ..mod_sheet_contract import ModSheetRecord
 from .contract import (
     clean_draft, final_redline_text, outcome_fields, sold_products,
     individual_product_sales, deposit_payment_text, product_result_context,
+    canceled_without_notes,
 )
 
 
@@ -71,28 +72,6 @@ class ResultingService:
         """
         return self.refresh(day, clear_local=True)
 
-    @staticmethod
-    def _visible_sheet(sheet):
-        """Keep canceled-only appointments visible when the MOD wrote notes.
-
-        Rendering filters do not delete the saved SQLite row or its draft.
-        Salesforce remains readable for Refresh and local notes stay durable.
-        """
-        snapshot = sheet['snapshot']
-        draft = sheet['draft']
-        canceled = (
-            snapshot.get('appointment_canceled') is True
-            or str(snapshot.get('sales_lead_status') or '').strip().casefold() == 'canceled'
-            or str(draft.get('lead_status') or '').strip().casefold() == 'canceled'
-        )
-        has_notes = bool(
-            str(draft.get('notes') or '').strip()
-            or str(draft.get('redlines') or '').strip()
-            or any(str(run.get('text') or '').strip()
-                   for run in (draft.get('note_runs') or []) if isinstance(run, dict))
-        )
-        return not canceled or has_notes
-
     def snapshot(self, day):
         state = self.repository.day(day)
         if not state:
@@ -102,7 +81,7 @@ class ResultingService:
         for sheet in self.repository.sheets(day):
             data = clean_draft(sheet['draft'])
             sheet['draft'] = data
-            if not self._visible_sheet(sheet):
+            if canceled_without_notes(sheet['snapshot'], data):
                 continue
             sheet['result'] = outcome_fields(data)
             sheets.append(sheet)
@@ -243,7 +222,7 @@ class ResultingService:
         if self.pdf_exporter is None:
             raise ValueError('MOD PDF renderer is not configured.')
         sheets = [sheet for sheet in self.repository.print_sheets(day)
-                  if self._visible_sheet(sheet)]
+                  if not canceled_without_notes(sheet['snapshot'], sheet['draft'])]
         if not sheets:
             raise LookupError('There are no MOD sheets to print for this day.')
         return self.pdf_exporter(sheets)
