@@ -1145,12 +1145,17 @@ class ResultingSalesforceAdapter:
                     wo_fields['start_price'], payload['fields']['price']['highest']
                 )
             if payload['fields']['price']['lowest']:
-                # The Flow updates Price__c in a separate WorkOrder DML step
-                # before its main WorkOrder update. Do not send it twice.
+                # Flow v30 updates Price__c before its main WorkOrder update,
+                # then reasserts the final price on the WorkOrder field holder.
+                # Both writes matter when WorkOrder automations run between
+                # the two steps.
+                final_price = self._value(
+                    wo_fields['final_price'], payload['fields']['price']['lowest']
+                )
                 plan.append(('update', WORK_ORDER, work_order_id, {
-                    WO['final_price']: self._value(
-                        wo_fields['final_price'], payload['fields']['price']['lowest'])
+                    WO['final_price']: final_price,
                 }))
+                wo_values[WO['final_price']] = final_price
             if payload['deposit_payment'] != '':
                 wo_values[WO['deposit']] = self._value(
                     wo_fields['deposit'], payload['deposit_payment']
