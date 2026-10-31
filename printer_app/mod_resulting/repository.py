@@ -217,14 +217,23 @@ class ResultingRepository:
                     str(record.sales_lead_status or '').strip().casefold() == 'canceled'
                     or str(incoming.get('lead_status') or '').strip().casefold() == 'canceled'
                 )
-                new_cancellation = lead_canceled and (
-                    baseline is None or
-                    str(baseline.get('lead_status') or '').strip().casefold() != 'canceled'
+                # Only a transition in the actual resulting read may
+                # invalidate a local receipt; a source-only Lead status must
+                # not repeatedly look like a new remote cancellation.
+                new_cancellation = (
+                    str(incoming.get('lead_status') or '').strip().casefold() == 'canceled'
+                    and (baseline is None or
+                         str(baseline.get('lead_status') or '').strip().casefold() != 'canceled')
                 )
                 auto_key = 'mod_result_inferred_cxl:' + day + ':' + ident
                 prior_auto = conn.execute(
                     'SELECT value FROM meta WHERE key=?', (auto_key,)
                 ).fetchone()
+                if clear_local:
+                    # Clear must discard any pre-cancellation draft backup;
+                    # an active card must not resurrect explicitly cleared data.
+                    conn.execute('DELETE FROM meta WHERE key=?', (auto_key,))
+                    prior_auto = None
                 if (record.appointment_canceled or lead_canceled) and not source_resulted:
                     # Keep the prior local Dispo for a later reactivation.
                     if prior_auto is None:

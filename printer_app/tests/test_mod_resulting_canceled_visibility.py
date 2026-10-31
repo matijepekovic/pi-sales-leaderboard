@@ -179,3 +179,31 @@ def test_canceled_lead_does_not_replace_a_real_salesforce_sale(tmp_path):
     row = service.snapshot(DAY)['sheets'][0]
     assert row['draft']['dispo'] == 'sale'
     assert row['submitted_at'] == -1.0
+
+def test_clear_local_disposes_previous_auto_cxl_backup(tmp_path):
+    service, repo, source, _ = _setup(tmp_path)
+    service.refresh(DAY)
+    repo.save_draft(DAY, WO, clean_draft({
+        'dispo': 'pns', 'notes': 'Temporary local notes',
+    }), 0)
+    source['value'] = CANCELED
+    service.refresh(DAY)
+    assert service.snapshot(DAY)['sheets'][0]['draft']['dispo'] == 'cxl'
+    service.clear_local(DAY)
+    cleared = service.snapshot(DAY)['sheets'][0]['draft']
+    assert cleared['notes'] == ''
+    assert cleared['dispo'] == 'cxl'
+    source['value'] = ACTIVE
+    service.refresh(DAY)
+    restored = service.snapshot(DAY)['sheets'][0]['draft']
+    assert restored['dispo'] == ''
+    assert restored['notes'] == ''
+
+
+def test_salesforce_lead_canceled_without_resulting_draft_sets_cxl(tmp_path):
+    canceled_lead = replace(ACTIVE, sales_lead_status='Canceled')
+    service, repo, _, _ = _setup(tmp_path, canceled_lead)
+    service.refresh(DAY)
+    assert service.snapshot(DAY)['sheets'][0]['draft']['dispo'] == 'cxl'
+    service.refresh(DAY)
+    assert service.snapshot(DAY)['sheets'][0]['draft']['dispo'] == 'cxl'
