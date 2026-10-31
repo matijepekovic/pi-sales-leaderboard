@@ -308,6 +308,24 @@ class ResultingRepository:
             conn.execute('UPDATE mod_result_days SET refreshed_at=? WHERE day=?', (now, day))
             return True
 
+    @staticmethod
+    def _work_order_submission_locked(conn, day, work_order_id):
+        """Lock only reserved cards during a background batch.
+
+        The synchronous writer has no queued job, so its legacy whole-day
+        lock remains in force. All database decisions use this transaction.
+        """
+        active = conn.execute('''SELECT j.id FROM mod_result_submission_jobs j
+            WHERE j.day=? AND j.state IN ('queued','running') LIMIT 1''',
+            (day,)).fetchone()
+        if active is None:
+            return True
+        return conn.execute('''SELECT 1 FROM mod_result_submission_items i
+            JOIN mod_result_submission_jobs j ON j.id=i.job_id
+            WHERE j.day=? AND i.work_order_id=?
+              AND j.state IN ('queued','running') LIMIT 1''',
+            (day, work_order_id)).fetchone() is not None
+
     def override(self, day, work_order_id, revision):
         """Explicitly unlock exactly one completed sheet for End of Day."""
         with self.db.connect() as conn:
@@ -317,8 +335,9 @@ class ResultingRepository:
             ).fetchone()
             if state is None:
                 raise LookupError('No MOD sheets have been loaded for this day.')
-            if state['submitting']:
-                raise ValueError('Submission in progress; editing is locked.')
+            if state['submitting'] and self._work_order_submission_locked(
+                    conn, day, work_order_id):
+                raise ValueError('This Work Order is being submitted.')
             updated = conn.execute('''UPDATE mod_result_sheets
                 SET override_active=1,revision=revision+1,submit_error=''
                 WHERE day=? AND work_order_id=?
@@ -334,8 +353,9 @@ class ResultingRepository:
             day_state = conn.execute('SELECT submitting FROM mod_result_days WHERE day=?', (day,)).fetchone()
             if day_state is None:
                 raise LookupError('No MOD sheets have been loaded for this day.')
-            if day_state['submitting']:
-                raise ValueError('Submission in progress; editing is locked.')
+            if day_state['submitting'] and self._work_order_submission_locked(
+                    conn, day, work_order_id):
+                raise ValueError('This Work Order is being submitted.')
             before = conn.execute('''SELECT draft FROM mod_result_sheets
                     WHERE day=? AND work_order_id=? AND revision=?
                     AND (submitted_at IS NULL OR override_active=1)''',
@@ -519,6 +539,21 @@ class ResultingRepository:
                 'pending': sum(item['state']=='pending' for item in items),
                 'processing': sum(item['state']=='processing' for item in items),
                 'failed': sum(item['state']=='uncertain' for item in items)}
+
+    def recent_submission_items(self, day):
+        """Recent per-Work-Order statuses for the MOD notification bell.
+
+        Submission history is already durable; no second notification store
+        and no Salesforce calls are necessary. Include cross-midnight results.
+        """
+        return self.db.rows('''SELECT j.id AS job_id, j.day, j.state AS job_state,
+                j.created_at, j.finished_at, j.error AS job_error,
+                i.work_order_id, i.work_order_number, i.state, i.error
+            FROM mod_result_submission_items i
+            JOIN mod_result_submission_jobs j ON j.id=i.job_id
+            WHERE j.day=? OR j.created_at >= ?
+            ORDER BY j.id DESC, i.position DESC LIMIT 60''',
+            (day, time.time() - 2 * 86400))
 
     def interrupt_abandoned_submissions(self):
         """Worker-start reconciliation; never replay an in-flight Salesforce write."""
