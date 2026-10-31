@@ -224,6 +224,8 @@ class ResultingService:
     def _apply_batch(self, day, mod_id, rows, *, job_id=None, resulted_on=None):
         """Single Salesforce write path for direct and background submissions."""
         resulting_date = resulted_on or self.day()
+        if job_id is not None:
+            self.repository.submission_stage(job_id, 'Reading Lead appointment dates')
         date_reader = getattr(self.writer, 'lead_appointment_dates', None)
         leads = sorted({row['snapshot'].get('lead_source_id', '')
                         for row in rows if row['snapshot'].get('lead_source_id')})
@@ -234,10 +236,15 @@ class ResultingService:
             dict(row, day=day), mod_id, resulted_on=resulting_date,
             lead_appointment_date=dates.get(row['snapshot'].get('lead_source_id', ''), ''),
         ) for row in rows]
-        # Preflight the entire batch before any Salesforce write.
+        # The dashboard must explain preflight before the first Work Order.
+        if job_id is not None:
+            self.repository.submission_stage(
+                job_id, 'Checking Salesforce records and validating the batch')
         plans = self.writer.prepare(batch)
         if len(plans) != len(rows):
             raise ValueError('Salesforce preflight produced an incomplete submission plan.')
+        if job_id is not None:
+            self.repository.submission_stage(job_id, 'Writing Salesforce results')
         sent = 0
         for row, plan in zip(rows, plans):
             ident = row['work_order_id']
