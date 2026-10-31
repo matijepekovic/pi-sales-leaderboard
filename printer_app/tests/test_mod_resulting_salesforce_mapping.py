@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from types import SimpleNamespace
 import json
+import re
 
 import pytest
 
@@ -145,7 +146,15 @@ def _adapter(*, existing_results=(), lead_interest='Roofing;Siding', schemas=Non
         elif command[1:3] == ['data','query']:
             query = command[command.index('--query')+1]
             if ' FROM ServiceAppointment ' in query:
-                result = {'records':[{'Id':SA1},{'Id':SA2}], 'done':True}
+                work_ids = re.findall(r"'(0WO[A-Za-z0-9]{15})'", query)
+                records = []
+                for offset, work_order in enumerate(work_ids):
+                    for n in (1, 2):
+                        records.append({
+                            'Id': '08p' + str(offset * 2 + n).zfill(12) + 'AAA',
+                            'FSSK__FSK_Work_Order__c': work_order,
+                        })
+                result = {'records':records, 'done':True}
             elif ' FROM WorkOrder ' in query:
                 assert 'WHERE Lead__c IN (' in query
                 assert 'Appointment_Date_Time__c' in query
