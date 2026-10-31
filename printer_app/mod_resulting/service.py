@@ -60,6 +60,8 @@ class ResultingService:
             day, records, external_drafts=normalized,
             market_segment=kwargs['market_segment'],
             clear_local=clear_local, initial_only=initial_only,
+            verify_uncertain=(not clear_local and not initial_only
+                              and callable(reader)),
         )
         return len(records) if applied is not False else 0
 
