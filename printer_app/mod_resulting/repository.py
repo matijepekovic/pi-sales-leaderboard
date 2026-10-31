@@ -207,15 +207,50 @@ class ResultingRepository:
                     # projected draft. Never discard them on Refresh.
                     merged['redlines'] = previous_local.get('redlines', '')
 
-                # A canceled Lead always takes precedence, including over a
-                # locally drafted Dispo or an old unmatched product result.
-                canceled = str(incoming.get('lead_status') or '').strip().casefold() == 'canceled'
-                new_cancellation = canceled and (
-                    baseline is None or str(baseline.get('lead_status') or '').strip().casefold() != 'canceled'
+                # Salesforce's recorded disposition is authoritative. Only an
+                # unresulted canceled Service Appointment/Lead infers CXL;
+                # Refresh does not send any Salesforce writes.
+                source_resulted = bool(incoming.get('dispo') or any(
+                    item.get('result') for item in
+                    incoming.get('product_results', {}).values()))
+                lead_canceled = (
+                    str(record.sales_lead_status or '').strip().casefold() == 'canceled'
+                    or str(incoming.get('lead_status') or '').strip().casefold() == 'canceled'
                 )
-                if new_cancellation:
+                # Only a transition in the actual resulting read may
+                # invalidate a local receipt; a source-only Lead status must
+                # not repeatedly look like a new remote cancellation.
+                new_cancellation = (
+                    str(incoming.get('lead_status') or '').strip().casefold() == 'canceled'
+                    and (baseline is None or
+                         str(baseline.get('lead_status') or '').strip().casefold() != 'canceled')
+                )
+                auto_key = 'mod_result_inferred_cxl:' + day + ':' + ident
+                prior_auto = conn.execute(
+                    'SELECT value FROM meta WHERE key=?', (auto_key,)
+                ).fetchone()
+                if clear_local:
+                    # Clear must discard any pre-cancellation draft backup;
+                    # an active card must not resurrect explicitly cleared data.
+                    conn.execute('DELETE FROM meta WHERE key=?', (auto_key,))
+                    prior_auto = None
+                if (record.appointment_canceled or lead_canceled) and not source_resulted:
+                    # Keep the prior local Dispo for a later reactivation.
+                    if prior_auto is None:
+                        conn.execute('INSERT INTO meta(key,value) VALUES (?,?)',
+                                     (auto_key, json.dumps(merged.get('dispo') or '')))
                     merged['dispo'] = 'cxl'
-                    merged['lead_status'] = incoming['lead_status']
+                    if lead_canceled:
+                        merged['lead_status'] = (incoming.get('lead_status')
+                                                 or record.sales_lead_status)
+                elif prior_auto is not None:
+                    # Reactivation restores only an inferred, unsent CXL.
+                    # A Salesforce result or completed local write remains intact.
+                    if (not source_resulted and not clear_local
+                            and merged.get('dispo') == 'cxl'
+                            and (old is None or old['submitted_at'] is None)):
+                        merged['dispo'] = json.loads(prior_auto['value'])
+                    conn.execute('DELETE FROM meta WHERE key=?', (auto_key,))
 
                 # Clear must be explicit, and any note replacement is backed up.
                 if old and any(
@@ -235,9 +270,7 @@ class ResultingRepository:
                     ON CONFLICT(key) DO UPDATE SET value=excluded.value''',
                     (notes_key, json.dumps(incoming.get('notes', ''))))
 
-                remote_resulted = bool(incoming.get('dispo') or any(
-                    item.get('result') for item in
-                    incoming.get('product_results', {}).values()))
+                remote_resulted = source_resulted
                 remote_result_changed = (baseline is not None and any(
                     baseline.get(key) != incoming.get(key)
                     for key in ('dispo', 'product_results', 'lead_status')))
@@ -359,10 +392,11 @@ class ResultingRepository:
         pending = []
         for row in records:
             draft = json.loads(row['draft'])
+            snapshot = json.loads(row['snapshot'])
             if draft.get('dispo') and (selected is None or row['work_order_id'] in selected):
                 pending.append({
                     'work_order_id': row['work_order_id'],
-                    'snapshot': json.loads(row['snapshot']),
+                    'snapshot': snapshot,
                     'draft': draft,
                 })
         if selected is not None and {row['work_order_id'] for row in pending} != selected:

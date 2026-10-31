@@ -517,6 +517,7 @@ class SalesforceCliAdapter:
                 lead_description=_nested(lead, 'Description'),
                 sales_lead_status=_nested(lead, 'Status'),
                 lead_source_id=_nested(lead, 'Id'),
+                appointment_canceled=selected['canceled'],
             ))
         return tuple(normalized)
 
@@ -1130,6 +1131,21 @@ class SalesforceCliAdapter:
         if not grouped:
             raise SalesforceAdapterError('No Records Found for Selected Criteria')
 
+        # Both morning Print MOD Sheets and digital MOD Resulting consume this
+        # normalized source. Order the *selected* appointment for each Work
+        # Order, not the first appointment that happened to create its group.
+        # This preserves the print service's Scheduled Start / customer order
+        # even when canceled fallback appointments are replaced by active ones
+        # or the digital reader paginates ServiceAppointments by record ID.
+        order.sort(key=lambda key: (
+            grouped[key]['local_start'],
+            _nested(
+                (grouped[key]['item'].get('FSSK__FSK_Work_Order__r') or {})
+                .get('Lead__r') or {}, 'Name',
+            ).casefold(),
+            key[0],
+        ))
+
         normalized = []
         for work_order_id, day in order:
             grouped_item = grouped[(work_order_id, day)]
@@ -1154,5 +1170,6 @@ class SalesforceCliAdapter:
                 lead_description=_nested(lead, 'Description'),
                 sales_lead_status=_nested(lead, 'Status'),
                 lead_source_id=_nested(lead, 'Id'),
+                appointment_canceled=grouped_item['canceled'],
             ))
         return normalized

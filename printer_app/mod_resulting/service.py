@@ -76,11 +76,12 @@ class ResultingService:
         if not state:
             self.refresh(day)
             state = self.repository.day(day)
-        sheets = self.repository.sheets(day)
-        for sheet in sheets:
+        sheets = []
+        for sheet in self.repository.sheets(day):
             data = clean_draft(sheet['draft'])
             sheet['draft'] = data
             sheet['result'] = outcome_fields(data)
+            sheets.append(sheet)
         return {'day': day, 'state': state, 'sheets': sheets}
 
     def checkbox_fields(self):
