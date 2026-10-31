@@ -235,7 +235,8 @@ def test_real_adapter_refuses_guessed_salesforce_identifiers():
     adapter=ResultingSalesforceAdapter(
         executable='/does-not-exist/sf')
     with pytest.raises(ResultingSalesforceError):
-        adapter._appointment_ids('this is not an ID',DAY)
+        adapter._appointments_for_batch([{'day':DAY,
+                                          'work_order_id':'this is not an ID'}])
     with pytest.raises(ResultingSalesforceError):
         adapter._describe('WorkOrder; DROP TABLE')
 
