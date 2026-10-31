@@ -60,8 +60,6 @@ class ResultingService:
             day, records, external_drafts=normalized,
             market_segment=kwargs['market_segment'],
             clear_local=clear_local, initial_only=initial_only,
-            verify_uncertain=(not clear_local and not initial_only
-                              and callable(reader)),
         )
         return len(records) if applied is not False else 0
 
@@ -141,11 +139,10 @@ class ResultingService:
 
     @staticmethod
     def _saved_appointment_date(snapshot):
-        """Use the selected Service Appointment stored on the MOD card.
+        """Read the selected Service Appointment date when available.
 
-        New and existing locally saved cards carry scheduled_start as a local
-        datetime. The printed Local Scheduled Start Time is a fallback for
-        older snapshots; never infer the date from the End-of-Day clock.
+        Saved dates supply the fallback for Product Interest Results. Missing
+        legacy snapshot dates must not block valid Salesforce Lead date paths.
         """
         sources = (
             (snapshot.get('scheduled_start'),
@@ -162,10 +159,7 @@ class ResultingService:
                     return datetime.strptime(raw.strip(), fmt).date().isoformat()
                 except ValueError:
                     continue
-        number = str(snapshot.get('work_order_number') or 'unknown')
-        raise ValueError(
-            'Work Order ' + number + ' has no valid saved appointment date.'
-        )
+        return ''
 
     @staticmethod
     def submission_payload(sheet, mod_id, *, resulted_on=None,
@@ -259,8 +253,24 @@ class ResultingService:
         resulting_date = resulted_on or self.day()
         if job_id is not None:
             self.repository.submission_stage(job_id, 'Checking saved MOD appointment dates')
+        # Prefer Salesforce's Lead dates for the Flow date branches. An
+        # unavailable lookup is not a new submission gate: the normalized
+        # contract can fall back to the saved Service Appointment date.
+        lead_ids = [row['snapshot']['lead_source_id'] for row in rows]
+        reader = getattr(self.writer, 'lead_appointment_dates', None)
+        lead_dates = {}
+        if callable(reader):
+            try:
+                lead_dates = reader(lead_ids)
+            except RuntimeError:
+                logging.getLogger(__name__).warning(
+                    'MOD Lead appointment date lookup failed; using saved dates.')
+        if not isinstance(lead_dates, dict):
+            lead_dates = {}
         batch = [self.submission_payload(
             dict(row, day=day), mod_id, resulted_on=resulting_date,
+            lead_appointment_date=lead_dates.get(
+                row['snapshot']['lead_source_id'], '') or '',
             work_order_appointment_date=self._saved_appointment_date(row['snapshot']),
         ) for row in rows]
         # The dashboard must explain preflight before the first Work Order.

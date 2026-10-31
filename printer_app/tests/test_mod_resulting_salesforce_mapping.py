@@ -86,6 +86,7 @@ def _schemas():
             'Completed','Canceled','No Rep Available',
         ]),
         _field('FSSK__FSK_Work_Order__c','reference',refs=['WorkOrder']),
+        _field('ParentRecordId','reference',refs=['WorkOrder']),
     ]
     product = [
         _field('Lead__c','reference',refs=['Lead']),
@@ -146,13 +147,15 @@ def _adapter(*, existing_results=(), lead_interest='Roofing;Siding', schemas=Non
         elif command[1:3] == ['data','query']:
             query = command[command.index('--query')+1]
             if ' FROM ServiceAppointment ' in query:
+                assert 'ParentRecordId IN (' in query
+                assert "Status IN ('Scheduled','Dispatched')" in query
                 work_ids = re.findall(r"'(0WO[A-Za-z0-9]{15})'", query)
                 records = []
                 for offset, work_order in enumerate(work_ids):
                     for n in (1, 2):
                         records.append({
                             'Id': '08p' + str(offset * 2 + n).zfill(12) + 'AAA',
-                            'FSSK__FSK_Work_Order__c': work_order,
+                            'ParentRecordId': work_order,
                         })
                 result = {'records':records, 'done':True}
             elif ' FROM WorkOrder ' in query:
@@ -209,8 +212,19 @@ def _operations(adapter,payload):
 
 def _single(plan,name):
     matches=[row for row in plan if row[1]==name]
+    if name == 'WorkOrder' and len(matches) == 2:
+        # Flow v30 writes Price__c first, and the other WO fields second.
+        assert matches[0][3].keys() == {'Price__c'}
+        matches = [matches[1]]
     assert len(matches)==1, (name,matches)
     return matches[0]
+
+
+def _work_order_price(plan):
+    matches = [row for row in plan if row[1] == 'WorkOrder'
+               and set(row[3]) == {'Price__c'}]
+    assert len(matches) == 1, matches
+    return matches[0][3]['Price__c']
 
 
 def _assert_no_protected_fields(plan):
@@ -536,6 +550,7 @@ def test_legacy_manual_choices_cannot_override_automatic_status_or_history():
     wo=_single(plan,'WorkOrder')[3]
     assert lead['Status']=='Do Not Call' and lead['Previous_Result__c'] is None
     assert wo['Start_Price__c']=='27000'
+    assert _work_order_price(plan)=='16000'
     assert wo['Price__c']=='16000'
     assert wo['Deposit_Payment__c']=='2500'
     # Old local manual fields remain backward-compatible draft inputs, but
@@ -583,11 +598,11 @@ def test_previous_result_preflight_rejects_required_field_if_blank():
 
 def test_independent_final_price_override_writes_without_start_price():
     adapter,_=_adapter()
-    wo=_single(_operations(adapter,_payload(
-        'pns',final_price_override='15500'
-    )), 'WorkOrder')[3]
+    plan=_operations(adapter,_payload('pns',final_price_override='15500'))
+    wo=_single(plan,'WorkOrder')[3]
     assert 'Start_Price__c' not in wo
     assert wo['Price__c']=='15500'
+    assert _work_order_price(plan)=='15500'
 
 
 @pytest.mark.parametrize('dispo', ['sale','pns','np','cxl','nra','oos'])
@@ -660,6 +675,7 @@ def test_main_sale_uses_separate_product_prices_deposits_and_preserves_lead_inte
     wo=_single(plan,'WorkOrder')[3]
     assert wo['Dispo__c']=='Sale'
     assert wo['Start_Price__c']=='25000'
+    assert _work_order_price(plan)=='17000'
     assert wo['Price__c']=='17000'
     assert wo['Deposit_Payment__c']=='5000/'
     assert 'SALE Roofing: $17,000 | Deposit: $0' in wo['MOD_Notes__c']
@@ -866,6 +882,71 @@ def test_numeric_salesforce_deposit_field_is_rejected_before_any_write():
     assert all(command[1:3] != ['data', 'update'] for command in calls)
 
 
+def test_resulting_never_queries_salesforce_flow_kill_switch():
+    adapter,calls = _adapter()
+    plan = _operations(adapter, _payload('pns',interest='Roofing'))
+    assert plan
+    queries = [command[command.index('--query')+1] for command in calls
+               if command[1:3] == ['data','query']]
+    assert not any('trac_killswitch__c' in query for query in queries)
+
+
+def test_flow_v30_write_order_and_salesforce_service_appointment_filter():
+    adapter,calls = _adapter()
+    plan = _operations(adapter, _payload(
+        'sale', numbers='77494\\n69746',
+        sale_products={'Siding': {'price':'69745','deposit':'23000'}},
+    ))
+    stages = [(action, object_name) for action, object_name, _, _ in plan]
+    assert stages == [
+        ('create', PRODUCT_RESULT), ('update', 'ServiceAppointment'),
+        ('update', 'ServiceAppointment'), ('update', 'WorkOrder'),
+        ('update', 'WorkOrder'), ('update', 'Lead'),
+    ]
+    assert _work_order_price(plan) == '69746'
+    assert _single(plan, 'WorkOrder')[3]['Price__c']=='69746'
+    queries = [cmd[cmd.index('--query')+1] for cmd in calls
+               if cmd[1:3] == ['data','query'] and '--query' in cmd]
+    sa_query = next(q for q in queries if ' FROM ServiceAppointment ' in q)
+    assert 'ParentRecordId IN (' in sa_query
+    assert "Status IN ('Scheduled','Dispatched')" in sa_query
+    assert 'SchedStartTime' not in sa_query
+
+
+def test_no_eligible_service_appointments_does_not_block_other_results():
+    adapter,calls = _adapter()
+    original = adapter._query
+    adapter._query = lambda soql, **kwargs: (
+        [] if ' FROM ServiceAppointment ' in soql
+        else original(soql, **kwargs))
+    plan = _operations(adapter, _payload('pns',interest='Roofing'))
+    assert [entry[1] for entry in plan] == [
+        PRODUCT_RESULT, 'WorkOrder', 'Lead'
+    ]
+    assert all(command[1:3] != ['data', 'update'] for command in calls)
+
+
+def test_pns_without_prior_product_result_creates_pir_before_work_order():
+    adapter,_=_adapter()
+    plan=_operations(adapter,_payload('pns',interest='Roofing'))
+    assert plan[0][0:2] == ('create', PRODUCT_RESULT)
+    assert plan[0][3]['Result__c'] == 'Pitch No Sale'
+    assert all(op[1]=='ServiceAppointment' for op in plan[1:3])
+    assert [op[1] for op in plan[3:]] == ['WorkOrder','Lead']
+    assert 'Price__c' not in _single(plan,'WorkOrder')[3]
+
+
+def test_existing_product_result_is_updated_before_service_appointments():
+    adapter,_ = _adapter(existing_results=[{
+        'Id':PR1, 'Product_Interest__c':'Roofing',
+        PR_ISSUED_COUNT:True, PR_APPOINTMENT_DATE:DAY,
+    }])
+    plan=_operations(adapter,_payload('pns',interest='Roofing'))
+    assert plan[0][0:3] == ('update',PRODUCT_RESULT,PR1)
+    assert plan[1][1] == 'ServiceAppointment'
+    assert [row[1] for row in plan][-2:] == ['WorkOrder','Lead']
+
+
 def test_phase2_salesforce_date_reader_batches_authoritative_lead_dates_only():
     adapter, calls = _adapter()
     assert adapter.lead_appointment_dates([LEAD]) == {LEAD:'2026-10-27'}
@@ -964,6 +1045,40 @@ def test_phase3_existing_future_date_is_copied_and_missing_input_blocks_write():
                for command in calls)
 
 
+def test_future_primary_new_result_uses_saved_sa_date_and_existing_keeps_pir_date():
+    source=ModSheetRecord(
+        source_id=WORK, lead_source_id=LEAD,
+        work_order_number='00012345', product_interest='Roofing',
+        work_type='Sales - Roofing',
+    )
+    payload=ResultingService.submission_payload({
+        'day':DAY, 'work_order_id':WORK, 'snapshot':asdict(source),
+        'draft':clean_draft({'dispo':'pns'}),
+    }, MOD, lead_appointment_date='2026-10-30',
+       work_order_appointment_date='2026-10-29', resulted_on=DAY)
+    context=payload['product_result_context']['Roofing']
+    assert context['appointment_date_source']=='existing_result_input'
+    assert context['fallback_appointment_date']=='2026-10-29'
+    adapter,_=_adapter()
+    created=_single(_operations(adapter,payload),PRODUCT_RESULT)
+    assert created[0]=='create'
+    assert created[3][PR_APPOINTMENT_DATE]=='2026-10-29'
+    adapter,_=_adapter(existing_results=[{
+        'Id':PR1, 'Product_Interest__c':'Roofing',
+        PR_ISSUED_COUNT:True, PR_APPOINTMENT_DATE:'2026-10-26',
+    }])
+    existing=_single(_operations(adapter,payload),PRODUCT_RESULT)
+    assert existing[0]=='update'
+    assert existing[3][PR_APPOINTMENT_DATE]=='2026-10-26'
+    adapter,_=_adapter(existing_results=[{
+        'Id':PR1, 'Product_Interest__c':'Roofing',
+        PR_ISSUED_COUNT:True, PR_APPOINTMENT_DATE:None,
+    }])
+    legacy=_single(_operations(adapter,payload),PRODUCT_RESULT)
+    assert legacy[0]=='update'
+    assert legacy[3][PR_APPOINTMENT_DATE]=='2026-10-29'
+
+
 def test_phase3_missing_flow_metadata_rejects_batch_before_writes():
     schema = _schemas()
     schema[PRODUCT_RESULT]['fields'] = [
@@ -1012,7 +1127,7 @@ def test_batched_preflight_accepts_salesforce_15_or_18_character_ids():
         if ' FROM WorkOrder ' in soql:
             return [dict(row, Lead__c=LEAD[:15]) for row in rows]
         if ' FROM ServiceAppointment ' in soql:
-            return [dict(row, FSSK__FSK_Work_Order__c=WORK[:15]) for row in rows]
+            return [dict(row, ParentRecordId=WORK[:15]) for row in rows]
         if ' FROM Lead ' in soql:
             return [dict(row, Id=LEAD[:15]) for row in rows]
         return rows

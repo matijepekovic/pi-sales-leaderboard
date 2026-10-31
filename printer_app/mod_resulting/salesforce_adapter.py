@@ -5,11 +5,10 @@ contract. Core workflow code never depends on Salesforce API names.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 import json
 import re
-import shlex
 import subprocess
 from zoneinfo import ZoneInfo
 
@@ -24,6 +23,8 @@ WO_LEAD = 'Lead__c'
 WO_APPOINTMENT_DATETIME = 'Appointment_Date_Time__c'
 WO_APPOINTMENT_DATE = 'Appointment_Date__c'
 SERVICE_APPOINTMENT = 'ServiceAppointment'
+# The native Result Appointment Flow selects Service Appointments by ParentRecordId.
+SA_PARENT = 'ParentRecordId'
 PRODUCT_RESULT = 'Product_Interest_Result__c'
 # Result Appointment Flow fields, owned and validated by this adapter only.
 PR_ISSUED_COUNT = 'Include_in_Issued_Lead_Count__c'
@@ -466,26 +467,6 @@ class ResultingSalesforceAdapter:
             field['name'] + ' cannot safely store an AM/PM time.'
         )
 
-    def _appointment_ids(self, work_order_id, day):
-        work_order_id = _require_id(work_order_id)
-        start = datetime.combine(date.fromisoformat(day), time.min, tzinfo=self.zone)
-        end = start + timedelta(days=1)
-        lo = start.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        hi = end.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        rows = self._query(
-            'SELECT Id FROM ' + SERVICE_APPOINTMENT + ' WHERE '
-            + SA['work_order'] + ' = ' + _soql(work_order_id)
-            + ' AND SchedStartTime >= ' + lo
-            + ' AND SchedStartTime < ' + hi
-            + ' ORDER BY Id LIMIT 2000'
-        )
-        ids = [_require_id(str(row.get('Id') or '')) for row in rows]
-        if not ids or len(set(ids)) != len(ids):
-            raise ResultingSalesforceError(
-                'No unique same-day Service Appointments for Work Order.'
-            )
-        return ids
-
     def _existing_product_results(self, lead_id, work_order_id, *, rows=None):
         fields = 'Id,' + PR['product'] + ',' + PR_ISSUED_COUNT + ',' + PR_APPOINTMENT_DATE
         if rows is None:
@@ -701,9 +682,14 @@ class ResultingSalesforceAdapter:
             source = planned.get('appointment_date_source')
             appointment_day = planned.get('appointment_date')
             if source == 'existing_result_input':
-                # The Flow copies the existing PIR date for future appointments.
-                # Do not substitute the Lead/Work Order date or the worker date.
-                appointment_day = old['appointment_date'] if old else ''
+                # Flow's future input can reference an existing PIR. For a
+                # genuinely new PIR there is no prior input, so use the
+                # selected SA's saved date (the approved End-of-Day fallback).
+                appointment_day = (
+                    old['appointment_date']
+                    if old and old['appointment_date']
+                    else planned.get('fallback_appointment_date', '')
+                )
             elif source not in ('today', 'lead', 'work_order_appointment'):
                 raise ResultingSalesforceError('Result appointment date is unresolved.')
             if not appointment_day or not isinstance(appointment_day, str):
@@ -832,49 +818,43 @@ class ResultingSalesforceAdapter:
         return history
 
     def _appointments_for_batch(self, payloads):
-        """Resolve all same-day Service Appointment IDs in grouped reads."""
-        groups = {}
-        for payload in payloads:
-            day = str(payload['day'])
-            groups.setdefault(day, []).append(_require_id(payload['work_order_id']))
-        appointments = {key: [] for ids in groups.values() for key in ids}
+        """Select every Scheduled/Dispatched appointment on each Work Order.
+
+        Match Flow v30 by ParentRecordId and Status; the MOD sheet day is
+        not an additional eligibility filter. A Work Order with no remaining
+        eligible appointments can still have its other results submitted.
+        """
+        ids = list(dict.fromkeys(
+            _require_id(payload['work_order_id']) for payload in payloads))
+        appointments = {key: [] for key in ids}
         seen = set()
-        for day, ids in groups.items():
-            start = datetime.combine(date.fromisoformat(day), time.min, tzinfo=self.zone)
-            end = start + timedelta(days=1)
-            lo = start.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-            hi = end.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-            for offset in range(0, len(ids), 40):
-                chunk = ids[offset:offset + 40]
-                canonical = {ident[:15]: ident for ident in chunk}
-                cursor = ''
-                while True:
-                    where = (SA['work_order'] + ' IN ('
-                             + ','.join(_soql(key) for key in chunk) + ')'
-                             + ' AND SchedStartTime >= ' + lo
-                             + ' AND SchedStartTime < ' + hi)
-                    if cursor:
-                        where += ' AND Id > ' + _soql(cursor)
-                    rows = self._query(
-                        'SELECT Id,' + SA['work_order'] + ' FROM '
-                        + SERVICE_APPOINTMENT + ' WHERE ' + where
-                        + ' ORDER BY Id LIMIT 2000')
-                    for row in rows:
-                        ident = _require_id(str(row.get('Id') or ''))
-                        source_id = _require_id(str(row.get(SA['work_order']) or ''))
-                        work_order = canonical.get(source_id[:15])
-                        if work_order is None or ident in seen or (
-                                cursor and ident <= cursor):
-                            raise ResultingSalesforceError(
-                                'Service Appointment identity or paging is invalid.')
-                        seen.add(ident)
-                        appointments[work_order].append(ident)
-                    if len(rows) < 2000:
-                        break
-                    cursor = _require_id(str(rows[-1].get('Id') or ''))
-        if any(not values or len(values) > 2000 for values in appointments.values()):
-            raise ResultingSalesforceError(
-                'No unique same-day Service Appointments for Work Order.')
+        for offset in range(0, len(ids), 40):
+            chunk = ids[offset:offset + 40]
+            canonical = {ident[:15]: ident for ident in chunk}
+            cursor = ''
+            while True:
+                where = (SA_PARENT + ' IN ('
+                         + ','.join(_soql(key) for key in chunk) + ')'
+                         + " AND Status IN ('Scheduled','Dispatched')")
+                if cursor:
+                    where += ' AND Id > ' + _soql(cursor)
+                rows = self._query(
+                    'SELECT Id,' + SA_PARENT + ' FROM '
+                    + SERVICE_APPOINTMENT + ' WHERE ' + where
+                    + ' ORDER BY Id LIMIT 2000')
+                for row in rows:
+                    ident = _require_id(str(row.get('Id') or ''))
+                    source_id = _require_id(str(row.get(SA_PARENT) or ''))
+                    work_order = canonical.get(source_id[:15])
+                    if work_order is None or ident in seen or (
+                            cursor and ident <= cursor):
+                        raise ResultingSalesforceError(
+                            'Service Appointment identity or paging is invalid.')
+                    seen.add(ident)
+                    appointments[work_order].append(ident)
+                if len(rows) < 2000:
+                    break
+                cursor = _require_id(str(rows[-1].get('Id') or ''))
         return appointments
 
     def _product_rows_for_batch(self, payloads):
@@ -968,11 +948,11 @@ class ResultingSalesforceAdapter:
 
         sa_status = self._field(sa_schema, SA['status'], types=('picklist',))
         sa_work_order = self._field(
-            sa_schema, SA['work_order'], update=False, types=('reference',)
+            sa_schema, SA_PARENT, update=False, types=('reference',)
         )
         if WORK_ORDER not in (sa_work_order.get('referenceTo') or []):
             raise ResultingSalesforceError(
-                SERVICE_APPOINTMENT + '.' + SA['work_order']
+                SERVICE_APPOINTMENT + '.' + SA_PARENT
                 + ' does not reference WorkOrder.'
             )
 
@@ -1053,12 +1033,18 @@ class ResultingSalesforceAdapter:
             appointment_status = self._choice(
                 sa_status, payload['fields']['appointment_status']
             )
-            plan = [
+            # Flow v30 writes Product Interest Results before Service
+            # Appointments and Work Orders. Resolve the complete plan during
+            # read-only preflight, then submit all steps atomically.
+            plan = self._product_operations(
+                payload, pr_schema, lead_schema,
+                existing_rows=product_rows_by_work[work_order_id],
+                attribution_row=lead_rows.get(lead_id))
+            plan.extend(
                 ('update', SERVICE_APPOINTMENT, ident, {
                     SA['status']: appointment_status,
-                })
-                for ident in appointment_ids
-            ]
+                }) for ident in appointment_ids
+            )
 
             wo_values = {
                 WO['dispo']: self._value(
@@ -1133,9 +1119,17 @@ class ResultingSalesforceAdapter:
                     wo_fields['start_price'], payload['fields']['price']['highest']
                 )
             if payload['fields']['price']['lowest']:
-                wo_values[WO['final_price']] = self._value(
+                # Flow v30 updates Price__c before its main WorkOrder update,
+                # then reasserts the final price on the WorkOrder field holder.
+                # Both writes matter when WorkOrder automations run between
+                # the two steps.
+                final_price = self._value(
                     wo_fields['final_price'], payload['fields']['price']['lowest']
                 )
+                plan.append(('update', WORK_ORDER, work_order_id, {
+                    WO['final_price']: final_price,
+                }))
+                wo_values[WO['final_price']] = final_price
             if payload['deposit_payment'] != '':
                 wo_values[WO['deposit']] = self._value(
                     wo_fields['deposit'], payload['deposit_payment']
@@ -1200,10 +1194,6 @@ class ResultingSalesforceAdapter:
                         lead_fields['product_interest'], merged
                     ) if lead_fields['product_interest'].get('type') == 'multipicklist' else merged
             plan.append(('update', LEAD, lead_id, lead_values))
-            plan.extend(self._product_operations(
-                payload, pr_schema, lead_schema,
-                existing_rows=product_rows_by_work[work_order_id],
-                attribution_row=lead_rows.get(lead_id)))
             operations.append(plan)
         # Reject an oversized Work Order before submitting any earlier
         # Work Orders from this End-of-Day batch. The ordered Composite API
@@ -1280,10 +1270,9 @@ class ResultingSalesforceAdapter:
     def apply(self, operations):
         """Commit one Work Order atomically, in the existing plan order.
 
-        This is the same preflighted SA -> Work Order -> Lead -> PIR sequence.
-        Composite's allOrNone rolls back earlier appointments if a later
-        Work Order or Product Result rejects the request. Its JSON body also
-        preserves MOD Notes containing quotes and multiline text.
+        Follow Flow v30: PIR -> SA -> optional WorkOrder price -> WorkOrder
+        -> Lead. Composite allOrNone rolls back every operation if any step
+        rejects the request. JSON preserves quoted/multiline MOD Notes.
         """
         if not operations or len(operations) > 25:
             raise ResultingSalesforceError(
@@ -1321,8 +1310,27 @@ class ResultingSalesforceAdapter:
             '--method', 'POST', '--body', '-',
             '--header', 'Content-Type: application/json',
         ], input_body=request_body, timeout=120)
-        results = response.get('compositeResponse') if isinstance(
-            response, dict) else None
+        # sf api request rest --json returns the HTTP envelope inside its
+        # CLI result: {statusCode, headers, body}. Salesforce puts
+        # compositeResponse in that HTTP body, not at the result's top level.
+        status_code = response.get('statusCode') if isinstance(response, dict) else None
+        if type(status_code) is not int:
+            raise ResultingSalesforceError(
+                'Salesforce CLI returned an invalid Composite HTTP response; '
+                'verify the Work Order before retrying.'
+            )
+        if status_code != 200:
+            raise ResultingSalesforceError(
+                'Salesforce Composite HTTP ' + str(status_code) + ': '
+                + self._rest_error(response.get('body'))
+            )
+        body = response.get('body')
+        if isinstance(body, str):
+            try:
+                body = json.loads(body)
+            except ValueError:
+                body = None
+        results = body.get('compositeResponse') if isinstance(body, dict) else None
         if not isinstance(results, list) or len(results) != len(requests):
             # Unknown transport outcome: the caller records an uncertain
             # receipt and must never blindly replay the Work Order.
@@ -1330,24 +1338,39 @@ class ResultingSalesforceAdapter:
                 'Salesforce Composite returned an incomplete response; '
                 'verify the Work Order before retrying.'
             )
-        seen = set()
+        by_ref = {}
+        expected = {'step_' + str(i) for i in range(1, len(requests) + 1)}
         for item in results:
             if not isinstance(item, dict):
                 raise ResultingSalesforceError(
                     'Salesforce Composite returned an invalid response.')
             reference = item.get('referenceId')
-            if (reference not in {r['referenceId'] for r in requests}
-                    or reference in seen):
+            if reference not in expected or reference in by_ref:
                 raise ResultingSalesforceError(
                     'Salesforce Composite returned mismatched operations.')
-            seen.add(reference)
-            index = int(reference.removeprefix('step_')) - 1
-            step = operations[index]
+            by_ref[reference] = item
+
+        failures = []
+        for index, step in enumerate(operations, 1):
+            item = by_ref['step_' + str(index)]
             status = item.get('httpStatusCode')
             if type(status) is not int or not 200 <= status < 300:
                 detail = self._rest_error(item.get('body'))
-                raise ResultingSalesforceError(
-                    step[1] + ' ' + step[0] + ' rejected: ' + detail
-                )
+                failures.append((step, detail))
+        if failures:
+            # In an allOrNone rollback Salesforce can report a generic
+            # ALL_OR_NONE_OPERATION_ROLLED_BACK/PROCESSING_HALTED for other
+            # steps. Prefer the concrete root rejection if one exists.
+            actual = next(
+                ((step, detail) for step, detail in failures
+                 if not any(code in detail for code in (
+                     'ALL_OR_NONE_OPERATION_ROLLED_BACK',
+                     'PROCESSING_HALTED'))),
+                failures[0],
+            )
+            step, detail = actual
+            raise ResultingSalesforceError(
+                step[1] + ' ' + step[0] + ' rejected: ' + detail
+            )
         # No success receipt can be issued until every expected subrequest
         # succeeds and Salesforce's response is complete.
