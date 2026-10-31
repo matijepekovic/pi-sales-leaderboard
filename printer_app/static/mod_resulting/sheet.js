@@ -1014,6 +1014,7 @@
       ? item.job_id + ':' + item.work_order_id + ':' + status : '';
   }
   function noticeError(item) {
+    if (item.state === 'submitted') return '';
     return item.error || ((item.job_state === 'failed' || item.job_state === 'interrupted')
       ? item.job_error : '') || '';
   }
