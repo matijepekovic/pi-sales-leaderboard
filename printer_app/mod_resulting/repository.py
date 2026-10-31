@@ -368,10 +368,15 @@ class ResultingRepository:
         pending = []
         for row in records:
             draft = json.loads(row['draft'])
+            snapshot = json.loads(row['snapshot'])
+            # A canceled card hidden for having no notes is never silently
+            # submitted by Submit All, even if an old local Dispo remains.
+            if canceled_without_notes(snapshot, draft):
+                continue
             if draft.get('dispo') and (selected is None or row['work_order_id'] in selected):
                 pending.append({
                     'work_order_id': row['work_order_id'],
-                    'snapshot': json.loads(row['snapshot']),
+                    'snapshot': snapshot,
                     'draft': draft,
                 })
         if selected is not None and {row['work_order_id'] for row in pending} != selected:
