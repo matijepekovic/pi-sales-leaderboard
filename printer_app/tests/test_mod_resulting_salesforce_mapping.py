@@ -1001,3 +1001,23 @@ def test_20_work_order_preflight_batches_related_salesforce_reads():
     assert sum(' FROM ServiceAppointment ' in query for query in queries) == 1
     assert sum(' FROM Product_Interest_Result__c ' in query for query in queries) == 1
     assert sum(' FROM Lead ' in query for query in queries) == 1
+
+
+def test_batched_preflight_accepts_salesforce_15_or_18_character_ids():
+    adapter, _ = _adapter()
+    query = adapter._query
+
+    def mixed_id_query(soql, **kwargs):
+        rows = query(soql, **kwargs)
+        if ' FROM WorkOrder ' in soql:
+            return [dict(row, Lead__c=LEAD[:15]) for row in rows]
+        if ' FROM ServiceAppointment ' in soql:
+            return [dict(row, FSSK__FSK_Work_Order__c=WORK[:15]) for row in rows]
+        if ' FROM Lead ' in soql:
+            return [dict(row, Id=LEAD[:15]) for row in rows]
+        return rows
+
+    adapter._query = mixed_id_query
+    planned = adapter.prepare([_payload('pns', interest='Roofing')])
+    assert len(planned) == 1
+    assert any(item[1] == 'WorkOrder' for item in planned[0])
