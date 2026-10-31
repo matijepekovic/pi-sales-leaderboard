@@ -9,7 +9,8 @@ from printer_app.mod_resulting.salesforce_adapter import (
 )
 
 
-def _adapter(*, failing_step=None, malformed=False):
+def _adapter(*, failing_step=None, malformed=False, http_status=200,
+             body_as_text=False, rollback=False):
     sent = []
 
     def run(command, *, input=None, **kwargs):
@@ -23,18 +24,28 @@ def _adapter(*, failing_step=None, malformed=False):
         responses = []
         for index, step in enumerate(request['compositeRequest'], 1):
             rejected = index == failing_step
+            rolled_back = rollback and failing_step is not None and not rejected
             responses.append({
                 'referenceId': step['referenceId'],
-                'httpStatusCode': 400 if rejected else 201 if step['method'] == 'POST' else 204,
+                'httpStatusCode': 400 if rejected or rolled_back else (
+                    201 if step['method'] == 'POST' else 204),
                 'body': [
-                    {'errorCode': 'FIELD_CUSTOM_VALIDATION_EXCEPTION',
-                     'message': 'Unsupported Work Order status.',
-                     'fields': ['Status']}
-                ] if rejected else {'id': 'a01000000000001AAA'} if step['method'] == 'POST' else None,
+                    {'errorCode': ('FIELD_CUSTOM_VALIDATION_EXCEPTION'
+                                   if rejected else 'ALL_OR_NONE_OPERATION_ROLLED_BACK'),
+                     'message': ('Unsupported Work Order status.'
+                                 if rejected else 'Other subrequest rejected.'),
+                     'fields': ['Status'] if rejected else []}
+                ] if rejected or rolled_back else (
+                    {'id': 'a01000000000001AAA'}
+                    if step['method'] == 'POST' else None),
             })
+        # Match @salesforce/plugin-api's actual --json result schema. The
+        # REST HTTP payload is under result.body, never result itself.
         body = {} if malformed else {'compositeResponse': responses}
+        http_result = {'statusCode': http_status, 'headers': {},
+                       'body': json.dumps(body) if body_as_text else body}
         return SimpleNamespace(returncode=0, stdout=json.dumps(
-            {'status': 0, 'result': body}), stderr='')
+            {'status': 0, 'result': http_result}), stderr='')
 
     adapter = ResultingSalesforceAdapter(runner=run)
     adapter._describes = {
@@ -150,3 +161,25 @@ def test_salesforce_error_message_redacts_access_tokens():
     }])
     assert 'secret123' not in text and 'secret456' not in text
     assert 'INVALID_FIELD' in text
+
+
+def test_cli_rest_http_body_can_be_returned_as_json_text():
+    adapter, sent = _adapter(body_as_text=True)
+    assert adapter.apply(PLAN) is None
+    assert len(sent) == 1
+
+
+def test_cli_http_status_does_not_count_as_success_without_composite_result():
+    adapter, sent = _adapter(http_status=503)
+    with pytest.raises(ResultingSalesforceError, match='Composite HTTP 503'):
+        adapter.apply(PLAN)
+    assert len(sent) == 1
+
+
+def test_all_or_none_reports_root_rejection_not_earlier_rollback():
+    adapter, sent = _adapter(failing_step=3, rollback=True)
+    with pytest.raises(ResultingSalesforceError, match=(
+            'WorkOrder update rejected: FIELD_CUSTOM_VALIDATION_EXCEPTION: '
+            'Unsupported Work Order status')):
+        adapter.apply(PLAN)
+    assert len(sent) == 1
