@@ -416,12 +416,20 @@ def test_select_mod_inherits_market_from_the_imported_daily_batch(tmp_path):
     assert chosen_markets == ['Olympia', 'Olympia', 'Olympia', 'Seattle']
 
 
-def test_preexisting_import_without_market_automatically_reimports_its_scope(tmp_path):
+def test_preexisting_import_without_market_requires_explicit_refresh(tmp_path):
     service, repository, source, writer = _service(tmp_path)
     repository.refresh(DAY, [RECORD])  # Old version, no market metadata.
+    repository.save_draft(DAY, WORK, clean_draft({
+        'dispo':'pns', 'notes':'Important local notes',
+    }), 0)
     assert repository.imported_market(DAY) == ''
-    assert service.users(DAY) == [{'id':USER,'name':'MOD Example'}]
+    with pytest.raises(ValueError, match='Press Refresh'):
+        service.users(DAY)
+    assert source.queries == []  # No implicit Salesforce re-import.
+    assert repository.sheets(DAY)[0]['draft']['notes'] == 'Important local notes'
+    service.refresh(DAY)  # The explicit user action.
     assert repository.imported_market(DAY) == 'Olympia'
+    assert repository.sheets(DAY)[0]['draft']['notes'] == 'Important local notes'
     assert source.queries[-1]['market_segment'] == 'Olympia'
 
 
