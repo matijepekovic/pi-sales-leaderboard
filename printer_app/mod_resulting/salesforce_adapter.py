@@ -1205,6 +1205,12 @@ class ResultingSalesforceAdapter:
                 existing_rows=product_rows_by_work[work_order_id],
                 attribution_row=lead_rows.get(lead_id)))
             operations.append(plan)
+        # Reject an oversized Work Order before submitting any earlier
+        # Work Orders from this End-of-Day batch. The ordered Composite API
+        # supports at most 25 subrequests per atomic transaction.
+        if any(len(plan) > 25 for plan in operations):
+            raise ResultingSalesforceError(
+                'A Work Order exceeds the Salesforce Composite 25-step limit.')
         return operations
 
     @staticmethod
