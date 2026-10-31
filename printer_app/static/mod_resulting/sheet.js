@@ -396,6 +396,10 @@
     display.hidden = !display.textContent;
   }
   function resultDetailPreview(sheet, draft) {
+    const value = sheet.querySelector('[data-detail-display]');
+    if (value) value.textContent = draft.result_detail || '—';
+    const cxl = sheet.querySelector('[data-cxl-indicator]');
+    if (cxl) cxl.hidden = !draft.cxl_at_lead;
     const output = sheet.querySelector('.result-detail-in-redline');
     if (!output) return;
     const lines = [];
@@ -647,14 +651,14 @@
     manualRedlinePreview(sheet, {redlines:redlineInput.value});
     const product = sheet.querySelector('.product-panel');
     const dnr = sheet.querySelector('.dnr-panel');
-    const cxl = sheet.querySelector('.cxl-panel');
+    const detail = sheet.querySelector('.detail-panel');
     const sale = sheet.querySelector('.sale-panel');
     const priceDialog = sheet.querySelector('.price-panel');
     const redlineDialog = sheet.querySelector('.redlines-panel');
     sheet.querySelector('.red-pen')?.addEventListener('click', () =>
       openDialog(redlineDialog, '[data-key="redlines"]'));
     const saleButton = sheet.querySelector('.edit-sale-products');
-    const cxlButton = sheet.querySelector('.edit-cxl-details');
+    const detailButton = sheet.querySelector('.edit-result-detail');
     const productButton = sheet.querySelector('.edit-product-results');
     const dnrButton = sheet.querySelector('.edit-dnr-reasons');
     const separate = sheet.querySelector('.separate-products');
@@ -667,7 +671,6 @@
     syncPrimaryChoice();
     if (separate) separate.hidden = init.dispo === 'sale';
     if (productButton) productButton.hidden = init.dispo === 'sale';
-    if (cxlButton) cxlButton.hidden = init.dispo !== 'cxl';
     if (dnrButton) dnrButton.hidden = !init.dnr;
     function syncPricePreviews() {
       const draft = serialize(sheet);
@@ -778,16 +781,11 @@
       const draft = serialize(sheet);
       if (separate) separate.hidden = draft.dispo === 'sale';
       if (productButton) productButton.hidden = draft.dispo === 'sale';
-      if (cxlButton) cxlButton.hidden = draft.dispo !== 'cxl';
       if (dnrButton) dnrButton.hidden = !draft.dnr;
       if (input.dataset.key === 'dispo') {
         if (saleButton) saleButton.hidden = draft.dispo !== 'sale';
-        if (draft.dispo === 'cxl') openDialog(cxl, '[data-key="cxl_at_lead"]');
-        else if (draft.dispo === 'sale') openSale();
-        else {
-          closeDialog(cxl);
-          closeDialog(sale);
-        }
+        if (draft.dispo === 'sale') openSale();
+        else closeDialog(sale);
         if (draft.dispo === 'sale') closeDialog(product);
       }
       if (input.dataset.key === 'dnr') {
@@ -844,7 +842,7 @@
         openDialog(priceDialog, '[data-key="' + button.dataset.priceTrigger + '"]');
       });
     }
-    cxlButton?.addEventListener('click', () => openDialog(cxl, '[data-key="cxl_at_lead"]'));
+    detailButton?.addEventListener('click', () => openDialog(detail, '[data-key="result_detail"]'));
     productButton?.addEventListener('click', () => openDialog(product, '[data-product-result]'));
     dnrButton?.addEventListener('click', () => openDialog(dnr, '[data-reason-choice]'));
     for (const button of sheet.querySelectorAll('[data-time-trigger]')) {

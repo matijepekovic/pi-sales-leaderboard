@@ -109,10 +109,26 @@
  {% endif %}
  <div class="cell field-detail replacement">
   <b>Result Detail:</b>
-  <select data-key="result_detail" aria-label="Result Detail">
-   <option value="">—</option>
-   {% for option in result_details %}<option value="{{ option.value }}" {% if d.result_detail==option.value %}selected{% endif %}>{{ option.label }}</option>{% endfor %}
-  </select>
+  <button type="button" class="edit-result-detail" aria-label="Edit Result Detail and CXL at Lead" title="Edit Result Detail and CXL at Lead">
+   <span data-detail-display>{{ d.result_detail or '—' }}</span>
+   <span class="detail-cxl-indicator" data-cxl-indicator title="CXL at Lead checked" aria-label="CXL at Lead checked" {% if not d.cxl_at_lead %}hidden{% endif %}>CXL</span>
+  </button>
+  <dialog class="editor-dialog detail-panel" aria-label="Result Detail and CXL at Lead">
+   <div class="editor-heading">
+    <div><h2>Result Detail</h2></div>
+    <button type="button" class="close-popover editor-close" aria-label="Close Result Detail">×</button>
+   </div>
+   <div class="editor-body">
+    <label class="detail-choice">Result Detail
+     <select data-key="result_detail" aria-label="Result Detail">
+      <option value="">—</option>
+      {% for option in result_details %}<option value="{{ option.value }}" {% if d.result_detail==option.value %}selected{% endif %}>{{ option.label }}</option>{% endfor %}
+     </select>
+    </label>
+    <label class="dnr-option"><input type="checkbox" data-key="cxl_at_lead" {% if d.cxl_at_lead %}checked{% endif %}> CXL At Lead</label>
+   </div>
+   <div class="editor-footer"><button type="button" class="close-popover editor-primary">Done</button></div>
+  </dialog>
  </div>
  <div class="cell field-startprice price-click">
   <button type="button" data-price-trigger="start_price_override" aria-label="Edit Start Price" title="Click to override Start Price"><span data-price-display="start_price_override">{{ d.start_price_override }}</span></button>
@@ -166,7 +182,6 @@
    <option value="oos" {% if d.dispo=='oos' %}selected{% endif %}>OOS</option>
   </select>
   <button type="button" class="edit-sale-products" {% if d.dispo!='sale' %}hidden{% endif %}>Products</button>
-  <button type="button" class="edit-cxl-details" {% if d.dispo!='cxl' %}hidden{% endif %}>CXL details</button>
  </div>
  <div class="cell field-extras replacement">
   {{ checkbox('one_leg','1 Leg',d.one_leg) }}
@@ -242,16 +257,6 @@
   {% endif %}
   </div>
   <div class="editor-footer"><button type="button" class="close-popover editor-primary sale-done">Done</button></div>
- </dialog>
- <dialog class="editor-dialog cxl-panel" aria-label="Canceled appointment details">
-  <div class="editor-heading">
-   <div><h2>Cancellation details</h2><p>Was this appointment canceled at the lead?</p></div>
-   <button type="button" class="close-popover editor-close" aria-label="Close cancellation details">×</button>
-  </div>
-  <div class="editor-body">
-   <label class="dnr-option"><input type="checkbox" data-key="cxl_at_lead" {% if d.cxl_at_lead %}checked{% endif %}> CXL At Lead</label>
-  </div>
-  <div class="editor-footer"><button type="button" class="close-popover editor-primary">Done</button></div>
  </dialog>
  <dialog class="editor-dialog price-panel" aria-label="Work Order price overrides">
   <div class="editor-heading">
