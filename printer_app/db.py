@@ -1,4 +1,4 @@
-"""Private, durable SQLite inbox, job queue and print outbox (schema version 4)."""
+"""Private, durable SQLite inbox, job queue and print outbox (schema version 3)."""
 from __future__ import annotations
 
 import json
@@ -166,7 +166,7 @@ class Database:
         with self.connect() as conn:
             conn.execute('PRAGMA journal_mode=WAL')
             version = conn.execute('PRAGMA user_version').fetchone()[0]
-            if version > 4:
+            if version > 3:
                 raise RuntimeError('Database is newer than this printer-app release')
             conn.executescript(SCHEMA)
             # Existing version-1 printer databases gain one local override flag;
@@ -177,7 +177,7 @@ class Database:
                     'ALTER TABLE mod_result_sheets ADD COLUMN override_active '
                     'INTEGER NOT NULL DEFAULT 0 CHECK(override_active IN (0,1))'
                 )
-            conn.execute('PRAGMA user_version=4')
+            conn.execute('PRAGMA user_version=3')
 
     @contextmanager
     def connect(self):
