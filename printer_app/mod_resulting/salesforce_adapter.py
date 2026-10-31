@@ -779,6 +779,50 @@ class ResultingSalesforceAdapter:
                 cursor = _require_id(str(rows[-1].get('Id') or ''))
         return history
 
+    def _appointments_for_batch(self, payloads):
+        """Resolve all same-day Service Appointment IDs in grouped reads."""
+        groups = {}
+        for payload in payloads:
+            day = str(payload['day'])
+            groups.setdefault(day, []).append(_require_id(payload['work_order_id']))
+        appointments = {key: [] for ids in groups.values() for key in ids}
+        seen = set()
+        for day, ids in groups.items():
+            start = datetime.combine(date.fromisoformat(day), time.min, tzinfo=self.zone)
+            end = start + timedelta(days=1)
+            lo = start.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            hi = end.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            for offset in range(0, len(ids), 40):
+                chunk = ids[offset:offset + 40]
+                cursor = ''
+                while True:
+                    where = (SA['work_order'] + ' IN ('
+                             + ','.join(_soql(key) for key in chunk) + ')'
+                             + ' AND SchedStartTime >= ' + lo
+                             + ' AND SchedStartTime < ' + hi)
+                    if cursor:
+                        where += ' AND Id > ' + _soql(cursor)
+                    rows = self._query(
+                        'SELECT Id,' + SA['work_order'] + ' FROM '
+                        + SERVICE_APPOINTMENT + ' WHERE ' + where
+                        + ' ORDER BY Id LIMIT 2000')
+                    for row in rows:
+                        ident = _require_id(str(row.get('Id') or ''))
+                        work_order = _require_id(str(row.get(SA['work_order']) or ''))
+                        if work_order not in chunk or ident in seen or (
+                                cursor and ident <= cursor):
+                            raise ResultingSalesforceError(
+                                'Service Appointment identity or paging is invalid.')
+                        seen.add(ident)
+                        appointments[work_order].append(ident)
+                    if len(rows) < 2000:
+                        break
+                    cursor = _require_id(str(rows[-1].get('Id') or ''))
+        if any(not values or len(values) > 2000 for values in appointments.values()):
+            raise ResultingSalesforceError(
+                'No unique same-day Service Appointments for Work Order.')
+        return appointments
+
     def prepare(self, payloads):
         """Preflight the complete batch before any live Salesforce write."""
         wo_schema = self._describe(WORK_ORDER)
@@ -856,6 +900,7 @@ class ResultingSalesforceAdapter:
             for payload in payloads
         }
 
+        appointment_ids_by_work = self._appointments_for_batch(payloads)
         operations = []
         # Different Work Orders can refer to the same Lead. Accumulate pivot
         # additions across the whole End of Day batch; never overwrite a pivot
@@ -865,7 +910,7 @@ class ResultingSalesforceAdapter:
             work_order_id = _require_id(payload['work_order_id'])
             lead_id = _require_id(payload['lead_id'])
             mod_id = _require_id(payload['mod_id'])
-            appointment_ids = self._appointment_ids(work_order_id, payload['day'])
+            appointment_ids = appointment_ids_by_work[work_order_id]
 
             appointment_status = self._choice(
                 sa_status, payload['fields']['appointment_status']
