@@ -92,7 +92,7 @@ class ResultingRepository:
             (day, work_order_id, day, work_order_id))
 
     def refresh(self, day, records, external_drafts=None, market_segment=None,
-                *, clear_local=False):
+                *, clear_local=False, initial_only=False):
         """Reconcile explicit Salesforce Refresh against its last remote baseline.
 
         Unchanged remote fields never overwrite local edits. Salesforce changes
@@ -111,9 +111,16 @@ class ResultingRepository:
         with self.db.connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
             conn.execute('INSERT OR IGNORE INTO mod_result_days(day) VALUES(?)', (day,))
-            state = conn.execute('SELECT submitting FROM mod_result_days WHERE day=?', (day,)).fetchone()
+            state = conn.execute('SELECT submitting,refreshed_at FROM mod_result_days WHERE day=?',
+                                 (day,)).fetchone()
             if state['submitting']:
                 raise ValueError('Cannot refresh while end-of-day submission is running.')
+            if initial_only and (state['refreshed_at'] > 0 or conn.execute(
+                    'SELECT 1 FROM mod_result_sheets WHERE day=? LIMIT 1',
+                    (day,)).fetchone()):
+                # Atomic guard against a background import queued just before
+                # the user began editing. Only explicit Refresh can reconcile.
+                return False
             if market_segment is not None:
                 market_key = 'mod_result_market:' + day
                 previous = conn.execute('SELECT value FROM meta WHERE key=?',
@@ -251,6 +258,7 @@ class ResultingRepository:
                     conn.execute('''UPDATE mod_result_sheets SET override_active=1
                         WHERE day=? AND work_order_id=?''', (day, ident))
             conn.execute('UPDATE mod_result_days SET refreshed_at=? WHERE day=?', (now, day))
+            return True
 
     def override(self, day, work_order_id, revision):
         """Explicitly unlock exactly one completed sheet for End of Day."""
