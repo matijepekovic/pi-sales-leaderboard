@@ -177,3 +177,28 @@ def test_preflight_stage_is_durable_and_visible_before_first_write(tmp_path):
     assert updated['stage_elapsed_seconds'] >= 0
     assert updated['submitted'] == 0
     assert updated['pending'] == 1
+
+
+def test_remote_checkbox_change_updates_value_and_edited_flag_atomically(tmp_path):
+    service, repo, _, remote = _service(tmp_path, {
+        'checkbox_values': {
+            'docs': {'value': 'Waiting', 'edited': False},
+            'review': {'value': 'Unreviewed', 'edited': False},
+        },
+    })
+    service.refresh(DAY)
+    draft = _draft(
+        checkbox_values={
+            'docs': {'value': 'Locally approved', 'edited': True},
+            'review': {'value': 'Local review', 'edited': True},
+        })
+    repo.save_draft(DAY, WORK, draft, 0)
+    # Only Docs changed in Salesforce; Review must remain the local value.
+    remote['value'] = _draft(checkbox_values={
+        'docs': {'value': 'Remote approved', 'edited': False},
+        'review': {'value': 'Unreviewed', 'edited': False},
+    })
+    service.refresh(DAY)
+    values = repo.sheets(DAY)[0]['draft']['checkbox_values']
+    assert values['docs'] == {'value': 'Remote approved', 'edited': False}
+    assert values['review'] == {'value': 'Local review', 'edited': True}
