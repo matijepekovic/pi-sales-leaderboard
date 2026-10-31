@@ -126,6 +126,8 @@ def test_8am_automatic_pull_never_replaces_existing_local_work(tmp_path):
     clock = datetime(2026, 10, 30, 8, 15, tzinfo=ZoneInfo('America/Los_Angeles')).timestamp()
     daily = ResultingDailyPull(service)
     assert not daily.due(clock)
+    # A job queued before the edit must also fail the transactional guard.
+    assert daily.run_due(clock) == {'ok': True, 'count': 0}
     assert repo.sheets(DAY)[0]['draft']['notes'] == 'Morning local note'
 
 
