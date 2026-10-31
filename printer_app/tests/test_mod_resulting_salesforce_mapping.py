@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from types import SimpleNamespace
 import json
+import re
 
 import pytest
 
@@ -145,13 +146,24 @@ def _adapter(*, existing_results=(), lead_interest='Roofing;Siding', schemas=Non
         elif command[1:3] == ['data','query']:
             query = command[command.index('--query')+1]
             if ' FROM ServiceAppointment ' in query:
-                result = {'records':[{'Id':SA1},{'Id':SA2}], 'done':True}
+                work_ids = re.findall(r"'(0WO[A-Za-z0-9]{15})'", query)
+                records = []
+                for offset, work_order in enumerate(work_ids):
+                    for n in (1, 2):
+                        records.append({
+                            'Id': '08p' + str(offset * 2 + n).zfill(12) + 'AAA',
+                            'FSSK__FSK_Work_Order__c': work_order,
+                        })
+                result = {'records':records, 'done':True}
             elif ' FROM WorkOrder ' in query:
-                assert 'WHERE Lead__c = ' in query
+                assert 'WHERE Lead__c IN (' in query
                 assert 'Appointment_Date_Time__c' in query
                 result = {'records':historical_works, 'done':True}
             elif ' FROM Product_Interest_Result__c ' in query:
-                result = {'records':list(existing_results),'done':True}
+                result = {'records':[dict(item,
+                    Work_Order__c=item.get('Work_Order__c', WORK),
+                    Lead__c=item.get('Lead__c', LEAD))
+                    for item in existing_results], 'done':True}
             elif ' FROM Lead ' in query:
                 result = {'records':[{
                     'Id': LEAD, 'Product_Interest_lead__c': lead_interest,
@@ -895,7 +907,7 @@ def test_phase3_sales_pivot_marks_only_sold_primary_and_clears_old_issued_flag()
     assert cleared[2] == PR1
     assert cleared[3] == {PR_ISSUED_COUNT:False}
     assert not any(item[3].get('Result__c') == 'Pitch No Sale' for item in pir)
-    assert any('SELECT Id,Product_Interest__c,' + PR_ISSUED_COUNT in
+    assert any('Product_Interest__c,' + PR_ISSUED_COUNT in
                command[command.index('--query')+1] for command in calls
                if command[1:3] == ['data','query'] and
                '--query' in command)
@@ -963,3 +975,49 @@ def test_phase3_missing_flow_metadata_rejects_batch_before_writes():
         _operations(adapter,_payload('pns'))
     assert all(command[1:3] not in (['data','update'],['data','create'])
                for command in calls)
+
+
+def test_20_work_order_preflight_batches_related_salesforce_reads():
+    """Preflight must not issue one query per Work Order or per Lead."""
+    work_ids = ['0WO' + str(index).zfill(12) + 'AAA' for index in range(1, 21)]
+    history = [
+        {'Id': work_id, 'Lead__c': LEAD, 'Dispo__c': None,
+         'Appointment_Date_Time__c': f'2026-10-27T{index - 1:02d}:00:00Z',
+         'Appointment_Date__c': DAY}
+        for index, work_id in enumerate(work_ids, 1)
+    ]
+    adapter, calls = _adapter(history=history)
+    payloads = []
+    for work_id in work_ids:
+        payload = _payload('pns', interest='Roofing')
+        payload['work_order_id'] = work_id
+        payloads.append(payload)
+    plans = adapter.prepare(payloads)
+    assert len(plans) == 20
+    assert all(any(op[1] == 'WorkOrder' for op in plan) for plan in plans)
+    queries = [command[command.index('--query') + 1] for command in calls
+               if command[1:3] == ['data', 'query']]
+    assert sum(' FROM WorkOrder ' in query for query in queries) == 1
+    assert sum(' FROM ServiceAppointment ' in query for query in queries) == 1
+    assert sum(' FROM Product_Interest_Result__c ' in query for query in queries) == 1
+    assert sum(' FROM Lead ' in query for query in queries) == 1
+
+
+def test_batched_preflight_accepts_salesforce_15_or_18_character_ids():
+    adapter, _ = _adapter()
+    query = adapter._query
+
+    def mixed_id_query(soql, **kwargs):
+        rows = query(soql, **kwargs)
+        if ' FROM WorkOrder ' in soql:
+            return [dict(row, Lead__c=LEAD[:15]) for row in rows]
+        if ' FROM ServiceAppointment ' in soql:
+            return [dict(row, FSSK__FSK_Work_Order__c=WORK[:15]) for row in rows]
+        if ' FROM Lead ' in soql:
+            return [dict(row, Id=LEAD[:15]) for row in rows]
+        return rows
+
+    adapter._query = mixed_id_query
+    planned = adapter.prepare([_payload('pns', interest='Roofing')])
+    assert len(planned) == 1
+    assert any(item[1] == 'WorkOrder' for item in planned[0])

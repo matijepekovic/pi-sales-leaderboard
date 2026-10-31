@@ -165,6 +165,11 @@ class ResultingSalesforceAdapter:
             raise ResultingSalesforceError('Salesforce query is incomplete; refusing partial results.')
         return records
 
+    def prepare_metadata(self):
+        """Warm the four write schemas on the worker before End of Day."""
+        for name in (WORK_ORDER, LEAD, SERVICE_APPOINTMENT, PRODUCT_RESULT):
+            self._describe(name)
+
     def _describe(self, name):
         if not NAME_RE.fullmatch(name):
             raise ResultingSalesforceError('Invalid Salesforce object name.')
@@ -443,14 +448,15 @@ class ResultingSalesforceAdapter:
             )
         return ids
 
-    def _existing_product_results(self, lead_id, work_order_id):
+    def _existing_product_results(self, lead_id, work_order_id, *, rows=None):
         fields = 'Id,' + PR['product'] + ',' + PR_ISSUED_COUNT + ',' + PR_APPOINTMENT_DATE
-        rows = self._query(
-            'SELECT ' + fields + ' FROM ' + PRODUCT_RESULT
-            + ' WHERE ' + PR['lead'] + ' = ' + _soql(lead_id)
-            + ' AND ' + PR['work_order'] + ' = ' + _soql(work_order_id)
-            + ' LIMIT 2000'
-        )
+        if rows is None:
+            rows = self._query(
+                'SELECT ' + fields + ' FROM ' + PRODUCT_RESULT
+                + ' WHERE ' + PR['lead'] + ' = ' + _soql(lead_id)
+                + ' AND ' + PR['work_order'] + ' = ' + _soql(work_order_id)
+                + ' LIMIT 2000'
+            )
         result = {}
         for row in rows:
             ident = _require_id(str(row.get('Id') or ''))
@@ -545,7 +551,8 @@ class ResultingSalesforceAdapter:
                 added = True
         return ';'.join(result), added
 
-    def _flow_pir_create_values(self, lead_id, lead_schema, pir_schema, result, comment):
+    def _flow_pir_create_values(self, lead_id, lead_schema, pir_schema, result, comment,
+                                *, source_row=None):
         """Resolve v30 PIR creation-only fields from their actual Lead sources.
 
         Never copy MOD notes into a PIR comment or overwrite existing PIR
@@ -563,15 +570,19 @@ class ResultingSalesforceAdapter:
             )
         for name in source_fields:
             self._field(lead_schema, name, update=False)
-        rows = self._query(
-            'SELECT Id,' + ','.join(source_fields) + ' FROM ' + LEAD
-            + ' WHERE Id = ' + _soql(lead_id) + ' LIMIT 2'
-        )
-        if len(rows) != 1 or str(rows[0].get('Id') or '') != lead_id:
-            raise ResultingSalesforceError(
-                'Lead attribution is unavailable for Flow v30 PIR creation.'
+        if source_row is None:
+            rows = self._query(
+                'SELECT Id,' + ','.join(source_fields) + ' FROM ' + LEAD
+                + ' WHERE Id = ' + _soql(lead_id) + ' LIMIT 2'
             )
-        row = rows[0]
+            if len(rows) != 1:
+                raise ResultingSalesforceError(
+                    'Lead attribution is unavailable for Flow v30 PIR creation.')
+            source_row = rows[0]
+        if _require_id(str(source_row.get('Id') or ''))[:15] != lead_id[:15]:
+            raise ResultingSalesforceError(
+                'Lead attribution identity does not match the submitted Lead.')
+        row = source_row
         result_fields = {}
         for dest, source in PIR_LEAD_COPY.items():
             if source not in row:
@@ -585,7 +596,8 @@ class ResultingSalesforceAdapter:
         )
         return result_fields
 
-    def _product_operations(self, payload, schema, lead_schema=None):
+    def _product_operations(self, payload, schema, lead_schema=None,
+                            *, existing_rows=None, attribution_row=None):
         lead_field = self._field(
             schema, PR['lead'], update=False, create=True, types=('reference',)
         )
@@ -632,7 +644,7 @@ class ResultingSalesforceAdapter:
             raise ResultingSalesforceError('Multiple primary product results are not valid.')
 
         existing = self._existing_product_results(
-            payload['lead_id'], payload['work_order_id']
+            payload['lead_id'], payload['work_order_id'], rows=existing_rows
         )
         lead_schema = lead_schema or self._describe(LEAD)
 
@@ -716,7 +728,7 @@ class ResultingSalesforceAdapter:
                 if flow_create_cache is None:
                     flow_create_cache = self._flow_pir_create_values(
                         payload['lead_id'], lead_schema, schema, result,
-                        entry.get('comment'),
+                        entry.get('comment'), source_row=attribution_row,
                     )
                 flow_values = dict(flow_create_cache)
                 # Original disposition and PIR comment are per-product.
@@ -746,6 +758,168 @@ class ResultingSalesforceAdapter:
                         PR_ISSUED_COUNT: self._value(issued_field, False),
                     }))
         return operations
+
+    def _historical_by_lead(self, payloads):
+        """Read same-batch Lead history together, with bounded keyset pages."""
+        leads = list(dict.fromkeys(
+            _require_id(payload['lead_id']) for payload in payloads))
+        history = {lead: [] for lead in leads}
+        seen = set()
+        for offset in range(0, len(leads), 40):
+            group = leads[offset:offset + 40]
+            canonical = {ident[:15]: ident for ident in group}
+            cursor = ''
+            while True:
+                where = WO_LEAD + ' IN (' + ','.join(_soql(lead) for lead in group) + ')'
+                if cursor:
+                    where += ' AND Id > ' + _soql(cursor)
+                rows = self._query(
+                    'SELECT Id,' + WO_LEAD + ',' + WO['dispo']
+                    + ',' + WO_APPOINTMENT_DATETIME + ',' + WO_APPOINTMENT_DATE
+                    + ' FROM ' + WORK_ORDER + ' WHERE ' + where
+                    + ' ORDER BY Id LIMIT 2000'
+                )
+                for row in rows:
+                    ident = _require_id(str(row.get('Id') or ''))
+                    lead_id = _require_id(str(row.get(WO_LEAD) or ''))
+                    lead = canonical.get(lead_id[:15])
+                    if lead is None or ident in seen or (cursor and ident <= cursor):
+                        raise ResultingSalesforceError(
+                            'Historical Work Order identity or paging is invalid.')
+                    seen.add(ident)
+                    history[lead].append(row)
+                if len(rows) < 2000:
+                    break
+                cursor = _require_id(str(rows[-1].get('Id') or ''))
+        return history
+
+    def _appointments_for_batch(self, payloads):
+        """Resolve all same-day Service Appointment IDs in grouped reads."""
+        groups = {}
+        for payload in payloads:
+            day = str(payload['day'])
+            groups.setdefault(day, []).append(_require_id(payload['work_order_id']))
+        appointments = {key: [] for ids in groups.values() for key in ids}
+        seen = set()
+        for day, ids in groups.items():
+            start = datetime.combine(date.fromisoformat(day), time.min, tzinfo=self.zone)
+            end = start + timedelta(days=1)
+            lo = start.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            hi = end.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            for offset in range(0, len(ids), 40):
+                chunk = ids[offset:offset + 40]
+                canonical = {ident[:15]: ident for ident in chunk}
+                cursor = ''
+                while True:
+                    where = (SA['work_order'] + ' IN ('
+                             + ','.join(_soql(key) for key in chunk) + ')'
+                             + ' AND SchedStartTime >= ' + lo
+                             + ' AND SchedStartTime < ' + hi)
+                    if cursor:
+                        where += ' AND Id > ' + _soql(cursor)
+                    rows = self._query(
+                        'SELECT Id,' + SA['work_order'] + ' FROM '
+                        + SERVICE_APPOINTMENT + ' WHERE ' + where
+                        + ' ORDER BY Id LIMIT 2000')
+                    for row in rows:
+                        ident = _require_id(str(row.get('Id') or ''))
+                        source_id = _require_id(str(row.get(SA['work_order']) or ''))
+                        work_order = canonical.get(source_id[:15])
+                        if work_order is None or ident in seen or (
+                                cursor and ident <= cursor):
+                            raise ResultingSalesforceError(
+                                'Service Appointment identity or paging is invalid.')
+                        seen.add(ident)
+                        appointments[work_order].append(ident)
+                    if len(rows) < 2000:
+                        break
+                    cursor = _require_id(str(rows[-1].get('Id') or ''))
+        if any(not values or len(values) > 2000 for values in appointments.values()):
+            raise ResultingSalesforceError(
+                'No unique same-day Service Appointments for Work Order.')
+        return appointments
+
+    def _product_rows_for_batch(self, payloads):
+        """Read existing PIR identities, dates and issued flags by Work Order."""
+        expected = {
+            _require_id(payload['work_order_id']): _require_id(payload['lead_id'])
+            for payload in payloads
+        }
+        by_work = {key: [] for key in expected}
+        seen = set()
+        ids = list(expected)
+        for offset in range(0, len(ids), 40):
+            chunk = ids[offset:offset + 40]
+            canonical = {ident[:15]: ident for ident in chunk}
+            cursor = ''
+            while True:
+                where = PR['work_order'] + ' IN (' + ','.join(
+                    _soql(ident) for ident in chunk) + ')'
+                if cursor:
+                    where += ' AND Id > ' + _soql(cursor)
+                rows = self._query(
+                    'SELECT Id,' + PR['work_order'] + ',' + PR['lead']
+                    + ',' + PR['product'] + ',' + PR_ISSUED_COUNT
+                    + ',' + PR_APPOINTMENT_DATE
+                    + ' FROM ' + PRODUCT_RESULT + ' WHERE ' + where
+                    + ' ORDER BY Id LIMIT 2000')
+                for row in rows:
+                    ident = _require_id(str(row.get('Id') or ''))
+                    source_id = _require_id(str(row.get(PR['work_order']) or ''))
+                    work_id = canonical.get(source_id[:15])
+                    lead_id = _require_id(str(row.get(PR['lead']) or ''))
+                    if (work_id is None or
+                            expected[work_id][:15] != lead_id[:15] or
+                            ident in seen or (cursor and ident <= cursor)):
+                        raise ResultingSalesforceError(
+                            'Product Interest Result identity or paging is invalid.')
+                    seen.add(ident)
+                    by_work[work_id].append(row)
+                if len(rows) < 2000:
+                    break
+                cursor = _require_id(str(rows[-1].get('Id') or ''))
+        return by_work
+
+    def _lead_rows_for_batch(self, payloads, product_rows_by_work):
+        """Load Lead attribution only for new PIRs; interests only for sales."""
+        needs_attribution, needs_interest = set(), set()
+        for payload in payloads:
+            lead_id = _require_id(payload['lead_id'])
+            work_id = _require_id(payload['work_order_id'])
+            existing = {
+                str(row.get(PR['product']) or '').casefold()
+                for row in product_rows_by_work[work_id]
+            }
+            if any(str(item['product']).casefold() not in existing
+                   for item in payload['product_results']):
+                needs_attribution.add(lead_id)
+            if any(item['result'] == 'sale' for item in payload['product_results']):
+                needs_interest.add(lead_id)
+        rows_by_lead = {}
+        for leads, fields in (
+            (sorted(needs_attribution),
+             sorted(set(PIR_LEAD_COPY.values())) + [LEAD_FIELDS['product_interest']]),
+            (sorted(needs_interest - needs_attribution),
+             [LEAD_FIELDS['product_interest']]),
+        ):
+            for offset in range(0, len(leads), 40):
+                chunk = leads[offset:offset + 40]
+                canonical = {ident[:15]: ident for ident in chunk}
+                found = self._query(
+                    'SELECT Id,' + ','.join(fields) + ' FROM ' + LEAD
+                    + ' WHERE Id IN (' + ','.join(_soql(key) for key in chunk)
+                    + ') ORDER BY Id LIMIT 2000')
+                for row in found:
+                    source_id = _require_id(str(row.get('Id') or ''))
+                    ident = canonical.get(source_id[:15])
+                    if ident is None or ident in rows_by_lead:
+                        raise ResultingSalesforceError(
+                            'Lead preflight returned unexpected identities.')
+                    rows_by_lead[ident] = row
+                if any(key not in rows_by_lead for key in chunk):
+                    raise ResultingSalesforceError(
+                        'Lead preflight is incomplete; no writes were performed.')
+        return rows_by_lead
 
     def prepare(self, payloads):
         """Preflight the complete batch before any live Salesforce write."""
@@ -818,27 +992,15 @@ class ResultingSalesforceAdapter:
                     types=('datetime',))
         self._field(wo_schema, WO_APPOINTMENT_DATE, update=False,
                     types=('date',))
-        history_by_lead = {}
-        for lead_id in dict.fromkeys(
-            _require_id(payload['lead_id']) for payload in payloads
-        ):
-            rows = self._query(
-                'SELECT Id,' + WO_LEAD + ',' + WO['dispo']
-                + ',' + WO_APPOINTMENT_DATETIME + ',' + WO_APPOINTMENT_DATE
-                + ' FROM ' + WORK_ORDER
-                + ' WHERE ' + WO_LEAD + ' = ' + _soql(lead_id)
-                + ' ORDER BY ' + WO_APPOINTMENT_DATETIME + ' DESC LIMIT 2000'
-            )
-            if any(str(row.get(WO_LEAD) or '') != lead_id for row in rows):
-                raise ResultingSalesforceError(
-                    'Historical Work Order does not match the selected Lead.'
-                )
-            history_by_lead[lead_id] = rows
+        history_by_lead = self._historical_by_lead(payloads)
         pending_dispositions = {
             _require_id(payload['work_order_id']): WORK_ORDER_DISPO[payload['dispo']]
             for payload in payloads
         }
 
+        appointment_ids_by_work = self._appointments_for_batch(payloads)
+        product_rows_by_work = self._product_rows_for_batch(payloads)
+        lead_rows = self._lead_rows_for_batch(payloads, product_rows_by_work)
         operations = []
         # Different Work Orders can refer to the same Lead. Accumulate pivot
         # additions across the whole End of Day batch; never overwrite a pivot
@@ -848,7 +1010,7 @@ class ResultingSalesforceAdapter:
             work_order_id = _require_id(payload['work_order_id'])
             lead_id = _require_id(payload['lead_id'])
             mod_id = _require_id(payload['mod_id'])
-            appointment_ids = self._appointment_ids(work_order_id, payload['day'])
+            appointment_ids = appointment_ids_by_work[work_order_id]
 
             appointment_status = self._choice(
                 sa_status, payload['fields']['appointment_status']
@@ -991,7 +1153,8 @@ class ResultingSalesforceAdapter:
             if sold:
                 current = lead_interest_in_batch.get(lead_id)
                 if current is None:
-                    current = self._lead_product_interest(lead_id)
+                    current = str(
+                        lead_rows[lead_id].get(LEAD_FIELDS['product_interest']) or '')
                 merged, changed = self._merge_products(current, sold)
                 lead_interest_in_batch[lead_id] = merged
                 if changed:
@@ -999,7 +1162,10 @@ class ResultingSalesforceAdapter:
                         lead_fields['product_interest'], merged
                     ) if lead_fields['product_interest'].get('type') == 'multipicklist' else merged
             plan.append(('update', LEAD, lead_id, lead_values))
-            plan.extend(self._product_operations(payload, pr_schema, lead_schema))
+            plan.extend(self._product_operations(
+                payload, pr_schema, lead_schema,
+                existing_rows=product_rows_by_work[work_order_id],
+                attribution_row=lead_rows.get(lead_id)))
             operations.append(plan)
         return operations
 

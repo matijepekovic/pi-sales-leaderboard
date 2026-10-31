@@ -6,6 +6,38 @@ import json
 import time
 
 
+def _apply_remote_changes(local, previous, incoming):
+    """Three-way update: only fields changed remotely can replace local values."""
+    if not (isinstance(local, dict) and isinstance(previous, dict)
+            and isinstance(incoming, dict)):
+        return incoming if previous != incoming else local
+    merged = dict(local)
+    for key in set(previous) | set(incoming):
+        if key not in incoming:
+            merged.pop(key, None)
+        elif key not in previous:
+            merged[key] = incoming[key]
+        elif previous[key] != incoming[key]:
+            if (key == 'checkbox_values' and isinstance(previous[key], dict)
+                    and isinstance(incoming[key], dict)):
+                # A changed Salesforce checkbox scalar is one atomic source
+                # observation: its local edited marker must not survive while
+                # replacing just the value. Unchanged remote fields preserve
+                # the entire locally edited checkbox entry.
+                values = dict(local.get(key) or {})
+                for field in set(previous[key]) | set(incoming[key]):
+                    if previous[key].get(field) != incoming[key].get(field):
+                        if field in incoming[key]:
+                            values[field] = incoming[key][field]
+                        else:
+                            values.pop(field, None)
+                merged[key] = values
+            else:
+                merged[key] = _apply_remote_changes(
+                    local.get(key), previous[key], incoming[key])
+    return merged
+
+
 class ResultingRepository:
     def __init__(self, db):
         self.db = db
@@ -53,18 +85,36 @@ class ResultingRepository:
             raise LookupError('This MOD sheet is not part of the selected day.')
         return json.loads(row['snapshot'])
 
+    @staticmethod
+    def _archive_notes(conn, day, work_order_id, draft, reason):
+        """Save a recoverable local checkpoint before any note replacement."""
+        notes = str(draft.get('notes') or '')
+        redlines = str(draft.get('redlines') or '')
+        runs = draft.get('note_runs') or []
+        if not (notes or redlines or runs):
+            return
+        conn.execute('''INSERT INTO mod_result_note_backups
+            (day,work_order_id,saved_at,reason,notes,redlines,note_runs)
+            VALUES (?,?,?,?,?,?,?)''',
+            (day, work_order_id, time.time(), reason, notes,
+             redlines, json.dumps(runs)))
+        # Bound autosave history on small Pi disks; Clear also creates a checkpoint.
+        conn.execute('''DELETE FROM mod_result_note_backups
+            WHERE day=? AND work_order_id=? AND id NOT IN
+                (SELECT id FROM mod_result_note_backups
+                 WHERE day=? AND work_order_id=?
+                 ORDER BY id DESC LIMIT 30)''',
+            (day, work_order_id, day, work_order_id))
+
     def refresh(self, day, records, external_drafts=None, market_segment=None,
-                *, clear_local=False):
-        """Apply a verified Salesforce snapshot atomically.
+                *, clear_local=False, initial_only=False):
+        """Reconcile explicit Salesforce Refresh against its last remote baseline.
 
-        Salesforce owns every resulting field, even for completed sheets.
-        Locally edited MOD Notes and redlines are the only normal Refresh
-        exceptions. Refresh cancels any manual override. Successful End-of-Day
-        receipt timestamps survive only while Salesforce still has a result.
-
-        Clear also discards local Notes before importing the same verified
-        Salesforce snapshot. Remote-note baselines distinguish local edits
-        from older Salesforce notes even when other controls were edited.
+        Unchanged remote fields never overwrite local edits. Salesforce changes
+        win only their affected fields, including cancellations. Locally edited
+        MOD Notes and red ink are protected even when other remote fields move.
+        Existing drafts without a remote baseline are treated conservatively.
+        Clear is the explicit local reset and archives notes before replacing.
         """
         external_drafts = external_drafts or {}
         if market_segment is not None and (
@@ -76,15 +126,20 @@ class ResultingRepository:
         with self.db.connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
             conn.execute('INSERT OR IGNORE INTO mod_result_days(day) VALUES(?)', (day,))
-            state = conn.execute('SELECT submitting FROM mod_result_days WHERE day=?', (day,)).fetchone()
+            state = conn.execute('SELECT submitting,refreshed_at FROM mod_result_days WHERE day=?',
+                                 (day,)).fetchone()
             if state['submitting']:
                 raise ValueError('Cannot refresh while end-of-day submission is running.')
-            # Persist the actual import scope transactionally with the sheets.
-            # Changing Settings later must not silently change Select MOD.
+            if initial_only and (state['refreshed_at'] > 0 or conn.execute(
+                    'SELECT 1 FROM mod_result_sheets WHERE day=? LIMIT 1',
+                    (day,)).fetchone()):
+                # Atomic guard against a background import queued just before
+                # the user began editing. Only explicit Refresh can reconcile.
+                return False
             if market_segment is not None:
                 market_key = 'mod_result_market:' + day
-                previous = conn.execute(
-                    'SELECT value FROM meta WHERE key=?', (market_key,)).fetchone()
+                previous = conn.execute('SELECT value FROM meta WHERE key=?',
+                                        (market_key,)).fetchone()
                 old_market = json.loads(previous['value']) if previous else ''
                 if old_market and old_market != market_segment:
                     conn.execute(
@@ -94,89 +149,131 @@ class ResultingRepository:
                     'INSERT INTO meta(key,value) VALUES(?,?) '
                     'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
                     (market_key, json.dumps(market_segment)))
-            previous = {
+            prior_rows = {
                 row['work_order_id']: row for row in conn.execute(
                     'SELECT work_order_id,draft,revision,submitted_at,override_active '
                     'FROM mod_result_sheets WHERE day=?', (day,)
                 ).fetchall()
             }
-            if clear_local:
-                # Clear is a LOCAL reset. Inactive drafts are reset too; actual
-                # End-of-Day receipts remain intact until Salesforce says the
-                # corresponding Work Order is no longer resulted.
-                conn.execute('''UPDATE mod_result_sheets
-                    SET draft='{}',revision=revision+1,override_active=0,
-                        submit_error=''
-                    WHERE day=? AND (submitted_at IS NULL OR override_active=1)''',
-                    (day,))
-                conn.execute('DELETE FROM meta WHERE key LIKE ?',
-                             ('mod_result_sf_notes:' + day + ':%',))
             conn.execute('UPDATE mod_result_sheets SET current=0 WHERE day=?', (day,))
             for position, record in enumerate(records):
-                snapshot = asdict(record)
+                ident = record.source_id
+                old = prior_rows.get(ident)
                 conn.execute('''INSERT INTO mod_result_sheets
-                            (day,work_order_id,snapshot,current,display_order)
-                        VALUES(?,?,?,1,?)
-                        ON CONFLICT(day,work_order_id) DO UPDATE SET
-                        snapshot=excluded.snapshot,current=1,
-                        display_order=excluded.display_order''',
-                             (day, record.source_id, json.dumps(snapshot), position))
-                if record.source_id not in external_drafts:
+                    (day,work_order_id,snapshot,current,display_order)
+                    VALUES(?,?,?,1,?)
+                    ON CONFLICT(day,work_order_id) DO UPDATE SET
+                    snapshot=excluded.snapshot,current=1,
+                    display_order=excluded.display_order''',
+                    (day, ident, json.dumps(asdict(record)), position))
+                if ident not in external_drafts:
                     continue
-                old = previous.get(record.source_id)
-                remote = dict(external_drafts[record.source_id])
-                imported_notes = remote['notes']
-                key = 'mod_result_sf_notes:' + day + ':' + record.source_id
-                marker = conn.execute('SELECT value FROM meta WHERE key=?',
-                                      (key,)).fetchone()
-                prior_notes = json.loads(marker['value']) if marker else None
+                incoming = dict(external_drafts[ident])
+                previous_local = json.loads(old['draft']) if old else {}
+                baseline_key = 'mod_result_sf_baseline:' + day + ':' + ident
+                baseline_row = conn.execute(
+                    'SELECT value FROM meta WHERE key=?', (baseline_key,)).fetchone()
+                baseline = json.loads(baseline_row['value']) if baseline_row else None
+                notes_key = 'mod_result_sf_notes:' + day + ':' + ident
+                prior_note = conn.execute(
+                    'SELECT value FROM meta WHERE key=?', (notes_key,)).fetchone()
+                prior_note_text = json.loads(prior_note['value']) if prior_note else None
+
+                if clear_local or old is None:
+                    merged = dict(incoming)
+                elif baseline is not None:
+                    merged = _apply_remote_changes(previous_local, baseline, incoming)
+                elif old['revision'] == 0:
+                    # Legacy pristine rows can accept the first full remote read.
+                    merged = dict(incoming)
+                else:
+                    # No trusted comparison baseline exists for old local edits.
+                    # Establish one without mistaking those edits for Salesforce.
+                    merged = dict(previous_local)
+
                 if old and not clear_local:
-                    local = json.loads(old['draft'])
-                    # On older installations there is no marker yet; preserve
-                    # only explicitly edited legacy notes, not pristine imports.
-                    local_edited_notes = (
-                        local.get('notes', '') != (
-                            prior_notes if prior_notes is not None else imported_notes
-                        ) and (prior_notes is not None or old['revision'] > 0)
+                    prior_remote_note = (baseline.get('notes', '')
+                                         if baseline is not None else prior_note_text)
+                    locally_edited_notes = (
+                        previous_local.get('notes', '') != prior_remote_note
+                        if prior_remote_note is not None else old['revision'] > 0
                     )
-                    if local_edited_notes or (
-                        old['revision'] > 0 and local.get('note_runs')
-                    ):
-                        remote['notes'] = local['notes']
-                        remote['note_runs'] = local.get('note_runs', [])
-                    if local.get('redlines'):
-                        remote['redlines'] = local['redlines']
-                source = external_drafts[record.source_id]
-                # A Salesforce product result is already submitted even when
-                # conflicting product outcomes cannot choose one main Dispo.
-                resulted = source['dispo'] or any(
-                    item.get('result')
-                    for item in source.get('product_results', {}).values()
+                    locally_edited_notes = locally_edited_notes or bool(
+                        previous_local.get('note_runs'))
+                    if locally_edited_notes:
+                        merged['notes'] = previous_local.get('notes', '')
+                        merged['note_runs'] = previous_local.get('note_runs', [])
+                    # Redlines are user-owned, not a field in Salesforce's
+                    # projected draft. Never discard them on Refresh.
+                    merged['redlines'] = previous_local.get('redlines', '')
+
+                # A canceled Lead always takes precedence, including over a
+                # locally drafted Dispo or an old unmatched product result.
+                canceled = str(incoming.get('lead_status') or '').strip().casefold() == 'canceled'
+                new_cancellation = canceled and (
+                    baseline is None or str(baseline.get('lead_status') or '').strip().casefold() != 'canceled'
                 )
-                # Keep real submission timestamps while Salesforce confirms a
-                # result. An empty Salesforce result is authoritative too.
+                if new_cancellation:
+                    merged['dispo'] = 'cxl'
+                    merged['lead_status'] = incoming['lead_status']
+
+                # Clear must be explicit, and any note replacement is backed up.
+                if old and any(
+                    previous_local.get(key) != merged.get(key)
+                    for key in ('notes', 'redlines', 'note_runs')
+                ):
+                    self._archive_notes(
+                        conn, day, ident, previous_local,
+                        'clear' if clear_local else 'salesforce_refresh')
+
+                # The remote baseline is updated separately, never from local
+                # drafts. Failed reads never reach this SQLite transaction.
+                conn.execute('''INSERT INTO meta(key,value) VALUES(?,?)
+                    ON CONFLICT(key) DO UPDATE SET value=excluded.value''',
+                    (baseline_key, json.dumps(incoming)))
+                conn.execute('''INSERT INTO meta(key,value) VALUES(?,?)
+                    ON CONFLICT(key) DO UPDATE SET value=excluded.value''',
+                    (notes_key, json.dumps(incoming.get('notes', ''))))
+
+                remote_resulted = bool(incoming.get('dispo') or any(
+                    item.get('result') for item in
+                    incoming.get('product_results', {}).values()))
+                remote_result_changed = (baseline is not None and any(
+                    baseline.get(key) != incoming.get(key)
+                    for key in ('dispo', 'product_results', 'lead_status')))
+                if new_cancellation:
+                    remote_result_changed = True
                 receipt = old['submitted_at'] if old else None
-                completed = (receipt if receipt is not None and receipt > 0
-                             else -1.0) if resulted else None
-                if resulted:
+                if remote_resulted:
+                    completed = receipt if receipt is not None and receipt > 0 else -1.0
                     conn.execute('''UPDATE mod_result_submission_items SET
                         state='submitted',error=''
                         WHERE work_order_id=? AND state='uncertain'
                         AND job_id IN (SELECT id FROM mod_result_submission_jobs WHERE day=?)''',
-                        (record.source_id, day))
-                revised = old['revision'] if old else 0
-                if old and (clear_local or old['override_active']
-                            or remote != json.loads(old['draft'])):
-                    revised += 1
-                conn.execute('''UPDATE mod_result_sheets
-                    SET draft=?,revision=?,submitted_at=?,override_active=0,
-                        submit_error=''
-                    WHERE day=? AND work_order_id=?''',
-                    (json.dumps(remote), revised, completed, day, record.source_id))
-                conn.execute('''INSERT INTO meta(key,value) VALUES(?,?)
-                    ON CONFLICT(key) DO UPDATE SET value=excluded.value''',
-                    (key, json.dumps(imported_notes)))
+                        (ident, day))
+                elif old and not remote_result_changed and not clear_local:
+                    # An unchanged blank remote result is not evidence that
+                    # an earlier successful local write should be replayed.
+                    completed = receipt
+                else:
+                    completed = None
+
+                override_active = (0 if (clear_local or
+                    (remote_result_changed and remote_resulted)) else
+                    int(old['override_active']) if old else 0)
+                revision = old['revision'] if old else 0
+                if old and (merged != previous_local or
+                            override_active != old['override_active']):
+                    revision += 1
+                conn.execute('''UPDATE mod_result_sheets SET
+                    draft=?,revision=?,submitted_at=?,override_active=0,
+                    submit_error='' WHERE day=? AND work_order_id=?''',
+                    (json.dumps(merged), revision, completed, day, ident))
+                if override_active:
+                    conn.execute('''UPDATE mod_result_sheets SET override_active=1
+                        WHERE day=? AND work_order_id=?''', (day, ident))
             conn.execute('UPDATE mod_result_days SET refreshed_at=? WHERE day=?', (now, day))
+            return True
 
     def override(self, day, work_order_id, revision):
         """Explicitly unlock exactly one completed sheet for End of Day."""
@@ -206,6 +303,16 @@ class ResultingRepository:
                 raise LookupError('No MOD sheets have been loaded for this day.')
             if day_state['submitting']:
                 raise ValueError('Submission in progress; editing is locked.')
+            before = conn.execute('''SELECT draft FROM mod_result_sheets
+                    WHERE day=? AND work_order_id=? AND revision=?
+                    AND (submitted_at IS NULL OR override_active=1)''',
+                    (day, work_order_id, int(revision))).fetchone()
+            if before is None:
+                raise ValueError('Sheet changed or already submitted. Reload before editing.')
+            prior = json.loads(before['draft'])
+            if any(prior.get(key) != draft.get(key)
+                   for key in ('notes', 'redlines', 'note_runs')):
+                self._archive_notes(conn, day, work_order_id, prior, 'local_edit')
             result = conn.execute('''UPDATE mod_result_sheets SET draft=?,revision=revision+1
                     WHERE day=? AND work_order_id=? AND revision=?
                     AND (submitted_at IS NULL OR override_active=1)''',
@@ -314,9 +421,11 @@ class ResultingRepository:
                                  (day,)).fetchone()
             if not state or not state['submitting'] or not state['mod_user_id']:
                 raise ValueError('Queued MOD submission lost its reserved day.')
+            now = time.time()
             conn.execute('''UPDATE mod_result_submission_jobs SET
-                state='running', started_at=? WHERE id=? AND state='queued' ''',
-                (time.time(), job['id']))
+                state='running', started_at=?, stage='Preparing submission',
+                stage_started=? WHERE id=? AND state='queued' ''',
+                (now, now, job['id']))
             records = conn.execute('''SELECT i.work_order_id,s.snapshot,s.draft
                 FROM mod_result_submission_items i
                 JOIN mod_result_sheets s ON s.day=? AND s.work_order_id=i.work_order_id
@@ -331,6 +440,17 @@ class ResultingRepository:
                 raise ValueError('Queued MOD sheet records changed. Submission was not started.')
             return {'job_id': job['id'], 'day': day, 'mod_id': state['mod_user_id'],
                     'queued_at': job['created_at'], 'rows': rows}
+
+    def submission_stage(self, job_id, stage):
+        """Persist the active preflight stage for the progress dashboard."""
+        if not isinstance(stage, str) or not 0 < len(stage) <= 120:
+            raise ValueError('Invalid submission stage.')
+        with self.db.connect() as conn:
+            updated = conn.execute('''UPDATE mod_result_submission_jobs
+                SET stage=?,stage_started=? WHERE id=? AND state='running' ''',
+                (stage, time.time(), job_id))
+            if updated.rowcount != 1:
+                raise LookupError('Active submission stage is unavailable.')
 
     def submission_item(self, job_id, work_order_id, state, error=''):
         if state not in ('pending','processing','submitted','uncertain'):
@@ -349,7 +469,7 @@ class ResultingRepository:
                 ('failed' if error else 'completed', time.time(), str(error)[:500], job_id))
 
     def latest_submission(self, day, job_id=None):
-        fields = 'id,day,state,created_at,started_at,finished_at,error'
+        fields = 'id,day,state,created_at,started_at,finished_at,stage,stage_started,error'
         if job_id is not None:
             job = self.db.one('SELECT ' + fields +
                               ' FROM mod_result_submission_jobs WHERE id=?', (job_id,))
@@ -367,7 +487,9 @@ class ResultingRepository:
         items = self.db.rows('''SELECT work_order_number,state,error
             FROM mod_result_submission_items WHERE job_id=? ORDER BY position''',
             (job['id'],))
-        return {**job, 'items': items,
+        elapsed = max(0, int(time.time() - job['stage_started'])) if (
+            job['state'] == 'running' and job['stage_started']) else 0
+        return {**job, 'items': items, 'stage_elapsed_seconds': elapsed,
                 'total': len(items),
                 'submitted': sum(item['state']=='submitted' for item in items),
                 'pending': sum(item['state']=='pending' for item in items),

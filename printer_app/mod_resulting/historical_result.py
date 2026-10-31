@@ -1,4 +1,4 @@
-"""Derive Lead.Previous_Result__c from the most recent older resulted Work Order.
+"""Derive Lead.Previous_Result__c from the immediately preceding appointment.
 
 Never infer it from the Work Order currently being resulted, today's Dispo, or
 LastModifiedDate. Salesforce WorkOrder.Lead__c and Appointment_Date_Time__c
@@ -50,9 +50,9 @@ def historical_previous_result(rows, current_id, *, timezone_name,
     """Return one allowed Previous Result or None (intentionally clear).
 
     Current appointment is identified by Work Order Id, never by current
-    disposition. A Work Order must be earlier and have a nonblank disposition.
-    Unknown/unsupported *latest* historical result returns None, not a
-    search for an older, qualifying outcome. Ambiguous dating fails safely.
+    disposition. The immediately preceding appointment wins even if unresulted.
+    Blank or unsupported prior outcomes clear the field; never search farther
+    back. Ambiguous dating still fails safely.
     """
     zone = ZoneInfo(timezone_name)
     current_id = _require_id(current_id)
@@ -78,13 +78,15 @@ def historical_previous_result(rows, current_id, *, timezone_name,
         if ident == current_id:
             continue
         result = str(pending.get(ident, row.get('Dispo__c')) or '').strip()
-        if not result:
-            continue  # An unresulted work order never becomes a Previous Result.
         start, precise = _appointment_start(row, zone)
         if start is None:
-            raise ResultingSalesforceError(
-                'A previously resulted Work Order has no appointment date.'
-            )
+            # An undated result is ambiguous. An undated unresulted record
+            # cannot contribute a Previous Result.
+            if result:
+                raise ResultingSalesforceError(
+                    'A previously resulted Work Order has no appointment date.'
+                )
+            continue
         # Same-calendar-day date-only records cannot be reliably ordered
         # against a precise timestamp or another date-only record.
         if (start.date() == current_start.date()
@@ -98,4 +100,4 @@ def historical_previous_result(rows, current_id, *, timezone_name,
     if not earlier:
         return None
     latest = max(earlier, key=lambda item: (item[0], item[1]))
-    return HISTORICAL_RESULTS.get(latest[2].casefold())
+    return HISTORICAL_RESULTS.get(latest[2].casefold()) if latest[2] else None

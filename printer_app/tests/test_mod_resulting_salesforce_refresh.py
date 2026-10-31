@@ -20,7 +20,7 @@ RECORD = ModSheetRecord(
 )
 
 
-def test_refresh_salesforce_wins_over_local_fields_except_edited_notes(tmp_path):
+def test_refresh_merges_changed_salesforce_fields_and_preserves_local_edits(tmp_path):
     repo = ResultingRepository(Database(tmp_path / 'printer.sqlite'))
     remote = clean_draft({
         'dispo':'pns', 'notes':'WorkOrder.MOD_Notes__c from Salesforce',
@@ -56,7 +56,7 @@ def test_refresh_salesforce_wins_over_local_fields_except_edited_notes(tmp_path)
     repo.refresh(DAY, [RECORD, other], external_drafts={different:refreshed})
     sheet = repo.sheets(DAY)[1]
     assert sheet['draft'] == dict(
-        refreshed, notes='My notes during the day', redlines='MY REDLINE'
+        refreshed, notes='My notes during the day', redlines='MY REDLINE', review=True
     )
     assert sheet['submitted_at'] == -1.0
     assert sheet['revision'] > 1
@@ -238,7 +238,7 @@ def test_raw_checkbox_text_hydrates_visually_and_survives_refresh_without_conver
     edited = clean_draft(dict(remote, notes='MOD note only'))
     repo.save_draft(DAY, WORK, edited, sheet['revision'])
     assert repo.sheets(DAY)[0]['draft']['checkbox_values']['docs']['edited'] is False
-    # Salesforce still wins on Refresh, including after a local popup edit.
+    # Unchanged Salesforce values must not undo a local popup edit.
     changed = clean_draft(dict(edited, checkbox_values={
         **edited['checkbox_values'],
         'docs': {'value': 'Checked in office', 'edited': True},
@@ -246,7 +246,7 @@ def test_raw_checkbox_text_hydrates_visually_and_survives_refresh_without_conver
     repo.save_draft(DAY, WORK, changed, repo.sheets(DAY)[0]['revision'])
     repo.refresh(DAY, [RECORD], external_drafts={WORK: remote})
     assert repo.sheets(DAY)[0]['draft']['checkbox_values']['docs'] == {
-        'value': '  Completed  ', 'edited': False
+        'value': 'Checked in office', 'edited': True
     }
 
 
@@ -545,4 +545,4 @@ def test_refresh_preserves_existing_red_note_runs_when_text_matches_remote(tmp_p
     actual = repo.sheets(DAY)[0]['draft']
     assert actual['notes'] == 'Same note'
     assert actual['note_runs'] == [{'text':'Same note', 'red':True}]
-    assert actual['review'] is False
+    assert actual['review'] is True

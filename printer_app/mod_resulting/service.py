@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time as wall_time
+import logging
 import time
 from zoneinfo import ZoneInfo
 
@@ -28,7 +29,7 @@ class ResultingService:
     def day(self):
         return datetime.now(self.zone).date().isoformat()
 
-    def refresh(self, day, *, clear_local=False):
+    def refresh(self, day, *, clear_local=False, initial_only=False):
         # The same normalized records and market settings used by Printer;
         # canceled/unconfirmed results are included for live routing changes.
         config = self.settings_repository.settings()
@@ -49,18 +50,18 @@ class ResultingService:
         external = reader(records) if callable(reader) else {}
         if not isinstance(external, dict):
             raise ValueError('Salesforce resulting refresh returned invalid records.')
-        # A successful read is authoritative, including blank Salesforce
-        # values. Do not allow stale local test fields to survive Refresh.
-        normalized = {
-            record.source_id: clean_draft(external.get(record.source_id, {}))
-            for record in records
-        }
-        self.repository.refresh(
+        # A partial remote response must never become blank local data.
+        if callable(reader) and set(external) != {record.source_id for record in records}:
+            raise ValueError('Salesforce resulting refresh returned incomplete records.')
+        normalized = {key: clean_draft(value) for key, value in external.items()}
+        if clear_local and not callable(reader):
+            normalized = {record.source_id: clean_draft({}) for record in records}
+        applied = self.repository.refresh(
             day, records, external_drafts=normalized,
             market_segment=kwargs['market_segment'],
-            clear_local=clear_local,
+            clear_local=clear_local, initial_only=initial_only,
         )
-        return len(records)
+        return len(records) if applied is not False else 0
 
     def clear_local(self, day):
         """Discard local drafts and restore verified Salesforce values.
@@ -98,16 +99,11 @@ class ResultingService:
         day = day or self.day()
         market = self.repository.imported_market(day)
         if not market:
-            # Upgrade legacy days that were imported before market provenance
-            # was stored. Reimport using the saved MOD Settings scope; drafts
-            # are still preserved by the repository.
-            config = self.settings_repository.settings()
-            if not config or not config.market_segment:
-                raise ValueError('Imported MOD sheets have no market. Set the market in MOD Settings and Refresh.')
-            self.refresh(day)
-            market = self.repository.imported_market(day)
-        if not market:
-            raise ValueError('No imported MOD market is available.')
+            # Never refresh existing work implicitly just to populate Select
+            # MOD: only the explicit Refresh button may reconcile remote data.
+            raise ValueError(
+                'Imported MOD sheets have no market. Press Refresh to load the '
+                'Salesforce market before selecting a MOD.')
         return self.writer.mod_users(market)
 
     def dropdowns(self):
@@ -229,6 +225,8 @@ class ResultingService:
     def _apply_batch(self, day, mod_id, rows, *, job_id=None, resulted_on=None):
         """Single Salesforce write path for direct and background submissions."""
         resulting_date = resulted_on or self.day()
+        if job_id is not None:
+            self.repository.submission_stage(job_id, 'Reading Lead appointment dates')
         date_reader = getattr(self.writer, 'lead_appointment_dates', None)
         leads = sorted({row['snapshot'].get('lead_source_id', '')
                         for row in rows if row['snapshot'].get('lead_source_id')})
@@ -239,10 +237,15 @@ class ResultingService:
             dict(row, day=day), mod_id, resulted_on=resulting_date,
             lead_appointment_date=dates.get(row['snapshot'].get('lead_source_id', ''), ''),
         ) for row in rows]
-        # Preflight the entire batch before any Salesforce write.
+        # The dashboard must explain preflight before the first Work Order.
+        if job_id is not None:
+            self.repository.submission_stage(
+                job_id, 'Checking Salesforce records and validating the batch')
         plans = self.writer.prepare(batch)
         if len(plans) != len(rows):
             raise ValueError('Salesforce preflight produced an incomplete submission plan.')
+        if job_id is not None:
+            self.repository.submission_stage(job_id, 'Writing Salesforce results')
         sent = 0
         for row, plan in zip(rows, plans):
             ident = row['work_order_id']
@@ -322,9 +325,11 @@ class ResultingDailyPull:
             return False
         day = local.date().isoformat()
         state = self.service.repository.day(day)
-        target = local.replace(hour=8, minute=0, second=0, microsecond=0).timestamp()
+        # The 8 AM pull is initial-only; existing drafts cannot be replaced
+        # by background work. Explicit Refresh is the only reconciliation.
         if state and (state['submitting'] or state['submitted_at'] or
-                      state['refreshed_at'] >= target):
+                      state['refreshed_at'] > 0 or
+                      self.service.repository.sheets(day)):
             return False
         last = self.service.repository.auto_attempt(day)
         return float(last.get('at') or 0) + 600 <= stamp
@@ -334,7 +339,18 @@ class ResultingDailyPull:
         day = datetime.fromtimestamp(stamp,self.service.zone).date().isoformat()
         self.service.repository.record_auto_attempt(day,stamp)
         try:
-            return {'ok':True,'count':self.service.refresh(day)}
+            count = self.service.refresh(day, initial_only=True)
+            if count:
+                prepare = getattr(self.service.writer, 'prepare_metadata', None)
+                if callable(prepare):
+                    try:
+                        prepare()
+                    except Exception:
+                        # Warming a cache is optional, never reason to discard
+                        # a verified morning MOD import. EOD revalidates.
+                        logging.getLogger(__name__).warning(
+                            'MOD write metadata prewarm unavailable; preflight will retry')
+            return {'ok':True,'count':count}
         except Exception as exc:
             self.service.repository.record_auto_attempt(day,stamp,str(exc))
             return {'ok':False,'error':str(exc)[:250]}

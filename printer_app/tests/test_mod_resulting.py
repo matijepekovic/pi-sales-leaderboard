@@ -64,7 +64,7 @@ def test_times_are_am_pm_and_disallow_unexpected_draft_fields():
         clean_draft({'salesforce_api_field':'Status'})
 
 
-def test_refresh_preserves_only_local_notes_and_updates_routing(tmp_path):
+def test_refresh_updates_changed_sf_fields_and_keeps_unrelated_local_work(tmp_path):
     repo = ResultingRepository(Database(tmp_path/'printer.sqlite'))
     repo.refresh(DAY, [RECORD], external_drafts={WORK:clean_draft({})})
     revision = repo.save_draft(
@@ -79,7 +79,9 @@ def test_refresh_preserves_only_local_notes_and_updates_routing(tmp_path):
                       'notes':'Salesforce note'})
     repo.refresh(DAY, [changed], external_drafts={WORK:sf})
     row = repo.sheets(DAY)[0]
-    assert row['draft'] == dict(sf, notes='Do not lose')
+    # Salesforce changed Dispo, Numbers and Need; unchanged Review keeps its
+    # local value, while local MOD Notes remain protected.
+    assert row['draft'] == dict(sf, notes='Do not lose', review=True)
     assert row['submitted_at'] == -1.0  # Already resulted in Salesforce.
     assert row['snapshot']['assigned_service_resources'] == ['Reassigned Rep']
     assert row['revision'] == 2
@@ -416,12 +418,20 @@ def test_select_mod_inherits_market_from_the_imported_daily_batch(tmp_path):
     assert chosen_markets == ['Olympia', 'Olympia', 'Olympia', 'Seattle']
 
 
-def test_preexisting_import_without_market_automatically_reimports_its_scope(tmp_path):
+def test_preexisting_import_without_market_requires_explicit_refresh(tmp_path):
     service, repository, source, writer = _service(tmp_path)
     repository.refresh(DAY, [RECORD])  # Old version, no market metadata.
+    repository.save_draft(DAY, WORK, clean_draft({
+        'dispo':'pns', 'notes':'Important local notes',
+    }), 0)
     assert repository.imported_market(DAY) == ''
-    assert service.users(DAY) == [{'id':USER,'name':'MOD Example'}]
+    with pytest.raises(ValueError, match='Press Refresh'):
+        service.users(DAY)
+    assert source.queries == []  # No implicit Salesforce re-import.
+    assert repository.sheets(DAY)[0]['draft']['notes'] == 'Important local notes'
+    service.refresh(DAY)  # The explicit user action.
     assert repository.imported_market(DAY) == 'Olympia'
+    assert repository.sheets(DAY)[0]['draft']['notes'] == 'Important local notes'
     assert source.queries[-1]['market_segment'] == 'Olympia'
 
 
@@ -577,7 +587,7 @@ def test_completed_override_unlocks_one_sheet_and_resubmits_with_other_jobs(tmp_
     authoritative = clean_draft({
         'dispo':'cxl', 'lead_status':'Canceled', 'notes':'Salesforce note'
     })
-    writer.read_results = lambda records: {WORK:authoritative}
+    writer.read_results = lambda records: {WORK:authoritative, second.source_id:clean_draft({})}
     service.refresh(DAY)
     service.set_mod(DAY, USER)
     rows = repo.sheets(DAY)
@@ -635,7 +645,7 @@ def test_completed_override_unlocks_one_sheet_and_resubmits_with_other_jobs(tmp_
                         repo.sheets(DAY)[0]['revision'])
 
 
-def test_refresh_revokes_override_and_only_keeps_locally_edited_notes(tmp_path):
+def test_unchanged_refresh_preserves_override_and_all_locally_edited_fields(tmp_path):
     service, repo, source, writer = _service(tmp_path)
     remote = clean_draft({'dispo':'cxl', 'lead_status':'Canceled',
                           'notes':'Salesforce original', 'need':'From Salesforce'})
@@ -651,13 +661,13 @@ def test_refresh_revokes_override_and_only_keeps_locally_edited_notes(tmp_path):
     service.refresh(DAY)
     sheet = repo.sheets(DAY)[0]
     assert sheet['submitted_at'] == -1.0
-    assert sheet['override_active'] == 0
-    assert sheet['draft'] == dict(remote, notes='My locally edited notes')
-    with pytest.raises(ValueError, match='Reload'):
-        service.save(DAY, WORK, clean_draft({'dispo':'sale'}), sheet['revision'])
+    assert sheet['override_active'] == 1
+    assert sheet['draft'] == clean_draft({
+        'dispo':'sale', 'notes':'My locally edited notes', 'need':'Local only',
+        'sale_products':{'Roofing':{'price':'12000','deposit':'0'}}
+    })
     assert writer.applied == []
 
-    service.override(DAY, WORK, sheet['revision'])
     assert service.clear_local(DAY) == 1
     reset = repo.sheets(DAY)[0]
     assert reset['draft'] == remote

@@ -334,12 +334,13 @@ def test_long_press_textarea_preserves_multiline_source_value_on_phone(mod_brows
                  'length':3000,'choices':[]},
     }
     writer.read_results = lambda rows: {
-        record.source_id: clean_draft({
+        r.source_id: (clean_draft({
             'docs':True,
             'checkbox_values': {
                 'docs':{'value':'Reviewed\nPending upload','edited':False},
             },
-        }),
+        }) if r.source_id == record.source_id else clean_draft({}))
+        for r in rows
     }
     service.refresh(service.day())
     page.goto(origin + '/mod-resulting')
@@ -383,7 +384,7 @@ def test_completed_override_button_unlocks_one_sheet_and_refresh_restores_salesf
     authoritative = clean_draft({
         'dispo':'cxl', 'lead_status':'Canceled', 'notes':'Salesforce note'
     })
-    writer.read_results = lambda records: {first_id:authoritative}
+    writer.read_results = lambda records: {r.source_id:(authoritative if r.source_id == first_id else clean_draft({})) for r in records}
     service.refresh(day)
 
     page.goto(origin + '/mod-resulting')
@@ -436,12 +437,12 @@ def test_completed_override_button_unlocks_one_sheet_and_refresh_restores_salesf
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     first = page.locator('.mod-sheet').first
-    expect(first).to_have_attribute('data-submitted','yes')
-    expect(first.locator('.override-sheet')).to_be_visible()
-    expect(first.locator('[data-key=dispo]')).to_have_value('cxl')
+    expect(first).to_have_attribute('data-submitted','no')
+    expect(first.locator('.override-sheet')).to_have_count(0)
+    expect(first.locator('[data-key=dispo]')).to_have_value('pns')
     expect(first.locator('[data-key=notes]')).to_have_value(
         'Local note survives refresh')
-    assert service.repository.sheets(day)[0]['override_active'] == 0
+    assert service.repository.sheets(day)[0]['override_active'] == 1
     assert writer.applied == []
 
 
@@ -497,8 +498,8 @@ def test_mod_sheets_search_customers_and_assigned_reps_only(mod_browser):
     expect(page.locator('.mod-sheet').first.locator('[data-key=notes]')).to_have_value('Black comment')
     expect(page.locator('.mod-sheet').first.locator('[data-key=redlines]')).to_have_value('REDLINE')
     row = service.repository.sheets(service.day())[0]
-    assert row['draft']['dispo'] == ''  # Salesforce returned no disposition.
-    assert row['draft']['cxl_at_lead'] is False
+    assert row['draft']['dispo'] == 'cxl'  # Remote was unchanged; local edit survives.
+    assert row['draft']['cxl_at_lead'] is True
 
     with page.expect_response('**/mod-resulting/api/mod') as response:
         page.locator('#dailyMod').select_option(MOD)
@@ -599,7 +600,8 @@ def test_clear_discards_local_notes_and_restores_salesforce_without_writes(mod_b
     calls = []
     def remote_results(records):
         calls.append(tuple(r.source_id for r in records))
-        return {r.source_id: remote for r in records if r.source_id == ident}
+        return {r.source_id: (remote if r.source_id == ident else clean_draft({}))
+                for r in records}
     writer.read_results = remote_results
 
     page.locator('#clearLocal').click()
@@ -781,13 +783,14 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     assert draft['notes'] == 'Black comment above redlines.'
     assert draft['redlines'] == 'REPLACE TRIM WITH FULL SCOPE.'
     assert draft['note_runs'] == []
-    assert draft['dnr_reason'] == ''
-    assert draft['sale_products'] == {}
-    assert draft['call_1'] == ''
-    assert draft['call_2'] == ''
-    assert draft['review'] is False
-    assert draft['dispo'] == ''
-    assert draft['numbers'] == ''
+    assert draft['dnr_reason'] == 'Roofing'
+    assert draft['sale_products']['Roofing']['price'] == '17850'
+    assert draft['sale_products']['Siding']['price'] == '0'
+    assert draft['call_1'] == '10:15 AM'
+    assert draft['call_2'] == '10:27 AM'
+    assert draft['review'] is True
+    assert draft['dispo'] == 'sale'
+    assert draft['numbers'] == '25,000\n17,850'
     first.locator('[data-key=review]').uncheck()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
@@ -893,13 +896,12 @@ def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, vi
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     saved = service.repository.sheets(service.day())[0]['draft']
-    assert saved['dnr_reason'] == ''
-    assert saved['sale_products'] == {}
-    assert saved['cxl_at_lead'] is False
-    assert saved['call_1'] == ''
-    assert saved['call_2'] == ''
-    assert saved['product_results'] == {}
-    assert saved['dispo'] == ''
+    # A Refresh with unchanged Salesforce data must retain local editor work.
+    assert saved['dnr_reason'] == 'Roofing'
+    assert saved['call_1'] == '10:15 AM'
+    assert saved['call_2'] == '1:27 PM'
+    assert saved['product_results']['Roofing']['result'] == 'np'
+    assert saved['dispo'] == 'pns'
     assert not writer.applied
     evidence('editor-dialogs-' + str(viewport[0]))
 
@@ -997,7 +999,7 @@ def test_existing_split_notes_remain_in_separate_redlines_editor(mod_browser):
     assert saved['notes'] == 'Legacy first note\nAdditional black note'
     assert saved['redlines'] == 'Legacy second note\nAdditional redline'
     assert saved['note_runs'] == []
-    assert saved['dispo'] == ''
+    assert saved['dispo'] == 'pns'
     assert not writer.applied
 
 
@@ -1039,11 +1041,12 @@ def test_price_overrides_stay_in_original_sheet_cells(mod_browser, viewport):
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     saved = service.repository.sheets(service.day())[0]['draft']
-    assert saved['start_price_override'] == ''
-    assert saved['final_price_override'] == ''
-    assert saved['deposit_override'] == ''
-    assert outcome_fields(saved) is None
-    assert not any(saved[key] for key in ('docs','review','ninety_min'))
+    assert saved['start_price_override'] == '27000'
+    assert saved['final_price_override'] == '16000'
+    assert saved['deposit_override'] == '2500/159.50'
+    assert saved['dispo'] == 'pns'
+    assert outcome_fields(saved) is not None
+    assert all(saved[key] for key in ('docs','review','ninety_min'))
     assert not writer.applied
     assert page.evaluate('window.modCspViolations') == []
 
@@ -1064,15 +1067,16 @@ def test_dnr_editor_respects_refresh_from_salesforce(mod_browser):
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     draft = service.repository.sheets(service.day())[0]['draft']
-    assert outcome_fields(draft) is None
-    assert draft['dnr'] is False and draft['dnr_reason'] == ''
+    assert outcome_fields(draft)['lead_status'] == 'Do Not Call'
+    assert draft['dnr'] is True and draft['dnr_reason'] == 'Roofing'
 
     first.locator('[data-key=dnr]').uncheck()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     draft = service.repository.sheets(service.day())[0]['draft']
-    assert outcome_fields(draft) is None
+    assert outcome_fields(draft)['lead_status'] == 'Nurturing'
     assert draft['dnr'] is False
+    assert draft['dispo'] == 'pns'
     assert not writer.applied
 
 
@@ -1109,9 +1113,9 @@ def test_dnr_unchecks_when_dialog_closes_without_a_reason(mod_browser):
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     saved = service.repository.sheets(service.day())[0]['draft']
-    assert saved['dispo'] == ''
+    assert saved['dispo'] == 'pns'
     assert saved['dnr'] is False and saved['dnr_reason'] == ''
-    assert outcome_fields(saved) is None
+    assert outcome_fields(saved)['lead_status'] == 'Nurturing'
     assert not writer.applied
 
 def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
@@ -1155,8 +1159,8 @@ def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
     saved = service.repository.sheets(service.day())[0]['draft']
     expected = {'review': False, 'numbers': '', 'notes': 'Final black comment',
                 'redlines': 'FINAL REDLINE',
-                'call_1': '',
-                'call_2': '', 'dispo': '', 'cxl_at_lead': False}
+                'call_1': '10:15 AM',
+                'call_2': '1:27 PM', 'dispo': 'cxl', 'cxl_at_lead': True}
     for key, value in expected.items():
         assert saved[key] == value, (key, saved[key])
         control = first.locator('[data-key=' + key + ']')
