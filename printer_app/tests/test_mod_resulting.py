@@ -100,8 +100,11 @@ class Source:
 
 
 class Writer:
-    def __init__(self): self.plans=[];self.applied=[]
+    def __init__(self): self.plans=[];self.applied=[];self.date_lookups=[]
     def mod_users(self, market_segment): return [{'id':USER,'name':'MOD Example'}]
+    def lead_appointment_dates(self, lead_ids):
+        self.date_lookups.append(tuple(lead_ids))
+        return {lead_id: DAY for lead_id in lead_ids}
     def prepare(self,batch):
         self.plans.extend(batch)
         return [{'work_order_id':item['work_order_id']} for item in batch]
@@ -115,6 +118,29 @@ def _service(tmp_path):
     service=ResultingService(repo,source,writer,settings,'America/Los_Angeles',
                              allow_salesforce_writes=True)
     return service,repo,source,writer
+
+
+def test_eod_uses_salesforce_lead_date_for_past_flow_branch(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    service.refresh(DAY)
+    service.set_mod(DAY,USER)
+    repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
+    writer.lead_appointment_dates=lambda lead_ids: {LEAD:'2026-10-25'}
+    assert service.submit(DAY)['submitted']==1
+    context=writer.plans[0]['product_result_context']
+    assert all(row['appointment_date_source']=='lead' for row in context.values())
+    assert all(row['appointment_date']=='2026-10-25' for row in context.values())
+
+
+def test_eod_fails_closed_when_lead_date_batch_incomplete(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    service.refresh(DAY)
+    service.set_mod(DAY,USER)
+    repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
+    writer.lead_appointment_dates=lambda lead_ids: {}
+    with pytest.raises(ValueError,match='lookup is incomplete'):
+        service.submit(DAY)
+    assert writer.applied==[]
 
 
 def test_clear_local_restores_salesforce_and_never_writes_to_salesforce(tmp_path):
