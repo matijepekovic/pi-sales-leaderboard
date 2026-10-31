@@ -132,15 +132,42 @@ def test_eod_uses_salesforce_lead_date_for_past_flow_branch(tmp_path):
     assert all(row['appointment_date']=='2026-10-25' for row in context.values())
 
 
-def test_eod_fails_closed_when_lead_date_batch_incomplete(tmp_path):
+def test_eod_uses_saved_appointment_date_when_lead_date_missing(tmp_path):
     service,repo,source,writer=_service(tmp_path)
     service.refresh(DAY)
     service.set_mod(DAY,USER)
     repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
     writer.lead_appointment_dates=lambda lead_ids: {}
-    with pytest.raises(ValueError,match='lookup is incomplete'):
-        service.submit(DAY)
-    assert writer.applied==[]
+    assert service.submit(DAY)['submitted']==1
+    context=writer.plans[0]['product_result_context']
+    assert all(row['appointment_date_source']=='work_order_appointment'
+               for row in context.values())
+    assert all(row['appointment_date']==DAY for row in context.values())
+
+
+def test_eod_uses_saved_date_when_lead_query_unavailable(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    service.refresh(DAY)
+    service.set_mod(DAY,USER)
+    repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
+    def unavailable(lead_ids):
+        raise RuntimeError('Lead date query unavailable')
+    writer.lead_appointment_dates=unavailable
+    assert service.submit(DAY)['submitted']==1
+    context=writer.plans[0]['product_result_context']
+    assert all(row['appointment_date']==DAY for row in context.values())
+
+
+def test_eod_lead_date_does_not_require_saved_appointment_date(tmp_path):
+    service,repo,source,writer=_service(tmp_path)
+    source.records=lambda **kwargs:[ModSheetRecord(
+        source_id=WORK,lead_source_id=LEAD,work_order_number='00001234',
+        product_interest='Roofing',work_type='Sales - Roofing')]
+    service.refresh(DAY)
+    service.set_mod(DAY,USER)
+    repo.save_draft(DAY,WORK,clean_draft({'dispo':'pns'}),0)
+    assert service.submit(DAY)['submitted']==1
+    assert writer.plans[0]['product_result_context']['Roofing']['appointment_date']==DAY
 
 
 def test_clear_local_restores_salesforce_and_never_writes_to_salesforce(tmp_path):
@@ -828,12 +855,15 @@ def test_queued_failure_records_uncertain_and_skips_successful_receipts(tmp_path
     assert status['items'][0]['state'] == 'submitted'
     assert status['items'][1]['state'] == 'uncertain'
     assert repo.day(DAY)['submitting'] == 0
-    # A new submit-all attempt must not replay the possibly-written record.
+    # A new explicit Submit All includes the unresulted sheet, not the
+    # already successfully submitted Work Order.
     writer.apply = original
-    with pytest.raises(ValueError, match='requires Salesforce confirmation'):
-        service.enqueue(DAY)
+    queued = service.enqueue(DAY)
+    assert queued['total'] == 1
     assert len(writer.applied) == 1
-    # An authoritative Salesforce Refresh can confirm the uncertain outcome.
+    assert service.process_next_submission()['submitted'] == 1
+    assert len(writer.applied) == 2
+    # Salesforce Refresh remains authoritative over recorded results.
     writer.read_results = lambda records: {
         other.source_id: clean_draft({'dispo': 'np'}),
         WORK: clean_draft({'dispo': 'pns'}),
@@ -859,8 +889,8 @@ def test_worker_restart_marks_only_inflight_item_uncertain(tmp_path):
     assert status['state'] == 'interrupted'
     assert status['failed'] == 1 and status['items'][0]['state'] == 'uncertain'
     assert repo.day(DAY)['submitting'] == 0
-    with pytest.raises(ValueError, match='requires Salesforce confirmation'):
-        service.enqueue(DAY)
+    queued = service.enqueue(DAY)
+    assert queued['total'] == 1
     assert writer.applied == []
 
 
