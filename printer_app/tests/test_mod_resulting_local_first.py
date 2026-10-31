@@ -155,3 +155,23 @@ def test_incomplete_salesforce_refresh_never_changes_local_data(tmp_path):
     with pytest.raises(ValueError, match='incomplete records'):
         service.refresh(DAY)
     assert repo.sheets(DAY) == before
+
+
+def test_preflight_stage_is_durable_and_visible_before_first_write(tmp_path):
+    service, repo, _, _ = _service(tmp_path)
+    service.refresh(DAY)
+    repo.select_mod(DAY, '005000000000001AAA', 'Example MOD')
+    repo.save_draft(DAY, WORK, _draft(dispo='pns', notes='Keep local data'), 0)
+    job = repo.enqueue_submit(DAY)
+    assert repo.latest_submission(DAY)['state'] == 'queued'
+    claimed = repo.claim_submission()
+    assert claimed['job_id'] == job['job_id']
+    status = repo.latest_submission(DAY)
+    assert status['stage'] == 'Preparing submission'
+    assert status['submitted'] == 0 and status['processing'] == 0
+    repo.submission_stage(job['job_id'], 'Checking Salesforce records')
+    updated = repo.latest_submission(DAY)
+    assert updated['stage'] == 'Checking Salesforce records'
+    assert updated['stage_elapsed_seconds'] >= 0
+    assert updated['submitted'] == 0
+    assert updated['pending'] == 1
