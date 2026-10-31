@@ -498,8 +498,8 @@ def test_mod_sheets_search_customers_and_assigned_reps_only(mod_browser):
     expect(page.locator('.mod-sheet').first.locator('[data-key=notes]')).to_have_value('Black comment')
     expect(page.locator('.mod-sheet').first.locator('[data-key=redlines]')).to_have_value('REDLINE')
     row = service.repository.sheets(service.day())[0]
-    assert row['draft']['dispo'] == ''  # Salesforce returned no disposition.
-    assert row['draft']['cxl_at_lead'] is False
+    assert row['draft']['dispo'] == 'cxl'  # Remote was unchanged; local edit survives.
+    assert row['draft']['cxl_at_lead'] is True
 
     with page.expect_response('**/mod-resulting/api/mod') as response:
         page.locator('#dailyMod').select_option(MOD)
@@ -899,8 +899,8 @@ def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, vi
     assert saved['dnr_reason'] == ''
     assert saved['sale_products'] == {}
     assert saved['cxl_at_lead'] is False
-    assert saved['call_1'] == ''
-    assert saved['call_2'] == ''
+    assert saved['call_1'] == '10:15 AM'
+    assert saved['call_2'] == '1:27 PM'
     assert saved['product_results'] == {}
     assert saved['dispo'] == ''
     assert not writer.applied
@@ -1042,11 +1042,12 @@ def test_price_overrides_stay_in_original_sheet_cells(mod_browser, viewport):
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     saved = service.repository.sheets(service.day())[0]['draft']
-    assert saved['start_price_override'] == ''
-    assert saved['final_price_override'] == ''
-    assert saved['deposit_override'] == ''
-    assert outcome_fields(saved) is None
-    assert not any(saved[key] for key in ('docs','review','ninety_min'))
+    assert saved['start_price_override'] == '27000'
+    assert saved['final_price_override'] == '16000'
+    assert saved['deposit_override'] == '2500/159.50'
+    assert saved['dispo'] == 'pns'
+    assert outcome_fields(saved) is not None
+    assert all(saved[key] for key in ('docs','review','ninety_min'))
     assert not writer.applied
     assert page.evaluate('window.modCspViolations') == []
 
@@ -1067,15 +1068,16 @@ def test_dnr_editor_respects_refresh_from_salesforce(mod_browser):
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     draft = service.repository.sheets(service.day())[0]['draft']
-    assert outcome_fields(draft) is None
-    assert draft['dnr'] is False and draft['dnr_reason'] == ''
+    assert outcome_fields(draft)['lead_status'] == 'Do Not Call'
+    assert draft['dnr'] is True and draft['dnr_reason'] == 'Roofing'
 
     first.locator('[data-key=dnr]').uncheck()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     draft = service.repository.sheets(service.day())[0]['draft']
-    assert outcome_fields(draft) is None
+    assert outcome_fields(draft)['lead_status'] == 'Nurturing'
     assert draft['dnr'] is False
+    assert draft['dispo'] == 'pns'
     assert not writer.applied
 
 
@@ -1112,9 +1114,9 @@ def test_dnr_unchecks_when_dialog_closes_without_a_reason(mod_browser):
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     saved = service.repository.sheets(service.day())[0]['draft']
-    assert saved['dispo'] == ''
+    assert saved['dispo'] == 'pns'
     assert saved['dnr'] is False and saved['dnr_reason'] == ''
-    assert outcome_fields(saved) is None
+    assert outcome_fields(saved)['lead_status'] == 'Nurturing'
     assert not writer.applied
 
 def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
