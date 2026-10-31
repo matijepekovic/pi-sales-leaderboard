@@ -64,9 +64,10 @@ def test_phone_native_pinch_and_refresh_keep_the_actual_sheet(mod_browser, viewp
     expect(page.locator('#sheets')).not_to_have_attribute('data-zoom', '3')
     expect(first.locator('[data-key=notes]')).to_have_value('Phone black notes')
     expect(first.locator('[data-key=redlines]')).to_have_count(1)
-    expect(first.locator('[data-key=review]')).not_to_be_checked()
+    # Salesforce did not change Review; an explicit Refresh keeps local edits.
+    expect(first.locator('[data-key=review]')).to_be_checked()
     saved = service.repository.sheets(service.day())[0]['draft']
-    assert saved['notes'] == 'Phone black notes' and saved['review'] is False
+    assert saved['notes'] == 'Phone black notes' and saved['review'] is True
     assert first.bounding_box()['width'] == pytest.approx(width - 16, abs=1)
     _assert_overlay_positions(first)
     page.locator('#nameSearch').fill('Alex')
@@ -145,10 +146,14 @@ def test_saved_sale_and_dnr_choices_load_with_metadata_outage_but_refresh_uses_s
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
 
+    # The fake Salesforce adapter has no new remote result, so Refresh must
+    # retain local Sale and DNR choices even when picklist metadata is down.
+    expect(first.locator('[data-sale-product="Windows"] [data-sale-selected]')).to_be_checked()
     draft = service.repository.sheets(day)[0]['draft']
-    assert draft['sale_products'] == {}
-    assert draft['dnr_reason'] == ''
-    assert draft['dispo'] == ''
+    assert draft['sale_products'] == {'Windows': {'price': '18000', 'deposit': '0'}}
+    assert draft['dnr'] is True
+    assert draft['dnr_reason'] == 'Roofing'
+    assert draft['dispo'] == 'sale'
     assert draft['notes'] == 'Saved before metadata outage\nEdited comment during metadata outage'
     assert draft['redlines'] == ''
     assert not service.allow_salesforce_writes and writer.applied == []
