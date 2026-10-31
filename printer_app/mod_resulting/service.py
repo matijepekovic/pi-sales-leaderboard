@@ -49,12 +49,12 @@ class ResultingService:
         external = reader(records) if callable(reader) else {}
         if not isinstance(external, dict):
             raise ValueError('Salesforce resulting refresh returned invalid records.')
-        # A successful read is authoritative, including blank Salesforce
-        # values. Do not allow stale local test fields to survive Refresh.
-        normalized = {
-            record.source_id: clean_draft(external.get(record.source_id, {}))
-            for record in records
-        }
+        # A partial remote response must never become blank local data.
+        if callable(reader) and set(external) != {record.source_id for record in records}:
+            raise ValueError('Salesforce resulting refresh returned incomplete records.')
+        normalized = {key: clean_draft(value) for key, value in external.items()}
+        if clear_local and not callable(reader):
+            normalized = {record.source_id: clean_draft({}) for record in records}
         self.repository.refresh(
             day, records, external_drafts=normalized,
             market_segment=kwargs['market_segment'],
@@ -323,8 +323,10 @@ class ResultingDailyPull:
         day = local.date().isoformat()
         state = self.service.repository.day(day)
         target = local.replace(hour=8, minute=0, second=0, microsecond=0).timestamp()
+        # The 8 AM pull is initial-only; existing drafts cannot be replaced
+        # by background work. Explicit Refresh is the only reconciliation.
         if state and (state['submitting'] or state['submitted_at'] or
-                      state['refreshed_at'] >= target):
+                      state['refreshed_at'] > 0):
             return False
         last = self.service.repository.auto_attempt(day)
         return float(last.get('at') or 0) + 600 <= stamp
