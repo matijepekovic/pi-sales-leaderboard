@@ -398,9 +398,11 @@ class ResultingRepository:
                                  (day,)).fetchone()
             if not state or not state['submitting'] or not state['mod_user_id']:
                 raise ValueError('Queued MOD submission lost its reserved day.')
+            now = time.time()
             conn.execute('''UPDATE mod_result_submission_jobs SET
-                state='running', started_at=? WHERE id=? AND state='queued' ''',
-                (time.time(), job['id']))
+                state='running', started_at=?, stage='Preparing submission',
+                stage_started=? WHERE id=? AND state='queued' ''',
+                (now, now, job['id']))
             records = conn.execute('''SELECT i.work_order_id,s.snapshot,s.draft
                 FROM mod_result_submission_items i
                 JOIN mod_result_sheets s ON s.day=? AND s.work_order_id=i.work_order_id
@@ -415,6 +417,17 @@ class ResultingRepository:
                 raise ValueError('Queued MOD sheet records changed. Submission was not started.')
             return {'job_id': job['id'], 'day': day, 'mod_id': state['mod_user_id'],
                     'queued_at': job['created_at'], 'rows': rows}
+
+    def submission_stage(self, job_id, stage):
+        """Persist the active preflight stage for the progress dashboard."""
+        if not isinstance(stage, str) or not 0 < len(stage) <= 120:
+            raise ValueError('Invalid submission stage.')
+        with self.db.connect() as conn:
+            updated = conn.execute('''UPDATE mod_result_submission_jobs
+                SET stage=?,stage_started=? WHERE id=? AND state='running' ''',
+                (stage, time.time(), job_id))
+            if updated.rowcount != 1:
+                raise LookupError('Active submission stage is unavailable.')
 
     def submission_item(self, job_id, work_order_id, state, error=''):
         if state not in ('pending','processing','submitted','uncertain'):
@@ -433,7 +446,7 @@ class ResultingRepository:
                 ('failed' if error else 'completed', time.time(), str(error)[:500], job_id))
 
     def latest_submission(self, day, job_id=None):
-        fields = 'id,day,state,created_at,started_at,finished_at,error'
+        fields = 'id,day,state,created_at,started_at,finished_at,stage,stage_started,error'
         if job_id is not None:
             job = self.db.one('SELECT ' + fields +
                               ' FROM mod_result_submission_jobs WHERE id=?', (job_id,))
@@ -451,7 +464,9 @@ class ResultingRepository:
         items = self.db.rows('''SELECT work_order_number,state,error
             FROM mod_result_submission_items WHERE job_id=? ORDER BY position''',
             (job['id'],))
-        return {**job, 'items': items,
+        elapsed = max(0, int(time.time() - job['stage_started'])) if (
+            job['state'] == 'running' and job['stage_started']) else 0
+        return {**job, 'items': items, 'stage_elapsed_seconds': elapsed,
                 'total': len(items),
                 'submitted': sum(item['state']=='submitted' for item in items),
                 'pending': sum(item['state']=='pending' for item in items),
