@@ -703,9 +703,11 @@ class ResultingSalesforceAdapter:
             source = planned.get('appointment_date_source')
             appointment_day = planned.get('appointment_date')
             if source == 'existing_result_input':
-                # The Flow copies the existing PIR date for future appointments.
-                # Do not substitute the Lead/Work Order date or the worker date.
-                appointment_day = old['appointment_date'] if old else ''
+                # Flow's future input can reference an existing PIR. For a
+                # genuinely new PIR there is no prior input, so use the
+                # selected SA's saved date (the approved End-of-Day fallback).
+                appointment_day = (old['appointment_date'] if old else
+                                   planned.get('fallback_appointment_date', ''))
             elif source not in ('today', 'lead', 'work_order_appointment'):
                 raise ResultingSalesforceError('Result appointment date is unresolved.')
             if not appointment_day or not isinstance(appointment_day, str):
