@@ -138,8 +138,36 @@ class ResultingService:
         return self.repository.save_draft(day, work_order_id, data, revision)
 
     @staticmethod
+    def _saved_appointment_date(snapshot):
+        """Use the selected Service Appointment stored on the MOD card.
+
+        New and existing locally saved cards carry scheduled_start as a local
+        datetime. The printed Local Scheduled Start Time is a fallback for
+        older snapshots; never infer the date from the End-of-Day clock.
+        """
+        sources = (
+            (snapshot.get('scheduled_start'),
+             ('%Y.%m.%d ; %I:%M:%S %p',)),
+            (snapshot.get('local_scheduled_start_time'),
+             ('%b %d %Y %I:%M %p', '%b %d, %Y %I:%M %p',
+              '%m/%d/%Y %I:%M %p', '%Y-%m-%d %I:%M %p')),
+        )
+        for raw, formats in sources:
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            for fmt in formats:
+                try:
+                    return datetime.strptime(raw.strip(), fmt).date().isoformat()
+                except ValueError:
+                    continue
+        number = str(snapshot.get('work_order_number') or 'unknown')
+        raise ValueError(
+            'Work Order ' + number + ' has no valid saved appointment date.'
+        )
+
+    @staticmethod
     def submission_payload(sheet, mod_id, *, resulted_on=None,
-                           lead_appointment_date=''):
+                           lead_appointment_date='', work_order_appointment_date=''):
         draft = clean_draft(sheet['draft'])
         fields = outcome_fields(draft)
         if fields is None:
@@ -199,6 +227,7 @@ class ResultingService:
         context = product_result_context(
             draft, results,
             lead_appointment_date=lead_appointment_date,
+            work_order_appointment_date=work_order_appointment_date,
             resulted_on=resulted_on or sheet['day'],
             work_type=sheet['snapshot'].get('work_type', ''),
         )
@@ -227,16 +256,10 @@ class ResultingService:
         """Single Salesforce write path for direct and background submissions."""
         resulting_date = resulted_on or self.day()
         if job_id is not None:
-            self.repository.submission_stage(job_id, 'Reading Lead appointment dates')
-        date_reader = getattr(self.writer, 'lead_appointment_dates', None)
-        leads = sorted({row['snapshot'].get('lead_source_id', '')
-                        for row in rows if row['snapshot'].get('lead_source_id')})
-        dates = date_reader(leads) if callable(date_reader) else {}
-        if not isinstance(dates, dict):
-            raise ValueError('Lead appointment date lookup returned invalid data.')
+            self.repository.submission_stage(job_id, 'Checking saved MOD appointment dates')
         batch = [self.submission_payload(
             dict(row, day=day), mod_id, resulted_on=resulting_date,
-            lead_appointment_date=dates.get(row['snapshot'].get('lead_source_id', ''), ''),
+            work_order_appointment_date=self._saved_appointment_date(row['snapshot']),
         ) for row in rows]
         # The dashboard must explain preflight before the first Work Order.
         if job_id is not None:

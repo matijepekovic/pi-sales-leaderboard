@@ -243,7 +243,7 @@ def dnr_redline(reason):
 
 
 def product_result_context(draft, results, *, lead_appointment_date, resulted_on,
-                           work_type=None):
+                           work_type=None, work_order_appointment_date=''):
     """Plan primary/additional identities and date sources without vendor fields.
 
     Existing Result Appointment Flow: the first selected product is the
@@ -260,6 +260,15 @@ def product_result_context(draft, results, *, lead_appointment_date, resulted_on
         submitted = date.fromisoformat(resulted_on)
     except (TypeError, ValueError) as exc:
         raise ValueError('The resulting date must be an ISO calendar date.') from exc
+    # The saved MOD card identifies the Service Appointment being resulted.
+    # That date is authoritative for the Product Interest Results in End of Day;
+    # it must never depend on a PIR that has not yet been created.
+    appointment_day = None
+    if work_order_appointment_date:
+        try:
+            appointment_day = date.fromisoformat(work_order_appointment_date)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('The saved MOD appointment date is invalid.') from exc
     lead_day = None
     if lead_appointment_date:
         try:
@@ -323,21 +332,24 @@ def product_result_context(draft, results, *, lead_appointment_date, resulted_on
         # do not silently treat list order as a business decision.
         role = ('primary' if is_primary else
                 'additional' if primary else 'unresolved')
-        if lead_day is None:
-            source, appointment_day = 'unresolved', ''
+        if appointment_day is not None:
+            # All products on this Work Order share its selected appointment.
+            source, result_day = 'work_order_appointment', appointment_day.isoformat()
+        elif lead_day is None:
+            source, result_day = 'unresolved', ''
         elif is_primary and lead_day == submitted:
-            source, appointment_day = 'today', submitted.isoformat()
+            source, result_day = 'today', submitted.isoformat()
         elif is_primary and lead_day > submitted:
-            source, appointment_day = 'existing_result_input', ''
+            source, result_day = 'existing_result_input', ''
         else:
-            source, appointment_day = 'lead', lead_day.isoformat()
+            source, result_day = 'lead', lead_day.isoformat()
 
         planned[product] = {
             'role': role,
             'counts_as_issued_lead': (is_primary and result['result'] not in ('cxl', 'oos')
                                       if primary else None),
             'appointment_date_source': source,
-            'appointment_date': appointment_day,
+            'appointment_date': result_day,
         }
     return planned
 
