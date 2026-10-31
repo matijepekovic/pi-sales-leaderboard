@@ -999,8 +999,13 @@
       labels[submission.state] || submission.state;
     const processing = submission.items.find(item => item.state === 'processing');
     const current = document.getElementById('submissionCurrent');
-    current.hidden = !processing;
-    current.textContent = processing ? 'Processing Work Order ' + processing.work_order_number : '';
+    const preparing = !processing && submission.state === 'running';
+    current.hidden = !processing && !preparing;
+    current.textContent = processing
+      ? 'Processing Work Order ' + processing.work_order_number
+      : preparing ? (submission.stage || 'Preparing submission') + ' · ' +
+          Math.max(0, submission.stage_elapsed_seconds || 0) + 's'
+        : '';
     const error = document.getElementById('submissionError');
     error.textContent = submission.error || '';
     error.hidden = !submission.error;
