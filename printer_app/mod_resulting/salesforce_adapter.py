@@ -9,7 +9,6 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 import json
 import re
-import shlex
 import subprocess
 from zoneinfo import ZoneInfo
 
@@ -467,26 +466,6 @@ class ResultingSalesforceAdapter:
         raise ResultingSalesforceError(
             field['name'] + ' cannot safely store an AM/PM time.'
         )
-
-    def _appointment_ids(self, work_order_id, day):
-        work_order_id = _require_id(work_order_id)
-        start = datetime.combine(date.fromisoformat(day), time.min, tzinfo=self.zone)
-        end = start + timedelta(days=1)
-        lo = start.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        hi = end.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        rows = self._query(
-            'SELECT Id FROM ' + SERVICE_APPOINTMENT + ' WHERE '
-            + SA['work_order'] + ' = ' + _soql(work_order_id)
-            + ' AND SchedStartTime >= ' + lo
-            + ' AND SchedStartTime < ' + hi
-            + ' ORDER BY Id LIMIT 2000'
-        )
-        ids = [_require_id(str(row.get('Id') or '')) for row in rows]
-        if not ids or len(set(ids)) != len(ids):
-            raise ResultingSalesforceError(
-                'No unique same-day Service Appointments for Work Order.'
-            )
-        return ids
 
     def _existing_product_results(self, lead_id, work_order_id, *, rows=None):
         fields = 'Id,' + PR['product'] + ',' + PR_ISSUED_COUNT + ',' + PR_APPOINTMENT_DATE
