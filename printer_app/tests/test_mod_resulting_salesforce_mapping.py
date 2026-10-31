@@ -925,6 +925,16 @@ def test_flow_v30_write_order_and_salesforce_service_appointment_filter():
     assert 'SchedStartTime >=' in sa_query and 'SchedStartTime <' in sa_query
 
 
+def test_pns_without_prior_product_result_creates_pir_before_work_order():
+    adapter,_=_adapter()
+    plan=_operations(adapter,_payload('pns',interest='Roofing'))
+    assert plan[0][0:2] == ('create', PRODUCT_RESULT)
+    assert plan[0][3]['Result__c'] == 'Pitch No Sale'
+    assert all(op[1]=='ServiceAppointment' for op in plan[1:3])
+    assert [op[1] for op in plan[3:]] == ['WorkOrder','Lead']
+    assert 'Price__c' not in _single(plan,'WorkOrder')[3]
+
+
 def test_existing_product_result_is_updated_before_service_appointments():
     adapter,_ = _adapter(existing_results=[{
         'Id':PR1, 'Product_Interest__c':'Roofing',
