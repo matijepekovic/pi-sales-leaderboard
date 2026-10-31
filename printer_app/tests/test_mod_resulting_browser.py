@@ -621,6 +621,99 @@ def test_clear_discards_local_notes_and_restores_salesforce_without_writes(mod_b
     assert not writer.applied
 
 
+def test_per_card_result_confirmation_and_notification_bell(mod_browser):
+    from playwright.sync_api import expect
+    from urllib.parse import parse_qs
+
+    page, service, writer, origin, evidence = mod_browser
+    page.set_viewport_size({'width':390, 'height':844})
+    submitted = []
+    state = {'job':None, 'notifications':[]}
+
+    def fake_submit(route):
+        fields = parse_qs(route.request.post_data)
+        submitted.append(fields)
+        state['job'] = {
+            'id': 31, 'day': service.day(), 'state': 'queued', 'total':1,
+            'submitted':0, 'pending':1, 'processing':0, 'failed':0,
+            'items':[{'state':'pending','work_order_number':'00011111','error':''}],
+            'error':'',
+        }
+        route.fulfill(status=202, json={
+            'ok':True, 'job_id':31, 'day':service.day(), 'total':1,
+        })
+
+    def fake_status(route):
+        route.fulfill(status=200, json={
+            'ok':True,
+            'submission':state['job'],
+            'notifications':state['notifications'],
+        })
+
+    page.route('**/mod-resulting/api/submit', fake_submit)
+    page.route('**/mod-resulting/api/submission-status*', fake_status)
+    page.goto(origin + '/mod-resulting')
+    page.locator('#dailyMod').select_option(MOD)
+    first, second = page.locator('.mod-sheet').all()
+    first.locator('[data-key=dispo]').select_option('pns')
+    second.locator('[data-key=dispo]').select_option('np')
+    first_button = first.locator('.submit-sheet')
+    expect(first_button).to_be_visible()
+    expect(second.locator('.submit-sheet')).to_be_visible()
+    box = first.bounding_box()
+    action = first_button.bounding_box()
+    assert box and action
+    assert box['x'] + box['width'] - (action['x'] + action['width']) < 20
+    assert abs(action['y'] - box['y']) < 20
+
+    first_button.click()
+    confirm = page.locator('#singleResultConfirm')
+    expect(confirm).to_be_visible()
+    expect(confirm.locator('.editor-body')).to_contain_text(
+        'Are you sure you want to result this Work Order?')
+    expect(confirm.locator('#singleResultWorkOrder')).to_have_text('Work Order 00011111')
+    page.locator('#singleResultNo').click()
+    expect(confirm).to_be_hidden()
+    assert submitted == []
+
+    first_button.click()
+    page.locator('#singleResultYes').click()
+    expect(confirm).to_be_hidden()
+    expect(page.locator('#submissionProgress')).to_be_hidden()
+    assert len(submitted) == 1
+    assert submitted[0]['mode'] == ['selected']
+    assert submitted[0]['work_order_ids'] == [
+        json.dumps([first.get_attribute('data-id')])
+    ]
+    assert second.get_attribute('data-submitted') == 'no'
+
+    state['job'] = {
+        'id':31, 'day':service.day(), 'state':'completed', 'total':1,
+        'submitted':1, 'pending':0, 'processing':0, 'failed':0,
+        'items':[{'state':'submitted','work_order_number':'00011111','error':''}],
+        'error':'',
+    }
+    state['notifications'] = [{
+        'job_id':31, 'day':service.day(), 'job_state':'completed',
+        'created_at':1761920000, 'finished_at':1761920001, 'job_error':'',
+        'work_order_id':first.get_attribute('data-id'),
+        'work_order_number':'00011111', 'state':'submitted', 'error':'',
+    }]
+    expect(page.locator('#submissionToast')).to_contain_text(
+        'Work Order 00011111 — Submitted', timeout=9000)
+    expect(first).to_have_attribute('data-submitted', 'yes')
+    expect(second).to_have_attribute('data-submitted', 'no')
+    expect(page.locator('#submissionNotificationBadge')).to_have_text('1')
+    page.locator('#viewSubmissionProgress').click()
+    expect(page.locator('#submissionProgress')).to_be_visible()
+    expect(page.locator('#submissionNotificationList li')).to_have_count(1)
+    expect(page.locator('#submissionNotificationList li')).to_contain_text(
+        'Work Order 00011111 — Submitted')
+    expect(page.locator('#submissionNotificationBadge')).to_be_hidden()
+    assert writer.applied == []
+    evidence('per-card-result-bell')
+
+
 def test_end_of_day_three_popups_submit_only_explicitly_selected_work_order(mod_browser):
     from playwright.sync_api import expect
     from urllib.parse import parse_qs
