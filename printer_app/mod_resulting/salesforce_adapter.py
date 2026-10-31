@@ -964,8 +964,30 @@ class ResultingSalesforceAdapter:
                         'Lead preflight is incomplete; no writes were performed.')
         return rows_by_lead
 
+    def _verify_flow_kill_switch(self):
+        """Block writes unless the org's Result Appointment Flow is enabled.
+
+        Flow v30 continues only when $Setup.trac_killswitch__c.trac_flows__c
+        is false. Hierarchy overrides are not available in the normalized
+        Stats contract; conservatively block if any returned scope is on or
+        the effective setting cannot be established. Never guess it is off.
+        """
+        rows = self._query(
+            'SELECT SetupOwnerId,trac_flows__c FROM trac_killswitch__c LIMIT 2000'
+        )
+        if (not rows or len(rows) == 2000 or
+                any(type(row.get('trac_flows__c')) is not bool for row in rows)):
+            raise ResultingSalesforceError(
+                'Result Appointment Flow kill switch could not be verified; '
+                'no Salesforce writes were made.')
+        if any(row['trac_flows__c'] for row in rows):
+            raise ResultingSalesforceError(
+                'Result Appointment Flow kill switch is enabled; '
+                'no Salesforce writes were made.')
+
     def prepare(self, payloads):
         """Preflight the complete batch before any live Salesforce write."""
+        self._verify_flow_kill_switch()
         wo_schema = self._describe(WORK_ORDER)
         lead_schema = self._describe(LEAD)
         sa_schema = self._describe(SERVICE_APPOINTMENT)
