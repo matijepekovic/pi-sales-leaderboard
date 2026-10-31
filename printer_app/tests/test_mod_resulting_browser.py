@@ -896,13 +896,12 @@ def test_every_editor_is_centered_and_only_one_popup_can_be_open(mod_browser, vi
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     saved = service.repository.sheets(service.day())[0]['draft']
-    assert saved['dnr_reason'] == ''
-    assert saved['sale_products'] == {}
-    assert saved['cxl_at_lead'] is False
+    # A Refresh with unchanged Salesforce data must retain local editor work.
+    assert saved['dnr_reason'] == 'Roofing'
     assert saved['call_1'] == '10:15 AM'
     assert saved['call_2'] == '1:27 PM'
-    assert saved['product_results'] == {}
-    assert saved['dispo'] == ''
+    assert saved['product_results']['Roofing']['result'] == 'np'
+    assert saved['dispo'] == 'pns'
     assert not writer.applied
     evidence('editor-dialogs-' + str(viewport[0]))
 
@@ -1000,7 +999,7 @@ def test_existing_split_notes_remain_in_separate_redlines_editor(mod_browser):
     assert saved['notes'] == 'Legacy first note\nAdditional black note'
     assert saved['redlines'] == 'Legacy second note\nAdditional redline'
     assert saved['note_runs'] == []
-    assert saved['dispo'] == ''
+    assert saved['dispo'] == 'pns'
     assert not writer.applied
 
 
