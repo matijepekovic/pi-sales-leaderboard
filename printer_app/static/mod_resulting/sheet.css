@@ -7,6 +7,11 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .sheets{padding:90px 12px 24px;display:flex;flex-direction:column;gap:28px;align-items:center}
 .mod-sheet{position:relative;flex:none;width:min(1460px,max(990px,calc(100vw - 24px)));container-type:inline-size;background:white}
 .printer-sheet{display:block;width:100%;height:100%;user-select:none}
+/* Per-card Result overlays the existing image without changing sheet geometry. */
+.mod-sheet>.submit-sheet{position:absolute;top:.45cqw;right:.45cqw;z-index:22;min-height:clamp(23px,2.4cqw,32px);padding:3px 9px;border:1px solid #202c39;border-radius:5px;background:#fff;color:#182331;font:650 clamp(11px,1.03cqw,14px)/1.2 system-ui,-apple-system,sans-serif;box-shadow:0 1px 5px #0002;cursor:pointer}
+.mod-sheet>.submit-sheet:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.mod-sheet>.submit-sheet:disabled{opacity:.55;cursor:not-allowed}
+.mod-sheet>.submit-sheet[hidden]{display:none}
 /* Override occupies the bottom-right of the ORIGINAL MOD Notes cell. */
 .mod-sheet .field-notes>.override-sheet{position:absolute;right:.45cqw;bottom:.4cqw;z-index:21;min-height:clamp(24px,2.2cqw,30px);padding:2px 7px;border:1px solid #444;border-radius:4px;background:#fff;color:#111;font:600 clamp(11px,1.05cqw,13px)/1.1 system-ui,-apple-system,sans-serif;cursor:pointer;pointer-events:auto}
 .mod-sheet .field-notes>.override-sheet:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
@@ -87,6 +92,10 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .floating-controls .mod-choice,.floating-controls .toggle-hide{display:flex;align-items:center;gap:6px;white-space:nowrap}
 .floating-controls button{background:white;border:1px solid #888;border-radius:5px;font:inherit;padding:7px 12px;cursor:pointer}
 .floating-controls #submitDay{background:#111;color:#fff}
+.floating-controls .notification-bell{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:38px;min-height:34px;padding:5px 7px}
+.notification-bell svg{display:block;flex:none}
+.notification-count{position:absolute;top:-7px;right:-7px;min-width:18px;height:18px;padding:0 3px;border-radius:10px;background:#1e293b;color:#fff;display:flex;align-items:center;justify-content:center;font:700 11px/1 system-ui,sans-serif}
+.notification-count[hidden]{display:none}
 .notification{position:static;flex:0 1 auto;max-width:320px;padding:0;background:transparent;border:0;color:#983721;font:12px/1.35 system-ui,sans-serif;overflow-wrap:anywhere}
 /* Editors live in the browser's native dialog top layer, never inside the
    zoomable sheet's absolute positioning or horizontal-scroll viewport. */
@@ -152,6 +161,18 @@ body.dialog-open{overflow:hidden}
 .redlines-panel textarea[data-key=redlines]{width:100%;min-height:180px;max-height:55dvh;resize:vertical;padding:10px;border:1px solid #aeb6c2;border-radius:6px;background:#fff;color:#17212d;font:16px/1.4 system-ui,-apple-system,sans-serif}
 .end-dialog{width:min(520px,calc(100vw - 28px))}
 .submission-panel{width:min(520px,calc(100vw - 28px));font:14px system-ui,-apple-system,sans-serif}
+.result-work-order{font-weight:700}
+.submission-panel h3{margin:0 0 8px;font:650 14px/1.4 system-ui,sans-serif}
+.submission-history{margin-bottom:13px}
+.submission-notifications{list-style:none;margin:0;padding:0;max-height:32dvh;overflow-y:auto}
+.submission-notifications li{display:flex;flex-direction:column;gap:3px;border-top:1px solid #e3e7ec;padding:9px 0;font:13px/1.4 system-ui,sans-serif}
+.submission-notifications li strong{font-weight:650}
+.submission-notifications li span{color:#4b5563;white-space:pre-wrap;overflow-wrap:anywhere}
+.submission-notifications li.failed span,.submission-notifications li.uncertain span{color:#a33333}
+.submission-empty{margin:6px 0;color:#657183}
+.submission-progress-details{border-top:1px solid #d7dde4;padding-top:12px}
+.submission-toast{position:fixed;right:16px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:70;max-width:min(400px,calc(100vw - 32px));padding:12px 15px;border:1px solid #aeb6c2;border-radius:9px;background:#fff;color:#182331;box-shadow:0 8px 25px #0003;font:600 13px/1.4 system-ui,sans-serif;white-space:pre-wrap;overflow-wrap:anywhere}
+.submission-toast[hidden]{display:none}
 .submission-state{font:600 12px system-ui,sans-serif;padding:5px 9px;background:#edf0f4;border-radius:12px;white-space:nowrap}
 .submission-summary{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
 .submission-summary strong{font:700 27px system-ui,sans-serif}
@@ -220,4 +241,4 @@ body.dialog-open{overflow:hidden}
  .product-result-row .individual-sale-fields label{flex-basis:85px}
 }
 
-@media print{.floating-controls,.notification,.editor-dialog,.sheet-message,.time-picker-button,.red-pen,.override-sheet{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}.mod-sheet.submitted{margin-top:0}}
+@media print{.floating-controls,.notification,.editor-dialog,.sheet-message,.time-picker-button,.red-pen,.override-sheet,.submit-sheet,.submission-toast{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}.mod-sheet.submitted{margin-top:0}}

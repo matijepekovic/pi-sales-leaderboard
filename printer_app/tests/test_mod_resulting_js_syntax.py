@@ -39,6 +39,33 @@ def test_mod_sheet_javascript_syntax_and_single_binding():
         assert result.returncode == 0, result.stderr
 
 
+def test_individual_result_and_notifications_reuse_the_existing_submission_boundary():
+    root = Path(__file__).resolve().parents[1]
+    html = (root/'templates/mod_resulting.html').read_text()
+    js = (root/'static/mod_resulting/sheet.js').read_text()
+    css = (root/'static/mod_resulting/sheet.css').read_text()
+    web = (root/'mod_resulting/web.py').read_text()
+    repo = (root/'mod_resulting/repository.py').read_text()
+    assert html.count('class="submit-sheet"') == 1
+    assert html.count('id="singleResultConfirm"') == 1
+    assert html.count('id="viewSubmissionProgress"') == 1
+    assert html.count('id="submissionNotificationList"') == 1
+    assert 'Submission Status</button>' not in html
+    assert 'Are you sure you want to result this Work Order?' in html
+    assert 'function openSingleResult(sheet)' in js
+    assert "mode:'selected'" in js
+    assert "work_order_ids:JSON.stringify([sheet.dataset.id])" in js
+    assert 'function renderNotifications(items)' in js
+    assert 'Salesforce confirmation required' not in js
+    assert '.mod-sheet>.submit-sheet' in css
+    assert '.submit-sheet,.submission-toast' in css
+    assert 'recent_submission_items(day)' in web
+    assert 'def recent_submission_items(self, day):' in repo
+    assert 'from .salesforce_adapter' not in web
+    # All three submission paths share one worker and one Salesforce writer.
+    assert web.count('service.enqueue(service.day(), selected)') == 1
+
+
 def test_salesforce_refresh_and_clear_keep_explicit_module_boundaries():
     root = Path(__file__).resolve().parents[1]
     repo = (root/'mod_resulting/repository.py').read_text()

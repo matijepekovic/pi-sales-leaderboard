@@ -829,6 +829,113 @@ def test_queue_writes_nothing_until_worker_runs_and_reports_success(tmp_path):
         service.enqueue(DAY)
 
 
+def test_per_card_background_result_uses_existing_queue_and_preserves_other_edits(tmp_path):
+    service, repo, source, writer = _service(tmp_path)
+    other = ModSheetRecord(
+        source_id='0WO000000000002AAA', lead_source_id=LEAD,
+        lead_name='Other Customer', work_order_number='00001235',
+        product_interest='Roofing', scheduled_start='2026.10.26 ; 11:00:00 AM',
+    )
+    source.records = lambda **kwargs: [RECORD, other]
+    service.refresh(DAY)
+    service.set_mod(DAY, USER)
+    repo.save_draft(DAY, WORK, clean_draft({'dispo':'pns'}), 0)
+    repo.save_draft(DAY, other.source_id, clean_draft({'dispo':'np'}), 0)
+
+    queued = service.enqueue(DAY, [WORK])
+    assert queued['total'] == 1
+    assert writer.applied == []
+    assert repo.latest_submission(DAY)['items'][0]['work_order_number'] == '00001234'
+    # Only the reserved Work Order is immutable during a background job.
+    other_row = next(row for row in repo.sheets(DAY)
+                     if row['work_order_id'] == other.source_id)
+    repo.save_draft(DAY, other.source_id,
+                    clean_draft(dict(other_row['draft'], notes='Continue working')),
+                    other_row['revision'])
+    with pytest.raises(ValueError, match='being submitted'):
+        repo.save_draft(DAY, WORK, clean_draft({'dispo':'cxl'}), 1)
+    with pytest.raises(ValueError, match='already underway'):
+        service.enqueue(DAY, [other.source_id])
+
+    assert service.process_next_submission() == {
+        'ok': True, 'submitted': 1, 'day': DAY,
+    }
+    assert [entry['work_order_id'] for entry in writer.applied] == [WORK]
+    notices = repo.recent_submission_items(DAY)
+    assert len(notices) == 1
+    assert notices[0]['job_id'] == queued['job_id']
+    assert notices[0]['state'] == 'submitted'
+    assert notices[0]['work_order_number'] == '00001234'
+    pending = next(row for row in repo.sheets(DAY)
+                   if row['work_order_id'] == other.source_id)
+    assert pending['submitted_at'] is None
+    assert pending['draft']['notes'] == 'Continue working'
+
+    # A later Submit All skips the successful individual result.
+    next_batch = service.enqueue(DAY)
+    assert next_batch['total'] == 1
+    assert service.process_next_submission()['submitted'] == 1
+    assert [entry['work_order_id'] for entry in writer.applied] == [
+        WORK, other.source_id,
+    ]
+
+
+def test_submission_notifications_keep_failure_details_without_new_salesforce_reads(tmp_path):
+    service, repo, source, writer = _service(tmp_path)
+    service.refresh(DAY)
+    service.set_mod(DAY, USER)
+    repo.save_draft(DAY, WORK, clean_draft({'dispo':'pns'}), 0)
+
+    def rejected(plan):
+        raise RuntimeError('Salesforce rejected the requested Work Order')
+    writer.apply = rejected
+    queued = service.enqueue(DAY, [WORK])
+    result = service.process_next_submission()
+    assert result['ok'] is False
+    notices = repo.recent_submission_items(DAY)
+    assert len(notices) == 1
+    assert notices[0]['job_id'] == queued['job_id']
+    assert notices[0]['state'] == 'uncertain'
+    assert 'Salesforce rejected' in notices[0]['error']
+    assert repo.latest_submission(DAY)['state'] == 'failed'
+    # Reading notifications only uses the existing SQLite receipt history.
+    assert len(writer.date_lookups) == 1
+    assert writer.applied == []
+
+
+def test_submission_status_exposes_notifications_without_salesforce_writes(tmp_path):
+    from printer_app.app import create_app
+    from printer_app.config import Config
+    from printer_app.tests.auth_helpers import login_admin
+
+    env = tmp_path/'env'
+    env.write_text('EMAIL_ENABLED=0\n')
+    app = create_app(Config(data_dir=tmp_path/'app', env_file=env,
+                            secret_key='s'*64, email_enabled=False))
+    service = app.extensions['mod_resulting']
+    service.day = lambda: DAY
+    repo = service.repository
+    repo.refresh(DAY, [RECORD], market_segment='Olympia')
+    repo.select_mod(DAY, USER, 'MOD Example')
+    repo.save_draft(DAY, WORK, clean_draft({'dispo':'pns'}), 0)
+    queued = repo.enqueue_submit(DAY, [WORK])
+    repo.claim_submission()
+    repo.submission_item(queued['job_id'], WORK, 'submitted')
+    repo.finish_item(DAY, WORK)
+    repo.finish_submission_job(queued['job_id'])
+    repo.finish_submit(DAY)
+
+    client = app.test_client()
+    login_admin(client)
+    response = client.get('/mod-resulting/api/submission-status')
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['submission']['state'] == 'completed'
+    assert payload['notifications'][0]['work_order_number'] == '00001234'
+    assert payload['notifications'][0]['state'] == 'submitted'
+    assert payload['notifications'][0]['job_id'] == queued['job_id']
+
+
 def test_queued_failure_records_uncertain_and_skips_successful_receipts(tmp_path):
     service, repo, source, writer = _service(tmp_path)
     other = ModSheetRecord(
