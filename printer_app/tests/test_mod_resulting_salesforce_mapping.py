@@ -975,3 +975,29 @@ def test_phase3_missing_flow_metadata_rejects_batch_before_writes():
         _operations(adapter,_payload('pns'))
     assert all(command[1:3] not in (['data','update'],['data','create'])
                for command in calls)
+
+
+def test_20_work_order_preflight_batches_related_salesforce_reads():
+    """Preflight must not issue one query per Work Order or per Lead."""
+    work_ids = ['0WO' + str(index).zfill(12) + 'AAA' for index in range(1, 21)]
+    history = [
+        {'Id': work_id, 'Lead__c': LEAD, 'Dispo__c': None,
+         'Appointment_Date_Time__c': f'2026-10-27T{index - 1:02d}:00:00Z',
+         'Appointment_Date__c': DAY}
+        for index, work_id in enumerate(work_ids, 1)
+    ]
+    adapter, calls = _adapter(history=history)
+    payloads = []
+    for work_id in work_ids:
+        payload = _payload('pns', interest='Roofing')
+        payload['work_order_id'] = work_id
+        payloads.append(payload)
+    plans = adapter.prepare(payloads)
+    assert len(plans) == 20
+    assert all(any(op[1] == 'WorkOrder' for op in plan) for plan in plans)
+    queries = [command[command.index('--query') + 1] for command in calls
+               if command[1:3] == ['data', 'query']]
+    assert sum(' FROM WorkOrder ' in query for query in queries) == 1
+    assert sum(' FROM ServiceAppointment ' in query for query in queries) == 1
+    assert sum(' FROM Product_Interest_Result__c ' in query for query in queries) == 1
+    assert sum(' FROM Lead ' in query for query in queries) == 1
