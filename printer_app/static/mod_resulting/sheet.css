@@ -30,7 +30,12 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .product-choice select{flex:1;font-size:1.5cqw}
 .small-checkbox{display:flex;align-items:center;gap:.3cqw;font-size:1.12cqw;margin-top:.5cqw;white-space:nowrap}
 .field-detail b{display:block;white-space:nowrap;font-size:1.25cqw}
-.field-detail select{width:100%;font-size:1.2cqw;margin-top:.3cqw}
+/* The existing Result Detail cell is the sole entry to detail + CXL at Lead.
+   No additional overlay space or change to the printed MOD grid is needed. */
+.mod-sheet .field-detail .edit-result-detail{display:flex;align-items:center;gap:.25cqw;width:100%;max-width:100%;min-height:1.6cqw;margin-top:.3cqw;padding:0 .2cqw 0 0;border:0;background:transparent;color:#111;text-align:left;font:1.2cqw/1.15 "Times New Roman",Times,serif}
+.field-detail [data-detail-display]{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mod-sheet .field-detail .detail-cxl-indicator:not([hidden]){display:inline;flex:none;white-space:nowrap;padding:0 .12cqw;border:1px solid #555;border-radius:2px;font:bold .9cqw/1.2 "Times New Roman",Times,serif}
+.field-detail .edit-result-detail:focus-visible{outline:2px solid #1e40af;outline-offset:1px}
 /* Price cells stay the exact printed row; touching the price opens the editor.
    Existing labels stay legible and no parallel sheet is introduced. */
 .price-click{z-index:8}
@@ -123,8 +128,10 @@ body.dialog-open{overflow:hidden}
 .dnr-options{display:flex;flex-wrap:wrap;gap:6px}
 .dnr-option{display:flex;flex:1 1 calc(50% - 3px);align-items:center;gap:8px;padding:8px;border:1px solid #e3e7ec;border-radius:8px;min-height:44px;cursor:pointer}
 .dnr-option:has(input:checked){background:#eaf1ff;border-color:#749de8}
-.cxl-panel{width:min(450px,calc(100vw - 28px))}
-.cxl-panel .dnr-option{max-width:100%}
+.detail-panel{width:min(450px,calc(100vw - 28px))}
+.detail-panel .detail-choice{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.mod-sheet .detail-panel .detail-choice select{width:100%;max-width:none}
+.detail-panel .dnr-option{max-width:100%}
 .checkbox-dialog{width:min(310px,calc(100vw - 28px))}
 .checkbox-dialog .editor-body{flex:0 1 auto;padding:14px 14px 12px}
 .checkbox-dialog .checkbox-current{overflow-wrap:anywhere;white-space:pre-wrap;padding:0;font:600 17px/1.4 system-ui,-apple-system,sans-serif}
