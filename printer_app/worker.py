@@ -336,13 +336,17 @@ def main():
                 captured.timezone,
             )
             map_sync = JobMapSyncService(JobMapRepository(db), source)
+            # The morning read must use the same authoritative Salesforce
+            # resulting projection as manual Refresh. It is initial-only;
+            # existing local sheets are never rewritten in the background.
+            resulting_adapter = ResultingSalesforceAdapter(
+                executable='/usr/bin/sf', target_org='work',
+                timezone_name=captured.timezone)
             digital = ResultingDailyPull(ResultingService(
-                ResultingRepository(db), source, None, repository, captured.timezone))
+                ResultingRepository(db), source, resulting_adapter,
+                repository, captured.timezone))
             submitter = ResultingService(
-                ResultingRepository(db), source,
-                ResultingSalesforceAdapter(
-                    executable='/usr/bin/sf', target_org='work',
-                    timezone_name=captured.timezone),
+                ResultingRepository(db), source, resulting_adapter,
                 repository, captured.timezone,
                 allow_salesforce_writes=captured.mod_resulting_live_writes)
             return daily, references, manual_gallery, map_sync, digital, submitter
