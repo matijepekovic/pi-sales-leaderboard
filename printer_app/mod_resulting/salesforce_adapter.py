@@ -152,8 +152,39 @@ class ResultingSalesforceAdapter:
         except (TypeError, ValueError) as exc:
             raise ResultingSalesforceError('Salesforce CLI returned invalid JSON.') from exc
         if completed.returncode or payload.get('status') not in (0, None):
+            # Salesforce CLI --json already includes the actual rejection.
+            # Preserve its code and message instead of replacing them with a
+            # generic permissions warning. Never echo CLI arguments/values.
+            code = str(payload.get('name') or payload.get('errorCode') or '').strip()
+            reason = payload.get('message')
+            if not reason:
+                result = payload.get('result') or payload.get('data')
+                if isinstance(result, dict):
+                    reason = result.get('message') or result.get('errors')
+                elif isinstance(result, list):
+                    reason = result
+            if isinstance(reason, list):
+                reason = '; '.join(
+                    str(item.get('message') or item.get('errorCode') or item)
+                    if isinstance(item, dict) else str(item)
+                    for item in reason
+                )
+            reason = str(reason or '').strip()
+            # Salesforce error text may contain data values; never surface an
+            # access token or authorization header even if one is echoed.
+            reason = re.sub(
+                r'(?i)\\bBearer\\s+[^\\s,;]+', 'Bearer [REDACTED]', reason)
+            reason = re.sub(
+                r'(?i)\\b(accessToken|sfdxAuthUrl|authorization)\\s*[:=]\\s*\\S+',
+                r'\\1=[REDACTED]', reason)
+            object_name = (parts[parts.index('--sobject') + 1]
+                           if '--sobject' in parts else 'Salesforce')
+            operation = ' '.join(parts[:3])
+            detail = (code + ': ' if code and reason and code not in reason
+                      else code if code and not reason else '') + reason
             raise ResultingSalesforceError(
-                'Salesforce rejected ' + ' '.join(parts[:3]) + '. Check permissions and values.')
+                object_name + ' ' + operation + ' failed: '
+                + (detail or 'Salesforce returned no error details.'))
         return payload.get('result') or {}
 
     def _query(self, soql, *, max_results=2000):
