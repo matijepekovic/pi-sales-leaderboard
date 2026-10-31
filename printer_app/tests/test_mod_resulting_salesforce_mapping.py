@@ -555,7 +555,7 @@ def test_legacy_manual_choices_cannot_override_automatic_status_or_history():
     assert lead['Status']=='Do Not Call' and lead['Previous_Result__c'] is None
     assert wo['Start_Price__c']=='27000'
     assert _work_order_price(plan)=='16000'
-    assert 'Price__c' not in wo
+    assert wo['Price__c']=='16000'
     assert wo['Deposit_Payment__c']=='2500'
     # Old local manual fields remain backward-compatible draft inputs, but
     # cannot replace a lookup of the previous Salesforce Work Order.
@@ -605,7 +605,7 @@ def test_independent_final_price_override_writes_without_start_price():
     plan=_operations(adapter,_payload('pns',final_price_override='15500'))
     wo=_single(plan,'WorkOrder')[3]
     assert 'Start_Price__c' not in wo
-    assert 'Price__c' not in wo
+    assert wo['Price__c']=='15500'
     assert _work_order_price(plan)=='15500'
 
 
@@ -680,7 +680,7 @@ def test_main_sale_uses_separate_product_prices_deposits_and_preserves_lead_inte
     assert wo['Dispo__c']=='Sale'
     assert wo['Start_Price__c']=='25000'
     assert _work_order_price(plan)=='17000'
-    assert 'Price__c' not in wo
+    assert wo['Price__c']=='17000'
     assert wo['Deposit_Payment__c']=='5000/'
     assert 'SALE Roofing: $17,000 | Deposit: $0' in wo['MOD_Notes__c']
     assert 'SALE Windows: $22,000 | Deposit: $5,000' in wo['MOD_Notes__c']
@@ -916,7 +916,7 @@ def test_flow_v30_write_order_and_salesforce_service_appointment_filter():
         ('update', 'WorkOrder'), ('update', 'Lead'),
     ]
     assert _work_order_price(plan) == '69746'
-    assert 'Price__c' not in _single(plan, 'WorkOrder')[3]
+    assert _single(plan, 'WorkOrder')[3]['Price__c']=='69746'
     queries = [cmd[cmd.index('--query')+1] for cmd in calls
                if cmd[1:3] == ['data','query'] and '--query' in cmd]
     sa_query = next(q for q in queries if ' FROM ServiceAppointment ' in q)
