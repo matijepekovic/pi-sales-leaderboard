@@ -5,6 +5,8 @@ from dataclasses import asdict
 import json
 import time
 
+from .contract import canceled_without_notes, has_mod_notes
+
 
 def _apply_remote_changes(local, previous, incoming):
     """Three-way update: only fields changed remotely can replace local values."""
@@ -221,12 +223,7 @@ class ResultingRepository:
                 # cancellations. Do not turn a blank, canceled-only card into
                 # an eligible End-of-Day result. If the MOD has written notes,
                 # keep the card visible and make its disposition clearly CXL.
-                if record.appointment_canceled and (
-                        str(merged.get('notes') or '').strip()
-                        or str(merged.get('redlines') or '').strip()
-                        or any(str(run.get('text') or '').strip()
-                               for run in (merged.get('note_runs') or [])
-                               if isinstance(run, dict))):
+                if record.appointment_canceled and has_mod_notes(merged):
                     merged['dispo'] = 'cxl'
 
                 # Clear must be explicit, and any note replacement is backed up.
