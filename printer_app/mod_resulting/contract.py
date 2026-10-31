@@ -49,6 +49,33 @@ _NUMBER_TOKEN_RE = re.compile(
 )
 
 
+
+def has_mod_notes(draft):
+    """Actual MOD Notes/redlines, including older mixed red-ink note runs."""
+    return bool(
+        str(draft.get('notes') or '').strip()
+        or str(draft.get('redlines') or '').strip()
+        or any(
+            isinstance(run, dict) and str(run.get('text') or '').strip()
+            for run in (draft.get('note_runs') or ())
+        )
+    )
+
+
+def canceled_without_notes(snapshot, draft):
+    """Canceled card without written notes is hidden, not deleted.
+
+    The normalized snapshot may indicate a canceled Service Appointment while
+    the Salesforce Lead still has an active status. A canceled Lead also counts.
+    """
+    canceled = (
+        snapshot.get('appointment_canceled') is True
+        or str(snapshot.get('sales_lead_status') or '').strip().casefold() == 'canceled'
+        or str(draft.get('lead_status') or '').strip().casefold() == 'canceled'
+    )
+    return canceled and not has_mod_notes(draft)
+
+
 def _money(value, *, allow_blank=True):
     value = str(value or '').strip()
     if not value:
