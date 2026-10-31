@@ -601,6 +601,23 @@
     }
     throw new Error('Work Order has unsaved changes; retry after editing.');
   }
+  function bindOverride(sheet, button) {
+    if (!button || button.dataset.overrideBound === 'yes') return;
+    button.dataset.overrideBound = 'yes';
+    button.addEventListener('click', async () => {
+      button.hidden = true;
+      try {
+        await post(root.dataset.override, {
+          work_order_id:sheet.dataset.id, revision:sheet.dataset.revision
+        });
+        // Rebuild the card from the normal editable template after Override.
+        location.reload();
+      } catch (error) {
+        button.hidden = false;
+        message('Override failed: ' + error.message, sheet);
+      }
+    });
+  }
   function setup(sheet) {
     const background = sheet.querySelector('.printer-sheet');
     const showSurface = () => {
@@ -724,20 +741,7 @@
         redraw();
       });
     }
-    overrideButton?.addEventListener('click', async () => {
-      overrideButton.hidden = true;
-      try {
-        await post(root.dataset.override, {
-          work_order_id:sheet.dataset.id, revision:sheet.dataset.revision
-        });
-        // Rebuild listeners in their normal editable state, with no stale
-        // completed-sheet controls or dangling delayed saves.
-        location.reload();
-      } catch (error) {
-        overrideButton.hidden = false;
-        message('Override failed: ' + error.message, sheet);
-      }
-    });
+    bindOverride(sheet, overrideButton);
     if (sheet.dataset.submitted === 'yes') {
       for (const input of sheet.querySelectorAll('input,select,textarea,button')) {
         if (input !== overrideButton) input.disabled = true;
@@ -1056,8 +1060,24 @@
     sheet.classList.add('submitted');
     const button = sheet.querySelector('.submit-sheet');
     if (button) button.hidden = true;
+    // Keep the existing per-sheet Override available without forcing a
+    // reload that could discard edits on unrelated cards.
+    let override = sheet.querySelector('.override-sheet');
+    if (!override) {
+      const notes = sheet.querySelector('.field-notes');
+      if (notes) {
+        override = document.createElement('button');
+        override.type = 'button';
+        override.className = 'override-sheet';
+        override.textContent = 'Override';
+        override.setAttribute('aria-label',
+          'Override completed work order ' + sheet.dataset.workNumber);
+        notes.append(override);
+        bindOverride(sheet, override);
+      }
+    }
     for (const input of sheet.querySelectorAll('input,select,textarea,button')) {
-      input.disabled = true;
+      if (input !== override) input.disabled = true;
     }
     applyVisibility();
   }
