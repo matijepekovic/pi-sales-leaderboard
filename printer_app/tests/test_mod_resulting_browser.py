@@ -1158,8 +1158,8 @@ def test_refresh_keeps_edits_made_during_an_inflight_save(mod_browser):
     saved = service.repository.sheets(service.day())[0]['draft']
     expected = {'review': False, 'numbers': '', 'notes': 'Final black comment',
                 'redlines': 'FINAL REDLINE',
-                'call_1': '',
-                'call_2': '', 'dispo': '', 'cxl_at_lead': False}
+                'call_1': '10:15 AM',
+                'call_2': '1:27 PM', 'dispo': 'cxl', 'cxl_at_lead': True}
     for key, value in expected.items():
         assert saved[key] == value, (key, saved[key])
         control = first.locator('[data-key=' + key + ']')
