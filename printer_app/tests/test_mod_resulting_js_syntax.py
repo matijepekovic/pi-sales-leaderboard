@@ -65,6 +65,13 @@ def test_salesforce_refresh_and_clear_keep_explicit_module_boundaries():
     assert "_apply_remote_changes" in repo
     assert "mod_result_sf_notes:" in repo
     assert 'repo.writer' not in repo
+    assert 'initial_only=initial_only' in svc
+    assert 'def submission_stage(self, job_id, stage):' in repo
+    assert 'stage_elapsed_seconds' in repo
+    assert 'def _historical_by_lead(self, payloads):' in adapter
+    assert 'def _appointments_for_batch(self, payloads):' in adapter
+    assert 'def _product_rows_for_batch(self, payloads):' in adapter
+    assert 'def _lead_rows_for_batch(self, payloads, product_rows_by_work):' in adapter
 
 
 def test_selected_submission_and_salesforce_field_boundaries_remain_isolated():
@@ -84,6 +91,9 @@ def test_selected_submission_and_salesforce_field_boundaries_remain_isolated():
     submission = svc.split('    def _apply_batch(', 1)[1].split('    def submit(', 1)[0]
     assert 'pdf_exporter' not in submission
     assert 'self.writer.apply(plan)' in submission
+    assert 'self.repository.submission_stage(' in submission
+    js = (root/'static/mod_resulting/sheet.js').read_text()
+    assert 'stage_elapsed_seconds' in js
     assert 'deposit_payment=deposit_payment_text(draft)' in svc
     assert "payload['deposit_payment']" in adapter
     assert "'deposit': ('string', 'textarea')" in adapter
