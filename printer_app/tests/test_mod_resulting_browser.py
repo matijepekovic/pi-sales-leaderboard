@@ -383,7 +383,7 @@ def test_completed_override_button_unlocks_one_sheet_and_refresh_restores_salesf
     authoritative = clean_draft({
         'dispo':'cxl', 'lead_status':'Canceled', 'notes':'Salesforce note'
     })
-    writer.read_results = lambda records: {first_id:authoritative}
+    writer.read_results = lambda records: {r.source_id:(authoritative if r.source_id == first_id else clean_draft({})) for r in records}
     service.refresh(day)
 
     page.goto(origin + '/mod-resulting')
@@ -436,12 +436,12 @@ def test_completed_override_button_unlocks_one_sheet_and_refresh_restores_salesf
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     first = page.locator('.mod-sheet').first
-    expect(first).to_have_attribute('data-submitted','yes')
-    expect(first.locator('.override-sheet')).to_be_visible()
-    expect(first.locator('[data-key=dispo]')).to_have_value('cxl')
+    expect(first).to_have_attribute('data-submitted','no')
+    expect(first.locator('.override-sheet')).to_have_count(0)
+    expect(first.locator('[data-key=dispo]')).to_have_value('pns')
     expect(first.locator('[data-key=notes]')).to_have_value(
         'Local note survives refresh')
-    assert service.repository.sheets(day)[0]['override_active'] == 0
+    assert service.repository.sheets(day)[0]['override_active'] == 1
     assert writer.applied == []
 
 
@@ -599,7 +599,8 @@ def test_clear_discards_local_notes_and_restores_salesforce_without_writes(mod_b
     calls = []
     def remote_results(records):
         calls.append(tuple(r.source_id for r in records))
-        return {r.source_id: remote for r in records if r.source_id == ident}
+        return {r.source_id: (remote if r.source_id == ident else clean_draft({}))
+                for r in records}
     writer.read_results = remote_results
 
     page.locator('#clearLocal').click()
@@ -781,13 +782,14 @@ def test_notes_and_context_controls_remain_in_original_boxes(mod_browser):
     assert draft['notes'] == 'Black comment above redlines.'
     assert draft['redlines'] == 'REPLACE TRIM WITH FULL SCOPE.'
     assert draft['note_runs'] == []
-    assert draft['dnr_reason'] == ''
-    assert draft['sale_products'] == {}
-    assert draft['call_1'] == ''
-    assert draft['call_2'] == ''
-    assert draft['review'] is False
-    assert draft['dispo'] == ''
-    assert draft['numbers'] == ''
+    assert draft['dnr_reason'] == 'Roofing'
+    assert draft['sale_products']['Roofing']['price'] == '17850'
+    assert draft['sale_products']['Siding']['price'] == '0'
+    assert draft['call_1'] == '10:15 AM'
+    assert draft['call_2'] == '10:27 AM'
+    assert draft['review'] is True
+    assert draft['dispo'] == 'sale'
+    assert draft['numbers'] == '25,000\n17,850'
     first.locator('[data-key=review]').uncheck()
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
