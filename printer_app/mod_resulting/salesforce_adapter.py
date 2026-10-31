@@ -6,6 +6,7 @@ contract. Core workflow code never depends on Salesforce API names.
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
 import json
 import re
 import shlex
@@ -139,11 +140,17 @@ class ResultingSalesforceAdapter:
         self.runner = runner
         self._describes = {}
 
-    def _run(self, parts, *, timeout=60):
+    def _run(self, parts, *, timeout=60, input_body=None):
+        # JSON writes travel through stdin, never through the CLI's fragile
+        # shell-like --values parser or process command-line arguments.
+        run_options = dict(text=True, capture_output=True,
+                           check=False, timeout=timeout)
+        if input_body is not None:
+            run_options['input'] = input_body
         try:
             completed = self.runner(
                 [self.executable, *parts, '--target-org', self.target_org, '--json'],
-                text=True, capture_output=True, check=False, timeout=timeout,
+                **run_options,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ResultingSalesforceError('Salesforce CLI unavailable or timed out.') from exc
@@ -1198,38 +1205,149 @@ class ResultingSalesforceAdapter:
                 existing_rows=product_rows_by_work[work_order_id],
                 attribution_row=lead_rows.get(lead_id)))
             operations.append(plan)
+        # Reject an oversized Work Order before submitting any earlier
+        # Work Orders from this End-of-Day batch. The ordered Composite API
+        # supports at most 25 subrequests per atomic transaction.
+        if any(len(plan) > 25 for plan in operations):
+            raise ResultingSalesforceError(
+                'A Work Order exceeds the Salesforce Composite 25-step limit.')
         return operations
 
     @staticmethod
-    def _values_argument(values):
-        chunks = []
-        for key, value in values.items():
-            if not NAME_RE.fullmatch(key):
-                raise ResultingSalesforceError('Unsafe Salesforce field name.')
-            if value is True:
-                raw = 'true'
-            elif value is False:
-                raw = 'false'
-            elif value is None:
-                raw = ''
+    def _rest_error(body):
+        """Extract a Salesforce subrequest failure without leaking credentials."""
+        errors = body if isinstance(body, list) else (
+            body.get('errors', [body]) if isinstance(body, dict) else [body]
+        )
+        details = []
+        for item in errors:
+            if isinstance(item, dict):
+                code = str(item.get('errorCode') or item.get('name') or '').strip()
+                reason = str(item.get('message') or '').strip()
+                fields = item.get('fields') or ()
+                field_names = ', '.join(str(v) for v in fields) if isinstance(
+                    fields, list) else ''
+                detail = (code + ': ' if code and reason else code) + reason
+                if field_names:
+                    detail += ' (' + field_names + ')'
             else:
-                raw = str(value)
-            chunks.append(key + '=' + shlex.quote(raw))
-        return ' '.join(chunks)
+                detail = str(item or '').strip()
+            if detail:
+                details.append(detail)
+        result = '; '.join(details) or 'No Salesforce error details returned.'
+        result = re.sub(r'(?i)\bBearer\s+[^\s,;]+', 'Bearer [REDACTED]', result)
+        result = re.sub(
+            r'(?i)\b(accessToken|sfdxAuthUrl|authorization)\s*[:=]\s*\S+',
+            r'\1=[REDACTED]', result)
+        return result[:380]
+
+    def _rest_values(self, object_name, values):
+        """Use Salesforce field types to serialize an existing preflight plan."""
+        schema = self._describes.get(object_name)
+        if not isinstance(schema, dict) or not isinstance(values, dict):
+            raise ResultingSalesforceError(
+                'Salesforce metadata is unavailable for the planned update.'
+            )
+        types = {
+            field.get('name'): field.get('type')
+            for field in schema.get('fields', [])
+            if isinstance(field, dict)
+        }
+        result = {}
+        for field, value in values.items():
+            if not NAME_RE.fullmatch(field) or field not in types:
+                raise ResultingSalesforceError(
+                    'Unknown Salesforce write field on ' + object_name + '.')
+            kind = types[field]
+            if value is None:
+                result[field] = None
+            elif kind in ('currency', 'double', 'percent', 'int', 'long'):
+                # The previous CLI path stringified numbers, but REST JSON
+                # requires numeric types for currency and numeric fields.
+                number = Decimal(str(value))
+                if not number.is_finite():
+                    raise ResultingSalesforceError('Invalid Salesforce amount.')
+                if kind in ('int', 'long') and number != number.to_integral_value():
+                    raise ResultingSalesforceError('Invalid integer amount.')
+                result[field] = (
+                    int(number) if number == number.to_integral_value()
+                    else float(number)
+                )
+            else:
+                result[field] = value
+        return result
 
     def apply(self, operations):
-        """Apply only a preflighted plan. No shell interpolation is used."""
-        for action, object_name, record_id, values in operations:
-            pairs = self._values_argument(values)
-            if action == 'update':
-                self._run([
-                    'data', 'update', 'record', '--sobject', object_name,
-                    '--record-id', _require_id(record_id), '--values', pairs,
-                ])
-            elif action == 'create':
-                self._run([
-                    'data', 'create', 'record', '--sobject', object_name,
-                    '--values', pairs,
-                ])
-            else:
+        """Commit one Work Order atomically, in the existing plan order.
+
+        This is the same preflighted SA -> Work Order -> Lead -> PIR sequence.
+        Composite's allOrNone rolls back earlier appointments if a later
+        Work Order or Product Result rejects the request. Its JSON body also
+        preserves MOD Notes containing quotes and multiline text.
+        """
+        if not operations or len(operations) > 25:
+            raise ResultingSalesforceError(
+                'Work Order requires between 1 and 25 Salesforce writes.'
+            )
+        version = '/services/data/v60.0'
+        requests = []
+        for index, (action, object_name, record_id, values) in enumerate(
+                operations, 1):
+            if object_name not in (
+                    SERVICE_APPOINTMENT, WORK_ORDER, LEAD, PRODUCT_RESULT):
+                raise ResultingSalesforceError('Unknown resulting object.')
+            if action not in ('update', 'create'):
                 raise ResultingSalesforceError('Unknown resulting operation.')
+            if action == 'update':
+                url = version + '/sobjects/' + object_name + '/' + _require_id(record_id)
+            else:
+                if record_id:
+                    raise ResultingSalesforceError(
+                        'A new Salesforce result cannot have an existing ID.')
+                url = version + '/sobjects/' + object_name
+            requests.append({
+                'method': 'PATCH' if action == 'update' else 'POST',
+                'url': url,
+                'referenceId': 'step_' + str(index),
+                'body': self._rest_values(object_name, values),
+            })
+        request_body = json.dumps({
+            'allOrNone': True,
+            'collateSubrequests': False,  # Preserve the existing Flow order.
+            'compositeRequest': requests,
+        }, ensure_ascii=False)
+        response = self._run([
+            'api', 'request', 'rest', version + '/composite',
+            '--method', 'POST', '--body', '-',
+            '--header', 'Content-Type: application/json',
+        ], input_body=request_body, timeout=120)
+        results = response.get('compositeResponse') if isinstance(
+            response, dict) else None
+        if not isinstance(results, list) or len(results) != len(requests):
+            # Unknown transport outcome: the caller records an uncertain
+            # receipt and must never blindly replay the Work Order.
+            raise ResultingSalesforceError(
+                'Salesforce Composite returned an incomplete response; '
+                'verify the Work Order before retrying.'
+            )
+        seen = set()
+        for item in results:
+            if not isinstance(item, dict):
+                raise ResultingSalesforceError(
+                    'Salesforce Composite returned an invalid response.')
+            reference = item.get('referenceId')
+            if (reference not in {r['referenceId'] for r in requests}
+                    or reference in seen):
+                raise ResultingSalesforceError(
+                    'Salesforce Composite returned mismatched operations.')
+            seen.add(reference)
+            index = int(reference.removeprefix('step_')) - 1
+            step = operations[index]
+            status = item.get('httpStatusCode')
+            if type(status) is not int or not 200 <= status < 300:
+                detail = self._rest_error(item.get('body'))
+                raise ResultingSalesforceError(
+                    step[1] + ' ' + step[0] + ' rejected: ' + detail
+                )
+        # No success receipt can be issued until every expected subrequest
+        # succeeds and Salesforce's response is complete.
