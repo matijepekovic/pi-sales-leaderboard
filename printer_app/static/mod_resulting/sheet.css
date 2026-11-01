@@ -242,3 +242,8 @@ body.dialog-open{overflow:hidden}
 }
 
 @media print{.floating-controls,.notification,.editor-dialog,.sheet-message,.time-picker-button,.red-pen,.override-sheet,.submit-sheet,.submission-toast{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}.mod-sheet.submitted{margin-top:0}}
+
+/* Cover-first PDFs are available only for fully resulted daily batches. */
+.floating-controls #pdfsButton:disabled{opacity:.42;cursor:not-allowed}
+.pdf-options{display:flex;flex-direction:column;gap:12px}
+.pdf-options>button{width:100%;min-height:48px}
