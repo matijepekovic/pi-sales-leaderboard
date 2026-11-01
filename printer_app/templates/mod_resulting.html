@@ -49,6 +49,7 @@
  data-id="{{ item.work_order_id }}" data-revision="{{ item.revision }}"
  data-name="{{ sheet.lead_name|lower }}" data-customer="{{ sheet.lead_name }}" data-work-number="{{ sheet.work_order_number }}" data-reps="{{ sheet.assigned_service_resources|join(' ')|lower }}" data-dispo="{{ d.dispo }}"
  data-submitted="{{ 'yes' if locked else 'no' }}"
+ data-source-resulted="{{ 'yes' if (d.dispo or d.product_results) else 'no' }}"
  data-override-active="{{ 'yes' if item.override_active else 'no' }}"
  data-initial='{{ d|tojson|forceescape }}'>
  {% if not locked %}
