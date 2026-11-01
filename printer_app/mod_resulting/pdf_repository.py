@@ -83,6 +83,11 @@ class ModPdfRepository:
                 SET state='pending_finalize',stage='restarting'
                 WHERE state='finalizing'""")
 
+    def has_pending(self):
+        return self.db.one(
+            "SELECT id FROM mod_result_pdf_jobs WHERE state IN ('queued','pending_finalize')"
+            " ORDER BY id LIMIT 1") is not None
+
     def claim(self):
         with self.db.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
