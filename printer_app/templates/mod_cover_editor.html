@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OLY MOD Cover</title>
+<link rel="stylesheet" href="{{ url_for('static',filename='mod_resulting/cover_editor.css') }}">
+<script defer src="{{ url_for('static',filename='mod_resulting/cover_editor.js') }}"></script>
+</head>
+<body data-job-id="{{ data.job_id }}" data-revision="{{ data.revision }}"
+ data-csrf="{{ session.csrf }}"
+ data-edits="{{ data.edits|tojson|forceescape }}"
+ data-confirm="{{ url_for('mod_resulting.pdfs_confirm') }}"
+ data-status="{{ url_for('mod_resulting.pdfs_status',job_id=data.job_id) }}">
+<header class="toolbar">
+ <div><h1>OLY MOD Cover</h1><p>Edit any cell. This report does not write to Salesforce.</p></div>
+ <div class="actions">
+  <a href="{{ url_for('mod_resulting.page') }}">MOD Sheets</a>
+  <button type="button" id="confirmCover" class="primary">Confirm</button>
+  <a id="downloadCover" href="#" target="_blank" rel="noopener" hidden>Open Redlines PDF</a>
+ </div>
+</header>
+<div id="coverStatus" role="status" aria-live="polite"></div>
+<main id="coverEditor">
+ <div class="report-title">OLYMPIA</div>
+ {% set columns = (
+ ('lead_source','Lead Source'),('marketer','Marketer'),('client_name','Client Name'),
+ ('sales_rep','Sales Rep'),('manager_sign','Manager Sign'),('price','Price'),
+ ('deposit','Deposit'),('cash_finance','C/F'),('product','Product'),
+ ('phone','Phone #'),('poi','POI'),('doc_signing','Doc Signing'),('sold_at','% Sold At')
+ ) %}
+ {% for section in data.report.sections %}
+ <section class="division" data-division="{{ section.key }}">
+  <h2>{{ section.title }}</h2>
+  <div class="table-scroll"><table>
+   <thead><tr>
+    {% for field,label in columns %}<th data-field="{{ field }}">{{ label }}</th>{% endfor %}
+    <th> </th>
+   </tr></thead>
+   <tbody>
+   {% for item in section.rows %}
+   <tr data-row-id="{{ item.id }}">
+    {% for field,label in columns %}
+    <td><input aria-label="{{ label }} for {{ item.client_name or 'new row' }}"
+       data-row="{{ item.id }}" data-field="{{ field }}"
+       value="{{ item.get(field,'') }}" maxlength="160"></td>
+    {% endfor %}
+    <td><button type="button" class="remove-row" aria-label="Remove cover row">Remove</button></td>
+   </tr>
+   {% endfor %}
+   </tbody>
+  </table></div>
+  <button type="button" class="add-row" data-division="{{ section.key }}">Add row</button>
+ </section>
+ {% endfor %}
+ <section class="summary">
+  <h2>Daily Summary</h2>
+  <div class="table-scroll"><table>
+   <thead><tr><th>Work Type</th>
+    {% for f,label in (('leads','Leads'),('pitched','Pitched'),
+                       ('pitch_pct','Pitch %'),('closing_pct','Closing %'),
+                       ('day_total','Day Total'),('dpl','$ Per Lead')) %}
+     <th>{{ label }}</th>
+    {% endfor %}
+   </tr></thead>
+   <tbody>
+   {% for section in data.report.sections %}
+   <tr><th scope="row">{{ section.title }}</th>
+    {% for key in ('leads','pitched','pitch_pct','closing_pct','day_total','dpl') %}
+    <td><input data-summary="{{ section.key }}" data-field="{{ key }}"
+       aria-label="{{ section.title }} {{ key }}"
+       maxlength="160" value="{{ section.summary[key] }}"></td>
+    {% endfor %}
+   </tr>
+   {% endfor %}
+   <tr class="grand"><th scope="row">Grand Total</th>
+   {% for key in ('leads','pitched','pitch_pct','closing_pct','day_total','dpl') %}
+   <td><input data-grand="{{ key }}" aria-label="Grand Total {{ key }}"
+      maxlength="160" value="{{ data.report.grand[key] }}"></td>
+   {% endfor %}
+   </tr>
+   </tbody>
+  </table></div>
+ </section>
+ <section class="totals">
+  <h2>Daily Totals</h2>
+  <div class="totals-grid">
+  {% for key,label in (
+   ('avg_job_pct','Avg Job %'),('average_sale','Average Sale'),
+   ('average_deposit','Average Deposit'),('sales','Sales'),
+   ('reps_paid','Reps Paid'),('nra','NRA'),
+   ('mod','MOD'),('date','Date')
+  ) %}
+   <label>{{ label }}<input data-total="{{ key }}" aria-label="{{ label }}"
+                          maxlength="160" value="{{ data.report.totals[key] }}"></label>
+  {% endfor %}
+  </div>
+ </section>
+</main>
+<footer><button type="button" id="bottomConfirm" class="primary">Confirm cover and create Redlines PDF</button></footer>
+</body>
+</html>
