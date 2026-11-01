@@ -16,6 +16,7 @@
  <div><h1>OLY MOD Cover</h1><p>Edit any cell. This report does not write to Salesforce.</p></div>
  <div class="actions">
   <a href="{{ url_for('mod_resulting.page') }}">MOD Sheets</a>
+  <a href="{{ url_for('mod_resulting.pdfs_calc', job_id=data.job_id) }}">OLY Calc</a>
   <button type="button" id="confirmCover" class="primary">Confirm</button>
   <a id="downloadCover" href="#" target="_blank" rel="noopener" hidden>Open Redlines PDF</a>
  </div>

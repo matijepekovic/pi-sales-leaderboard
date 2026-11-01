@@ -111,6 +111,7 @@ def blueprint(service, surface, *, color_code=None, pdfs=None):
         job_id = result["job_id"]
         return jsonify(ok=True, **result,
                        editor_url=url_for('mod_resulting.pdfs_cover', job_id=job_id),
+                       calc_editor_url=url_for('mod_resulting.pdfs_calc', job_id=job_id),
                        status_url=url_for('mod_resulting.pdfs_status', job_id=job_id)), 202
 
     @bp.get('/pdfs/cover/<int:job_id>')
@@ -122,6 +123,63 @@ def blueprint(service, surface, *, color_code=None, pdfs=None):
         except LookupError:
             abort(404)
         return render_template('mod_cover_editor.html', data=data)
+
+    @bp.get('/pdfs/calc/<int:job_id>')
+    def pdfs_calc(job_id):
+        if pdfs is None:
+            abort(404)
+        try:
+            data = pdfs.calc_editor(service.day(), job_id)
+        except LookupError:
+            abort(404)
+        return render_template('mod_calc_editor.html', data=data)
+
+    @bp.post('/api/pdfs/calc/confirm')
+    def pdfs_calc_confirm():
+        if pdfs is None:
+            abort(503)
+        try:
+            job_id = int(request.form.get('job_id', ''))
+            revision = int(request.form.get('revision', ''))
+            raw = request.form.get('edits', '')
+            if len(raw) > 10000:
+                raise ValueError('OLY Calc edit is too large.')
+            edits = json.loads(raw)
+            next_revision = pdfs.confirm_calc(service.day(), job_id, edits, revision)
+        except (ValueError, TypeError, LookupError, json.JSONDecodeError) as exc:
+            return jsonify(ok=False, error=str(exc)), 409
+        return jsonify(ok=True, revision=next_revision)
+
+    @bp.get('/api/pdfs/calc/status')
+    def pdfs_calc_status():
+        if pdfs is None:
+            abort(404)
+        job_id = request.args.get('job_id', type=int)
+        if job_id is None:
+            return jsonify(ok=False, error='PDF job ID required.'), 400
+        try:
+            status = pdfs.calc_status(service.day(), job_id)
+        except LookupError:
+            abort(404)
+        return jsonify(ok=True, **status,
+                       download_url=(url_for('mod_resulting.pdfs_download_calc', job_id=job_id)
+                                     if status['ready'] else None))
+
+    @bp.get('/pdfs/calc/download/<int:job_id>')
+    def pdfs_download_calc(job_id):
+        if pdfs is None:
+            abort(404)
+        try:
+            path = pdfs.calc_pdf_path(service.day(), job_id)
+        except LookupError:
+            abort(404)
+        except ValueError as exc:
+            return Response(str(exc), status=409, mimetype='text/plain')
+        response = send_file(path, mimetype='application/pdf', as_attachment=False,
+                             download_name='OLY-Calc-' + service.day() + '.pdf')
+        response.headers['Cache-Control'] = 'no-store'
+        response.headers['Content-Security-Policy'] = "sandbox; default-src 'none'"
+        return response
 
     @bp.post('/api/pdfs/confirm')
     def pdfs_confirm():

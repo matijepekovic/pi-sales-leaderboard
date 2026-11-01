@@ -1312,7 +1312,9 @@
   const pdfsButton = document.getElementById('pdfsButton');
   const pdfChoice = document.getElementById('pdfChoice');
   const pdfRedlines = document.getElementById('pdfRedlines');
+  const pdfCalc = document.getElementById('pdfCalc');
   let pdfEditorUrl = '';
+  let pdfCalcEditorUrl = '';
   function updatePdfAvailability() {
     if (!pdfsButton) return;
     let incomplete = 0;
@@ -1341,6 +1343,7 @@
         await flushAll();
         const result = await post(root.dataset.pdfsStart);
         pdfEditorUrl = result.editor_url;
+        pdfCalcEditorUrl = result.calc_editor_url;
         document.getElementById('pdfsProgress').textContent =
           'Generating ' + result.total_sheets + ' MOD sheets in the background. ' +
           'Redlines opens the editable cover page.';
@@ -1353,6 +1356,9 @@
     });
     pdfRedlines.addEventListener('click', () => {
       if (pdfEditorUrl) location.assign(pdfEditorUrl);
+    });
+    pdfCalc.addEventListener('click', () => {
+      if (pdfCalcEditorUrl) location.assign(pdfCalcEditorUrl);
     });
   }
 

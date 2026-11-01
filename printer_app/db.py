@@ -177,6 +177,12 @@ CREATE TABLE IF NOT EXISTS mod_result_pdf_jobs (
  error TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS mod_result_pdf_jobs_queue
  ON mod_result_pdf_jobs(state,id);
+
+-- OLY Calc edits are report-only, independently persistent from the cover.
+CREATE TABLE IF NOT EXISTS mod_calc_edits (
+ day TEXT PRIMARY KEY,
+ edits TEXT NOT NULL DEFAULT '{}',
+ revision INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS mod_result_submission_items (
  job_id INTEGER NOT NULL REFERENCES mod_result_submission_jobs(id) ON DELETE CASCADE,
  work_order_id TEXT NOT NULL,
@@ -215,6 +221,22 @@ class Database:
                 conn.execute(
                     'ALTER TABLE mod_result_submission_jobs ADD COLUMN '
                     'stage_started REAL NOT NULL DEFAULT 0')
+            # The existing Redlines PDF job owns both report outputs for one
+            # immutable daily snapshot; each has independent confirmation.
+            calc_columns = {
+                'calc_base': "TEXT NOT NULL DEFAULT '{}'",
+                'calc_edits': "TEXT NOT NULL DEFAULT '{}'",
+                'calc_revision': "INTEGER NOT NULL DEFAULT 0",
+                'calc_confirmed': "INTEGER NOT NULL DEFAULT 0",
+                'calc_state': "TEXT NOT NULL DEFAULT 'unavailable'",
+                'calc_error': "TEXT NOT NULL DEFAULT ''",
+            }
+            pdf_columns = {row[1] for row in conn.execute(
+                'PRAGMA table_info(mod_result_pdf_jobs)')}
+            for key, definition in calc_columns.items():
+                if key not in pdf_columns:
+                    conn.execute('ALTER TABLE mod_result_pdf_jobs ADD COLUMN '
+                                 + key + ' ' + definition)
             # Additive tables/columns retain version 3 for safe old-release rollback.
             conn.execute('PRAGMA user_version=3')
 

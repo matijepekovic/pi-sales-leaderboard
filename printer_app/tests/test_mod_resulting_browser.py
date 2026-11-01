@@ -1549,7 +1549,7 @@ def test_pdfs_gate_and_cover_editor_without_salesforce_submission(mod_browser):
     popup = page.locator('#pdfChoice')
     expect(popup).to_be_visible()
     expect(popup.locator('#pdfRedlines')).to_be_enabled()
-    expect(popup.locator('#pdfCalc')).to_be_disabled()
+    expect(popup.locator('#pdfCalc')).to_be_enabled()
     popup.locator('#pdfRedlines').click()
     page.wait_for_url('**/mod-resulting/pdfs/cover/*')
     expect(page.locator('h1')).to_have_text('OLY MOD Cover')
@@ -1563,3 +1563,39 @@ def test_pdfs_gate_and_cover_editor_without_salesforce_submission(mod_browser):
     assert writer.applied == []
     assert service.repository.sheets(service.day())[0]['draft']['dispo'] == 'np'
     assert service.repository.sheets(service.day())[1]['draft']['dispo'] == 'pns'
+
+
+
+def test_oly_calc_browser_uses_approved_picture_and_editable_formulas(mod_browser):
+    from playwright.sync_api import expect
+    page, service, writer, origin, capture = mod_browser
+    page.goto(origin + '/mod-resulting')
+    dispositions = page.locator('.mod-sheet select[data-key="dispo"]')
+    dispositions.nth(0).select_option('pns')
+    dispositions.nth(1).select_option('np')
+    page.locator('#pdfsButton').click()
+    page.locator('#pdfChoice #pdfCalc').click()
+    page.wait_for_url('**/mod-resulting/pdfs/calc/*')
+    expect(page.locator('h1')).to_have_text('OLY Calc')
+    assert page.locator('img.calc-picture').evaluate('(img) => img.naturalWidth') > 0
+    expect(page.locator('[data-output="leads"]')).to_have_value('2')
+    page.locator('[data-input="sold"]').fill('1')
+    page.locator('[data-input="cxl"]').fill('1')
+    expect(page.locator('[data-output="leads"]')).to_have_value('1')
+    expect(page.locator('[data-output="close"]')).to_have_value('100.0%')
+    page.locator('[data-output="leads"]').fill('2')
+    expect(page.locator('[data-output="close"]')).to_have_value('50.0%')
+    page.locator('[data-output="total"]').fill('2000')
+    expect(page.locator('[data-output="dpl"]')).to_have_value('$1,000.00')
+    page.locator('[data-output="pitch"]').fill('85%')
+    page.locator('#confirmCalc').click()
+    expect(page.locator('#calcStatus')).to_contain_text('confirmed')
+    day = service.day()
+    db = service.repository.db
+    result = db.one('SELECT calc_edits,calc_confirmed FROM mod_result_pdf_jobs')
+    import json
+    changes = json.loads(result['calc_edits'])
+    assert changes['inputs'] == {'sold':'1', 'cxl':'1'}
+    assert changes['outputs'] == {'leads':'2', 'total':'2000', 'pitch':'85%'}
+    assert result['calc_confirmed'] == 1
+    assert not writer.applied
