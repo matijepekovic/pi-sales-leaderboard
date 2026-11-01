@@ -1273,3 +1273,92 @@ def test_phase3_sale_order_is_validated_without_implicit_sale_detection():
             clean_draft({'dispo':'sale','sale_products':{
                 'Siding':{'price':'15000','deposit':'0'},
             },'sale_selection_order':order})
+
+
+@pytest.mark.parametrize(
+    ('dispo', 'individual', 'interest'),
+    [
+        ('sale', True, 'Roofing;Siding'),
+        ('pns', False, 'Roofing;Siding'),
+        ('pns', True, 'Roofing'),
+    ],
+)
+def test_unrelated_save_preserves_salesforce_product_results_without_editor(
+        tmp_path, dispo, individual, interest):
+    """An old browser may submit empty product_results for a hidden editor."""
+    from dataclasses import replace
+
+    service, repo, _, writer = _service(tmp_path)
+    record = replace(RECORD, product_interest=interest)
+    source_products = {
+        'Roofing': {
+            'result': 'sale', 'detail': '', 'price': '15000', 'deposit': '',
+        },
+        'Siding': {
+            'result': 'pns', 'detail': 'Price Objection', 'price': '', 'deposit': '',
+        },
+        'Windows': {
+            'result': 'np', 'detail': 'Not Home', 'price': '', 'deposit': '',
+        },
+    }
+    source = clean_draft({
+        'dispo': dispo,
+        'additional_products': individual,
+        'product_results': source_products,
+        'sale_products': {'Roofing': {'price': '15000', 'deposit': '500'}},
+        'notes': 'Salesforce note',
+    })
+    source_records = [{
+        'id': 'a12000000000001AAA', 'product': 'Roofing',
+        'result': 'Sale', 'price': 15000,
+    }]
+    source['source_product_records'] = source_records
+    repo.refresh(DAY, [record], external_drafts={WORK: source})
+    assert repo.sheets(DAY)[0]['submitted_at'] == -1.0
+    revision = repo.override(DAY, WORK, 0)
+
+    # This is exactly the old serializer's destructive payload. The backend
+    # must not treat empty product_results as an intentional edit when the
+    # individual-results panel is inaccessible.
+    note_only = clean_draft({
+        'dispo': dispo, 'additional_products': individual,
+        'notes': 'Locally updated note',
+        'product_results': {},
+        'sale_products': {'Roofing': {'price': '15000', 'deposit': '500'}},
+    })
+    service.save(DAY, WORK, note_only, revision)
+    saved = repo.sheets(DAY)[0]['draft']
+    assert saved['product_results'] == source_products
+    assert saved['source_product_records'] == source_records
+    assert saved['notes'] == 'Locally updated note'
+    assert saved['sale_products'] == source['sale_products']
+    assert not writer.applied and not writer.plans
+
+
+def test_individual_product_editor_still_updates_and_removes_visible_results(tmp_path):
+    """Preservation must never make an actual individual-result edit inert."""
+    service, repo, _, _ = _service(tmp_path)
+    source = clean_draft({
+        'dispo': 'pns', 'additional_products': True,
+        'product_results': {
+            'Roofing': {'result': 'sale', 'detail': '', 'price': '15000', 'deposit': ''},
+            'Siding': {'result': 'pns', 'detail': '', 'price': '', 'deposit': ''},
+            'Windows': {'result': 'nra', 'detail': '', 'price': '', 'deposit': ''},
+        },
+    })
+    repo.refresh(DAY, [RECORD], external_drafts={WORK: source})
+    revision = repo.override(DAY, WORK, 0)
+    edited = clean_draft({
+        'dispo': 'pns', 'additional_products': True,
+        'product_results': {
+            'Roofing': {'result': 'np', 'detail': 'Not Home', 'price': '', 'deposit': ''},
+            # Clearing the visible Siding result is intentional.
+        },
+    })
+    service.save(DAY, WORK, edited, revision)
+    saved = repo.sheets(DAY)[0]['draft']['product_results']
+    assert saved == {
+        'Roofing': {'result': 'np', 'detail': 'Not Home', 'price': '', 'deposit': ''},
+        'Windows': {'result': 'nra', 'detail': '', 'price': '', 'deposit': ''},
+    }
+
