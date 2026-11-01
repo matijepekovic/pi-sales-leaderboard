@@ -61,8 +61,10 @@ def _recalculate(inputs, work_orders, oos, *, manual_leads=None, manual_total=No
         denominator_no_nra = sold + pns + nh + np
     else:
         pitched = denominator = denominator_no_nra = None
-    leads = (decimal_amount(manual_leads) if manual_leads is not None else
-             Decimal(work_orders - oos) - cxl if cxl is not None else None)
+    if manual_leads is not None:
+        leads = decimal_amount(manual_leads)
+    else:
+        leads = Decimal(work_orders - oos) - cxl if cxl is not None else None
     return {
         "leads": str(int(leads)) if leads is not None and leads == int(leads) else (
             str(leads) if leads is not None else ""),
