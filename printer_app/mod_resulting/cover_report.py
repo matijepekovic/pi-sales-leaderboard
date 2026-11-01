@@ -229,7 +229,9 @@ def project_cover(day, sheets, mod_name=""):
         info = counts[key]
         info["leads"] += 1
         disposition = str(draft.get("dispo") or "").strip().casefold()
-        if disposition in ("sale", "pns"):
+        # A sold product counts as a pitch even when another product owns
+        # the sheet-level disposition.
+        if disposition in ("sale", "pns") or _sold(draft):
             info["pitched"] += 1
         if disposition == "nra":
             info["nra"] += 1
