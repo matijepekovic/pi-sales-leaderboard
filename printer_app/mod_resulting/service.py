@@ -131,10 +131,15 @@ class ResultingService:
                     if s['work_order_id'] == work_order_id), None)
         if row is None:
             raise LookupError('This MOD sheet is not part of the selected day.')
-        if 'source_product_records' in row['draft']:
-            data['source_product_records'] = row['draft']['source_product_records']
-        else:
-            data.pop('source_product_records', None)
+        # Only actual Stats editor fields may be changed by a browser post.
+        # Preserve every source-owned field from the stored Salesforce read,
+        # including identities that the current editor cannot represent.
+        editor_fields = set(clean_draft({}))
+        data = {key: value for key, value in data.items() if key in editor_fields}
+        data.update({
+            key: value for key, value in row['draft'].items()
+            if key not in editor_fields
+        })
         # The Salesforce writer owns validation of deliberately submitted
         # selections against actual org metadata, not the imported snapshot.
         return self.repository.save_draft(day, work_order_id, data, revision)
