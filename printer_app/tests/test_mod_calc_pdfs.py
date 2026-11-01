@@ -158,7 +158,10 @@ def test_calc_confirmation_and_redlines_are_separate_durable_jobs(tmp_path):
     pdf = PdfReader(str(service.calc_pdf_path(DAY, job_id)))
     assert "$199,999.00" in pdf.pages[0].extract_text()
     assert "75%" in pdf.pages[0].extract_text()
-    assert resulting.print_sheets(DAY) == cards
+    unchanged = resulting.print_sheets(DAY)
+    assert len(unchanged) == 21
+    assert unchanged[0]["draft"]["sale_products"]["Roofing"]["price"] == "30000"
+    assert unchanged[18]["draft"]["dispo"] == "cxl"
     assert repo.calc_edits(DAY)[0] == edits
 
     # Re-confirming Calc invalidates only the Calc PDF.
