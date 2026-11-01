@@ -180,9 +180,6 @@
  <div class="cell field-dispo replacement">
   <b>Dispo:</b><select data-key="dispo" aria-label="Dispo">
    <option value=""></option>
-   {% if d.dispo and d.dispo not in ('sale','pns','np','cxl','nra','oos') %}
-   <option value="{{ d.dispo }}" selected>{{ d.dispo }}</option>
-   {% endif %}
    <option value="sale" {% if d.dispo=='sale' %}selected{% endif %}>Sale</option>
    <option value="pns" {% if d.dispo=='pns' %}selected{% endif %}>Pitch No Sale</option>
    <option value="np" {% if d.dispo=='np' %}selected{% endif %}>No Pitch</option>

@@ -633,6 +633,13 @@
     });
     if (background.complete) showSurface();
     const init = JSON.parse(sheet.dataset.initial || '{}');
+    const disposition = sheet.querySelector('[data-key="dispo"]');
+    if (disposition && init.dispo &&
+        ![...disposition.options].some(option => option.value === init.dispo)) {
+      // A stored Salesforce disposition is selectable without a second list.
+      disposition.add(new Option(init.dispo, init.dispo));
+      disposition.value = init.dispo;
+    }
     sheet.checkboxValues = JSON.parse(JSON.stringify(init.checkbox_values || {}));
     sheet.saleSelectionOrder = Array.isArray(init.sale_selection_order)
       ? [...init.sale_selection_order] : [];
