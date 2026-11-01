@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 import json
-from io import BytesIO
 
-from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request, send_file
+from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request, send_file, url_for
 
 from .surface import SheetSurfaceError, overlay_css
 from .cover_report import has_result
@@ -111,8 +110,8 @@ def blueprint(service, surface, *, color_code=None, pdfs=None):
             return jsonify(ok=False, error=str(exc)), 422
         job_id = result["job_id"]
         return jsonify(ok=True, **result,
-                       editor_url='/mod-resulting/pdfs/cover/' + str(job_id),
-                       status_url='/mod-resulting/api/pdfs/status?job_id=' + str(job_id)), 202
+                       editor_url=url_for('mod_resulting.pdfs_cover', job_id=job_id),
+                       status_url=url_for('mod_resulting.pdfs_status', job_id=job_id)), 202
 
     @bp.get('/pdfs/cover/<int:job_id>')
     def pdfs_cover(job_id):
@@ -152,7 +151,7 @@ def blueprint(service, surface, *, color_code=None, pdfs=None):
         except LookupError:
             abort(404)
         return jsonify(ok=True, **status,
-                       download_url=('/mod-resulting/pdfs/redlines/' + str(job_id)
+                       download_url=(url_for('mod_resulting.pdfs_download', job_id=job_id)
                                      if status['ready'] else None))
 
     @bp.get('/pdfs/redlines/<int:job_id>')
