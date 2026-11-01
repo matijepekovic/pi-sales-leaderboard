@@ -82,7 +82,12 @@ def project_calc(day, sheets):
         draft = sheet["draft"]
         # WorkOrder's actual disposition takes precedence when present.
         outcome = result_disposition(draft)
-        if outcome == "sale" or (not outcome and has_sale(draft)):
+        if outcome in ("cxl", "oos"):
+            # An actual canceled/out-of-scope WorkOrder is not an issued lead.
+            bucket = outcome
+        elif outcome == "sale" or has_sale(draft):
+            # Include a positive-priced sale on a secondary product, but
+            # count its WorkOrder only once.
             bucket = "sold"
         elif outcome == "np" and is_not_home(draft):
             bucket = "nh"
