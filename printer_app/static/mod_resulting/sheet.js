@@ -1308,4 +1308,52 @@
     const selected = selectedWorkOrders();
     if (selected.length) submitBatch(event.currentTarget, selected);
   });
+  // PDF exports have a separate queue and never submit End of Day.
+  const pdfsButton = document.getElementById('pdfsButton');
+  const pdfChoice = document.getElementById('pdfChoice');
+  const pdfRedlines = document.getElementById('pdfRedlines');
+  let pdfEditorUrl = '';
+  function updatePdfAvailability() {
+    if (!pdfsButton) return;
+    let incomplete = 0;
+    for (const sheet of sheets) {
+      if (sheet.dataset.submitted === 'yes' || sheet.dataset.sourceResulted === 'yes') continue;
+      const draft = serialize(sheet);
+      if (!draft.dispo && !Object.values(draft.product_results || {})
+          .some(entry => entry && entry.result)) incomplete++;
+    }
+    pdfsButton.disabled = !sheets.length || incomplete > 0;
+    pdfsButton.title = incomplete
+      ? incomplete + ' MOD sheet(s) still need resulting'
+      : sheets.length ? 'Prepare PDFs' : 'No MOD sheets loaded';
+  }
+  if (pdfsButton && pdfChoice) {
+    document.addEventListener('change', event => {
+      if (event.target.matches('[data-key="dispo"],[data-product-result]')) {
+        updatePdfAvailability();
+      }
+    });
+    updatePdfAvailability();
+    pdfsButton.addEventListener('click', async () => {
+      if (pdfsButton.disabled) return;
+      pdfsButton.disabled = true;
+      try {
+        await flushAll();
+        const result = await post(root.dataset.pdfsStart);
+        pdfEditorUrl = result.editor_url;
+        document.getElementById('pdfsProgress').textContent =
+          'Generating ' + result.total_sheets + ' MOD sheets in the background. ' +
+          'Redlines opens the editable cover page.';
+        openDialog(pdfChoice, '#pdfRedlines');
+      } catch (error) {
+        message('PDFs unavailable: ' + error.message);
+      } finally {
+        updatePdfAvailability();
+      }
+    });
+    pdfRedlines.addEventListener('click', () => {
+      if (pdfEditorUrl) location.assign(pdfEditorUrl);
+    });
+  }
+
 })();

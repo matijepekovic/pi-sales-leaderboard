@@ -150,6 +150,33 @@ CREATE TABLE IF NOT EXISTS mod_result_submission_jobs (
  error TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS mod_result_submission_jobs_day
  ON mod_result_submission_jobs(day,id);
+
+-- Olympia cover edits are report-only; they never alter MOD drafts or Salesforce.
+CREATE TABLE IF NOT EXISTS mod_cover_edits (
+ day TEXT PRIMARY KEY,
+ edits TEXT NOT NULL DEFAULT '{}',
+ revision INTEGER NOT NULL DEFAULT 0);
+
+-- Durable generation queue; the worker renders the cover before MOD sheets.
+-- A final Redlines download is published only after cover confirmation.
+CREATE TABLE IF NOT EXISTS mod_result_pdf_jobs (
+ id INTEGER PRIMARY KEY,
+ day TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN
+  ('queued','rendering','awaiting_confirmation','pending_finalize',
+   'finalizing','ready','failed')),
+ stage TEXT NOT NULL DEFAULT '',
+ created REAL NOT NULL,
+ updated REAL NOT NULL,
+ confirmed INTEGER NOT NULL DEFAULT 0,
+ revision INTEGER NOT NULL DEFAULT 0,
+ base_cover TEXT NOT NULL,
+ edits TEXT NOT NULL DEFAULT '{}',
+ sheets TEXT NOT NULL,
+ color_code INTEGER NOT NULL DEFAULT 0,
+ error TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS mod_result_pdf_jobs_queue
+ ON mod_result_pdf_jobs(state,id);
 CREATE TABLE IF NOT EXISTS mod_result_submission_items (
  job_id INTEGER NOT NULL REFERENCES mod_result_submission_jobs(id) ON DELETE CASCADE,
  work_order_id TEXT NOT NULL,

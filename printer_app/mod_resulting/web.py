@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 import json
-from io import BytesIO
 
-from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request, send_file
+from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request, send_file, url_for
 
 from .surface import SheetSurfaceError, overlay_css
+from .cover_report import has_result
 
 
-def blueprint(service, surface, *, color_code=None):
+def blueprint(service, surface, *, color_code=None, pdfs=None):
     bp = Blueprint('mod_resulting', __name__, url_prefix='/mod-resulting')
 
     @bp.get('')
@@ -78,6 +78,8 @@ def blueprint(service, surface, *, color_code=None):
             live_writes_enabled=service.allow_salesforce_writes,
             color_code=bool(color_code()) if color_code else False,
             checkbox_specs=checkbox_specs,
+            pdfs_remaining=sum(not has_result(sheet["draft"]) for sheet in data["sheets"]),
+            pdfs_available=bool(data["sheets"]) and pdfs is not None,
             notice=notice,
         )
 
@@ -98,16 +100,72 @@ def blueprint(service, surface, *, color_code=None):
             return Response(str(exc), status=503, mimetype='text/plain')
         return Response(payload, mimetype='image/png')
 
-    @bp.get('/pdf')
-    def pdf():
-        day = service.day()
+    @bp.post('/api/pdfs/start')
+    def pdfs_start():
+        if pdfs is None:
+            abort(503)
         try:
-            payload = service.export_all_pdf(day)
+            result = pdfs.begin(service.day())
+        except (ValueError, LookupError) as exc:
+            return jsonify(ok=False, error=str(exc)), 422
+        job_id = result["job_id"]
+        return jsonify(ok=True, **result,
+                       editor_url=url_for('mod_resulting.pdfs_cover', job_id=job_id),
+                       status_url=url_for('mod_resulting.pdfs_status', job_id=job_id)), 202
+
+    @bp.get('/pdfs/cover/<int:job_id>')
+    def pdfs_cover(job_id):
+        if pdfs is None:
+            abort(404)
+        try:
+            data = pdfs.editor(service.day(), job_id)
         except LookupError:
             abort(404)
-        response = send_file(BytesIO(payload), mimetype='application/pdf',
-                             as_attachment=False,
-                             download_name='MOD-Sheets-' + day + '.pdf')
+        return render_template('mod_cover_editor.html', data=data)
+
+    @bp.post('/api/pdfs/confirm')
+    def pdfs_confirm():
+        if pdfs is None:
+            abort(503)
+        try:
+            job_id = int(request.form.get('job_id', ''))
+            revision = int(request.form.get('revision', ''))
+            raw = request.form.get('edits', '')
+            if len(raw) > 180000:
+                raise ValueError('Cover edit is too large.')
+            edits = json.loads(raw)
+            next_revision = pdfs.confirm(service.day(), job_id, edits, revision)
+        except (ValueError, TypeError, LookupError, json.JSONDecodeError) as exc:
+            return jsonify(ok=False, error=str(exc)), 409
+        return jsonify(ok=True, revision=next_revision)
+
+    @bp.get('/api/pdfs/status')
+    def pdfs_status():
+        if pdfs is None:
+            abort(404)
+        job_id = request.args.get('job_id', type=int)
+        if job_id is None:
+            return jsonify(ok=False, error='PDF job ID required.'), 400
+        try:
+            status = pdfs.status(service.day(), job_id)
+        except LookupError:
+            abort(404)
+        return jsonify(ok=True, **status,
+                       download_url=(url_for('mod_resulting.pdfs_download', job_id=job_id)
+                                     if status['ready'] else None))
+
+    @bp.get('/pdfs/redlines/<int:job_id>')
+    def pdfs_download(job_id):
+        if pdfs is None:
+            abort(404)
+        try:
+            path = pdfs.pdf_path(service.day(), job_id)
+        except LookupError:
+            abort(404)
+        except ValueError as exc:
+            return Response(str(exc), status=409, mimetype='text/plain')
+        response = send_file(path, mimetype='application/pdf', as_attachment=False,
+                             download_name='OLY-Redlines-' + service.day() + '.pdf')
         response.headers['Cache-Control'] = 'no-store'
         response.headers['Content-Security-Policy'] = "sandbox; default-src 'none'"
         return response

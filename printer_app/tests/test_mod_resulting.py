@@ -1001,7 +1001,7 @@ def test_worker_restart_marks_only_inflight_item_uncertain(tmp_path):
     assert writer.applied == []
 
 
-def test_print_all_http_and_submission_http_are_independent(tmp_path):
+def test_pdfs_require_resulting_and_do_not_submit_salesforce(tmp_path):
     from printer_app.app import create_app
     from printer_app.config import Config
     from printer_app.tests.auth_helpers import login_admin
@@ -1010,33 +1010,56 @@ def test_print_all_http_and_submission_http_are_independent(tmp_path):
     app = create_app(Config(data_dir=tmp_path/'data', env_file=env,
                             secret_key='s'*64, email_enabled=False))
     service = app.extensions['mod_resulting']
+    pdfs = app.extensions['mod_resulting_pdfs']
     service.allow_salesforce_writes = True
     service.writer = Writer()
     service.source = Source()
+    service.source.records = lambda **kwargs: [ModSheetRecord(
+        **dict(asdict(RECORD), work_type='Roofing'))]
     service.settings_repository = SimpleNamespace(
         settings=lambda: SimpleNamespace(market_segment='Olympia'))
-    service.pdf_exporter = render_resulting_pdf
     day = service.day()
     service.refresh(day)
     service.set_mod(day, USER)
     client = app.test_client()
     csrf = login_admin(client)
-    printable = client.get('/mod-resulting/pdf')
-    assert printable.status_code == 200
-    assert printable.mimetype == 'application/pdf'
-    assert printable.headers['Content-Disposition'].startswith('inline;')
-    assert '00001234' in PdfReader(BytesIO(printable.data)).pages[0].extract_text()
-    assert service.writer.applied == []
+
+    # The old synchronous endpoint is gone. All reports are background jobs.
+    assert client.get('/mod-resulting/pdf').status_code == 404
+    not_ready = client.post('/mod-resulting/api/pdfs/start', data={'csrf':csrf},
+                            headers={'Origin':'http://localhost'})
+    assert not_ready.status_code == 422
+    assert 'need resulting' in not_ready.json['error']
     row = service.repository.sheets(day)[0]
     service.save(day, WORK, clean_draft({'dispo':'pns'}), row['revision'])
-    response = client.post('/mod-resulting/api/submit',
-                           data={'csrf':csrf, 'mode':'all'},
-                           headers={'Origin':'http://localhost'})
-    assert response.status_code == 202
+    queued = client.post('/mod-resulting/api/pdfs/start', data={'csrf':csrf},
+                         headers={'Origin':'http://localhost'})
+    assert queued.status_code == 202
+    job_id = queued.json['job_id']
     assert service.writer.applied == [] and service.writer.plans == []
-    current = client.get('/mod-resulting/api/submission-status').json['submission']
-    assert current['state'] == 'queued' and current['total'] == 1
-    assert service.repository.day(day)['submitting'] == 1
+    assert pdfs.process_next() == {'job_id':job_id, 'state':'awaiting_confirmation'}
+
+    editor = client.get(f'/mod-resulting/pdfs/cover/{job_id}')
+    assert editor.status_code == 200
+    assert b'OLY MOD Cover' in editor.data
+    confirmation = client.post('/mod-resulting/api/pdfs/confirm', data={
+        'csrf':csrf, 'job_id':str(job_id), 'revision':'0', 'edits':'{}'
+    }, headers={'Origin':'http://localhost'})
+    assert confirmation.status_code == 200
+    assert pdfs.process_next() == {'job_id':job_id, 'state':'ready'}
+    pdf_response = client.get(f'/mod-resulting/pdfs/redlines/{job_id}')
+    assert pdf_response.status_code == 200
+    pages = PdfReader(BytesIO(pdf_response.data)).pages
+    assert len(pages) == 2
+    assert 'OLYMPIA' in pages[0].extract_text()
+    assert '00001234' in pages[1].extract_text()
+    assert service.writer.applied == [] and service.writer.plans == []
+
+    submission = client.post('/mod-resulting/api/submit',
+                            data={'csrf':csrf, 'mode':'all'},
+                            headers={'Origin':'http://localhost'})
+    assert submission.status_code == 202
+    assert service.writer.applied == [] and service.writer.plans == []
 
 
 @pytest.mark.parametrize('lead_day,resulted_on,primary_source,primary_date', [

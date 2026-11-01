@@ -35,6 +35,9 @@ from .retention_files import RetentionFiles
 from .gmail_cleanup import GmailCleanup
 from .mod_sheets.pdf_renderer import render_mod_pdf
 from .mod_resulting.repository import ResultingRepository
+from .mod_resulting.pdf_repository import ModPdfRepository
+from .mod_resulting.pdf_service import ModPdfService
+from .mod_resulting.pdf_export import render_resulting_pdf
 from .mod_resulting.salesforce_adapter import ResultingSalesforceAdapter
 from .mod_resulting.service import ResultingService, ResultingDailyPull
 from .mod_sheets.repository import ModSheetAutomationRepository
@@ -285,6 +288,7 @@ def main():
         PrintQueueRepository(db).recover_cancellations(time.time())
         # A killed worker must never silently replay an in-flight SF update.
         ResultingRepository(db).interrupt_abandoned_submissions()
+        ModPdfRepository(db).recover()
         engine = Engine(cfg, db, stop=stop)
         gmail = GmailClient(cfg, db, stop=stop, gallery=GalleryInbox(cfg.data_dir, cfg.gallery))
 
@@ -349,9 +353,13 @@ def main():
                 ResultingRepository(db), source, resulting_adapter,
                 repository, captured.timezone,
                 allow_salesforce_writes=captured.mod_resulting_live_writes)
-            return daily, references, manual_gallery, map_sync, digital, submitter
+            pdfs = ModPdfService(
+                ModPdfRepository(db), ResultingRepository(db),
+                render_resulting_pdf, captured.data_dir / 'mod_resulting_pdfs',
+            )
+            return daily, references, manual_gallery, map_sync, digital, submitter, pdfs
 
-        daily_mod_sheets, mod_references, manual_mod_gallery, map_sync, daily_resulting, mod_submitter = make_mod_workflows(cfg)
+        daily_mod_sheets, mod_references, manual_mod_gallery, map_sync, daily_resulting, mod_submitter, mod_pdfs = make_mod_workflows(cfg)
         report_printing = ReportPrintingService(
             ReportPrintingRepository(db),
             SalesforceSandboxService(SalesforceCliAdapter(executable='/usr/bin/sf', target_org='work')),
@@ -373,6 +381,7 @@ def main():
         polling, preparing, cleaning, daily_mod_task = None, None, None, None
         resulting_task = None
         submission_task = None
+        pdf_task = None
         report_print_task = None
         last_report_minute = None
         mod_reference_task = background.submit(mod_references.backfill_existing)
@@ -455,6 +464,14 @@ def main():
                             log.warning('MOD End of Day stopped: %s', result.get('error',''))
                     if submission_task is None and mod_submitter.allow_salesforce_writes:
                         submission_task = background.submit(mod_submitter.process_next_submission)
+                    if pdf_task is not None and pdf_task.done():
+                        completed, pdf_task = pdf_task, None
+                        try:
+                            completed.result()
+                        except Exception:
+                            log.exception('Background MOD PDF generation failed')
+                    if pdf_task is None and mod_pdfs.repository.has_pending():
+                        pdf_task = background.submit(mod_pdfs.process_next)
                     if mod_reference_task is not None and mod_reference_task.done():
                         finished, mod_reference_task = mod_reference_task, None
                         finished.result()

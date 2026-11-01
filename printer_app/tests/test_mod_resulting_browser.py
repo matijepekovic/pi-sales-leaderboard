@@ -1528,3 +1528,38 @@ def test_phase3_primary_is_manual_only_when_individual_and_sale_order_is_saved(m
     assert payload['product_result_context']['Roofing']['role'] == 'additional'
     assert first.bounding_box()['width'] == original['width']
     assert writer.applied == []
+
+
+def test_pdfs_gate_and_cover_editor_without_salesforce_submission(mod_browser):
+    from playwright.sync_api import expect
+    page, service, writer, origin, capture = mod_browser
+    page.goto(origin + '/mod-resulting')
+    button = page.locator('#pdfsButton')
+    expect(button).to_be_disabled()
+
+    # The MOD Resulting edits are the source. Submission is not needed.
+    dispos = page.locator('.mod-sheet select[data-key="dispo"]')
+    assert dispos.count() == 2
+    dispos.nth(0).select_option('np')
+    expect(button).to_be_disabled()
+    dispos.nth(1).select_option('pns')
+    expect(button).to_be_enabled()
+
+    button.click()
+    popup = page.locator('#pdfChoice')
+    expect(popup).to_be_visible()
+    expect(popup.locator('#pdfRedlines')).to_be_enabled()
+    expect(popup.locator('#pdfCalc')).to_be_disabled()
+    popup.locator('#pdfRedlines').click()
+    page.wait_for_url('**/mod-resulting/pdfs/cover/*')
+    expect(page.locator('h1')).to_have_text('OLY MOD Cover')
+    assert page.locator('section.division').count() == 5
+    assert page.locator('section.division[data-division="gutters"]').count() == 1
+    # Fully editable daily report does not mutate Salesforce or re-submit any
+    # MOD card, even if the background worker has not yet processed the PDF.
+    page.locator('input[data-total="mod"]').fill('Edited MOD')
+    page.locator('#confirmCover').click()
+    expect(page.locator('#coverStatus')).to_contain_text('confirmed')
+    assert writer.applied == []
+    assert service.repository.sheets(service.day())[0]['draft']['dispo'] == 'np'
+    assert service.repository.sheets(service.day())[1]['draft']['dispo'] == 'pns'
