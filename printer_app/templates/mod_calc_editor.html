@@ -16,6 +16,7 @@
  <div><h1>OLY Calc</h1><p>Editable daily report. No Salesforce changes.</p></div>
  <div class="actions">
   <a href="{{ url_for('mod_resulting.page') }}">MOD Sheets</a>
+  <a href="{{ url_for('mod_resulting.pdfs_cover', job_id=data.job_id) }}">Redlines Cover</a>
   <button class="primary" type="button" id="confirmCalc">Confirm</button>
   <a id="downloadCalc" href="#" target="_blank" rel="noopener" hidden>Open OLY Calc PDF</a>
  </div>
