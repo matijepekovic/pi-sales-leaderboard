@@ -47,6 +47,8 @@ from .mod_sheets.web import blueprint as mod_sheets_blueprint
 from .mod_resulting.repository import ResultingRepository
 from .mod_resulting.surface import ModSheetSurface
 from .mod_resulting.pdf_export import render_resulting_pdf
+from .mod_resulting.pdf_repository import ModPdfRepository
+from .mod_resulting.pdf_service import ModPdfService
 from .mod_resulting.service import ResultingService
 from .mod_resulting.salesforce_adapter import ResultingSalesforceAdapter
 from .mod_resulting.web import blueprint as mod_resulting_blueprint
@@ -173,9 +175,15 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
         allow_salesforce_writes=cfg.mod_resulting_live_writes,
     )
     app.extensions['mod_resulting'] = mod_resulting
+    mod_pdfs = ModPdfService(
+        ModPdfRepository(db), mod_resulting.repository,
+        render_resulting_pdf, cfg.data_dir / 'mod_resulting_pdfs',
+        color_code=resulting_color_code,
+    )
+    app.extensions['mod_resulting_pdfs'] = mod_pdfs
     app.register_blueprint(mod_resulting_blueprint(
         mod_resulting, ModSheetSurface(render_mod_pdf),
-        color_code=resulting_color_code,
+        color_code=resulting_color_code, pdfs=mod_pdfs,
     ))
 
     @app.template_filter('localtime')
@@ -234,6 +242,9 @@ def create_app(cfg: Config | None = None, settings_service: SettingsService | No
             session['csrf'] = secrets.token_urlsafe(32)
             session.permanent = True
         if request.method == 'POST':
+            if request.endpoint == 'mod_resulting.pdfs_confirm':
+                request.max_content_length = 220000
+                request.max_form_memory_size = 220000
             if request.endpoint == 'mod_resulting.submit':
                 # A selected batch can contain many Work Order IDs. Scope the
                 # larger form limit to this protected route, not Printer-wide.
