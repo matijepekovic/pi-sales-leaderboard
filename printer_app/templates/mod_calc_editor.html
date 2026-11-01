@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OLY Calc</title>
+<link rel="stylesheet" href="{{ url_for('static',filename='mod_resulting/calc_editor.css') }}">
+<script defer src="{{ url_for('static',filename='mod_resulting/calc_editor.js') }}"></script>
+</head>
+<body data-job-id="{{ data.job_id }}" data-revision="{{ data.revision }}"
+ data-csrf="{{ session.csrf }}" data-report="{{ data.report|tojson|forceescape }}"
+ data-edits="{{ data.edits|tojson|forceescape }}"
+ data-confirm="{{ url_for('mod_resulting.pdfs_calc_confirm') }}"
+ data-status="{{ url_for('mod_resulting.pdfs_calc_status',job_id=data.job_id) }}">
+<header class="toolbar">
+ <div><h1>OLY Calc</h1><p>Editable daily report. No Salesforce changes.</p></div>
+ <div class="actions">
+  <a href="{{ url_for('mod_resulting.page') }}">MOD Sheets</a>
+  <button class="primary" type="button" id="confirmCalc">Confirm</button>
+  <a id="downloadCalc" href="#" target="_blank" rel="noopener" hidden>Open OLY Calc PDF</a>
+ </div>
+</header>
+<div id="calcStatus" role="status" aria-live="polite"></div>
+<main class="calc-paper" aria-label="Olympia daily calculator">
+ <section class="calc-left">
+  <h2 class="green">Olympia, WA</h2>
+  <h2 class="mint">#1 in Puget Sound</h2>
+  {% for key,label in (('sold','# Sold'),('pns','PNS'),('nh','NH'),('np','NP'),
+                       ('nra','NRA'),('cxl','CXL'),('revenue','Total Sale Rev')) %}
+  <label class="calc-input-row">
+   <span>{{ label }}</span>
+   <input data-input="{{ key }}" aria-label="{{ label }}" maxlength="90"
+    value="{{ data.report.inputs[key] }}">
+  </label>
+  {% endfor %}
+  <h2 class="mint">At EVERYTHING</h2>
+  <h2 class="green">Results &gt; Excuses</h2>
+  <h2 class="mint light-title">MOD Results</h2>
+  {% for key,label in (('leads','Leads'),('pitch','Pitch'),
+                       ('pitch_nra','Pitch -NRA'),('close','Close'),
+                       ('close_nra','Close -NRA'),('total','Total'),
+                       ('dpl','DPL'),('nra_total','NRA')) %}
+  <label class="calc-result-row">
+   <span>{{ label }}</span>
+   <input data-output="{{ key }}" aria-label="{{ label }} calculated result"
+    maxlength="90" value="{{ data.report.outputs[key] }}">
+  </label>
+  {% endfor %}
+ </section>
+ <img class="calc-picture"
+  src="{{ url_for('static',filename='mod_resulting/oly_calc_art.webp') }}"
+  alt="Original Olympia Capitol illustration with butterflies and stacks of money"
+  width="390" height="585">
+ <div class="report-footer">{{ data.day }} — CXL and OOS excluded from Leads</div>
+</main>
+<footer>
+ <button type="button" class="primary" id="bottomConfirm">Confirm OLY Calc and generate PDF</button>
+</footer>
+</body>
+</html>
