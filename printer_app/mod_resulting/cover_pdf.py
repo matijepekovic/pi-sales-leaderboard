@@ -21,7 +21,7 @@ PALE = colors.HexColor("#e4e9e4")
 GREEN = colors.HexColor("#589b36")
 WHITE = colors.white
 TEXT = colors.HexColor("#202922")
-COL_WIDTHS = (52, 53, 132, 158, 60, 60, 33, 63, 130, 53, 50, 57, 63)
+COL_WIDTHS = (53, 53, 134, 158, 67, 56, 57, 31, 64, 131, 53, 55, 52)
 SLOTS = {"roof": 6, "bath": 4, "siding": 4, "windows": 4, "gutters": 4}
 assert sum(COL_WIDTHS) == RIGHT - LEFT
 
@@ -89,7 +89,7 @@ def _section(c, section, rows, top):
 
 
 SUMMARY_WIDTHS = (55, 70, 80, 74, 80, 100, 135)
-SIDE_WIDTHS = (158, 212)
+SIDE_WIDTHS = (148, 222)
 assert sum(SUMMARY_WIDTHS) + sum(SIDE_WIDTHS) == RIGHT - LEFT
 
 
