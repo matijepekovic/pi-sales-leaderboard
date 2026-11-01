@@ -6,6 +6,8 @@ Salesforce, reads SQLite, or changes resulting/submission state.
 from __future__ import annotations
 
 from datetime import date
+import base64
+import re
 from io import BytesIO
 from pathlib import Path
 
@@ -30,7 +32,7 @@ GRAY = HexColor("#47564A")
 
 ORIGINAL_ART = (
     Path(__file__).resolve().parents[1]
-    / "static" / "mod_resulting" / "oly_calc_art.webp"
+    / "static" / "mod_resulting" / "oly_calc_art.svg"
 )
 
 
@@ -98,7 +100,11 @@ def render_calc_pdf(report, *, artwork_path=None):
         top = calculation(top, display, report["outputs"].get(key, ""))
 
     # Exact source image exported from the user's OLY Calc Excel drawing.
-    artwork = ImageReader(str(target))
+    artwork_source = target.read_text(encoding="utf-8")
+    encoded = re.search(r'data:image/webp;base64,([A-Za-z0-9+/=]+)', artwork_source)
+    if encoded is None:
+        raise ValueError("Original OLY Calc artwork is unavailable.")
+    artwork = ImageReader(BytesIO(base64.b64decode(encoded.group(1), validate=True)))
     c.drawImage(artwork, ART_X, ART_Y, width=ART_W, height=ART_H,
                 preserveAspectRatio=True, mask="auto")
     c.setStrokeColor(HexColor("#385443"))
