@@ -14,6 +14,7 @@
  data-save="{{ url_for('mod_resulting.save') }}"
  data-mod="{{ url_for('mod_resulting.choose_mod') }}"
  data-submit="{{ url_for('mod_resulting.submit') }}"
+ data-pdfs-start="{{ url_for('mod_resulting.pdfs_start') }}"
  data-submission-status="{{ url_for('mod_resulting.submission_status') }}"
  data-checkbox-specs='{{ checkbox_specs|tojson|forceescape }}'>
 <div class="floating-controls" aria-label="MOD sheet controls">
@@ -33,7 +34,8 @@
   <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
   <span id="submissionNotificationBadge" class="notification-count" hidden></span>
  </button>
- <a class="completed-pdf" href="{{ url_for('mod_resulting.pdf') }}" target="_blank" rel="noopener">Print All</a>
+ <button type="button" id="pdfsButton" {% if not pdfs_available or pdfs_remaining %}disabled{% endif %}
+    title="{% if pdfs_remaining %}{{ pdfs_remaining }} MOD sheet(s) still need resulting{% elif not pdfs_available %}PDF generation unavailable{% else %}Create Redlines PDFs{% endif %}">PDFs</button>
  <span id="notice" role="status" aria-live="polite" class="notification" {% if not notice %}hidden{% endif %}>{{ notice }}</span>
 </div>
 {% macro checkbox(key, label, value, cls='') -%}
@@ -363,6 +365,17 @@
  <div class="editor-footer">
   <button type="button" id="singleResultNo" class="editor-secondary">No</button>
   <button type="button" id="singleResultYes" class="editor-primary">Yes</button>
+ </div>
+</dialog>
+<dialog class="editor-dialog end-dialog" id="pdfChoice" aria-label="Choose PDFs">
+ <div class="editor-heading"><h2>PDFs</h2><button type="button" class="close-popover editor-close" aria-label="Close PDFs">×</button></div>
+ <div class="editor-body">
+  <p>PDFs are generated in the background, beginning with the OLY cover page.</p>
+  <div class="pdf-options">
+   <button type="button" id="pdfRedlines" class="editor-primary">Redlines (MOD Sheets + Cover Page)</button>
+   <button type="button" id="pdfCalc" class="editor-secondary" disabled title="OLY Calc mapping is not finalized">OLY Calc</button>
+  </div>
+  <p class="editor-hint" id="pdfsProgress">Select Redlines to edit and confirm the cover page.</p>
  </div>
 </dialog>
 <dialog class="editor-dialog end-dialog" id="endConfirm" aria-label="Confirm End of Day submission">
