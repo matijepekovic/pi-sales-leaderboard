@@ -32,6 +32,12 @@ class ModPdfRepository:
             raise LookupError("PDF job not found for this day.")
         return self._decode(row)
 
+    def job_any(self, job_id):
+        row = self.db.one("SELECT * FROM mod_result_pdf_jobs WHERE id=?", (job_id,))
+        if row is None:
+            raise LookupError("PDF job no longer exists.")
+        return self._decode(row)
+
     @staticmethod
     def _decode(row):
         entry = dict(row)
