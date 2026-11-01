@@ -1583,6 +1583,10 @@ def test_oly_calc_browser_uses_approved_picture_and_editable_formulas(mod_browse
     page.locator('[data-input="cxl"]').fill('1')
     expect(page.locator('[data-output="leads"]')).to_have_value('1')
     expect(page.locator('[data-output="close"]')).to_have_value('100.0%')
+    page.locator('[data-output="leads"]').fill('2')
+    expect(page.locator('[data-output="close"]')).to_have_value('50.0%')
+    page.locator('[data-output="total"]').fill('2000')
+    expect(page.locator('[data-output="dpl"]')).to_have_value('$1,000.00')
     page.locator('[data-output="pitch"]').fill('85%')
     page.locator('#confirmCalc').click()
     expect(page.locator('#calcStatus')).to_contain_text('confirmed')
@@ -1592,6 +1596,6 @@ def test_oly_calc_browser_uses_approved_picture_and_editable_formulas(mod_browse
     import json
     changes = json.loads(result['calc_edits'])
     assert changes['inputs'] == {'sold':'1', 'cxl':'1'}
-    assert changes['outputs'] == {'pitch':'85%'}
+    assert changes['outputs'] == {'leads':'2', 'total':'2000', 'pitch':'85%'}
     assert result['calc_confirmed'] == 1
     assert not writer.applied
