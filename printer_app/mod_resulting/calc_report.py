@@ -45,7 +45,7 @@ def _ratio(numerator, denominator):
     return f"{numerator / denominator:.1%}"
 
 
-def _recalculate(inputs, work_orders, oos):
+def _recalculate(inputs, work_orders, oos, *, manual_leads=None, manual_total=None):
     """Exact OLY Calc spreadsheet formulas, with CXL and OOS off the lead count."""
     sold = decimal_amount(inputs["sold"])
     pns = decimal_amount(inputs["pns"])
@@ -54,13 +54,15 @@ def _recalculate(inputs, work_orders, oos):
     nra = decimal_amount(inputs["nra"])
     cxl = decimal_amount(inputs["cxl"])
     revenue = decimal_amount(inputs["revenue"])
+    total = decimal_amount(manual_total) if manual_total is not None else revenue
     if all(v is not None for v in (sold, pns, nh, np, nra, cxl)):
         pitched = sold + pns
         denominator = sold + pns + nh + np + nra
         denominator_no_nra = sold + pns + nh + np
     else:
         pitched = denominator = denominator_no_nra = None
-    leads = Decimal(work_orders - oos) - cxl if cxl is not None else None
+    leads = (decimal_amount(manual_leads) if manual_leads is not None else
+             Decimal(work_orders - oos) - cxl if cxl is not None else None)
     return {
         "leads": str(int(leads)) if leads is not None and leads == int(leads) else (
             str(leads) if leads is not None else ""),
@@ -68,8 +70,8 @@ def _recalculate(inputs, work_orders, oos):
         "pitch_nra": _ratio(pitched, denominator_no_nra),
         "close": _ratio(sold, leads),
         "close_nra": _ratio(sold, leads - nra) if leads is not None and nra is not None else "",
-        "total": _money(revenue),
-        "dpl": _money(revenue / leads) if revenue is not None and leads is not None and leads > 0 else "",
+        "total": str(manual_total) if manual_total is not None else _money(revenue),
+        "dpl": _money(total / leads) if total is not None and leads is not None and leads > 0 else "",
         "nra_total": inputs["nra"],
     }
 
@@ -123,7 +125,9 @@ def apply_calc_edits(original, edits):
                        for value in changes.values())):
             raise ValueError("Invalid OLY Calc cell edit.")
     report["inputs"].update(edits.get("inputs", {}))
+    overrides = edits.get("outputs", {})
     report["outputs"] = _recalculate(
-        report["inputs"], report["work_orders"], report["oos"])
+        report["inputs"], report["work_orders"], report["oos"],
+        manual_leads=overrides.get("leads"), manual_total=overrides.get("total"))
     report["outputs"].update(edits.get("outputs", {}))
     return report
