@@ -90,6 +90,20 @@ def test_cxl_at_lead_is_not_cxl_and_multiple_products_count_one_sale():
     assert report["outputs"]["close"] == "50.0%"
 
 
+def test_secondary_sale_counts_one_sold_work_order_not_pns_or_two_products():
+    mixed = entry("pns", additional_products=True,
+                  product_results={
+                      "Roofing": {"result": "pns", "detail": "", "price": "", "deposit": ""},
+                      "Windows": {"result": "sale", "detail": "", "price": "12000",
+                                  "deposit": "0"},
+                  })
+    report = project_calc(DAY, [card(1, mixed)])
+    assert report["inputs"]["sold"] == "1"
+    assert report["inputs"]["pns"] == "0"
+    assert report["outputs"]["leads"] == "1"
+    assert report["inputs"]["revenue"] == "$12,000.00"
+
+
 def test_user_edits_recalculate_and_can_override_every_output():
     original = project_calc(DAY, sample_cards())
     edited = apply_calc_edits(original, {
