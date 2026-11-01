@@ -1014,6 +1014,8 @@ def test_pdfs_require_resulting_and_do_not_submit_salesforce(tmp_path):
     service.allow_salesforce_writes = True
     service.writer = Writer()
     service.source = Source()
+    service.source.records = lambda **kwargs: [ModSheetRecord(
+        **dict(asdict(RECORD), work_type='Roofing'))]
     service.settings_repository = SimpleNamespace(
         settings=lambda: SimpleNamespace(market_segment='Olympia'))
     day = service.day()
