@@ -1599,3 +1599,58 @@ def test_oly_calc_browser_uses_approved_picture_and_editable_formulas(mod_browse
     assert changes['outputs'] == {'leads':'2', 'total':'2000', 'pitch':'85%'}
     assert result['calc_confirmed'] == 1
     assert not writer.applied
+
+
+def test_sale_notes_autosave_keeps_every_imported_product_result_in_browser(mod_browser):
+    """Real JS + save API: editing Notes cannot remove a mixed Salesforce sale."""
+    from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import clean_draft
+
+    page, service, writer, origin, _ = mod_browser
+    records = service.source.records_data
+    work_order = records[0].source_id
+    products = {
+        'Roofing': {'result':'sale', 'detail':'', 'price':'15000', 'deposit':''},
+        'Siding': {'result':'pns', 'detail':'Price Objection', 'price':'', 'deposit':''},
+        # Outside the card's original interests, but still a real SF result.
+        'Windows': {'result':'np', 'detail':'Not Home', 'price':'', 'deposit':''},
+    }
+    imported = clean_draft({
+        'dispo':'sale', 'additional_products':True,
+        'notes':'Original MOD Notes',
+        'sale_products':{'Roofing':{'price':'15000', 'deposit':'500'}},
+        'product_results':products,
+    })
+    service.repository.refresh(
+        service.day(), records, external_drafts={work_order:imported})
+    assert service.repository.sheets(service.day())[0]['submitted_at'] == -1.0
+
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+    expect(first.locator('.override-sheet')).to_be_visible()
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        first.locator('.override-sheet').click()
+    first = page.locator('.mod-sheet').first
+    expect(first.locator('[data-key="dispo"]')).to_have_value('sale')
+    # The Sale card deliberately hides individual-result editing.
+    expect(first.locator('.edit-product-results')).to_be_hidden()
+    assert json.loads(first.get_attribute('data-initial'))['product_results'] == products
+
+    first.locator('[data-key="notes"]').fill('Only the MOD Notes changed')
+    page.wait_for_function("""() => {
+        const sheet = document.querySelector('.mod-sheet');
+        const saved = JSON.parse(sheet.dataset.initial || '{}');
+        return sheet.dataset.dirty === 'no'
+            && saved.notes === 'Only the MOD Notes changed';
+    }""", timeout=8000)
+    # Assert both copies: the live JS snapshot and SQLite persistence.
+    assert json.loads(first.get_attribute('data-initial'))['product_results'] == products
+    saved = service.repository.sheets(service.day())[0]['draft']
+    assert saved['product_results'] == products
+    assert saved['notes'] == 'Only the MOD Notes changed'
+
+    page.reload(wait_until='domcontentloaded')
+    assert json.loads(page.locator('.mod-sheet').first.get_attribute('data-initial'))[
+        'product_results'] == products
+    assert not writer.applied
+
