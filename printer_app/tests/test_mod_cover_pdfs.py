@@ -197,3 +197,26 @@ def test_durable_cover_first_queue_and_edit_while_eod_runs(tmp_path):
     text = PdfReader(str(service.pdf_path(DAY, job_id))).pages[0].extract_text()
     assert "$42" in text
     assert source.sheets(DAY)[0]["draft"]["sale_products"]["Roofing"]["price"] == "15000"
+
+
+def test_cover_normalizer_and_renderer_remain_replaceable():
+    import ast
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "mod_resulting"
+    for module in ("cover_report.py", "cover_pdf.py"):
+        code = (root / module).read_text()
+        tree = ast.parse(code)
+        imports = [
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            for alias in node.names
+        ]
+        # The cover projection and PDF drawing must remain pure and cannot
+        # acquire Salesforce, SQLite, Flask, worker, or file-system adapters.
+        forbidden = ("salesforce", "sqlite", "flask", "repository", "worker")
+        assert not any(any(part in name.lower() for part in forbidden)
+                       for name in imports)
+    service = (root / "pdf_service.py").read_text()
+    assert "Salesforce" not in service.replace("Salesforce End of Day", "")
+    assert "sqlite3" not in service
