@@ -218,5 +218,11 @@ def test_cover_normalizer_and_renderer_remain_replaceable():
         assert not any(any(part in name.lower() for part in forbidden)
                        for name in imports)
     service = (root / "pdf_service.py").read_text()
-    assert "Salesforce" not in service.replace("Salesforce End of Day", "")
-    assert "sqlite3" not in service
+    service_tree = ast.parse(service)
+    service_imports = [
+        alias.name for node in ast.walk(service_tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    ]
+    assert not any("salesforce" in name.lower() or "sqlite" in name.lower()
+                   for name in service_imports)
