@@ -633,6 +633,13 @@
     });
     if (background.complete) showSurface();
     const init = JSON.parse(sheet.dataset.initial || '{}');
+    const disposition = sheet.querySelector('[data-key="dispo"]');
+    if (disposition && init.dispo &&
+        ![...disposition.options].some(option => option.value === init.dispo)) {
+      // A stored Salesforce disposition is selectable without a second list.
+      disposition.add(new Option(init.dispo, init.dispo));
+      disposition.value = init.dispo;
+    }
     sheet.checkboxValues = JSON.parse(JSON.stringify(init.checkbox_values || {}));
     sheet.saleSelectionOrder = Array.isArray(init.sale_selection_order)
       ? [...init.sale_selection_order] : [];
@@ -644,7 +651,13 @@
     for (const row of sheet.querySelectorAll('[data-product]')) {
       const selected = init.product_results?.[row.dataset.product];
       if (selected) {
-        row.querySelector('[data-product-result]').value = selected.result || '';
+        const resultSelect = row.querySelector('[data-product-result]');
+        const sourceResult = selected.result || '';
+        if (sourceResult && ![...resultSelect.options].some(o => o.value === sourceResult)) {
+          // Preserve a Salesforce value without altering the edit picklist.
+          resultSelect.add(new Option(sourceResult, sourceResult));
+        }
+        resultSelect.value = sourceResult;
         row.querySelector('[data-product-detail]').value = selected.detail || '';
         row.querySelector('[data-product-price]').value = selected.price || '';
         row.querySelector('[data-product-deposit]').value = selected.deposit || '';

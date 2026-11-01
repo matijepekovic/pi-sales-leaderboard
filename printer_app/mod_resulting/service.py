@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from ..mod_sheet_contract import ModSheetRecord
 from .contract import (
+    source_draft,
     clean_draft, final_redline_text, outcome_fields, sold_products,
     individual_product_sales, deposit_payment_text, product_result_context,
 )
@@ -53,7 +54,7 @@ class ResultingService:
         # A partial remote response must never become blank local data.
         if callable(reader) and set(external) != {record.source_id for record in records}:
             raise ValueError('Salesforce resulting refresh returned incomplete records.')
-        normalized = {key: clean_draft(value) for key, value in external.items()}
+        normalized = {key: source_draft(value) for key, value in external.items()}
         if clear_local and not callable(reader):
             normalized = {record.source_id: clean_draft({}) for record in records}
         applied = self.repository.refresh(
@@ -78,7 +79,7 @@ class ResultingService:
             state = self.repository.day(day)
         sheets = []
         for sheet in self.repository.sheets(day):
-            data = clean_draft(sheet['draft'])
+            data = source_draft(sheet['draft'])
             sheet['draft'] = data
             sheet['result'] = outcome_fields(data)
             sheets.append(sheet)
@@ -123,18 +124,38 @@ class ResultingService:
         return self.repository.override(day, work_order_id, revision)
 
     def save(self, day, work_order_id, data, revision):
-        data = clean_draft(data)
+        # Saving an editable sheet cannot revalidate untouched Salesforce
+        # values or discard source records absent from the visible controls.
+        data = source_draft(data)
         row = next((s for s in self.repository.sheets(day)
                     if s['work_order_id'] == work_order_id), None)
         if row is None:
             raise LookupError('This MOD sheet is not part of the selected day.')
-        available = {name.strip() for name in
-                     row['snapshot']['product_interest'].split(';') if name.strip()}
-        if data['additional_products'] and not set(data['product_results']).issubset(available):
-            raise ValueError('Separate results must belong to a product on the MOD sheet.')
-        # Sale products deliberately are not limited to the original lead:
-        # pivot products are validated against Salesforce's live product list
-        # by the writer during End of Day preflight.
+        # Only actual Stats editor fields may be changed by a browser post.
+        # Preserve every source-owned field from the stored Salesforce read,
+        # including identities that the current editor cannot represent.
+        editor_fields = set(clean_draft({}))
+        data = {key: value for key, value in data.items() if key in editor_fields}
+        data.update({
+            key: value for key, value in row['draft'].items()
+            if key not in editor_fields
+        })
+        # Product Interest is the sheet's starting selection, not a limit on
+        # existing Salesforce product results. The browser has no controls
+        # for results outside the original list, so retain those source values.
+        visible_products = {
+            part.strip() for part in
+            row['snapshot'].get('product_interest', '').split(';')
+            if part.strip()
+        }
+        source_results = row['draft'].get('product_results') or {}
+        edited_results = dict(data.get('product_results') or {})
+        for product, info in source_results.items():
+            if product not in visible_products and product not in edited_results:
+                edited_results[product] = info
+        data['product_results'] = edited_results
+        # The Salesforce writer owns validation of deliberately submitted
+        # selections against actual org metadata, not the imported snapshot.
         return self.repository.save_draft(day, work_order_id, data, revision)
 
     @staticmethod

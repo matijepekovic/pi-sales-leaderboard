@@ -153,8 +153,6 @@ def blueprint(service, surface, *, color_code=None):
     def save():
         try:
             raw = request.form.get('draft', '')
-            if len(raw) > 14000:
-                raise ValueError('MOD draft is too large.')
             revision = int(request.form.get('revision', '-1'))
             data = json.loads(raw)
             ident = request.form.get('work_order_id', '')

@@ -3,8 +3,6 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 import re
 
-from .contract import deposit_payment_value
-
 from .salesforce_adapter import (
     LEAD_FIELDS, PR, PR_ISSUED_COUNT, WO, REVIEW_FIELD, PRODUCT_RESULT_VALUE,
     WORK_ORDER_DISPO,
@@ -15,12 +13,13 @@ from .salesforce_adapter import (
 def _money(value):
     if value is None or value == '':
         return ''
+    original = str(value)
     try:
-        result = Decimal(str(value))
-    except InvalidOperation as exc:
-        raise ResultingSalesforceError('Invalid Salesforce resulting amount.') from exc
+        result = Decimal(original)
+    except (InvalidOperation, ValueError):
+        return original
     if not result.is_finite() or result < 0 or result.as_tuple().exponent < -2:
-        raise ResultingSalesforceError('Invalid Salesforce resulting amount.')
+        return original
     return format(result, 'f')
 
 
@@ -43,8 +42,8 @@ def _clock(value, zone):
             if parsed.tzinfo is not None:
                 parsed = parsed.astimezone(zone)
             hour, minute = parsed.hour, parsed.strftime('%M')
-        except ValueError as exc:
-            raise ResultingSalesforceError('Invalid Salesforce call time.') from exc
+        except ValueError:
+            return text
     return str(hour % 12 or 12) + ':' + str(minute).zfill(2) + (
         ' PM' if hour >= 12 else ' AM')
 
@@ -75,7 +74,7 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
     for work_id, lead_id in identities.items():
         work = works[work_id]
         raw_dispo = str(work.get(WO['dispo']) or '').strip()
-        dispo = dispositions.get(raw_dispo.casefold(), '')
+        dispo = dispositions.get(raw_dispo.casefold(), raw_dispo)
         # Lead.Status is checked before trusting any Work Order or Product result.
         content = str(work.get(WO['notes']) or '')
         draft = {
@@ -102,12 +101,9 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             draft['review'] = _checked(review)
         prices = [_money(work.get(WO[key])) for key in ('start_price', 'final_price')]
         draft['numbers'] = '\n'.join(price for price in prices if price)
-        # Salesforce's existing Deposit/Payment field is text and can contain
-        # both amounts separated by '/'. Preserve it exactly as a manual value.
-        try:
-            draft['deposit_override'] = deposit_payment_value(work.get(WO['deposit']))
-        except ValueError as exc:
-            raise ResultingSalesforceError('Invalid Salesforce Deposit/Payment.') from exc
+        # This is an existing Salesforce text value, not a Stats manual edit.
+        remote_deposit = work.get(WO['deposit'])
+        draft['deposit_override'] = '' if remote_deposit is None else str(remote_deposit)
         if lead_id:
             lead = leads[lead_id]
             dnr = lead.get(LEAD_FIELDS['dnr'])
@@ -132,30 +128,44 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             # The actual Salesforce Lead status wins even when the Work Order
             # has a contradictory Dispo or no existing product result.
             dispo = draft['dispo'] = 'cxl'
-        elif raw_dispo and not dispo:
-            raise ResultingSalesforceError('Unknown Salesforce Work Order disposition.')
+        # A source disposition outside the locally supported edit choices
+        # remains the actual Salesforce text; it cannot invalidate Refresh.
+        source_products = tuple(products.get(work_id, ()))
+        source_keys = set()
+        needs_full_source = False
+        for item in source_products:
+            product_key = str(item.get(PR['product']) or '').strip().casefold()
+            if not product_key or product_key in source_keys:
+                needs_full_source = True
+            source_keys.add(product_key)
+        if needs_full_source:
+            # Store all identities where a product-keyed edit UI cannot
+            # represent the full Salesforce record set without data loss.
+            draft['source_product_records'] = [{
+                'id': str(item.get('Id') or ''),
+                'product': item.get(PR['product']),
+                'result': item.get(PR['result']),
+                'detail': item.get(PR['detail']),
+                'price': item.get(PR['price']),
+                'one_leg': item.get(PR['one_leg']),
+                'free_lead': item.get(PR['free_lead']),
+                'cxl_at_lead': item.get(PR['cxl_at_lead']),
+            } for item in source_products]
 
         per_product, sales, details, seen = {}, {}, set(), set()
         ranked_results = []
         product_flags = {'free_lead': [], 'cxl_at_lead': []}
         issued_primary = []
-        for item in products.get(work_id, ()):
+        for item in source_products:
             product = str(item.get(PR['product']) or '').strip()
-            if not product:
+            if not product or product.casefold() in seen:
+                # These records survive intact in source_product_records.
                 continue
-            if product.casefold() in seen:
-                raise ResultingSalesforceError('Duplicate Salesforce product result.')
             seen.add(product.casefold())
             if item.get(PR_ISSUED_COUNT) is True:
                 issued_primary.append(product)
             raw_result = str(item.get(PR['result']) or '').strip()
-            result = results.get(raw_result.casefold(), '')
-            if raw_result and not result:
-                if lead_canceled:
-                    # An unrecognized product result cannot veto a canceled
-                    # Lead; leave that product untouched rather than guess.
-                    continue
-                raise ResultingSalesforceError('Unknown Salesforce product result.')
+            result = results.get(raw_result.casefold(), raw_result)
             detail = str(item.get(PR['detail']) or '')
             if detail:
                 details.add(detail)
@@ -176,8 +186,14 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
                     'result': result, 'detail': detail,
                     'price': price, 'deposit': '',
                 }
-            if result == 'sale' and price and Decimal(price) > 0:
-                sales[product] = {'price': price, 'deposit': ''}
+            if result == 'sale' and price:
+                try:
+                    sold_price = Decimal(price)
+                    positive_sale = sold_price.is_finite() and sold_price > 0
+                except (InvalidOperation, ValueError):
+                    positive_sale = True
+                if positive_sale:
+                    sales[product] = {'price': price, 'deposit': ''}
             for key in ('free_lead', 'cxl_at_lead'):
                 value = _source_value(item.get(PR[key]))
                 product_flags[key].append(value)
