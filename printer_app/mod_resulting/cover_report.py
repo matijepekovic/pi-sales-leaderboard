@@ -238,7 +238,7 @@ def project_cover(day, sheets, mod_name=""):
     report = {
         "day": day, "mod": str(mod_name or ""),
         "date": date.fromisoformat(day).strftime("%A, %B %-d, %Y"),
-        "sections": sections, "grand": {}, "totals": {},
+        "sections": sections, "counts": counts, "grand": {}, "totals": {},
     }
     _summary(report, counts)
     return report
@@ -290,16 +290,15 @@ def apply_edits(report, edits):
 
     # Changes to prices and deposits affect computed daily totals unless the
     # corresponding summary cell has been explicitly edited.
-    counts = {}
+    counts = deepcopy(report["counts"])
     for section in result["sections"]:
-        source = next(item for item in report["sections"] if item["key"] == section["key"])
-        original = source["summary"]
-        counts[section["key"]] = {
-            "leads": int(original["leads"]),
-            "pitched": int(original["pitched"]),
-            "sales": len(section["rows"]),
-            "nra": 0,
-        }
+        key = section["key"]
+        counts[key]["sales"] = len(section["rows"])
+        manual = (edits.get("summary") or {}).get(key, {})
+        for field in ("leads", "pitched"):
+            numeric = _decimal(manual.get(field)) if field in manual else None
+            if numeric is not None and numeric >= 0 and numeric == numeric.to_integral_value():
+                counts[key][field] = int(numeric)
     _summary(result, counts)
     for field_name, allowed in (("summary", set(SUMMARY_FIELDS)),
                                 ("grand", set(SUMMARY_FIELDS)),
