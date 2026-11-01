@@ -1362,3 +1362,34 @@ def test_individual_product_editor_still_updates_and_removes_visible_results(tmp
         'Windows': {'result': 'nra', 'detail': '', 'price': '', 'deposit': ''},
     }
 
+
+def test_explicit_refresh_repairs_product_results_lost_by_legacy_sale_save(tmp_path):
+    """Restore from Salesforce without making MOD Notes or redlines disappear."""
+    repo = ResultingRepository(Database(tmp_path / 'printer.sqlite'))
+    original = clean_draft({
+        'dispo': 'sale', 'additional_products': True,
+        'notes': 'Original Salesforce notes',
+        'sale_products': {'Roofing': {'price': '15000', 'deposit': '500'}},
+        'product_results': {
+            'Roofing': {'result': 'sale', 'detail': '', 'price': '15000', 'deposit': ''},
+            'Siding': {'result': 'pns', 'detail': 'Price Objection', 'price': '', 'deposit': ''},
+        },
+    })
+    repo.refresh(DAY, [RECORD], external_drafts={WORK: original})
+    revision = repo.override(DAY, WORK, 0)
+    # A previously released serializer could save a valid-looking Sale draft
+    # with all local Product Results wiped; model that already-stored damage.
+    damaged = dict(original, product_results={},
+                   notes='Locally edited MOD Notes', redlines='My red ink')
+    repo.save_draft(DAY, WORK, damaged, revision)
+    assert repo.sheets(DAY)[0]['draft']['product_results'] == {}
+
+    # Salesforce has not changed. Its last baseline is identical, but
+    # an explicit Refresh must rehydrate the same two Product Results.
+    repo.refresh(DAY, [RECORD], external_drafts={WORK: original})
+    repaired = repo.sheets(DAY)[0]['draft']
+    assert repaired['product_results'] == original['product_results']
+    assert repaired['notes'] == 'Locally edited MOD Notes'
+    assert repaired['redlines'] == 'My red ink'
+    assert repaired['sale_products'] == original['sale_products']
+
