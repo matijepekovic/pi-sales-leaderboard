@@ -80,6 +80,7 @@
   for (const output of outputFields) {
     output.addEventListener('input', () => {
       edits.outputs[output.dataset.output] = output.value;
+      if (output.dataset.output === 'leads' || output.dataset.output === 'total') calc();
       changed();
     });
   }
