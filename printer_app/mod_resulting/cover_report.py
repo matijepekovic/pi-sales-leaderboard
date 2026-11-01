@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from statistics import mean
 
 from .contract import prices
+from .report_facts import decimal_amount as _decimal, sold_entries as _sold, has_sale
 
 DIVISIONS = (
     ("roof", "Roofing Division"),
@@ -62,18 +63,6 @@ def division_for(work_type):
     return None
 
 
-def _decimal(value):
-    value = str(value if value is not None else "").strip()
-    if not value:
-        return None
-    value = value.replace(",", "").replace("$", "")
-    try:
-        result = Decimal(value)
-    except (ValueError, InvalidOperation):
-        return None
-    return result if result.is_finite() else None
-
-
 def _currency(value):
     if value is None:
         return ""
@@ -89,22 +78,6 @@ def _percent(value):
 
 def _number(value):
     return str(value)
-
-
-def _sold(draft):
-    """Keep source sale details, including independently sold products."""
-    result = {}
-    for product, entry in (draft.get("sale_products") or {}).items():
-        if isinstance(entry, dict):
-            amount = _decimal(entry.get("price"))
-            if amount is not None and amount > 0:
-                result[product] = entry
-    for product, entry in (draft.get("product_results") or {}).items():
-        if isinstance(entry, dict) and str(entry.get("result") or "").casefold() in ("sale",):
-            amount = _decimal(entry.get("price"))
-            if amount is not None and amount > 0 and product not in result:
-                result[product] = entry
-    return result
 
 
 def _first_name(name):
@@ -151,7 +124,7 @@ def _row(work_order_id, snapshot, draft):
 
 
 def _sale(draft):
-    return str(draft.get("dispo") or "").casefold() == "sale" or bool(_sold(draft))
+    return has_sale(draft)
 
 
 def _summary(report, counts):
