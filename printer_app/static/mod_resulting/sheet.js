@@ -1317,7 +1317,7 @@
     if (!pdfsButton) return;
     let incomplete = 0;
     for (const sheet of sheets) {
-      if (sheet.dataset.submitted === 'yes') continue;
+      if (sheet.dataset.submitted === 'yes' || sheet.dataset.sourceResulted === 'yes') continue;
       const draft = serialize(sheet);
       if (!draft.dispo && !Object.values(draft.product_results || {})
           .some(entry => entry && entry.result)) incomplete++;
