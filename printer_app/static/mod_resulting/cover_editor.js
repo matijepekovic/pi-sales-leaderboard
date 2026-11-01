@@ -150,7 +150,11 @@
           pending_finalize:'Finalizing edited cover and Redlines PDF.',
           finalizing:'Combining cover and MOD sheets.'
         };
-        status.textContent = descriptions[state.state] || 'Preparing PDF.';
+        // Confirmation belongs to this report job, not the transient worker
+        // stage. Polling must never replace a confirmed cover with an
+        // unconfirmed-looking "queued" message.
+        const progress = descriptions[state.state] || 'Preparing PDF.';
+        status.textContent = (state.confirmed ? 'Cover confirmed. ' : '') + progress;
       }
     } catch (error) {
       if (!dirty) status.textContent = error.message;
