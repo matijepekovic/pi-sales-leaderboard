@@ -191,6 +191,14 @@ class ResultingRepository:
                     # Establish one without mistaking those edits for Salesforce.
                     merged = dict(previous_local)
 
+                # The source adapter owns Product Results. An explicit
+                # Salesforce Refresh must restore them even if the last
+                # remote baseline is unchanged: older Sale-card saves could
+                # accidentally erase the local copy. This does not touch
+                # locally maintained MOD Notes or redlines.
+                if 'product_results' in incoming:
+                    merged['product_results'] = incoming['product_results']
+
                 if old and not clear_local:
                     prior_remote_note = (baseline.get('notes', '')
                                          if baseline is not None else prior_note_text)
