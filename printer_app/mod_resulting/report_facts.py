@@ -46,11 +46,7 @@ def sold_entries(draft):
 def has_sale(draft):
     """A result is sold if the work-order result or any product is a sale."""
     return (str(draft.get("dispo") or "").strip().casefold() == "sale" or
-            bool(sold_entries(draft)) or any(
-                isinstance(item, dict) and
-                str(item.get("result") or "").strip().casefold() == "sale"
-                for item in (draft.get("product_results") or {}).values()
-            ))
+            bool(sold_entries(draft)))
 
 
 def result_disposition(draft):
