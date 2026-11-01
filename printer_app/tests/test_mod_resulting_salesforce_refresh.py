@@ -620,3 +620,35 @@ def test_duplicate_and_unlabeled_salesforce_results_preserve_record_identities()
     assert [item['result'] for item in draft['source_product_records']] == [
         'Pitch No Sale', 'No Pitch', 'Canceled'
     ]
+
+
+def test_existing_offsheet_salesforce_results_cannot_be_erased_by_editor_save(tmp_path):
+    from printer_app.mod_resulting.service import ResultingService
+
+    remote = source_draft({
+        'dispo': 'pns',
+        'product_results': {
+            'Bath': {
+                'result': 'sale', 'detail': '', 'price': '14000', 'deposit': '0',
+            },
+        },
+        'source_product_records': [
+            {'id': PRODUCT, 'product': 'Bath', 'result': 'Sale'},
+        ],
+    })
+    repo = ResultingRepository(Database(tmp_path / 'printer.sqlite'))
+    repo.refresh(DAY, [RECORD], external_drafts={WORK: remote})
+    sheet = repo.sheets(DAY)[0]
+    revision = repo.override(DAY, WORK, sheet['revision'])
+
+    # A browser that only renders the originally assigned Roofing product
+    # cannot delete an existing Salesforce Bath pivot or forge its identity.
+    posted = dict(sheet['draft'], product_results={},
+                  source_product_records=[{'id': 'FORGED'}])
+    service = ResultingService(
+        repo, None, None, None, 'America/Los_Angeles',
+    )
+    service.save(DAY, WORK, posted, revision)
+    saved = repo.sheets(DAY)[0]['draft']
+    assert saved['product_results']['Bath'] == remote['product_results']['Bath']
+    assert saved['source_product_records'] == remote['source_product_records']
