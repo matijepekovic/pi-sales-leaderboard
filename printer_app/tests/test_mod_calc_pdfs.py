@@ -112,9 +112,15 @@ def test_user_edits_recalculate_and_can_override_every_output():
     })
     assert edited["outputs"]["leads"] == "100"
     assert edited["outputs"]["pitch"] == "80%"
-    assert edited["outputs"]["close"] == "29.4%"  # 5 / (21 - 3 - 1)
-    assert edited["outputs"]["dpl"] == "$11,764.71"
+    assert edited["outputs"]["close"] == "5.0%"  # Edited Leads now drives Close.
+    assert edited["outputs"]["dpl"] == "$2,000.00"
     assert edited["outputs"]["total"] == "$200,000.00"
+    derived = apply_calc_edits(original, {"inputs":{"cxl":"3","revenue":"$200000"}})
+    assert derived["outputs"]["leads"] == "17"
+    assert derived["outputs"]["close"] == "29.4%"
+    assert derived["outputs"]["dpl"] == "$11,764.71"
+    total_override = apply_calc_edits(original, {"outputs":{"total":"$300,000.00"}})
+    assert total_override["outputs"]["dpl"] == "$16,666.67"
     assert original["outputs"]["leads"] == "18"
     zero = apply_calc_edits(original, {
         "inputs": {"sold": "0", "pns": "0", "nh": "0", "np": "0", "nra": "0"}
