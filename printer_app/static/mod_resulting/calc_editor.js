@@ -41,8 +41,12 @@
     const pitched = all ? values.sold + values.pns : null;
     const denominator = all ? pitched + values.nh + values.np + values.nra : null;
     const denominatorNoNra = all ? pitched + values.nh + values.np : null;
-    const leads = values.cxl === null ? null :
-                  Number(report.work_orders) - Number(report.oos) - values.cxl;
+    const leads = Object.prototype.hasOwnProperty.call(edits.outputs, 'leads')
+      ? number(edits.outputs.leads)
+      : values.cxl === null ? null :
+        Number(report.work_orders) - Number(report.oos) - values.cxl;
+    const total = Object.prototype.hasOwnProperty.call(edits.outputs, 'total')
+      ? number(edits.outputs.total) : values.revenue;
     const valuesOut = {
       leads: leads === null ? '' : String(leads),
       pitch: percent(pitched, denominator),
@@ -50,9 +54,8 @@
       close: percent(values.sold, leads),
       close_nra: percent(values.sold, leads === null || values.nra === null
                                     ? null : leads - values.nra),
-      total: money(values.revenue),
-      dpl: money(values.revenue !== null && leads > 0
-                 ? values.revenue / leads : null),
+      total: money(total),
+      dpl: money(total !== null && leads > 0 ? total / leads : null),
       nra_total: values.nra === null ? '' : String(values.nra)
     };
     for (const input of outputFields) {
