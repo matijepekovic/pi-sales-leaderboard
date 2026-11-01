@@ -75,7 +75,12 @@ def _decimal(value):
 
 
 def _currency(value):
-    return ("$" + format(value, ",.0f")) if value is not None else ""
+    if value is None:
+        return ""
+    amount = format(value, ",f")
+    if "." in amount:
+        amount = amount.rstrip("0").rstrip(".")
+    return "$" + amount
 
 
 def _percent(value):
@@ -231,14 +236,15 @@ def project_cover(day, sheets, mod_name=""):
         if _sale(draft):
             info["sales"] += 1
             by_key[key]["rows"].append(_row(item["work_order_id"], snapshot, draft))
-    if unknown:
-        # Never silently classify an unknown Salesforce Work Type as another division.
-        raise ValueError("Unmapped Work Type(s) for OLY Cover: " + ", ".join(sorted(set(unknown))))
+    # No guessed work-type groupings. Unmapped values are left off the
+    # Olympia cover as requested; their MOD sheets remain in the PDF bundle.
+    # Keep these source labels for display and later manual cover additions.
     from datetime import date
     report = {
         "day": day, "mod": str(mod_name or ""),
         "date": date.fromisoformat(day).strftime("%A, %B %-d, %Y"),
-        "sections": sections, "counts": counts, "grand": {}, "totals": {},
+        "sections": sections, "counts": counts, "unmapped_work_types": unknown,
+        "grand": {}, "totals": {},
     }
     _summary(report, counts)
     return report
