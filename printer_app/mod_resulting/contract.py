@@ -237,6 +237,19 @@ def clean_draft(raw):
     return data
 
 
+
+def source_draft(raw):
+    """Hydrate an authoritative Salesforce projection without draft-input validation.
+
+    Salesforce has already accepted these values. Build the existing Stats
+    display shape, but never apply the manual-input lengths, enum choices,
+    money formats, or date/time restrictions to an imported source record.
+    """
+    if not isinstance(raw, dict):
+        raise TypeError('Salesforce resulting projection must be a dictionary.')
+    return {**clean_draft({}), **raw}
+
+
 def dnr_redline(reason):
     values = dnr_reasons(reason)
     return 'DNR - ' + '; '.join(values) if values else ''
@@ -403,15 +416,40 @@ def individual_product_sales(draft):
 
 
 def sale_redlines(draft):
-    sales = (sold_products(draft) if draft.get('dispo') == 'sale'
-             else individual_product_sales(draft))
-    return tuple(
-        'SALE ' + item['product'] + ': ' + format_money(item['price'])
-        + ' | Deposit: ' + format_money(item['deposit'])
-        + (' | Payment: ' + format_money(item['payment'])
-           if item['payment'] else '')
-        for item in sales
-    )
+    """Format sale annotations without rejecting imported Salesforce amounts."""
+    if draft.get('dispo') == 'sale':
+        entries = (draft.get('sale_products') or {}).items()
+    elif draft.get('additional_products'):
+        entries = ((product, item) for product, item in
+                   (draft.get('product_results') or {}).items()
+                   if item.get('result') == 'sale')
+    else:
+        entries = ()
+    lines = []
+    for product, item in entries:
+        price = item.get('price', '')
+        if not str(price).strip():
+            continue
+        try:
+            parsed_price = _money(price)
+        except ValueError:
+            parsed_price = None
+        if parsed_price == 0:
+            continue
+
+        def displayed(value):
+            try:
+                return format_money(value)
+            except ValueError:
+                # An existing Salesforce value is display data, not invalid input.
+                return str(value or '')
+
+        line = ('SALE ' + product + ': ' + displayed(price)
+                + ' | Deposit: ' + displayed(item.get('deposit', '')))
+        if item.get('payment'):
+            line += ' | Payment: ' + displayed(item['payment'])
+        lines.append(line)
+    return tuple(lines)
 
 
 def deposit_payment_value(value):
@@ -436,11 +474,17 @@ def deposit_payment_value(value):
 
 def deposit_payment_text(draft):
     """The single Work Order Deposit/Payment value, manual or computed."""
-    manual = deposit_payment_value(draft.get('deposit_override', ''))
+    manual = draft.get('deposit_override', '')
     if manual:
-        return manual
-    sales = (sold_products(draft) if draft.get('dispo') == 'sale'
-             else individual_product_sales(draft))
+        # On a refreshed sheet this is the exact existing Salesforce text.
+        return str(manual)
+    try:
+        sales = (sold_products(draft) if draft.get('dispo') == 'sale'
+                 else individual_product_sales(draft))
+    except ValueError:
+        # Do not invent a total when existing source sale amounts are not
+        # suitable for arithmetic. Preserve the separately stored source.
+        return ''
     if not sales:
         return ''
     def plain_amount(value):
@@ -535,7 +579,7 @@ def prices(numbers):
 def outcome_fields(draft):
     """Derive the normalized result fields from the authoritative main Dispo."""
     dispo = draft['dispo']
-    if not dispo:
+    if not dispo or dispo not in DISPOSITIONS:
         return None
     return {
         # The current Lead Status is strictly derived from today's Dispo and

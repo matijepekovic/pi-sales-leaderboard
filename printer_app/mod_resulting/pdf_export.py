@@ -19,7 +19,7 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from ..mod_sheet_contract import ModSheetRecord
 from ..mod_sheets.pdf_renderer import MOD_TABLE_WIDTH, MOD_ROW_HEIGHTS, render_mod_pdf
 from .contract import (
-    clean_draft, final_redline_text, note_runs_for_display,
+    source_draft, final_redline_text, note_runs_for_display,
     prices, format_money, deposit_payment_text,
 )
 
@@ -151,7 +151,7 @@ def _check(c,x,top,value, label,*, size=8.5):
 
 
 def _overlay_one(c,index,draft):
-    d=clean_draft(draft)
+    d=source_draft(draft)
     # Replace only the user-approved label. Keep the original exterior and
     # interior borders, spacing, column widths, and other Salesforce values.
     _erase(c,index,9,3)

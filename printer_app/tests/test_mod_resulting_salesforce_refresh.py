@@ -5,7 +5,7 @@ import json
 
 from printer_app.db import Database
 from printer_app.mod_sheet_contract import ModSheetRecord
-from printer_app.mod_resulting.contract import clean_draft
+from printer_app.mod_resulting.contract import clean_draft, source_draft
 from printer_app.mod_resulting.repository import ResultingRepository
 from printer_app.mod_resulting.salesforce_adapter import ResultingSalesforceAdapter
 
@@ -376,7 +376,7 @@ def _mapped(work_dispo, products, *, lead=None, notes=''):
         ZoneInfo('America/Los_Angeles'), {WORK: LEAD}, work,
         {LEAD: lead or {}}, {WORK: products},
     )
-    return clean_draft(result[WORK])
+    return source_draft(result[WORK])
 
 
 def test_product_result_is_primary_disposition_when_salesforce_work_order_blank():
@@ -441,7 +441,7 @@ def test_canceled_lead_overrides_work_order_and_product_results_first():
         'Product_Interest__c':'Bath', 'Result__c':'Unknown Result',
     }], lead={'Status':'Canceled'})
     assert unexpected['dispo'] == 'cxl'
-    assert unexpected['product_results'] == {}
+    assert unexpected['product_results']['Bath']['result'] == 'Unknown Result'
 
     unchanged = _mapped('Sale', [], lead={'Status':'Nurturing'})
     assert unchanged['dispo'] == 'sale'
@@ -546,3 +546,77 @@ def test_refresh_preserves_existing_red_note_runs_when_text_matches_remote(tmp_p
     assert actual['notes'] == 'Same note'
     assert actual['note_runs'] == [{'text':'Same note', 'red':True}]
     assert actual['review'] is True
+
+
+
+def test_existing_salesforce_values_are_not_rejected_by_stats_draft_rules(tmp_path):
+    from zoneinfo import ZoneInfo
+    from printer_app.mod_resulting.salesforce_drafts import project_salesforce_drafts
+    from printer_app.mod_resulting.service import ResultingService
+    from printer_app.mod_resulting.pdf_export import render_resulting_pdf
+
+    work = {
+        'Id': WORK, 'Dispo__c': 'Salesforce custom result',
+        'Call_1__c': 'Salesforce special time',
+        'Start_Price__c': '-12.345',
+        'Deposit_Payment__c': '$1,000 / original payment',
+        'MOD_Notes__c': 'Existing source ' + 'x' * 9200,
+    }
+    product = {
+        'Id': PRODUCT, 'Product_Interest__c': 'Roofing',
+        'Result__c': 'Salesforce custom product result',
+        'Price_Given__c': '12.345',
+    }
+    from_salesforce = project_salesforce_drafts(
+        ZoneInfo('America/Los_Angeles'), {WORK: LEAD},
+        {WORK: work}, {LEAD: {}}, {WORK: [product]},
+    )[WORK]
+    assert from_salesforce['dispo'] == 'Salesforce custom result'
+    assert from_salesforce['deposit_override'] == '$1,000 / original payment'
+    assert from_salesforce['call_1'] == 'Salesforce special time'
+    assert from_salesforce['product_results']['Roofing']['result'] == (
+        'Salesforce custom product result'
+    )
+    assert from_salesforce['product_results']['Roofing']['price'] == '12.345'
+    repo = ResultingRepository(Database(tmp_path / 'printer.sqlite'))
+    source = SimpleNamespace(records=lambda **kwargs: (RECORD,))
+    writer = SimpleNamespace(read_results=lambda records: {WORK: from_salesforce})
+    settings = SimpleNamespace(settings=lambda: SimpleNamespace(market_segment='Olympia'))
+    service = ResultingService(repo, source, writer, settings, 'America/Los_Angeles')
+    assert service.refresh(DAY) == 1
+    sheet = service.snapshot(DAY)['sheets'][0]
+    assert sheet['draft']['deposit_override'] == work['Deposit_Payment__c']
+    assert sheet['draft']['notes'] == work['MOD_Notes__c']
+    revision = service.override(DAY, WORK, sheet['revision'])
+    sheet['draft']['need'] = 'Changed only this field'
+    service.save(DAY, WORK, sheet['draft'], revision)
+    saved = repo.sheets(DAY)[0]
+    assert saved['draft']['deposit_override'] == work['Deposit_Payment__c']
+    assert saved['draft']['product_results']['Roofing']['price'] == '12.345'
+    assert render_resulting_pdf([saved]).startswith(b'%PDF')
+
+
+def test_duplicate_and_unlabeled_salesforce_results_preserve_record_identities():
+    from zoneinfo import ZoneInfo
+    from printer_app.mod_resulting.salesforce_drafts import project_salesforce_drafts
+    second_id = 'a12000000000002AAA'
+    third_id = 'a12000000000003AAA'
+    records = [
+        {'Id': PRODUCT, 'Product_Interest__c': 'Roofing',
+         'Result__c': 'Pitch No Sale'},
+        {'Id': second_id, 'Product_Interest__c': 'Roofing',
+         'Result__c': 'No Pitch'},
+        {'Id': third_id, 'Product_Interest__c': '',
+         'Result__c': 'Canceled'},
+    ]
+    draft = source_draft(project_salesforce_drafts(
+        ZoneInfo('America/Los_Angeles'), {WORK: LEAD},
+        {WORK: {'Id': WORK}}, {LEAD: {}}, {WORK: records},
+    )[WORK])
+    assert draft['product_results']['Roofing']['result'] == 'pns'
+    assert [item['id'] for item in draft['source_product_records']] == [
+        PRODUCT, second_id, third_id
+    ]
+    assert [item['result'] for item in draft['source_product_records']] == [
+        'Pitch No Sale', 'No Pitch', 'Canceled'
+    ]
