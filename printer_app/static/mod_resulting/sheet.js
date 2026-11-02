@@ -350,21 +350,28 @@
     draft.checkbox_values = sheet.checkboxValues || draft.checkbox_values || {};
     // Black Notes and popup Redlines are separate; migrate old mixed runs.
     draft.note_runs = [];
-    draft.product_results = {};
+    // Only individual-result controls may change product results. A Sale
+    // hides those controls; saving Notes or other fields must not erase the
+    // previously imported Salesforce product outcomes.
     if (draft.additional_products && draft.dispo !== 'sale') {
+      const productResults = {...(draft.product_results || {})};
       for (const row of sheet.querySelectorAll('[data-product]')) {
         const result = row.querySelector('[data-product-result]').value;
         const detail = row.querySelector('[data-product-detail]').value;
         if (result) {
           const payment = row.querySelector('[data-product-payment]')?.value || '';
-          draft.product_results[row.dataset.product] = {
+          productResults[row.dataset.product] = {
             result, detail,
             price: row.querySelector('[data-product-price]')?.value || '',
             deposit: row.querySelector('[data-product-deposit]')?.value || '',
             ...(payment ? {payment} : {})
           };
+        } else {
+          // An explicitly cleared visible product is the only removal here.
+          delete productResults[row.dataset.product];
         }
       }
+      draft.product_results = productResults;
     }
     draft.sale_products = {};
     const checkedSaleProducts = [];

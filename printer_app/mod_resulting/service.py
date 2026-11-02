@@ -140,20 +140,29 @@ class ResultingService:
             key: value for key, value in row['draft'].items()
             if key not in editor_fields
         })
-        # Product Interest is the sheet's starting selection, not a limit on
-        # existing Salesforce product results. The browser has no controls
-        # for results outside the original list, so retain those source values.
+        # A Sale does not expose individual Product Results for editing.
+        # Neither does a sheet with one product or individual mode disabled.
+        # Preserve the stored Salesforce outcomes in those modes, regardless
+        # of whether an older browser sent an empty product_results object.
+        # Only the individual-result editor may replace its visible entries.
         visible_products = {
             part.strip() for part in
             row['snapshot'].get('product_interest', '').split(';')
             if part.strip()
         }
         source_results = row['draft'].get('product_results') or {}
-        edited_results = dict(data.get('product_results') or {})
-        for product, info in source_results.items():
-            if product not in visible_products and product not in edited_results:
-                edited_results[product] = info
-        data['product_results'] = edited_results
+        if (data['dispo'] == 'sale' or not data['additional_products']
+                or len(visible_products) < 2):
+            data['product_results'] = dict(source_results)
+        else:
+            # Product Interest is the sheet's starting selection, not a limit
+            # on Salesforce results. Entries absent from the editor are always
+            # preserved; explicitly changed visible entries still take effect.
+            edited_results = dict(data.get('product_results') or {})
+            for product, info in source_results.items():
+                if product not in visible_products and product not in edited_results:
+                    edited_results[product] = info
+            data['product_results'] = edited_results
         # The Salesforce writer owns validation of deliberately submitted
         # selections against actual org metadata, not the imported snapshot.
         return self.repository.save_draft(day, work_order_id, data, revision)
