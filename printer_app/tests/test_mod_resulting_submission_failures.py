@@ -109,7 +109,7 @@ def test_group_preflight_rejection_preserves_drafts_and_submits_unrelated_lead(t
     assert [i['state'] for i in status['items']] == ['rejected', 'submitted', 'rejected']
     assert (status['submitted'], status['rejected'], status['failed']) == (1, 2, 2)
     assert writer.attempted == [records[1].source_id]
-    assert [event[0] for event in writer.events] == ['prepare', 'prepare', 'apply']
+    assert [event[0] for event in writer.events] == ['prepare', 'prepare', 'prepare', 'apply']
     assert [row['draft'] for row in repo.sheets(DAY)] == drafts
     assert 'no writes performed' in status['items'][0]['error']
 
@@ -130,7 +130,33 @@ def test_definitive_rejection_blocks_same_lead_but_continues_other_lead(tmp_path
     assert rows[0]['submitted_at'] is None
     assert rows[1]['submitted_at'] > 0
     assert rows[2]['submitted_at'] is None
-    assert [event[0] for event in writer.events[:2]] == ['prepare', 'prepare']
+    assert writer.events[0] == ('prepare', [record.source_id for record in records])
+
+
+def test_valid_many_leads_keep_one_bulk_preflight_before_all_writes(tmp_path):
+    service, repo, writer, records = _service(tmp_path, leads=tuple(range(1, 13)))
+    result, status = _run(service, repo)
+    assert result['ok'] and status['submitted'] == len(records)
+    prepares = [event for event in writer.events if event[0] == 'prepare']
+    assert prepares == [('prepare', [record.source_id for record in records])]
+    assert writer.events[0] == prepares[0]
+    assert writer.attempted == [record.source_id for record in records]
+
+
+def test_failed_bulk_preflight_isolates_groups_before_any_live_write(tmp_path):
+    service, repo, writer, records = _service(tmp_path, leads=(1, 2, 1, 3))
+    bad = repo.sheets(DAY)[2]
+    repo.save_draft(DAY, records[2].source_id,
+                    dict(bad['draft'], notes='INVALID but preserved'), bad['revision'])
+    result, status = _run(service, repo)
+    assert not result['ok']
+    assert [event[0] for event in writer.events] == [
+        'prepare', 'prepare', 'prepare', 'prepare', 'apply', 'apply']
+    assert writer.events[0][1] == [record.source_id for record in records]
+    assert writer.events[1][1] == [records[0].source_id, records[2].source_id]
+    assert writer.attempted == [records[1].source_id, records[3].source_id]
+    assert [item['state'] for item in status['items']] == [
+        'rejected', 'submitted', 'rejected', 'submitted']
 
 
 def test_unknown_write_stops_remaining_batch_without_terminal_pending_items(tmp_path):

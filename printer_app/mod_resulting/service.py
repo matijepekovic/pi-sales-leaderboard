@@ -362,8 +362,23 @@ class ResultingService:
             for key in targets:
                 if key in groups:
                     groups[key]['attempts'].append(attempt)
+        bulk_prepared = False
+        if len(payloads) == len(rows) and all(
+                group['error'] is None and not group['attempts'] for group in groups.values()):
+            try:
+                prepared = self.writer.prepare([payloads[row['work_order_id']] for row in rows])
+                if len(prepared) != len(rows):
+                    raise ValueError('Salesforce preflight produced an incomplete submission plan.')
+                plans.update((row['work_order_id'], plan) for row, plan in zip(rows, prepared))
+                bulk_prepared = True
+            except Exception:
+                # No writes occur during preflight. Isolate a rejected group
+                # below without making every normal batch fetch one Lead at a time.
+                plans.clear()
         verified_attempts = set()
         for group in groups.values():
+            if bulk_prepared:
+                continue
             if group['error'] is None:
                 try:
                     for attempt in group['attempts']:
