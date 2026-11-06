@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from ..mod_sheet_contract import ModSheetRecord
 from .contract import (
+    ResultingWriteRejected,
     source_draft,
     clean_draft, final_redline_text, outcome_fields, sold_products,
     individual_product_sales, deposit_payment_text, product_result_context,
@@ -34,7 +35,8 @@ class ResultingService:
         # The same normalized records and market settings used by Printer;
         # canceled/unconfirmed results are included for live routing changes.
         config = self.settings_repository.settings()
-        date = datetime.strptime(day, '%Y-%m-%d').strftime('%-m/%-d/%Y')
+        selected = datetime.strptime(day, '%Y-%m-%d')
+        date = f'{selected.month}/{selected.day}/{selected.year}'
         kwargs = dict(
             start_date=date, end_date=date,
             market_segment=config.market_segment if config else '',
@@ -88,6 +90,11 @@ class ResultingService:
     def checkbox_fields(self):
         """Presentation-only normalized capabilities from the source adapter."""
         reader = getattr(self.writer, 'checkbox_fields', None)
+        return reader() if callable(reader) else {}
+
+    def note_field(self):
+        """Normalized source capabilities for the existing Notes editor."""
+        reader = getattr(self.writer, 'note_field', None)
         return reader() if callable(reader) else {}
 
     def sheet_record(self, day, work_order_id):
@@ -278,7 +285,8 @@ class ResultingService:
             raise LookupError('There are no MOD sheets to print for this day.')
         return self.pdf_exporter(sheets)
 
-    def _apply_batch(self, day, mod_id, rows, *, job_id=None, resulted_on=None):
+    def _apply_batch(self, day, mod_id, rows, *, job_id=None, resulted_on=None,
+                     raise_on_error=True):
         """Single Salesforce write path for direct and background submissions."""
         resulting_date = resulted_on or self.day()
         if job_id is not None:
@@ -297,41 +305,171 @@ class ResultingService:
                     'MOD Lead appointment date lookup failed; using saved dates.')
         if not isinstance(lead_dates, dict):
             lead_dates = {}
-        batch = [self.submission_payload(
-            dict(row, day=day), mod_id, resulted_on=resulting_date,
-            lead_appointment_date=lead_dates.get(
-                row['snapshot']['lead_source_id'], '') or '',
-            work_order_appointment_date=self._saved_appointment_date(row['snapshot']),
-        ) for row in rows]
-        # The dashboard must explain preflight before the first Work Order.
+        # Plans sharing a Lead depend on one another's history and product
+        # interests. Keep that dependency inside one preflight group while
+        # allowing unrelated Leads to complete after a confirmed rejection.
+        groups, row_groups, plans, payloads, failures = {}, {}, {}, {}, []
+        confirmed = set()
+        sent = 0
+        counts = {'rejected': 0, 'uncertain': 0, 'not_submitted': 0}
+
+        def record_failure(row, state, message):
+            ident = row['work_order_id']
+            self.repository.error_item(day, ident, message)
+            if job_id is not None:
+                self.repository.submission_item(job_id, ident, state, message)
+            counts[state] += 1
+
+        group_key = getattr(self.writer, 'submission_group_key', None)
+        for row in rows:
+            ident = row['work_order_id']
+            identity = {'work_order_id': ident,
+                        'lead_id': row['snapshot'].get('lead_source_id', '')}
+            try:
+                key = group_key(identity) if callable(group_key) else identity['lead_id']
+                key = ('lead', key) if key else ('work_order', ident)
+                hash(key)
+            except Exception as exc:
+                failures.append(exc)
+                record_failure(row, 'rejected', str(exc))
+                continue
+            row_groups[ident] = key
+            group = groups.setdefault(key, {'rows': [], 'error': None, 'verifying': None})
+            group['rows'].append(row)
+            try:
+                payload = self.submission_payload(
+                    dict(row, day=day), mod_id, resulted_on=resulting_date,
+                    lead_appointment_date=lead_dates.get(identity['lead_id'], '') or '',
+                    work_order_appointment_date=self._saved_appointment_date(row['snapshot']),
+                )
+                payloads[ident] = payload
+            except Exception as exc:
+                group['error'] = group['error'] or exc
+
+        # Finish every group's read-only validation before the first write.
         if job_id is not None:
             self.repository.submission_stage(
                 job_id, 'Checking Salesforce records and validating the batch')
-        plans = self.writer.prepare(batch)
-        if len(plans) != len(rows):
-            raise ValueError('Salesforce preflight produced an incomplete submission plan.')
+        # Selecting a different Work Order must not bypass an unknown write
+        # against the same Lead, including attempts from an earlier day.
+        for group in groups.values():
+            group['attempts'] = []
+        for attempt in self.repository.unresolved_submission_attempts():
+            identity = {'work_order_id': attempt['work_order_id'], 'lead_id': attempt['lead_id']}
+            source_key = group_key(identity) if callable(group_key) else identity['lead_id']
+            source_key = ('lead', source_key) if source_key else ('work_order', identity['work_order_id'])
+            targets = {source_key, row_groups.get(attempt['work_order_id'])}
+            for key in targets:
+                if key in groups:
+                    groups[key]['attempts'].append(attempt)
+        verified_attempts = set()
+        for group in groups.values():
+            if group['error'] is None:
+                try:
+                    for attempt in group['attempts']:
+                        ident = attempt['work_order_id']
+                        token = (attempt['day'], ident)
+                        if token in verified_attempts:
+                            continue
+                        group['verifying'] = ident
+                        prior = attempt['payload'] or self.submission_payload(
+                            attempt, attempt['mod_user_id'], resulted_on=attempt['day'],
+                            work_order_appointment_date=self._saved_appointment_date(attempt['snapshot']))
+                        verifier = getattr(self.writer, 'reconcile_submission', None)
+                        if not callable(verifier):
+                            raise ValueError('Verify the previous Work Order submission before retrying.')
+                        verified = verifier(prior, verification=attempt['plan'])
+                        if verified not in ('submitted', 'ready'):
+                            raise ValueError('The previous Work Order submission could not be verified.')
+                        if verified == 'submitted':
+                            if not attempt['plan']:
+                                raise ValueError('The original submission plan is required to recover a receipt.')
+                            selected_here = attempt['day'] == day and ident in payloads
+                            same_desired = selected_here and prior == payloads[ident]
+                            preserve = (not same_desired and (
+                                selected_here or bool(attempt['override_active'])
+                                or prior.get('draft') != attempt['draft']))
+                            self.repository.recover_submission_attempt(
+                                attempt['day'], ident, preserve_edits=preserve,
+                                expected_revision=attempt['revision'])
+                            if same_desired:
+                                if job_id is not None:
+                                    self.repository.submission_item(job_id, ident, 'submitted')
+                                confirmed.add(ident)
+                                sent += 1
+                        verified_attempts.add(token)
+                        group['verifying'] = None
+                    remaining = [row for row in group['rows']
+                                 if row['work_order_id'] not in confirmed]
+                    group['rows'] = remaining
+                    prepared = self.writer.prepare([payloads[row['work_order_id']]
+                                                    for row in remaining]) if remaining else []
+                    if len(prepared) != len(group['rows']):
+                        raise ValueError('Salesforce preflight produced an incomplete submission plan.')
+                    group_plans = {row['work_order_id']: plan
+                                   for row, plan in zip(group['rows'], prepared)}
+                    plans.update(group_plans)
+                except Exception as exc:
+                    group['error'] = exc
+            if group['error'] is not None:
+                failures.append(group['error'])
+                message = 'Group preflight rejected; no writes performed: ' + str(group['error'])
+                for row in group['rows']:
+                    ident = row['work_order_id']
+                    if ident in confirmed:
+                        continue
+                    if group['verifying']:
+                        state = 'uncertain' if ident == group['verifying'] else 'not_submitted'
+                        detail = ('Previous submission still needs verification: '
+                                  if state == 'uncertain' else
+                                  'Not submitted because this Lead has an unverified earlier submission: ')
+                        record_failure(row, state, detail + str(group['error']))
+                    else:
+                        record_failure(row, 'rejected', message)
         if job_id is not None:
             self.repository.submission_stage(job_id, 'Writing Salesforce results')
-        sent = 0
-        for row, plan in zip(rows, plans):
+        blocked_groups, stopped = set(), False
+        for row in rows:
             ident = row['work_order_id']
+            if ident not in plans:
+                continue
+            key = row_groups[ident]
+            if stopped or key in blocked_groups:
+                message = ('Not submitted because an earlier write needs verification.'
+                           if stopped else
+                           'Not submitted because an earlier Work Order for this Lead was rejected.')
+                record_failure(row, 'not_submitted', message)
+                continue
             if job_id is not None:
                 self.repository.submission_item(job_id, ident, 'processing')
             try:
+                plan = plans[ident]
+                self.repository.record_submission_attempt(day, ident, payloads[ident], plan,
+                                                          job_id=job_id)
                 self.writer.apply(plan)
                 # A local receipt is recorded only after every planned write
                 # for this Work Order returns successfully.
                 self.repository.finish_item(day, ident)
             except Exception as exc:
-                self.repository.error_item(day, ident, str(exc))
-                if job_id is not None:
-                    # CLI timeout or crash can occur after a remote write.
-                    # Do not report a safe failure or blindly resend.
-                    self.repository.submission_item(job_id, ident, 'uncertain', str(exc))
-                raise
+                failures.append(exc)
+                if isinstance(exc, ResultingWriteRejected):
+                    self.repository.reject_submission_attempt(day, ident)
+                    record_failure(row, 'rejected', str(exc))
+                    blocked_groups.add(key)
+                else:
+                    # A transport failure or lost local receipt can follow a
+                    # committed remote write. Stop without replaying anything.
+                    record_failure(row, 'uncertain', str(exc))
+                    stopped = True
+                continue
             if job_id is not None:
                 self.repository.submission_item(job_id, ident, 'submitted')
             sent += 1
+        if failures:
+            if raise_on_error:
+                raise failures[0]
+            return {'submitted': sent, 'day': day, **counts,
+                    'error': str(failures[0])[:500]}
         return {'submitted': sent, 'day': day}
 
     def submit(self, day, work_order_ids=None):
@@ -368,9 +506,10 @@ class ResultingService:
             result = self._apply_batch(
                 job['day'], job['mod_id'], job['rows'], job_id=job['job_id'],
                 resulted_on=datetime.fromtimestamp(
-                    job['queued_at'], self.zone).date().isoformat())
-            self.repository.finish_submission_job(job['job_id'])
-            return {'ok': True, **result}
+                    job['queued_at'], self.zone).date().isoformat(),
+                raise_on_error=False)
+            self.repository.finish_submission_job(job['job_id'], result.get('error', ''))
+            return {'ok': not bool(result.get('error')), **result}
         except Exception as exc:
             self.repository.finish_submission_job(job['job_id'], str(exc))
             return {'ok': False, 'day': job['day'], 'error': str(exc)[:500]}

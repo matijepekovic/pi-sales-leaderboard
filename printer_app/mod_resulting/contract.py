@@ -5,6 +5,48 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 import re
 
+
+class ResultingWriteRejected(RuntimeError):
+    """The writer has confirmed that the attempted result did not commit."""
+
+
+def text_units(value):
+    """Count UTF-16 units, consistently with browser text-field counters."""
+    return len(value.encode('utf-16-le', errors='surrogatepass')) // 2
+
+
+def mod_note_text(draft):
+    """The notes destination contains only the entered numbers and MOD notes.
+
+    Older imported drafts can already contain their numbers as a prefix.
+    Reusing that exact prefix prevents a retry from adding the same text twice.
+    Generated result, sale and DNR annotations have their own destinations.
+    """
+    numbers = str(draft.get('numbers') or '').replace('\r\n', '\n').replace('\r', '\n').strip()
+    notes = str(draft.get('notes') or '').replace('\r\n', '\n').replace('\r', '\n')
+    combined = None
+    origin = draft.get('note_origin')
+    if isinstance(origin, dict):
+        source_numbers = str(origin.get('numbers') or '').replace('\r\n', '\n').replace('\r', '\n').strip()
+        if numbers == source_numbers:
+            # Source price fields cannot reconstruct annotated or intermediate
+            # Numbers entries. Reuse the observed source serialization instead
+            # of adding reconstructed prices to an already combined note.
+            prefix = str(origin.get('prefix') or '').replace('\r\n', '\n').replace('\r', '\n')
+            combined = '\n'.join(part for part in (prefix, notes) if part).strip()
+    if combined is None:
+        if numbers and (notes == numbers or notes.startswith(numbers + '\n')):
+            combined = notes.strip()
+        else:
+            combined = '\n'.join(part for part in (numbers, notes) if part).strip()
+    # Red-pen text is authored MOD note content, unlike generated annotations.
+    # It can already be part of an imported combined note after a prior submit.
+    redlines = str(draft.get('redlines') or '').replace('\r\n', '\n').replace('\r', '\n').strip()
+    if redlines and combined != redlines and not combined.endswith('\n' + redlines):
+        combined = '\n'.join(part for part in (combined, redlines) if part)
+    return combined
+
+
 DISPOSITIONS = ('', 'sale', 'pns', 'np', 'cxl', 'nra', 'oos')
 PRODUCT_RESULTS = ('sale', 'pns', 'np', 'cxl', 'nra', 'oos')
 RESULT_DETAILS = (
@@ -100,7 +142,7 @@ def dnr_reasons(value):
 def clean_draft(raw):
     if not isinstance(raw, dict):
         raise ValueError('Invalid MOD draft.')
-    if set(raw) - set(TEXT_FIELDS) - set(CHECKBOXES) - {'product_results', 'sale_products', 'sale_selection_order', 'note_runs', 'checkbox_values'}:
+    if set(raw) - set(TEXT_FIELDS) - set(CHECKBOXES) - {'product_results', 'sale_products', 'sale_selection_order', 'note_runs', 'checkbox_values', 'note_origin'}:
         raise ValueError('Unknown MOD draft fields.')
     data = {}
     for key in TEXT_FIELDS:
@@ -130,6 +172,13 @@ def clean_draft(raw):
             raise ValueError('Invalid source checkbox value.')
         normalized_values[key] = {'value': value, 'edited': entry['edited']}
     data['checkbox_values'] = normalized_values
+    origin = raw.get('note_origin')
+    if origin is not None:
+        if (not isinstance(origin, dict) or set(origin) != {'numbers', 'prefix'}
+                or any(not isinstance(origin[key], str) or len(origin[key]) > 9000
+                       for key in ('numbers', 'prefix'))):
+            raise ValueError('Invalid source note formatting.')
+        data['note_origin'] = dict(origin)
     runs = raw.get('note_runs', [])
     if not isinstance(runs, list) or len(runs) > 256:
         raise ValueError('Invalid MOD Notes formatting.')

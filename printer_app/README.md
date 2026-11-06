@@ -149,6 +149,22 @@ name. The same-day lookup includes canceled appointments as fallback matches.
 Existing cards are linked once after this update; hourly and manual refreshes
 keep the shared statuses current. The printed MOD sheet layout is unchanged.
 
+## MOD notes and resubmission
+
+The MOD Notes field stores the entered Numbers and authored MOD notes (including
+manually entered red-pen notes) together. Result
+details, sale/deposit/payment annotations and DNR details continue to use their
+existing Salesforce destinations and are not appended to MOD Notes. The live
+counter counts the exact combined value against the source field's actual limit;
+over-limit drafts remain saved, but cannot be submitted. Text is never truncated.
+
+Resubmission resolves existing product-result identities and updates those records.
+An uncertain attempt retains its original payload and operation plan. Before a
+retry, the writer reads the original records and relationships; only an exact
+verified result recovers a success receipt without another write. Refresh alone
+does not turn an uncertain attempt into a confirmed success. Confirmed rejections,
+unknown outcomes and work not attempted have distinct notifications.
+
 ## Result Appointment Flow v30 — read-only verification
 
 From a Stats checkout on the Raspberry Pi, with Salesforce CLI alias

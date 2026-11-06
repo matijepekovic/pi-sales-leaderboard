@@ -5,12 +5,13 @@ from types import SimpleNamespace
 import pytest
 
 from printer_app.mod_resulting.salesforce_adapter import (
-    ResultingSalesforceAdapter, ResultingSalesforceError,
+    ResultingSalesforceAdapter, ResultingSalesforceError, ResultingSalesforceRejected,
 )
+from printer_app.mod_resulting.contract import ResultingWriteRejected
 
 
 def _adapter(*, failing_step=None, malformed=False, http_status=200,
-             body_as_text=False, rollback=False):
+             body_as_text=False, rollback=False, mutate_response=None):
     sent = []
 
     def run(command, *, input=None, **kwargs):
@@ -41,6 +42,8 @@ def _adapter(*, failing_step=None, malformed=False, http_status=200,
             })
         # Match @salesforce/plugin-api's actual --json result schema. The
         # REST HTTP payload is under result.body, never result itself.
+        if mutate_response is not None:
+            mutate_response(responses)
         body = {} if malformed else {'compositeResponse': responses}
         http_result = {'statusCode': http_status, 'headers': {},
                        'body': json.dumps(body) if body_as_text else body}
@@ -184,3 +187,61 @@ def test_all_or_none_reports_root_rejection_not_earlier_rollback():
             'Unsupported Work Order status')):
         adapter.apply(PLAN)
     assert len(sent) == 1
+
+
+def test_complete_atomic_rejection_is_distinct_from_unknown_write_outcome():
+    adapter, sent = _adapter(failing_step=5, rollback=True)
+    with pytest.raises(ResultingSalesforceRejected) as caught:
+        adapter.apply(PLAN)
+    assert isinstance(caught.value, ResultingWriteRejected)
+    assert 'WorkOrder update rejected' in str(caught.value)
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize('mutate', [
+    lambda results: results[0].update(httpStatusCode='400'),
+    lambda results: results[0].update(httpStatusCode=True),
+    lambda results: results[0].update(httpStatusCode=999),
+    lambda results: results[0].update(httpStatusCode=302),
+    lambda results: results[0].update(referenceId='step_5'),
+    lambda results: results[0].update(referenceId=['step_1']),
+    lambda results: results.pop(),
+])
+def test_malformed_or_incomplete_rejection_response_remains_uncertain(mutate):
+    adapter, _ = _adapter(failing_step=5, rollback=True, mutate_response=mutate)
+    with pytest.raises(ResultingSalesforceError) as caught:
+        adapter.apply(PLAN)
+    assert not isinstance(caught.value, ResultingWriteRejected)
+
+
+def test_generic_rollback_without_concrete_rejection_remains_uncertain():
+    def generic_errors(results):
+        for result in results:
+            result['body'] = [{
+                'errorCode': 'ALL_OR_NONE_OPERATION_ROLLED_BACK',
+                'message': 'Other subrequest rejected.',
+            }]
+
+    adapter, _ = _adapter(failing_step=5, rollback=True, mutate_response=generic_errors)
+    with pytest.raises(ResultingSalesforceError) as caught:
+        adapter.apply(PLAN)
+    assert not isinstance(caught.value, ResultingWriteRejected)
+
+
+@pytest.mark.parametrize('options', [dict(malformed=True), dict(http_status=503)])
+def test_transport_or_envelope_failure_is_not_confirmed_rollback(options):
+    adapter, _ = _adapter(**options)
+    with pytest.raises(ResultingSalesforceError) as caught:
+        adapter.apply(PLAN)
+    assert not isinstance(caught.value, ResultingWriteRejected)
+
+
+def test_direct_atomic_write_checks_notes_limit_before_network():
+    adapter, sent = _adapter()
+    metadata = next(field for field in adapter._describes['WorkOrder']['fields']
+                    if field['name'] == 'MOD_Notes__c')
+    metadata['length'] = 255
+    with pytest.raises(ResultingSalesforceError,
+                       match=r'256 characters; Salesforce allows 255'):
+        adapter.apply([('update', 'WorkOrder', WO, {'MOD_Notes__c': 'x' * 256})])
+    assert sent == []

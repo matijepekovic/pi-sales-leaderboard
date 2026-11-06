@@ -214,6 +214,13 @@ class ResultingRepository:
                     if locally_edited_notes:
                         merged['notes'] = previous_local.get('notes', '')
                         merged['note_runs'] = previous_local.get('note_runs', [])
+                        # Source serialization provenance belongs to its Notes
+                        # text. A different incoming prefix cannot describe the
+                        # protected local text or reconstruct its old numbers.
+                        if 'note_origin' in previous_local:
+                            merged['note_origin'] = dict(previous_local['note_origin'])
+                        else:
+                            merged.pop('note_origin', None)
                     # Redlines are user-owned, not a field in Salesforce's
                     # projected draft. Never discard them on Refresh.
                     merged['redlines'] = previous_local.get('redlines', '')
@@ -290,11 +297,6 @@ class ResultingRepository:
                 receipt = old['submitted_at'] if old else None
                 if remote_resulted:
                     completed = receipt if receipt is not None and receipt > 0 else -1.0
-                    conn.execute('''UPDATE mod_result_submission_items SET
-                        state='submitted',error=''
-                        WHERE work_order_id=? AND state='uncertain'
-                        AND job_id IN (SELECT id FROM mod_result_submission_jobs WHERE day=?)''',
-                        (ident, day))
                 elif old and not remote_result_changed and not clear_local:
                     # An unchanged blank remote result is not evidence that
                     # an earlier successful local write should be replayed.
@@ -507,8 +509,97 @@ class ResultingRepository:
             if updated.rowcount != 1:
                 raise LookupError('Active submission stage is unavailable.')
 
+    @staticmethod
+    def _attempt_key(day, work_order_id):
+        return 'mod_result_submission_attempt:' + day + ':' + work_order_id
+
+    def unresolved_submission_attempts(self):
+        """Outstanding dependency checks across days, including legacy history.
+
+        Read only unknown attempts rather than loading the full daily archive.
+        Source identity normalization remains the writer's responsibility.
+        """
+        prefix = 'mod_result_submission_attempt:'
+        frozen = self.db.rows('''SELECT s.day,s.work_order_id,s.snapshot,s.draft,s.revision,
+                s.override_active,d.mod_user_id,m.value
+            FROM meta m
+            JOIN mod_result_sheets s ON m.key=? || s.day || ':' || s.work_order_id
+            JOIN mod_result_days d ON d.day=s.day
+            WHERE m.key GLOB ? AND json_extract(m.value,'$.state')='uncertain' ''',
+            (prefix, prefix + '*'))
+        legacy = self.db.rows('''SELECT DISTINCT s.day,s.work_order_id,s.snapshot,s.draft,s.revision,
+                s.override_active,d.mod_user_id
+            FROM mod_result_submission_items i
+            JOIN mod_result_submission_jobs j ON j.id=i.job_id
+            JOIN mod_result_sheets s ON s.day=j.day AND s.work_order_id=i.work_order_id
+            JOIN mod_result_days d ON d.day=s.day
+            LEFT JOIN meta m ON m.key=? || s.day || ':' || s.work_order_id
+            WHERE i.state='uncertain' AND m.key IS NULL
+              AND NOT EXISTS (SELECT 1 FROM mod_result_submission_items newer
+                JOIN mod_result_submission_jobs newer_job ON newer_job.id=newer.job_id
+                WHERE newer_job.day=j.day AND newer.work_order_id=i.work_order_id
+                  AND newer_job.id>j.id AND newer.state IN ('submitted','rejected'))''',
+            (prefix,))
+        output = []
+        for row in [*frozen, *legacy]:
+            attempt = json.loads(row.pop('value')) if 'value' in row else {}
+            row['snapshot'] = json.loads(row['snapshot'])
+            row['draft'] = json.loads(row['draft'])
+            row['payload'] = attempt.get('payload')
+            row['plan'] = attempt.get('plan')
+            row['lead_id'] = (row['payload'] or {}).get(
+                'lead_id', row['snapshot'].get('lead_source_id', ''))
+            output.append(row)
+        return output
+
+    def record_submission_attempt(self, day, work_order_id, payload, plan, *, job_id=None):
+        # Save before transport so a crash cannot erase what may have committed.
+        self.db.set(self._attempt_key(day, work_order_id),
+                    {'state': 'uncertain', 'payload': payload, 'plan': plan, 'job_id': job_id})
+
+    def recover_submission_attempt(self, day, work_order_id, *, preserve_edits=False,
+                                   expected_revision=None):
+        """Record an exact remote match without discarding newer local edits."""
+        with self.db.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            key = self._attempt_key(day, work_order_id)
+            saved = conn.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
+            if saved is None:
+                raise ValueError('The original submission plan is unavailable.')
+            attempt = json.loads(saved['value'])
+            if not attempt.get('plan'):
+                raise ValueError('The original submission plan is unavailable.')
+            current = conn.execute('''SELECT revision FROM mod_result_sheets
+                WHERE day=? AND work_order_id=?''', (day, work_order_id)).fetchone()
+            if current is None:
+                raise ValueError('The original MOD sheet is unavailable.')
+            if expected_revision is not None and current['revision'] != expected_revision:
+                # Unselected cards remain editable while another card runs.
+                # Do not mistake an edit made during verification for a write.
+                preserve_edits = True
+            conn.execute('UPDATE meta SET value=? WHERE key=?',
+                         (json.dumps(dict(attempt, state='submitted')), key))
+            now = time.time()
+            conn.execute('''UPDATE mod_result_sheets SET
+                submitted_at=CASE WHEN submitted_at>0 THEN submitted_at ELSE ? END,
+                override_active=?,submit_error='' WHERE day=? AND work_order_id=?''',
+                (now, int(preserve_edits), day, work_order_id))
+            conn.execute('''UPDATE mod_result_days SET submitted_at=COALESCE(submitted_at,?)
+                WHERE day=?''', (now, day))
+            if attempt.get('job_id') is not None:
+                conn.execute('''UPDATE mod_result_submission_items SET state='submitted',error=''
+                    WHERE job_id=? AND work_order_id=? AND state='uncertain' ''',
+                    (attempt['job_id'], work_order_id))
+
+    def reject_submission_attempt(self, day, work_order_id):
+        key = self._attempt_key(day, work_order_id)
+        attempt = self.db.get(key, None)
+        if isinstance(attempt, dict):
+            self.db.set(key, dict(attempt, state='rejected'))
+
     def submission_item(self, job_id, work_order_id, state, error=''):
-        if state not in ('pending','processing','submitted','uncertain'):
+        if state not in ('pending','processing','submitted','rejected',
+                          'uncertain','not_submitted'):
             raise ValueError('Unknown submission state.')
         with self.db.connect() as conn:
             updated = conn.execute('''UPDATE mod_result_submission_items SET state=?,error=?
@@ -519,9 +610,22 @@ class ResultingRepository:
 
     def finish_submission_job(self, job_id, error=''):
         with self.db.connect() as conn:
+            # A terminal batch has no work left waiting for this worker.
+            # Preserve a conclusive rejection separately from an unknown write.
+            conn.execute('''UPDATE mod_result_submission_items
+                SET state='not_submitted',error=CASE WHEN error='' THEN ? ELSE error END
+                WHERE job_id=? AND state='pending' ''',
+                (str(error or 'Submission ended before this Work Order was attempted.')[:500], job_id))
+            conn.execute('''UPDATE mod_result_submission_items
+                SET state='uncertain',error=CASE WHEN error='' THEN ? ELSE error END
+                WHERE job_id=? AND state='processing' ''',
+                (str(error or 'Submission ended before its outcome was recorded.')[:500], job_id))
+            incomplete = conn.execute('''SELECT 1 FROM mod_result_submission_items
+                WHERE job_id=? AND state!='submitted' LIMIT 1''', (job_id,)).fetchone()
+            message = str(error or ('Some Work Orders were not submitted.' if incomplete else ''))[:500]
             conn.execute('''UPDATE mod_result_submission_jobs SET
                 state=?,finished_at=?,error=? WHERE id=? AND state='running' ''',
-                ('failed' if error else 'completed', time.time(), str(error)[:500], job_id))
+                ('failed' if message else 'completed', time.time(), message, job_id))
 
     def latest_submission(self, day, job_id=None):
         fields = 'id,day,state,created_at,started_at,finished_at,stage,stage_started,error'
@@ -542,6 +646,12 @@ class ResultingRepository:
         items = self.db.rows('''SELECT work_order_number,state,error
             FROM mod_result_submission_items WHERE job_id=? ORDER BY position''',
             (job['id'],))
+        if job['state'] not in ('queued', 'running'):
+            # Older failed batches left untouched rows marked as pending.
+            # Project their terminal outcome without rewriting their history.
+            for item in items:
+                if item['state'] == 'pending':
+                    item.update(state='not_submitted', error=item['error'] or job['error'])
         elapsed = max(0, int(time.time() - job['stage_started'])) if (
             job['state'] == 'running' and job['stage_started']) else 0
         return {**job, 'items': items, 'stage_elapsed_seconds': elapsed,
@@ -549,7 +659,10 @@ class ResultingRepository:
                 'submitted': sum(item['state']=='submitted' for item in items),
                 'pending': sum(item['state']=='pending' for item in items),
                 'processing': sum(item['state']=='processing' for item in items),
-                'failed': sum(item['state']=='uncertain' for item in items)}
+                'rejected': sum(item['state']=='rejected' for item in items),
+                'uncertain': sum(item['state']=='uncertain' for item in items),
+                'not_submitted': sum(item['state']=='not_submitted' for item in items),
+                'failed': sum(item['state'] in ('rejected','uncertain','not_submitted') for item in items)}
 
     def recent_submission_items(self, day):
         """Recent per-Work-Order statuses for the MOD notification bell.
@@ -559,9 +672,11 @@ class ResultingRepository:
         """
         return self.db.rows('''SELECT j.id AS job_id, j.day, j.state AS job_state,
                 j.created_at, j.finished_at, j.error AS job_error,
-                i.work_order_id, i.work_order_number, i.state, i.error
+                i.work_order_id, i.work_order_number, i.state, i.error,
+                s.override_active
             FROM mod_result_submission_items i
             JOIN mod_result_submission_jobs j ON j.id=i.job_id
+            LEFT JOIN mod_result_sheets s ON s.day=j.day AND s.work_order_id=i.work_order_id
             WHERE j.day=? OR j.created_at >= ?
             ORDER BY j.id DESC, i.position DESC LIMIT 60''',
             (day, time.time() - 2 * 86400))
@@ -583,6 +698,9 @@ class ResultingRepository:
                 conn.execute('''UPDATE mod_result_submission_items
                     SET state='uncertain',error='Worker stopped during Salesforce submission.'
                     WHERE job_id=? AND state='processing' ''', (job['id'],))
+                conn.execute('''UPDATE mod_result_submission_items
+                    SET state='not_submitted',error='Worker stopped before this Work Order was submitted.'
+                    WHERE job_id=? AND state='pending' ''', (job['id'],))
                 conn.execute('''UPDATE mod_result_submission_jobs
                     SET state='interrupted',finished_at=?,
                         error='Worker stopped before submission completed.'
@@ -606,6 +724,12 @@ class ResultingRepository:
             conn.execute('''UPDATE mod_result_days
                     SET submitted_at=COALESCE(submitted_at,?) WHERE day=?''',
                     (now, day))
+            key = self._attempt_key(day, work_order_id)
+            attempt = conn.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
+            if attempt:
+                payload = json.loads(attempt['value'])
+                conn.execute('UPDATE meta SET value=? WHERE key=?',
+                             (json.dumps(dict(payload, state='submitted')), key))
 
     def error_item(self, day, work_order_id, message):
         with self.db.connect() as conn:

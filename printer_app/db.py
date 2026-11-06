@@ -7,6 +7,18 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+MOD_SUBMISSION_ITEMS_SCHEMA = '''
+CREATE TABLE IF NOT EXISTS mod_result_submission_items (
+ job_id INTEGER NOT NULL REFERENCES mod_result_submission_jobs(id) ON DELETE CASCADE,
+ work_order_id TEXT NOT NULL,
+ work_order_number TEXT NOT NULL DEFAULT '',
+ position INTEGER NOT NULL,
+ state TEXT NOT NULL CHECK(state IN
+  ('pending','processing','submitted','rejected','uncertain','not_submitted')),
+ error TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(job_id,work_order_id));
+'''
+
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS processed_messages (
@@ -183,15 +195,7 @@ CREATE TABLE IF NOT EXISTS mod_calc_edits (
  day TEXT PRIMARY KEY,
  edits TEXT NOT NULL DEFAULT '{}',
  revision INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS mod_result_submission_items (
- job_id INTEGER NOT NULL REFERENCES mod_result_submission_jobs(id) ON DELETE CASCADE,
- work_order_id TEXT NOT NULL,
- work_order_number TEXT NOT NULL DEFAULT '',
- position INTEGER NOT NULL,
- state TEXT NOT NULL CHECK(state IN ('pending','processing','submitted','uncertain')),
- error TEXT NOT NULL DEFAULT '',
- PRIMARY KEY(job_id,work_order_id));
-'''
+''' + MOD_SUBMISSION_ITEMS_SCHEMA
 
 
 class Database:
@@ -204,6 +208,19 @@ class Database:
             if version > 3:
                 raise RuntimeError('Database is newer than this printer-app release')
             conn.executescript(SCHEMA)
+            conn.execute('BEGIN IMMEDIATE')
+            submission_schema = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' "
+                "AND name='mod_result_submission_items'").fetchone()[0]
+            if "'rejected'" not in submission_schema or "'not_submitted'" not in submission_schema:
+                # Widen the state constraint transactionally without changing
+                # any saved draft, submission receipt, ordering or error text.
+                conn.execute('ALTER TABLE mod_result_submission_items '
+                             'RENAME TO mod_result_submission_items_migration')
+                conn.execute(MOD_SUBMISSION_ITEMS_SCHEMA)
+                conn.execute('INSERT INTO mod_result_submission_items '
+                             'SELECT * FROM mod_result_submission_items_migration')
+                conn.execute('DROP TABLE mod_result_submission_items_migration')
             # Existing version-1 printer databases gain one local override flag;
             # no Salesforce record or draft payload is migrated or rewritten.
             columns = {row[1] for row in conn.execute('PRAGMA table_info(mod_result_sheets)')}

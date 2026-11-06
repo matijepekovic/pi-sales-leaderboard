@@ -25,7 +25,8 @@ SA2 = '08p000000000002AAA'
 PR1 = 'a12000000000001AAA'
 
 
-def _field(name, kind='string', values=(), *, refs=(), update=True, create=True):
+def _field(name, kind='string', values=(), *, refs=(), update=True, create=True,
+           length=None):
     result = {
         'name': name, 'label': name, 'type': kind,
         'updateable': update, 'createable': create,
@@ -34,6 +35,9 @@ def _field(name, kind='string', values=(), *, refs=(), update=True, create=True)
         result['picklistValues'] = [{'value':v,'label':v,'active':True} for v in values]
     if refs:
         result['referenceTo'] = list(refs)
+    if kind in ('string', 'textarea'):
+        result['length'] = length if length is not None else (
+            255 if kind == 'string' else 32768)
     return result
 
 
@@ -45,7 +49,7 @@ def _schemas():
         _field('Appointment_Date_Time__c','datetime'),
         _field('Appointment_Date__c','date'),
         _field('MOD__c','reference',refs=['User']),
-        _field('MOD_Notes__c','textarea'),
+        _field('MOD_Notes__c','textarea',length=255),
         _field('Call_1__c','time'), _field('Call_2__c','time'),
         _field('Docs__c','boolean'), _field('X90_Min__c','boolean'),
         _field('Promotion__c','boolean'),
@@ -269,9 +273,7 @@ def test_ghost_fields_and_comment_are_never_written(review,redlines):
     wo=_single(plan,'WorkOrder')[3]
     assert wo['Dispo__c']=='PNS' and wo['Status']=='Completed'
     assert wo['MOD__c']==MOD
-    assert wo['MOD_Notes__c']=='Black note' + (
-        '\n'+redlines if redlines else ''
-    )+'\nDNR - Roofing; Windows'
+    assert wo['MOD_Notes__c']=='Black note' + ('\n' + redlines if redlines else '')
     assert wo['Call_1__c']=='10:15:00.000Z'
     assert wo['Call_2__c']=='13:27:00.000Z'
     assert wo['Docs__c'] is True and wo['Promotion__c'] is True
@@ -678,9 +680,7 @@ def test_main_sale_uses_separate_product_prices_deposits_and_preserves_lead_inte
     assert _work_order_price(plan)=='17000'
     assert wo['Price__c']=='17000'
     assert wo['Deposit_Payment__c']=='5000/'
-    assert 'SALE Roofing: $17,000 | Deposit: $0' in wo['MOD_Notes__c']
-    assert 'SALE Windows: $22,000 | Deposit: $5,000' in wo['MOD_Notes__c']
-    assert 'SALE Bath:' not in wo['MOD_Notes__c']
+    assert wo['MOD_Notes__c']=='25000\n17000\nBlack note\nExtra scope'
     lead=_single(plan,'Lead')[3]
     assert lead['Status']=='Sale Pending'
     assert lead['Product_Interest_lead__c']=='Roofing;Siding;Windows'
@@ -716,7 +716,7 @@ def test_individual_sale_price_deposit_does_not_change_work_order_dispo():
     wo=_single(plan,'WorkOrder')[3]
     assert wo['Dispo__c']=='PNS'
     assert wo['Deposit_Payment__c']=='0/'
-    assert 'SALE Roofing: $14,500 | Deposit: $0' in wo['MOD_Notes__c']
+    assert wo['MOD_Notes__c']==''
     results=[row[3] for row in plan if row[1]==PRODUCT_RESULT]
     assert {item['Product_Interest__c']:item['Result__c'] for item in results}=={
         'Roofing':'Sale','Siding':'Pitch No Sale',
@@ -839,7 +839,7 @@ def test_all_adapter_api_names_are_exactly_the_supplied_mapping():
     assert PRODUCT_RESULT == 'Product_Interest_Result__c'
 
 
-def test_financing_payment_goes_to_work_order_and_notes_preserving_review():
+def test_financing_payment_uses_dedicated_fields_without_duplicating_notes():
     payload=_payload('sale',review=True,sale_products={
         'Roofing':{'price':'17000','deposit':'0','payment':'159.50'},
     })
@@ -849,7 +849,7 @@ def test_financing_payment_goes_to_work_order_and_notes_preserving_review():
     assert wo['Dispo__c']=='Sale'
     assert wo['Review__c'] is True
     assert wo['Deposit_Payment__c']=='0/159.50'
-    assert 'SALE Roofing: $17,000 | Deposit: $0 | Payment: $159.50' in wo['MOD_Notes__c']
+    assert wo['MOD_Notes__c']==''
     assert {field for field in wo if 'Payment' in field} == {
         'Deposit_Payment__c',
     }
@@ -880,6 +880,174 @@ def test_numeric_salesforce_deposit_field_is_rejected_before_any_write():
             'Roofing': {'price':'18000', 'deposit':'0', 'payment':'159'},
         }))
     assert all(command[1:3] != ['data', 'update'] for command in calls)
+
+
+def test_notes_and_numbers_share_actual_limit_without_generated_annotations():
+    adapter, calls = _adapter()
+    payload = _payload(
+        numbers='1234', notes='x' * 227, redlines='Manual printed redline',
+        result_detail='Not Home', dnr=True, dnr_reason='Roofing',
+    )
+    plan = _operations(adapter, payload)
+    assert _single(plan, 'WorkOrder')[3]['MOD_Notes__c'] == (
+        '1234\n' + 'x' * 227 + '\nManual printed redline')
+    assert _single(plan, 'Lead')[3]['DNR_Reason__c'] == 'Roofing'
+    assert all(row[3]['Result_Detail__c'] == 'Not Home'
+               for row in plan if row[1] == PRODUCT_RESULT)
+    assert all(row[3]['Comment__c'] is None
+               for row in plan if row[1] == PRODUCT_RESULT)
+    assert all(command[1:4] != ['api', 'request', 'rest'] for command in calls)
+
+
+@pytest.mark.parametrize('numbers,notes', [
+    ('', 'x' * 256),
+    ('12345', 'x' * 250),
+    ('', '\U0001f600' * 128),
+])
+def test_oversized_combined_notes_fail_before_any_write(numbers, notes):
+    adapter, calls = _adapter()
+    with pytest.raises(ResultingSalesforceError,
+                       match=r'MOD_Notes__c.*256 characters; Salesforce allows 255'):
+        _operations(adapter, _payload(numbers=numbers, notes=notes))
+    assert all(command[1:4] != ['api', 'request', 'rest'] for command in calls)
+
+
+def test_notes_limit_is_read_from_metadata_and_counts_utf16_units():
+    schemas = _schemas()
+    field = next(field for field in schemas['WorkOrder']['fields']
+                 if field['name'] == WO['notes'])
+    field['length'] = 511
+    adapter, _ = _adapter(schemas=schemas)
+    assert adapter.note_field() == {'limit': 511}
+    notes = '\U0001f600' * 255 + 'x'
+    assert _single(_operations(adapter, _payload(notes=notes)),
+                   'WorkOrder')[3]['MOD_Notes__c'] == notes
+    with pytest.raises(ResultingSalesforceError,
+                       match=r'512 characters; Salesforce allows 511'):
+        _operations(adapter, _payload(notes=notes + 'x'))
+
+
+def test_missing_note_limit_never_invents_a_limit():
+    schemas = _schemas()
+    field = next(field for field in schemas['WorkOrder']['fields']
+                 if field['name'] == WO['notes'])
+    field.pop('length')
+    adapter, _ = _adapter(schemas=schemas)
+    assert adapter.note_field() == {'limit': None}
+
+
+def test_other_text_fields_also_honor_actual_metadata_lengths():
+    schemas = _schemas()
+    field = next(field for field in schemas['WorkOrder']['fields']
+                 if field['name'] == WO['need'])
+    field['length'] = 6
+    adapter, calls = _adapter(schemas=schemas)
+    with pytest.raises(ResultingSalesforceError,
+                       match=r'Need__c.*7 characters; Salesforce allows 6'):
+        _operations(adapter, _payload(need='1234567'))
+    assert all(command[1:4] != ['api', 'request', 'rest'] for command in calls)
+
+
+def test_repeated_override_updates_same_product_without_new_comments_or_records():
+    adapter, _ = _adapter(existing_results=[{
+        'Id': PR1, 'Product_Interest__c': 'Roofing',
+        'Comment__c': 'Historical Salesforce comment',
+    }])
+    payload = _payload(
+        interest='Roofing', numbers='25000\n17000', notes='Customer requested a callback',
+        result_detail='Not Home', dnr=True, dnr_reason='Roofing',
+    )
+    first = _operations(adapter, payload)
+    second = _operations(adapter, payload)
+    assert first == second
+    products = [operation for operation in second if operation[1] == PRODUCT_RESULT]
+    assert len(products) == 1
+    assert products[0][0] == 'update' and products[0][2] == PR1
+    assert 'Comment__c' not in products[0][3]
+    assert _single(second, 'WorkOrder')[3]['MOD_Notes__c'] == (
+        '25000\n17000\nCustomer requested a callback')
+
+
+def test_submission_groups_15_and_18_character_lead_ids_together():
+    assert ResultingSalesforceAdapter.submission_group_key({'lead_id': LEAD}) == LEAD[:15]
+    assert ResultingSalesforceAdapter.submission_group_key({'lead_id': LEAD[:15]}) == LEAD[:15]
+    with pytest.raises(ResultingSalesforceError, match='identity'):
+        ResultingSalesforceAdapter.submission_group_key({'lead_id': 'invalid'})
+
+
+def test_mixed_lead_id_representations_share_history_and_attribution_preflight():
+    adapter, calls = _adapter()
+    first = _payload(interest='Roofing')
+    second = _payload(interest='Roofing')
+    second['work_order_id'] = '0WO000000000002AAA'
+    second['lead_id'] = LEAD[:15]
+    plans = adapter.prepare([first, second])
+    assert len(plans) == 2
+    assert _single(plans[0], 'Lead')[2] == LEAD
+    assert _single(plans[1], 'Lead')[2] == LEAD[:15]
+    assert _single(plans[1], 'Lead')[3]['Previous_Result__c'] == 'Pitch No Sale'
+    queries = [command[command.index('--query') + 1] for command in calls
+               if command[1:3] == ['data', 'query']]
+    lead_queries = [query for query in queries if ' FROM Lead ' in query]
+    assert len(lead_queries) == 1
+    assert LEAD[:15] in lead_queries[0]
+
+
+def test_mixed_lead_id_representations_accumulate_sold_product_interests_once():
+    adapter, _ = _adapter()
+    first = _payload('sale', sale_products={
+        'Windows': {'price': '17000', 'deposit': '0'},
+    })
+    second = _payload('sale', sale_products={
+        'Bath': {'price': '18000', 'deposit': '0'},
+    })
+    second['work_order_id'] = '0WO000000000002AAA'
+    second['lead_id'] = LEAD[:15]
+    plans = adapter.prepare([first, second])
+    assert _single(plans[0], 'Lead')[3]['Product_Interest_lead__c'] == (
+        'Roofing;Siding;Windows')
+    assert _single(plans[1], 'Lead')[3]['Product_Interest_lead__c'] == (
+        'Roofing;Siding;Windows;Bath')
+
+
+def test_frozen_retry_verification_keeps_original_appointment_ids():
+    from copy import deepcopy
+
+    adapter, _ = _adapter(existing_results=[{
+        'Id': PR1, 'Product_Interest__c': 'Roofing',
+    }])
+    payload = _payload(interest='Roofing', notes='Call back')
+    original_plan = adapter.prepare([payload])[0]
+    remote = {}
+    for action, object_name, ident, values in original_plan:
+        remote.setdefault(object_name, {}).setdefault(ident, {'Id': ident}).update(values)
+    remote['WorkOrder'][WORK]['Lead__c'] = LEAD
+    for row in remote[PRODUCT_RESULT].values():
+        row['Lead__c'] = LEAD
+        row['Work_Order__c'] = WORK
+        row['Product_Interest__c'] = 'Roofing'
+    for row in remote['ServiceAppointment'].values():
+        row['ParentRecordId'] = WORK
+        row['Status'] = 'Canceled'
+    original_query = adapter._query
+    verification_reads = []
+
+    def query(statement):
+        if ' WHERE Id IN (' in statement:
+            verification_reads.append(statement)
+            object_name = statement.split(' FROM ', 1)[1].split(' ', 1)[0]
+            return list(deepcopy(remote[object_name]).values())
+        return original_query(statement)
+
+    adapter._query = query
+    # Completed/canceled appointments no longer appear in the normal write
+    # eligibility lookup. Verification must retain the original frozen IDs.
+    adapter._appointments_for_batch = lambda payloads: {WORK: []}
+    assert adapter.reconcile_submission(payload, verification=original_plan) == 'ready'
+    assert any(' FROM ServiceAppointment ' in read for read in verification_reads)
+    for row in remote['ServiceAppointment'].values():
+        row['Status'] = 'Completed'
+    assert adapter.reconcile_submission(payload, verification=original_plan) == 'submitted'
 
 
 def test_resulting_never_queries_salesforce_flow_kill_switch():
