@@ -1140,6 +1140,100 @@ def test_existing_split_notes_remain_in_separate_redlines_editor(mod_browser):
     assert not writer.applied
 
 
+def test_mod_notes_counter_excludes_manual_redlines_while_preserving_the_editor(mod_browser):
+    from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import mod_note_text, text_units, user_redline_text
+
+    page, service, writer, origin, evidence = mod_browser
+    writer.note_field = lambda: {'limit': 255}
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+    first.locator('[data-key=numbers]').fill('100')
+    first.locator('[data-key=notes]').fill('B' * 240)
+    counter = first.locator('.mod-notes-counter')
+    expect(counter).to_have_text('244 / 255 characters')
+    first.locator('.red-pen').click()
+    popup = first.locator('.redlines-panel')
+    popup.locator('[data-key=redlines]').fill('R' * 1000)
+    popup.locator('.editor-primary').click()
+    expect(first.locator('.manual-redlines')).to_have_text('R' * 1000)
+    expect(first.locator('[data-key=notes]')).to_have_value('B' * 240)
+    expect(counter).to_have_text('244 / 255 characters')
+    expect(first).to_have_attribute('data-notes-over-limit', 'no')
+
+    first.locator('[data-key=notes]').fill('B' * 252)
+    expect(counter).to_have_text('256 / 255 characters · 1 over limit')
+    expect(first).to_have_attribute('data-notes-over-limit', 'yes')
+    first.locator('[data-key=notes]').fill('B' * 240)
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    stored = service.repository.sheets(service.day())[0]['draft']
+    assert stored['notes'] == 'B' * 240
+    assert stored['numbers'] == '100'
+    assert stored['redlines'] == 'R' * 1000
+    assert text_units(mod_note_text(stored)) == 244
+    assert user_redline_text(stored) == 'R' * 1000
+    expect(first.locator('.mod-notes-counter')).to_have_text('244 / 255 characters')
+    expect(first.locator('.manual-redlines')).to_have_text('R' * 1000)
+    assert not writer.applied
+
+
+def test_legacy_mixed_red_runs_migrate_without_inflating_mod_notes_counter(mod_browser):
+    from playwright.sync_api import expect
+    from printer_app.mod_resulting.contract import clean_draft, mod_note_text, user_redline_text
+
+    page, service, writer, origin, evidence = mod_browser
+    writer.note_field = lambda: {'limit': 255}
+    day = service.day()
+    ident = service.repository.sheets(day)[0]['work_order_id']
+    black = 'B' * 240
+    red = 'R' * 1000
+    # Source provenance cannot be supplied through the browser-edit service;
+    # seed the trusted saved legacy draft at its persistence boundary.
+    service.repository.save_draft(day, ident, clean_draft({
+        'dispo': 'pns', 'numbers': '100', 'notes': black + '\n' + red,
+        'note_runs': [{'text': black, 'red': False}, {'text': '\n' + red, 'red': True}],
+        'redlines': 'Separate redline',
+        'note_origin': {'numbers': '100', 'prefix': '$100.00'},
+    }), 0)
+    before = service.repository.sheets(day)[0]
+    assert before['draft']['note_origin'] == {'numbers': '100', 'prefix': '$100.00'}
+    before_payload = service.submission_payload(dict(before, day=day), MOD)
+    expected_comment = red + '\nSeparate redline'
+    before_comments = {item['product']: item['comment']
+                       for item in before_payload['product_results'] if item.get('comment')}
+    assert set(before_comments.values()) == {expected_comment}
+    page.goto(origin + '/mod-resulting')
+    first = page.locator('.mod-sheet').first
+    assert json.loads(first.get_attribute('data-initial'))['note_origin'] == {
+        'numbers': '100', 'prefix': '$100.00',
+    }
+    expect(first.locator('[data-key=notes]')).to_have_value(black)
+    expect(first.locator('.manual-redlines')).to_have_text(expected_comment)
+    expect(first.locator('.mod-notes-counter')).to_have_text('248 / 255 characters')
+    expect(first).to_have_attribute('data-notes-over-limit', 'no')
+    # Merely viewing a legacy draft must not save it. Exercise a real editor
+    # change before Refresh so the existing autosave boundary owns migration.
+    note_input = first.locator('[data-key=notes]')
+    note_input.fill(black + '\n')
+    note_input.fill(black)
+    with page.expect_navigation(wait_until='domcontentloaded'):
+        page.locator('#refresh').click()
+    stored = service.repository.sheets(day)[0]['draft']
+    assert stored['note_origin'] == {'numbers': '100', 'prefix': '$100.00'}
+    assert stored['notes'] == black
+    assert stored['note_runs'] == []
+    assert stored['redlines'] == expected_comment
+    assert mod_note_text(stored) == '$100.00\n' + black
+    assert user_redline_text(stored) == expected_comment
+    after = service.repository.sheets(day)[0]
+    after_payload = service.submission_payload(dict(after, day=day), MOD)
+    after_comments = {item['product']: item['comment']
+                      for item in after_payload['product_results'] if item.get('comment')}
+    assert after_comments == before_comments
+    assert not writer.applied
+
+
 @pytest.mark.parametrize('viewport', [(1200, 820), (390, 844)])
 def test_price_overrides_stay_in_original_sheet_cells(mod_browser, viewport):
     from playwright.sync_api import expect
@@ -1438,9 +1532,25 @@ def test_calculated_amount_placeholders_update_and_clear_to_automatic(mod_browse
     page, service, writer, origin, evidence = mod_browser
     page.goto(origin + '/mod-resulting')
     sheet = page.locator('.mod-sheet').first
-    sheet.locator('[data-key=numbers]').fill('Sale 17000\nStarting price 25000\nAdjustment 21000')
+    sheet.locator('[data-key=numbers]').fill(
+        'Sale 17000\nStarting price 25000\nAdjustment 21000\n0\n9\n99.99\n099')
     expect(sheet.locator('[data-price-display=start_price_override]')).to_have_text('$25000')
     expect(sheet.locator('[data-price-display=final_price_override]')).to_have_text('$17000')
+
+    sheet.locator('[data-key=numbers]').fill('0\n9\n99.99\n099')
+    expect(sheet.locator('[data-price-display=start_price_override]')).to_have_text('')
+    expect(sheet.locator('[data-price-display=final_price_override]')).to_have_text('')
+    sheet.locator('[data-key=numbers]').fill('99.99\n100\n100.01')
+    expect(sheet.locator('[data-price-display=start_price_override]')).to_have_text('$100.01')
+    expect(sheet.locator('[data-price-display=final_price_override]')).to_have_text('$100')
+    sheet.locator('[data-price-trigger=final_price_override]').click()
+    price = sheet.locator('.price-panel')
+    price.locator('[data-key=final_price_override]').fill('50')
+    expect(sheet.locator('[data-price-display=final_price_override]')).to_have_text('$50')
+    price.locator('[data-key=final_price_override]').fill('')
+    expect(sheet.locator('[data-price-display=final_price_override]')).to_have_text('$100')
+    price.locator('.editor-primary').click()
+    sheet.locator('[data-key=numbers]').fill('Sale 17000\nStarting price 25000\nAdjustment 21000')
 
     sheet.locator('[data-key=dispo]').select_option('sale')
     sale = sheet.locator('.sale-panel')

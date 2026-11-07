@@ -258,7 +258,7 @@ def _assert_no_protected_fields(plan):
 @pytest.mark.parametrize('review,redlines',[
     (False,''),(True,''),(False,'REDLINE: scope changed'),(True,'REDLINE: scope changed'),
 ])
-def test_ghost_fields_and_comment_are_never_written(review,redlines):
+def test_ghost_fields_are_omitted_and_manual_redlines_use_product_comments(review,redlines):
     adapter,calls=_adapter()
     payload=_payload(
         'pns',review=review,redlines=redlines,notes='Black note',
@@ -273,7 +273,9 @@ def test_ghost_fields_and_comment_are_never_written(review,redlines):
     wo=_single(plan,'WorkOrder')[3]
     assert wo['Dispo__c']=='PNS' and wo['Status']=='Completed'
     assert wo['MOD__c']==MOD
-    assert wo['MOD_Notes__c']=='Black note' + ('\n' + redlines if redlines else '')
+    assert wo['MOD_Notes__c']=='Black note'
+    assert all(row[3]['Comment__c'] == (redlines or None)
+               for row in plan if row[1] == PRODUCT_RESULT)
     assert wo['Call_1__c']=='10:15:00.000Z'
     assert wo['Call_2__c']=='13:27:00.000Z'
     assert wo['Docs__c'] is True and wo['Promotion__c'] is True
@@ -309,7 +311,7 @@ def test_ghost_fields_and_comment_are_never_written(review,redlines):
         'PR_Set_By__c': MOD,
         'PR_Sub_Source__c': 'Direct',
         'Original_Disposition__c': 'Pitch No Sale',
-        'Comment__c': None,
+        'Comment__c': redlines or None,
     }
     for action, obj, ident, fields in results:
         if action == 'create':
@@ -680,7 +682,7 @@ def test_main_sale_uses_separate_product_prices_deposits_and_preserves_lead_inte
     assert _work_order_price(plan)=='17000'
     assert wo['Price__c']=='17000'
     assert wo['Deposit_Payment__c']=='5000/'
-    assert wo['MOD_Notes__c']=='25000\n17000\nBlack note\nExtra scope'
+    assert wo['MOD_Notes__c']=='25000\n17000\nBlack note'
     lead=_single(plan,'Lead')[3]
     assert lead['Status']=='Sale Pending'
     assert lead['Product_Interest_lead__c']=='Roofing;Siding;Windows'
@@ -690,6 +692,7 @@ def test_main_sale_uses_separate_product_prices_deposits_and_preserves_lead_inte
     }
     assert {item['Product_Interest__c'] for item in pr}=={'Roofing','Windows'}
     assert all(item['Result__c']=='Sale' for item in pr)
+    assert all(item['Comment__c']=='Extra scope' for item in pr)
     _assert_no_protected_fields(plan)
 
 
@@ -890,12 +893,13 @@ def test_notes_and_numbers_share_actual_limit_without_generated_annotations():
     )
     plan = _operations(adapter, payload)
     assert _single(plan, 'WorkOrder')[3]['MOD_Notes__c'] == (
-        '1234\n' + 'x' * 227 + '\nManual printed redline')
+        '1234\n' + 'x' * 227)
     assert _single(plan, 'Lead')[3]['DNR_Reason__c'] == 'Roofing'
     assert all(row[3]['Result_Detail__c'] == 'Not Home'
                for row in plan if row[1] == PRODUCT_RESULT)
-    assert all(row[3]['Comment__c'] is None
-               for row in plan if row[1] == PRODUCT_RESULT)
+    comments = [row[3].get('Comment__c') for row in plan if row[1] == PRODUCT_RESULT]
+    assert 'Manual printed redline' in comments
+    assert all(value in (None, 'Manual printed redline') for value in comments)
     assert all(command[1:4] != ['api', 'request', 'rest'] for command in calls)
 
 

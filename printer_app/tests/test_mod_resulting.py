@@ -53,7 +53,36 @@ def test_prices_ignore_letters_in_numbers_column_and_keep_separate_amounts():
     assert prices('12.345') == {'highest':'','lowest':''}
     assert prices('Invalid -100 or 1,00') == {'highest':'','lowest':''}
     assert prices('Notes only') == {'highest':'','lowest':''}
-    assert prices('Zero 0') == {'highest':'0','lowest':'0'}
+    assert prices('Zero 0') == {'highest':'','lowest':''}
+
+
+@pytest.mark.parametrize(('numbers', 'expected'), [
+    ('0', {'highest': '', 'lowest': ''}),
+    ('2 visits\n12 months\n99', {'highest': '', 'lowest': ''}),
+    ('$99.99\n10.50\n0.99', {'highest': '', 'lowest': ''}),
+    ('099\n0099.99', {'highest': '', 'lowest': ''}),
+    ('100', {'highest': '100', 'lowest': '100'}),
+    ('$100.00\n99.99', {'highest': '100', 'lowest': '100'}),
+    ('100.01\n100.00\n99.99', {'highest': '100.01', 'lowest': '100'}),
+    ('00100\n099', {'highest': '100', 'lowest': '100'}),
+    ('2 visits\nStart $25,000\n12 months\nFinal 17,850\nPayment 99.99',
+     {'highest': '25000', 'lowest': '17850'}),
+])
+def test_automatic_price_extremes_ignore_amounts_below_one_hundred(numbers, expected):
+    assert prices(numbers) == expected
+
+
+@pytest.mark.parametrize(('overrides', 'expected'), [
+    ({'start_price_override': '12'}, {'highest': '12', 'lowest': '17000'}),
+    ({'final_price_override': '99.99'}, {'highest': '25000', 'lowest': '99.99'}),
+    ({'start_price_override': '0', 'final_price_override': '0'},
+     {'highest': '0', 'lowest': '0'}),
+])
+def test_explicit_price_overrides_remain_valid_below_the_automatic_minimum(overrides, expected):
+    numbers = '2 visits\n25000\n17000\n99.99'
+    draft = clean_draft(dict(dispo='pns', numbers=numbers, **overrides))
+    assert outcome_fields(draft)['price'] == expected
+    assert draft['numbers'] == numbers
 
 
 def test_times_are_am_pm_and_disallow_unexpected_draft_fields():
@@ -230,7 +259,7 @@ def test_daily_mod_selection_refresh_and_end_of_day_idempotence(tmp_path):
     assert payload['draft']['notes']=='Black comment'
     assert payload['product_results']==[{
         'product':'Roofing','result':'sale','detail':'',
-        'price':'17000','deposit':'0',
+        'price':'17000','deposit':'0','comment':'REDLINE',
     }]
     assert payload['deposit_payment']=='0/'
     assert 'SALE Roofing: $17,000 | Deposit: $0' in payload['final_redlines']

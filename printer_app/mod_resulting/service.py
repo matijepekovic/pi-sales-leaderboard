@@ -12,6 +12,7 @@ from .contract import (
     source_draft,
     clean_draft, final_redline_text, outcome_fields, sold_products,
     individual_product_sales, deposit_payment_text, product_result_context,
+    user_redline_text,
 )
 
 
@@ -256,6 +257,17 @@ class ResultingService:
                         'deposit': '',
                     })
             individual_sales = individual_product_sales(draft)
+
+        manual_redline = user_redline_text(draft)
+        if manual_redline and not results:
+            raise ValueError(
+                'The manual redline needs a resulted product for its comment. '
+                'Your draft is saved; choose a product result before submitting.')
+        if manual_redline:
+            # The red-pen editor belongs to the whole card, like its default
+            # result detail. Only products actually being resulted receive it.
+            for result in results:
+                result['comment'] = manual_redline
 
         context = product_result_context(
             draft, results,

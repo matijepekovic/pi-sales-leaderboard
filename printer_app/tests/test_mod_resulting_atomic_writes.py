@@ -245,3 +245,76 @@ def test_direct_atomic_write_checks_notes_limit_before_network():
                        match=r'256 characters; Salesforce allows 255'):
         adapter.apply([('update', 'WorkOrder', WO, {'MOD_Notes__c': 'x' * 256})])
     assert sent == []
+
+
+def _comment_operation(version='2026-10-27T10:00:00.000+0000'):
+    return ('update', 'Product_Interest_Result__c', 'a12000000000001AAA',
+            {'Comment__c': 'Historical comment\n\nManual block'},
+            {'if_unmodified_since': version})
+
+
+def _comment_transport(**kwargs):
+    adapter, sent = _adapter(**kwargs)
+    adapter._describes['Product_Interest_Result__c']['fields'].append({
+        'name': 'Comment__c', 'type': 'textarea', 'length': 32768,
+    })
+    return adapter, sent
+
+
+def test_guarded_comment_transport_adds_conditional_subrequest_header():
+    adapter, sent = _comment_transport()
+    adapter.apply([_comment_operation()])
+    request = json.loads(sent[0][1])['compositeRequest'][0]
+    assert request['httpHeaders'] == {
+        'If-Unmodified-Since': 'Tue, 27 Oct 2026 10:00:00 GMT',
+    }
+    assert request['body'] == {'Comment__c': 'Historical comment\n\nManual block'}
+
+
+def test_fractional_source_version_is_never_rounded_forward():
+    adapter, sent = _comment_transport()
+    adapter.apply([_comment_operation('2026-10-27T12:00:00.987+0200')])
+    request = json.loads(sent[0][1])['compositeRequest'][0]
+    assert request['httpHeaders']['If-Unmodified-Since'] == 'Tue, 27 Oct 2026 10:00:00 GMT'
+
+
+def test_412_condition_failure_is_confirmed_atomic_rejection():
+    def condition_failure(results):
+        results[0].update(httpStatusCode=412, body=[{
+            'errorCode': 'PRECONDITION_FAILED', 'message': 'Record changed since preflight.',
+        }])
+
+    adapter, sent = _comment_transport(
+        failing_step=1, rollback=True, mutate_response=condition_failure)
+    with pytest.raises(ResultingSalesforceRejected, match='PRECONDITION_FAILED'):
+        adapter.apply([_comment_operation(), ('update', 'WorkOrder', WO, {'Status': 'Completed'})])
+    assert len(sent) == 1
+    assert json.loads(sent[0][1])['allOrNone'] is True
+
+
+@pytest.mark.parametrize('guard', [
+    None, {}, {'if_unmodified_since': '2026-10-27T10:00:00'},
+    {'if_unmodified_since': '2026-10-27T10:00:00Z', 'extra': 'unsupported'},
+])
+def test_invalid_comment_condition_cannot_reach_transport(guard):
+    adapter, sent = _comment_transport()
+    operation = _comment_operation()[:4] + (guard,)
+    with pytest.raises(ResultingSalesforceError, match='condition|version'):
+        adapter.apply([operation])
+    assert sent == []
+
+
+def test_conditional_metadata_is_restricted_to_existing_product_comment_updates():
+    adapter, sent = _comment_transport()
+    operation = ('update', 'WorkOrder', WO, {'Status': 'Completed'},
+                 {'if_unmodified_since': '2026-10-27T10:00:00Z'})
+    with pytest.raises(ResultingSalesforceError, match='condition'):
+        adapter.apply([operation])
+    assert sent == []
+
+
+def test_existing_product_comment_cannot_bypass_the_conditional_write_boundary():
+    adapter, sent = _comment_transport()
+    with pytest.raises(ResultingSalesforceError, match='require a conditional write'):
+        adapter.apply([_comment_operation()[:4]])
+    assert sent == []

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from email.utils import format_datetime
 import json
 import re
 import subprocess
@@ -17,6 +18,10 @@ from .contract import ResultingWriteRejected, mod_note_text, text_units
 
 ID_RE = re.compile(r'[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?\Z')
 NAME_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,254}\Z')
+VERSION_RE = re.compile(
+    r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?'
+    r'(?:Z|[+-]\d{2}:?\d{2})\Z'
+)
 
 WORK_ORDER = 'WorkOrder'
 LEAD = 'Lead'
@@ -504,8 +509,11 @@ class ResultingSalesforceAdapter:
             field['name'] + ' cannot safely store an AM/PM time.'
         )
 
-    def _existing_product_results(self, lead_id, work_order_id, *, rows=None):
+    def _existing_product_results(self, lead_id, work_order_id, *, rows=None,
+                                  include_comments=False, comment_products=None):
         fields = 'Id,' + PR['product'] + ',' + PR_ISSUED_COUNT + ',' + PR_APPOINTMENT_DATE
+        if include_comments:
+            fields += ',Comment__c,LastModifiedDate'
         if rows is None:
             rows = self._query(
                 'SELECT ' + fields + ' FROM ' + PRODUCT_RESULT
@@ -540,7 +548,79 @@ class ResultingSalesforceAdapter:
                 'issued': issued is True,
                 'appointment_date': day or '',
             }
+            if include_comments and (comment_products is None or key in comment_products):
+                if 'Comment__c' not in row:
+                    raise ResultingSalesforceError(
+                        'Product result comment lookup is incomplete; no writes were performed.')
+                comment = row['Comment__c']
+                if comment is not None and not isinstance(comment, str):
+                    raise ResultingSalesforceError('Salesforce product result comment is invalid.')
+                result[key]['comment'] = comment or ''
+                version = row.get('LastModifiedDate')
+                self._comment_version(version)
+                result[key]['comment_version'] = version
         return result
+
+    @staticmethod
+    def _comment_version(value):
+        """A guarded comment update requires an observed, timezone-aware version."""
+        if not isinstance(value, str) or not VERSION_RE.fullmatch(value):
+            raise ResultingSalesforceError(
+                'Product result comment version is unavailable; refresh before submitting.')
+        try:
+            stamp = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except ValueError as exc:
+            raise ResultingSalesforceError('Salesforce product result comment version is invalid.') from exc
+        if stamp.tzinfo is None or stamp.utcoffset() is None:
+            raise ResultingSalesforceError('Salesforce product result comment version needs a timezone.')
+        return stamp.astimezone(timezone.utc)
+
+    @classmethod
+    def _unpack_operation(cls, operation):
+        """Accept legacy plans and adapter-owned conditional comment updates."""
+        if not isinstance(operation, (list, tuple)) or len(operation) not in (4, 5):
+            raise ResultingSalesforceError('The Salesforce submission operation is invalid.')
+        action, object_name, ident, values = operation[:4]
+        guard = operation[4] if len(operation) == 5 else None
+        if len(operation) == 5:
+            if (action != 'update' or object_name != PRODUCT_RESULT
+                    or not isinstance(values, dict) or 'Comment__c' not in values
+                    or not isinstance(guard, dict)
+                    or set(guard) != {'if_unmodified_since'}):
+                raise ResultingSalesforceError('The Salesforce comment update condition is invalid.')
+            cls._comment_version(guard['if_unmodified_since'])
+        return action, object_name, ident, values, guard
+
+    @classmethod
+    def _comment_condition(cls, guard):
+        stamp = cls._comment_version(guard['if_unmodified_since'])
+        # Salesforce documents this as a weak HTTP-date precondition, not an
+        # ETag comparison. Never round a fractional source version forward:
+        # doing so could allow a newer comment to be overwritten. HTTP dates
+        # have second precision; this is not strong same-second concurrency
+        # detection and a floored fractional version can reject conservatively.
+        return format_datetime(stamp.replace(microsecond=0), usegmt=True)
+
+    @staticmethod
+    def _manual_comment(entry):
+        """A product receives only the explicit normalized comment selection."""
+        value = entry.get('comment')
+        if value is None:
+            return ''
+        if not isinstance(value, str):
+            raise ResultingSalesforceError('Product result comment must be text.')
+        return value if value.strip() else ''
+
+    @staticmethod
+    def _append_comment(previous, manual):
+        """Preserve history and append one complete, case-sensitive text block."""
+        previous_lines = previous.splitlines()
+        manual_lines = manual.splitlines()
+        size = len(manual_lines)
+        if any(previous_lines[offset:offset + size] == manual_lines
+               for offset in range(len(previous_lines) - size + 1)):
+            return previous
+        return previous + '\n\n' + manual if previous else manual
 
     def lead_appointment_dates(self, lead_ids):
         """Read current Lead dates for the Flow's branch decisions, in batches.
@@ -699,8 +779,14 @@ class ResultingSalesforceAdapter:
         if len(primary) > 1:
             raise ResultingSalesforceError('Multiple primary product results are not valid.')
 
+        comment_products = {
+            str(self._choice(product_field, entry['product'])).casefold()
+            for entry in payload['product_results'] if self._manual_comment(entry)
+        }
+        include_comments = bool(comment_products)
         existing = self._existing_product_results(
-            payload['lead_id'], payload['work_order_id'], rows=existing_rows
+            payload['lead_id'], payload['work_order_id'], rows=existing_rows,
+            include_comments=include_comments, comment_products=comment_products,
         )
         lead_schema = lead_schema or self._describe(LEAD)
 
@@ -781,15 +867,33 @@ class ResultingSalesforceAdapter:
             elif old_id:
                 fields[PR['price']] = None
 
+            manual_comment = self._manual_comment(entry)
+            if manual_comment:
+                if old_id:
+                    previous = old['comment']
+                    combined = self._append_comment(previous, manual_comment)
+                    comment_field = self._field(
+                        schema, 'Comment__c', types=('textarea', 'string'))
+                    # Keep the unchanged desired value in the frozen plan too:
+                    # an unknown retry must verify the requested manual text.
+                    fields['Comment__c'] = self._value(comment_field, combined)
+                else:
+                    # Existing v30 creation still owns the actual field write.
+                    # Check its free-text contract before preparing any writes.
+                    self._field(schema, 'Comment__c', update=False, create=True,
+                                types=('textarea', 'string'))
             if old_id:
-                operations.append(('update', PRODUCT_RESULT, old_id, fields))
+                operation = ('update', PRODUCT_RESULT, old_id, fields)
+                if manual_comment:
+                    operation += ({'if_unmodified_since': old['comment_version']},)
+                operations.append(operation)
             else:
                 # Only new PIRs receive v30 creation-time attribution.
                 # Existing Override fields are intentionally preserved.
                 if flow_create_cache is None:
                     flow_create_cache = self._flow_pir_create_values(
                         payload['lead_id'], lead_schema, schema, result,
-                        entry.get('comment'), source_row=attribution_row,
+                        manual_comment or None, source_row=attribution_row,
                     )
                 flow_values = dict(flow_create_cache)
                 # Original disposition and PIR comment are per-product.
@@ -800,7 +904,7 @@ class ResultingSalesforceAdapter:
                     schema, 'Comment__c', update=False, create=True
                 )
                 flow_values['Original_Disposition__c'] = self._value(original, result)
-                flow_values['Comment__c'] = self._value(comment, entry.get('comment'))
+                flow_values['Comment__c'] = self._value(comment, manual_comment or None)
                 fields.update(flow_values)
                 fields.update({
                     PR['lead']: self._value(lead_field, payload['lead_id']),
@@ -901,6 +1005,10 @@ class ResultingSalesforceAdapter:
 
     def _product_rows_for_batch(self, payloads):
         """Read existing PIR identities, dates and issued flags by Work Order."""
+        payloads = tuple(payloads)
+        include_comments = any(self._manual_comment(entry)
+                               for payload in payloads
+                               for entry in payload['product_results'])
         expected = {
             _require_id(payload['work_order_id']): _require_id(payload['lead_id'])
             for payload in payloads
@@ -921,6 +1029,7 @@ class ResultingSalesforceAdapter:
                     'SELECT Id,' + PR['work_order'] + ',' + PR['lead']
                     + ',' + PR['product'] + ',' + PR_ISSUED_COUNT
                     + ',' + PR_APPOINTMENT_DATE
+                    + (',Comment__c,LastModifiedDate' if include_comments else '')
                     + ' FROM ' + PRODUCT_RESULT + ' WHERE ' + where
                     + ' ORDER BY Id LIMIT 2000')
                 for row in rows:
@@ -1272,7 +1381,8 @@ class ResultingSalesforceAdapter:
             payload['lead_id'], payload['work_order_id'], rows=rows[payload['work_order_id']])
         expected = {}
         product_position = 0
-        for action, object_name, ident, values in operations:
+        for operation in operations:
+            action, object_name, ident, values, _guard = self._unpack_operation(operation)
             if (object_name not in (WORK_ORDER, LEAD, SERVICE_APPOINTMENT, PRODUCT_RESULT)
                     or action not in ('create', 'update') or not isinstance(values, dict)):
                 raise ResultingSalesforceError('The original submission plan is invalid.')
@@ -1460,13 +1570,19 @@ class ResultingSalesforceAdapter:
             )
         version = '/services/data/v60.0'
         requests = []
-        for index, (action, object_name, record_id, values) in enumerate(
-                operations, 1):
+        for index, operation in enumerate(operations, 1):
+            action, object_name, record_id, values, guard = self._unpack_operation(operation)
             if object_name not in (
                     SERVICE_APPOINTMENT, WORK_ORDER, LEAD, PRODUCT_RESULT):
                 raise ResultingSalesforceError('Unknown resulting object.')
             if action not in ('update', 'create'):
                 raise ResultingSalesforceError('Unknown resulting operation.')
+            if (action == 'update' and object_name == PRODUCT_RESULT
+                    and isinstance(values, dict) and 'Comment__c' in values
+                    and guard is None):
+                raise ResultingSalesforceError(
+                    'Existing product result comments require a conditional write; '
+                    'refresh before submitting.')
             if action == 'update':
                 url = version + '/sobjects/' + object_name + '/' + _require_id(record_id)
             else:
@@ -1474,12 +1590,17 @@ class ResultingSalesforceAdapter:
                     raise ResultingSalesforceError(
                         'A new Salesforce result cannot have an existing ID.')
                 url = version + '/sobjects/' + object_name
-            requests.append({
+            request = {
                 'method': 'PATCH' if action == 'update' else 'POST',
                 'url': url,
                 'referenceId': 'step_' + str(index),
                 'body': self._rest_values(object_name, values),
-            })
+            }
+            if guard is not None:
+                request['httpHeaders'] = {
+                    'If-Unmodified-Since': self._comment_condition(guard),
+                }
+            requests.append(request)
         request_body = json.dumps({
             'allOrNone': True,
             'collateSubrequests': False,  # Preserve the existing Flow order.
