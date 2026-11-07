@@ -398,7 +398,14 @@
   }
   function modNotesText(draft) {
     const numbers = String(draft.numbers || '').replace(/\r\n?/g, '\n').trim();
-    const notes = String(draft.notes || '').replace(/\r\n?/g, '\n');
+    let rawNotes = String(draft.notes || '');
+    const runs = draft.note_runs;
+    if (Array.isArray(runs) && runs.length &&
+        runs.every(run => run && typeof run.text === 'string' && typeof run.red === 'boolean') &&
+        runs.map(run => run.text).join('') === rawNotes) {
+      rawNotes = runs.filter(run => !run.red).map(run => run.text).join('');
+    }
+    const notes = rawNotes.replace(/\r\n?/g, '\n');
     const origin = draft.note_origin;
     let combined;
     if (origin && typeof origin === 'object') {
@@ -411,10 +418,6 @@
     if (combined === undefined) {
       combined = numbers && (notes === numbers || notes.startsWith(numbers + '\n')) ?
         notes.trim() : [numbers, notes].filter(Boolean).join('\n').trim();
-    }
-    const manual = String(draft.redlines || '').replace(/\r\n?/g, '\n').trim();
-    if (manual && combined !== manual && !combined.endsWith('\n' + manual)) {
-      combined = [combined, manual].filter(Boolean).join('\n');
     }
     return combined;
   }
@@ -741,8 +744,11 @@
       noteInput.value = init.note_runs.filter(run => !run.red)
         .map(run => run.text).join('');
       const oldRed = init.note_runs.filter(run => run.red)
-        .map(run => run.text.trim()).filter(Boolean).join('\n');
-      redlineInput.value = [init.redlines || '', oldRed].filter(Boolean).join('\n');
+        .map(run => run.text.replace(/\r\n?/g, '\n').trim()).filter(Boolean).join('\n');
+      // Match the authored-text contract: legacy ink came before the later
+      // separate Redlines editor. Loading must not reorder a saved comment.
+      const newerRed = String(init.redlines || '').replace(/\r\n?/g, '\n').trim();
+      redlineInput.value = [oldRed, newerRed].filter(Boolean).join('\n');
     }
     manualRedlinePreview(sheet, {redlines:redlineInput.value});
     updateModNotesCounter(sheet);

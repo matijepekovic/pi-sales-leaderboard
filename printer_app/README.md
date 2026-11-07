@@ -151,12 +151,25 @@ keep the shared statuses current. The printed MOD sheet layout is unchanged.
 
 ## MOD notes and resubmission
 
-The MOD Notes field stores the entered Numbers and authored MOD notes (including
-manually entered red-pen notes) together. Result
-details, sale/deposit/payment annotations and DNR details continue to use their
-existing Salesforce destinations and are not appended to MOD Notes. The live
+The MOD Notes field stores the entered Numbers and regular MOD notes together.
+Manually entered red-pen text is sent to the comment field on every product result
+being submitted from that card. Existing comments are preserved, and an identical
+manual block is not appended again on retry or Override. Blank manual text does
+not clear a product comment. Existing comment writes carry Salesforce's
+LastModifiedDate precondition in the same atomic request; a detected conflict
+rejects the Work Order so a fresh preflight can preserve the newer text. This
+uses the platform's time-based HTTP validation, with whole-second header
+precision, rather than a strong record-version comparison. A manual redline
+needs at least one resulted product;
+it never creates an artificial product result just to store a comment. Known
+legacy red-ink spans use the same route; ambiguous historical plain text is kept
+verbatim. Result details, sale/deposit/payment annotations and DNR details continue
+to use their existing Salesforce destinations and are not appended to MOD Notes
+or product comments. The live
 counter counts the exact combined value against the source field's actual limit;
 over-limit drafts remain saved, but cannot be submitted. Text is never truncated.
+Automatic Start and Final prices ignore Numbers amounts below 100; manual and
+imported price overrides remain authoritative.
 
 Resubmission resolves existing product-result identities and updates those records.
 An uncertain attempt retains its original payload and operation plan. Before a

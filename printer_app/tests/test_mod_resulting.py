@@ -259,7 +259,7 @@ def test_daily_mod_selection_refresh_and_end_of_day_idempotence(tmp_path):
     assert payload['draft']['notes']=='Black comment'
     assert payload['product_results']==[{
         'product':'Roofing','result':'sale','detail':'',
-        'price':'17000','deposit':'0',
+        'price':'17000','deposit':'0','comment':'REDLINE',
     }]
     assert payload['deposit_payment']=='0/'
     assert 'SALE Roofing: $17,000 | Deposit: $0' in payload['final_redlines']

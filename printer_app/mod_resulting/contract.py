@@ -20,10 +20,19 @@ def mod_note_text(draft):
 
     Older imported drafts can already contain their numbers as a prefix.
     Reusing that exact prefix prevents a retry from adding the same text twice.
-    Generated result, sale and DNR annotations have their own destinations.
+    Manual red-pen text and generated result, sale and DNR annotations have
+    their own destinations. Valid legacy color runs identify authored red
+    text without guessing from the content of plain black notes.
     """
     numbers = str(draft.get('numbers') or '').replace('\r\n', '\n').replace('\r', '\n').strip()
-    notes = str(draft.get('notes') or '').replace('\r\n', '\n').replace('\r', '\n')
+    notes = str(draft.get('notes') or '')
+    runs = draft.get('note_runs')
+    if (isinstance(runs, list) and runs
+            and all(isinstance(run, dict) and isinstance(run.get('text'), str)
+                    and type(run.get('red')) is bool for run in runs)
+            and ''.join(run['text'] for run in runs) == notes):
+        notes = ''.join(run['text'] for run in runs if not run['red'])
+    notes = notes.replace('\r\n', '\n').replace('\r', '\n')
     combined = None
     origin = draft.get('note_origin')
     if isinstance(origin, dict):
@@ -39,11 +48,6 @@ def mod_note_text(draft):
             combined = notes.strip()
         else:
             combined = '\n'.join(part for part in (numbers, notes) if part).strip()
-    # Red-pen text is authored MOD note content, unlike generated annotations.
-    # It can already be part of an imported combined note after a prior submit.
-    redlines = str(draft.get('redlines') or '').replace('\r\n', '\n').replace('\r', '\n').strip()
-    if redlines and combined != redlines and not combined.endswith('\n' + redlines):
-        combined = '\n'.join(part for part in (combined, redlines) if part)
     return combined
 
 
@@ -568,7 +572,8 @@ def note_runs_for_display(draft):
 
 def user_redline_text(draft):
     """Only user characters entered as red ink, not the earlier black notes."""
-    return '\n'.join(part['text'].strip() for part in note_runs_for_display(draft)
+    return '\n'.join(part['text'].replace('\r\n', '\n').replace('\r', '\n').strip()
+                     for part in note_runs_for_display(draft)
                      if part['red'] and part['text'].strip())
 
 

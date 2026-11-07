@@ -11,14 +11,16 @@ from printer_app.tests.test_mod_resulting_salesforce_mapping import (
 
 def _verification(*, created=False, changed=False, missing=False, original_create=False,
                   canceled=False, changed_attribution=False, moved_appointment=False,
-                  changed_product=False):
+                  changed_product=False, redline='', changed_comment=False):
     adapter, _ = _adapter(existing_results=[] if original_create else [{
-        'Id': PR1, 'Product_Interest__c': 'Roofing',
+        'Id': PR1, 'Product_Interest__c': 'Roofing', 'Comment__c': 'Historical comment',
+        'LastModifiedDate': '2026-10-27T10:00:00.000+0000',
     }])
-    payload = _payload('pns', interest='Roofing', notes='Call back', numbers='100')
+    payload = _payload('pns', interest='Roofing', notes='Call back', numbers='100',
+                       redlines=redline)
     plan = adapter.prepare([payload])[0]
     rows = {}
-    for action, object_name, ident, values in plan:
+    for action, object_name, ident, values, *_guard in plan:
         if action == 'create':
             ident = PR1
         rows.setdefault(object_name, {}).setdefault(ident, {'Id': ident}).update(values)
@@ -43,6 +45,8 @@ def _verification(*, created=False, changed=False, missing=False, original_creat
             item['Status'] = 'Canceled'
     if changed_attribution:
         rows[PRODUCT_RESULT][PR1]['Original_Disposition__c'] = 'No Pitch'
+    if changed_comment:
+        rows[PRODUCT_RESULT][PR1]['Comment__c'] = 'Changed remotely after the attempt'
     if missing:
         del rows['WorkOrder'][WORK]['MOD_Notes__c']
     reads = []
@@ -113,4 +117,20 @@ def test_reparented_appointment_cannot_recover_an_unrelated_work_order_receipt()
 
 def test_changed_product_cannot_recover_the_requested_products_receipt():
     adapter, payload, _, plan = _verification(changed_product=True)
+    assert adapter.reconcile_submission(payload, verification=plan) == 'ready'
+
+
+@pytest.mark.parametrize('original_create', [False, True])
+def test_manual_comment_is_part_of_the_original_frozen_receipt(original_create):
+    adapter, payload, reads, plan = _verification(
+        original_create=original_create, redline='Manual scope correction')
+    assert adapter.reconcile_submission(payload, verification=plan) == 'submitted'
+    assert any('Comment__c' in statement for statement in reads)
+
+
+@pytest.mark.parametrize('original_create', [False, True])
+def test_changed_manual_comment_cannot_be_confirmed_as_the_original_write(original_create):
+    adapter, payload, _, plan = _verification(
+        original_create=original_create, redline='Manual scope correction',
+        changed_comment=True)
     assert adapter.reconcile_submission(payload, verification=plan) == 'ready'
