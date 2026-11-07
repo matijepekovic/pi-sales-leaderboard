@@ -143,6 +143,66 @@ def test_salesforce_cancellation_finishes_for_pdf_without_calling_writer(tmp_pat
     assert 'Local cancellation note' in text and 'Local red ink' in text
 
 
+@pytest.mark.parametrize(('record', 'outcome'), [
+    (CANCELED, {}),
+    (ACTIVE, {'product_results': {'Roofing': {'result': 'cxl'}}}),
+], ids=['canceled-appointment', 'resulted-cxl'])
+def test_locked_cancellation_accepts_pdf_notes_without_a_salesforce_write(tmp_path, record, outcome):
+    service, repo, _, _ = _setup(tmp_path, record, remote={
+        **outcome, 'notes': 'Original CRM note',
+    })
+    service.allow_salesforce_writes = True
+    service.refresh(DAY)
+    if record.appointment_canceled:
+        repo.select_mod(DAY, MOD, 'Sales Manager')
+        assert service.submit(DAY, [WO])['pdf_only'] == 1
+    before = service.snapshot(DAY)['sheets'][0]
+    assert before['completed'] and not before['override_active']
+    draft = repo.print_sheets(DAY)[0]['draft']
+
+    def unexpected_salesforce(*args, **kwargs):
+        pytest.fail('PDF documentation must not call the Salesforce writer')
+
+    service.writer.read_results = unexpected_salesforce
+    service.writer.prepare = unexpected_salesforce
+    service.writer.apply = unexpected_salesforce
+    revision = service.save_pdf_notes(DAY, WO, before['revision'],
+                                      'New PDF-only note', 'New PDF-only redline')
+    assert revision == before['revision'] + 1
+    with pytest.raises(ValueError):
+        service.save_pdf_notes(DAY, WO, before['revision'], 'Stale edit', '')
+
+    after = service.snapshot(DAY)['sheets'][0]
+    assert after['revision'] == revision
+    for key in ('completed_at', 'submitted_at', 'override_active'):
+        assert after[key] == before[key]
+    assert after['draft'] == before['draft']
+    assert after['pdf_notes']['notes'] == 'New PDF-only note'
+    assert after['pdf_notes']['redlines'] == 'New PDF-only redline'
+    assert repo.unresolved_submission_attempts() == []
+    sheets = repo.print_sheets(DAY)
+    assert sheets[0]['draft'] == draft
+    assert sheets[0]['pdf_documentation']['supplement'] == after['pdf_notes']
+    text = PdfReader(BytesIO(render_resulting_pdf(sheets))).pages[0].extract_text()
+    assert 'Original CRM note' in text
+    assert 'New PDF-only note' in text
+    assert 'New PDF-only redline' in text
+    assert 'Stale edit' not in text
+
+
+@pytest.mark.parametrize(('dispo', 'override'), [('pns', False), ('cxl', True)])
+def test_pdf_notes_reject_an_ineligible_sheet(tmp_path, dispo, override):
+    service, repo, _, _ = _setup(tmp_path, remote={'dispo': dispo})
+    service.refresh(DAY)
+    revision = service.snapshot(DAY)['sheets'][0]['revision']
+    if override:
+        revision = service.override(DAY, WO, revision)
+    with pytest.raises(ValueError):
+        service.save_pdf_notes(DAY, WO, revision, 'Not saved', 'Not saved')
+    assert service.snapshot(DAY)['sheets'][0]['revision'] == revision
+    assert repo.print_sheets(DAY)[0]['pdf_documentation'] == {}
+
+
 def test_reactivated_appointment_can_submit_manual_cxl_without_pdf_only_notes(tmp_path):
     service, repo, source, _ = _setup(tmp_path)
     service.allow_salesforce_writes = True

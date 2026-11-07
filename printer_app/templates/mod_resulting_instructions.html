@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>MOD Resulting instructions</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='mod_resulting/instructions.css') }}">
+</head>
+<body id="top">
+<a class="skip" href="#instructions">Skip to instructions</a>
+<header class="top"><div class="wrap">
+  <span class="brand">PRINTER APP / MOD RESULTING</span>
+</div></header>
+<div class="hero"><div class="wrap">
+  <h1>MOD Resulting instructions</h1>
+  <p>Fill out your sheets, send results, and pull the Redlines PDF and OLY Calc.</p>
+</div></div>
+<div class="wrap layout">
+<nav aria-label="On this page">
+  <span class="nav-label">On this page</span>
+  <a href="#start">Start here</a>
+  <a href="#toolbar">Top controls</a>
+  <a href="#sheet">Fill in a sheet</a>
+  <a href="#submit">Send results</a>
+  <a href="#canceled">Canceled &amp; locked sheets</a>
+  <a href="#progress">Progress &amp; retries</a>
+  <a href="#reports">Export reports</a>
+  <a href="#troubleshoot">Troubleshooting</a>
+</nav>
+<main id="instructions">
+<section id="start">
+  <h2>Start here</h2>
+  <ol><li>Pick the day’s <strong>MOD</strong>. If a sheet is missing or the appointment changed in Salesforce, hit <strong>Refresh</strong>.</li><li>Open the right sheet and fill in the <strong>Dispo</strong>, products, call times, Notes, and redlines that apply.</li><li>Hit <strong>Result</strong> on one Work Order at a time. Check the bell for <strong>Submitted</strong>.</li><li>Open <strong>PDFs</strong> when you’re ready to pull the reports.</li></ol>
+  <div class="callout caution"><p><strong>Skip the batch if you can.</strong> Shit can still go wrong halfway through. Sending one at a time makes it easier to see what went through and what you need to retry.</p></div>
+  <div class="tiles" aria-label="Choosing the right action">
+    <div class="tile"><strong>Result</strong><span>Send one Work Order to Salesforce.</span></div>
+    <div class="tile"><strong>Finish for PDF</strong><span>Save a Salesforce cancellation for the Redlines PDF only.</span></div>
+    <div class="tile"><strong>Override</strong><span>Reopen a completed sheet for full editing. A later submission can update Salesforce.</span></div>
+    <div class="tile"><strong>Edit PDF notes</strong><span>Add text to the next Redlines PDF while the canceled sheet stays locked.</span></div>
+  </div>
+</section>
+<section id="toolbar">
+  <h2>Top controls</h2>
+  <dl class="controls">
+    <dt>Search customer or rep</dt><dd>Filter the display by customer name or assigned rep. Clear the search to see all sheets. Search only changes what you see.</dd>
+    <dt>MOD</dt><dd>Select the manager responsible for the day before using <strong>Result</strong>, <strong>End of day</strong>, or <strong>Finish for PDF</strong>. The first successful Salesforce submission locks that day’s MOD selection.</dd>
+    <dt>Hide completed</dt><dd>Hide sheets that are already completed. Sheets with a draft Dispo, a pending submission, or a failed submission stay visible. Uncheck to see completed sheets again.</dd>
+    <dt>Refresh</dt><dd>Save in-progress edits and read the latest Salesforce data. Use this after an appointment is canceled, added, or changed. A browser reload alone doesn’t pull Salesforce again.</dd>
+    <dt>Clear</dt><dd><strong>Clear local edits</strong> wipes the day’s local edits, including Notes and redlines, and reloads the values from Salesforce. Use it only if you mean to throw those edits away.</dd>
+    <dt>End of day</dt><dd>This is the batch button. It can send all eligible sheets or just the ones you pick. Use <strong>Result</strong> on each sheet for your normal workflow.</dd>
+    <dt>Notification bell</dt><dd>Open <strong>Resulting notifications</strong> to see what went through, what’s still running, and what failed. The badge shows unread updates.</dd>
+    <dt>PDFs</dt><dd>Open the Redlines and OLY Calc editors. If no sheets are loaded, hit <strong>Refresh</strong>. If the button is disabled, check for sheets still missing a Dispo or product result, including sheets hidden by a filter.</dd>
+    <dt>Info</dt><dd>Open this guide in a new tab. Your MOD sheets stay open in the original tab.</dd>
+  </dl>
+</section>
+<section id="sheet">
+  <h2>Fill in a MOD sheet</h2>
+  <p>The customer, address, reps, and appointment details come from Salesforce. MOD saves a local draft as you go. Hit <strong>Done</strong> in a popup to get back to the sheet. Hit <strong>Result</strong> when you’re ready to send it.</p>
+  <h3>Dispo and products</h3>
+  <ul>
+    <li>Pick the main <strong>Dispo</strong> from Sale, Pitch No Sale, No Pitch, CXL (Canceled), NRA (No Rep Available), or OOS (Out of Scope).</li>
+    <li>For a <strong>Sale</strong>, open <strong>Products</strong>, check each product that sold, and enter its <strong>Sale price</strong>, <strong>Deposit</strong> (use 0 if none), and optional <strong>Payment</strong>. A blank or zero sale price doesn’t count as sold. The first checked product with a positive price is primary.</li>
+    <li>For a sheet with multiple products and a main Dispo other than Sale, check <strong>Result individually</strong> and open <strong>Products</strong> to give the products different outcomes. Choose the <strong>Primary product</strong>, then fill in each product’s <strong>Result</strong> and <strong>Result Detail</strong>. For each product marked Sale, enter the price and deposit. Use 0 if there’s no deposit. Payment is optional. A product without an individual outcome uses the main Dispo.</li>
+    <li>Click <strong>Result Detail</strong> for the main reason or to check <strong>CXL At Lead</strong>. The <strong>CXL At Lead</strong> checkbox is separate from selecting <strong>CXL</strong> as Dispo.</li>
+  </ul>
+  <h3>Notes, numbers, and red ink</h3>
+  <dl class="controls">
+    <dt>Numbers</dt><dd>Enter quoted amounts here. The highest amount of 100 or more becomes Start Price and the lowest becomes Final Price. With <strong>95</strong>, <strong>18,000</strong>, and <strong>16,000</strong>, Start is <strong>18,000</strong> and Final is <strong>16,000</strong>.</dd>
+    <dt>MOD Notes</dt><dd>Put your regular notes here. The counter covers <strong>Numbers + Notes</strong> together because both go into Salesforce MOD Notes. If you’re over the limit, trim the text before you hit <strong>Result</strong>.</dd>
+    <dt>Red pen</dt><dd>Click the small red pen at the bottom left of the Numbers area. Enter redlines and click <strong>Done</strong>. On a normal submission, manual redlines go to the comment on every product being resulted. They also print in red on the MOD sheet.</dd>
+    <dt>Work Order amounts</dt><dd>Click <strong>Start Price</strong>, <strong>Final Price</strong>, or <strong>Deposit/Payment</strong> to enter a manual value. Clear a manual value to use the automatic amount again. For Deposit/Payment, enter the two amounts separated by a slash, such as <strong>500/239.50</strong>. For cash, the payment can be left blank, as in <strong>500/</strong>.</dd>
+  </dl>
+  <h3>Call times, checklist, and DNR</h3>
+  <ul>
+    <li>For <strong>Call 1</strong> and <strong>Call 2</strong>, type a time with AM or PM. Tap the clock for the current time or hold or right-click it to pick an exact time. Use <strong>Set time</strong> to save it or <strong>Clear</strong> inside that picker to remove it.</li>
+    <li>Fill in <strong>Need</strong> and <strong>Want</strong>. Check whichever apply from <strong>Power Questions</strong>, <strong>T Close</strong>, <strong>Docs</strong>, <strong>Bid Sheets</strong>, <strong>Promo</strong>, <strong>Review</strong>, <strong>Pictures</strong>, <strong>1 Leg</strong>, <strong>Free Lead</strong>, and <strong>90 Min</strong>.</li>
+    <li>Where available, hold or right-click a source-backed checkbox to inspect its stored value. If the editor offers <strong>Save value</strong>, you can set the exact value on an editable sheet. Power Questions, T Close, Bid Sheets, and Pictures are local MOD checkmarks.</li>
+    <li><strong>DNR</strong> opens <strong>Do Not Reset</strong>. Choose every reason that applies. Use <strong>Reasons</strong> to reopen the list. If you close a newly checked DNR without choosing a reason, the checkbox clears.</li>
+  </ul>
+</section>
+<section id="submit">
+  <h2>Send results to Salesforce</h2>
+  <dl class="controls">
+    <dt>One at a time</dt><dd>Check the Work Order and its Dispo. Hit <strong>Result</strong>, check the Work Order number in the prompt, then hit <strong>Yes</strong>. Look for <strong>Submitted</strong> in the bell.</dd>
+    <dt>If you need a batch</dt><dd>Go to <strong>End of day</strong> → <strong>Yes</strong> → <strong>Submit Selected</strong>. Pick the Work Orders and hit <strong>Submit Selected</strong> again. You can search by customer or Work Order number, or use <strong>Select All</strong> and <strong>Clear All</strong>.</dd>
+    <dt>Submit All</dt><dd><strong>End of day</strong> → <strong>Yes</strong> → <strong>Submit All</strong> processes every eligible sheet, even ones hidden by your filters. If a batch goes sideways, check each Work Order in the bell before you retry anything.</dd>
+  </dl>
+  <p class="subtle">A queued sheet is still processing. The completed label in the bell tells you whether it was sent to Salesforce or saved locally for PDF.</p>
+</section>
+<section id="canceled">
+  <h2>Canceled and locked sheets</h2>
+  <h3>Salesforce canceled the appointment</h3>
+  <p>Click <strong>Refresh</strong>. On an unfinished card labeled <strong>Canceled in Salesforce · Redlines PDF only</strong>, add your Notes and redlines. The Dispo is locked. Hit <strong>Finish for PDF</strong>, then <strong>Yes</strong>. The bell shows <strong>Saved for PDF</strong>. That action sends no Salesforce update.</p>
+  <h3>You’re choosing CXL in MOD Resulting</h3>
+  <p>Selecting <strong>CXL</strong> in the Dispo menu is a normal result. Clicking <strong>Result</strong> or submitting it through <strong>End of day</strong> uses the normal Salesforce path.</p>
+  <h3>The sheet is already locked</h3>
+  <div class="callout"><p>On a locked canceled or CXL sheet, hit <strong>Edit PDF notes</strong>. Enter <strong>Additional Notes</strong> and <strong>Additional redlines</strong>, then hit <strong>Save</strong>. Pull a fresh Redlines PDF to see what you added. The sheet stays locked and the additions go only to the PDF.</p></div>
+  <p><strong>Override</strong> is for reopening the entire sheet when you intend to correct a result. Override itself unlocks the card. A later <strong>Result</strong> or <strong>End of day</strong> on a normal card can send its result, Dispo, and other mapped fields to Salesforce.</p>
+</section>
+<section id="progress">
+  <h2>Progress and retries</h2>
+  <p>Open the <strong>Resulting notifications</strong> bell and read the status for the specific Work Order.</p>
+  <dl class="controls status-list">
+    <dt>Queued / In progress</dt><dd>It’s still running. Wait for a final status before you retry.</dd>
+    <dt>Submitted</dt><dd>The Salesforce submission completed. The sheet locks and is excluded from later batches unless reopened.</dd>
+    <dt>Saved for PDF</dt><dd>The canceled sheet was completed locally and its documentation is available for the Redlines PDF.</dd>
+    <dt>Rejected</dt><dd>Read the error, fix the issue, and use <strong>Result</strong> on that Work Order.</dd>
+    <dt>Needs verification</dt><dd>MOD doesn’t know yet if it went through. If you retry, MOD checks the first attempt before it sends anything again. Give that check time to finish.</dd>
+    <dt>Not submitted</dt><dd>MOD stopped before sending this Work Order. Read the error, then retry that Work Order on its own when ready.</dd>
+  </dl>
+  <p class="subtle">If a submission reports that the appointment was canceled in Salesforce, click <strong>Refresh</strong> and look for <strong>Finish for PDF</strong> on the affected sheet.</p>
+</section>
+<section id="reports">
+  <h2>Export reports</h2>
+  <p>Reports use the saved MOD sheets. You can generate them as soon as every sheet has an outcome, even before End of day. Choosing or confirming either report doesn’t submit results to Salesforce.</p>
+  <h3>Redlines PDF</h3>
+  <ol><li>Open <strong>PDFs</strong> → <strong>Redlines (MOD Sheets + Cover Page)</strong>.</li><li>Review the <strong>OLY MOD Cover</strong>. Edit sale rows, the Daily Summary, Grand Total, or Daily Totals as needed. Use <strong>Add row</strong> in the appropriate section or <strong>Remove</strong> next to a row.</li><li>Click <strong>Confirm</strong> or <strong>Confirm cover and create Redlines PDF</strong>. When ready, click <strong>Open Redlines PDF</strong>.</li></ol>
+  <p>Automatic cover totals exclude CXL and OOS. Their individual MOD sheets still appear in the PDF. After saving more Notes or redlines on a sheet, start a fresh report from <strong>PDFs</strong> to include them.</p>
+  <h3>OLY Calc PNG</h3>
+  <ol><li>Open <strong>PDFs</strong> → <strong>OLY Calc</strong>. You can also open <strong>OLY Calc</strong> from the Redlines cover editor.</li><li>Review the inputs and calculated results. Changing an input recalculates dependent values. You can also type a manual value into a calculated result.</li><li>Click <strong>Confirm</strong> or <strong>Confirm OLY Calc and generate PNG</strong>. When ready, click <strong>Download OLY Calc PNG</strong>.</li></ol>
+  <p>The automatic Leads count excludes CXL and OOS. The image footer shows the date.</p>
+</section>
+<section id="troubleshoot">
+  <h2>Troubleshooting</h2>
+  <details><summary>I can’t find a Work Order.</summary><p>Clear Search and uncheck Hide completed. If the list has changed in Salesforce, click the MOD page’s <strong>Refresh</strong>.</p></details>
+  <details><summary>Only Override is available.</summary><p>The sheet is locked. If Salesforce just canceled the appointment, use <strong>Refresh</strong> first. On a locked canceled or CXL sheet, use <strong>Edit PDF notes</strong> to add text to the Redlines PDF.</p></details>
+  <details><summary>The Notes counter is over the limit.</summary><p>Shorten regular Notes or the Numbers text and check the counter before submitting. The separate red pen text doesn’t use that MOD Notes limit.</p></details>
+  <details><summary>The export doesn’t include my latest edits.</summary><p>Return to MOD Sheets, make sure your edits have saved, and start a fresh report from <strong>PDFs</strong>. In the report editor, click <strong>Confirm</strong> again after making report edits.</p></details>
+</section>
+<p class="back"><a href="#top">Back to top</a></p>
+</main>
+</div>
+</body>
+</html>

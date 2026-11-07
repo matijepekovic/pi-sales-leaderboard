@@ -90,6 +90,10 @@ def blueprint(service, surface, *, color_code=None, pdfs=None):
             notice=notice,
         )
 
+    @bp.get('/instructions')
+    def instructions():
+        return render_template('mod_resulting_instructions.html')
+
     @bp.get('/surface.css')
     def surface_styles():
         return Response(overlay_css(), mimetype='text/css')
@@ -284,6 +288,17 @@ def blueprint(service, surface, *, color_code=None, pdfs=None):
         except (ValueError, TypeError, LookupError, json.JSONDecodeError) as exc:
             return jsonify(ok=False, error=str(exc)), 409
         return jsonify(ok=True, revision=result)
+
+    @bp.post('/api/pdf-notes')
+    def save_pdf_notes():
+        try:
+            revision = service.save_pdf_notes(
+                service.day(), request.form.get('work_order_id', ''),
+                int(request.form.get('revision', '-1')),
+                request.form.get('notes', ''), request.form.get('redlines', ''))
+        except (ValueError, TypeError, LookupError) as exc:
+            return jsonify(ok=False, error=str(exc)), 409
+        return jsonify(ok=True, revision=revision)
 
     @bp.get('/api/submission-status')
     def submission_status():

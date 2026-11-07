@@ -80,6 +80,7 @@ class ResultingRepository:
             row['snapshot'] = json.loads(row['snapshot'])
             row['draft'] = json.loads(row['draft'])
             pdf_documentation = json.loads(row.pop('pdf_documentation'))
+            row['pdf_notes'] = pdf_documentation.pop('supplement', {})
             if row['snapshot'].get('appointment_canceled'):
                 row['draft'].update(pdf_documentation)
         return rows
@@ -299,8 +300,10 @@ class ResultingRepository:
                         conn, day, ident, previous_local,
                         'clear' if clear_local else 'salesforce_refresh')
                 if old and clear_local and old['pdf_documentation'] != '{}':
+                    documentation = json.loads(old['pdf_documentation'])
+                    self._archive_notes(conn, day, ident, documentation, 'clear')
                     self._archive_notes(conn, day, ident,
-                                        json.loads(old['pdf_documentation']), 'clear')
+                                        documentation.get('supplement', {}), 'clear')
 
                 # The remote baseline is updated separately, never from local
                 # drafts. Failed reads never reach this SQLite transaction.
@@ -395,6 +398,25 @@ class ResultingRepository:
             if updated.rowcount != 1:
                 raise ValueError('Sheet changed or is not completed. Refresh and try again.')
             return int(revision) + 1
+
+    def save_pdf_notes(self, day, work_order_id, revision, notes):
+        """Store supplemental print text on a locked sheet without unlocking it."""
+        with self.db.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute(f'''SELECT pdf_documentation FROM mod_result_sheets
+                WHERE day=? AND work_order_id=? AND revision=? AND override_active=0
+                AND ({_COMPLETED_AT}) IS NOT NULL''', (day, work_order_id, revision)).fetchone()
+            if row is None:
+                raise ValueError('This completed MOD sheet changed. Reload it before saving PDF notes.')
+            documentation = json.loads(row['pdf_documentation'])
+            previous = documentation.get('supplement', {})
+            if previous == notes:
+                return revision
+            self._archive_notes(conn, day, work_order_id, previous, 'pdf_notes_edit')
+            documentation['supplement'] = notes
+            conn.execute('''UPDATE mod_result_sheets SET pdf_documentation=?,revision=revision+1
+                WHERE day=? AND work_order_id=?''', (json.dumps(documentation), day, work_order_id))
+            return revision + 1
 
     def save_draft(self, day, work_order_id, draft, revision):
         with self.db.connect() as conn:

@@ -27,6 +27,45 @@ def _assert_overlay_positions(sheet):
             assert abs(actual[axis] - value) < 1.2, (name, axis, actual, value)
 
 
+@pytest.mark.parametrize('width,height,touch,shows_info', [
+    (1200, 820, False, True),
+    (768, 1024, True, True),
+    (390, 844, True, False),
+    (844, 390, True, False),
+])
+def test_instructions_open_without_leaving_the_sheet(mod_browser, width, height, touch, shows_info):
+    from playwright.sync_api import expect
+
+    signed_in, service, writer, origin, _ = mod_browser
+    with signed_in.context.browser.new_context(
+        storage_state=signed_in.context.storage_state(),
+        viewport={'width': width, 'height': height}, has_touch=touch, is_mobile=touch,
+    ) as context:
+        page = context.new_page()
+        assert page.goto(origin + '/mod-resulting').status == 200
+        info = page.get_by_role('link', name='MOD Resulting instructions', include_hidden=True)
+        if not shows_info:
+            expect(info).to_be_hidden()
+            return
+
+        expect(info).to_be_visible()
+        assert info.evaluate('(link) => link.previousElementSibling.id') == 'pdfsButton'
+        notes = page.locator('.mod-sheet').first.locator('[data-key=notes]')
+        notes.fill('Keep this sheet open')
+        with page.expect_popup() as popup:
+            info.click()
+        guide = popup.value
+        expect(guide).to_have_title('MOD Resulting instructions')
+        assert guide.url == origin + '/mod-resulting/instructions'
+        assert guide.evaluate("document.styleSheets[0].href.endsWith('/mod_resulting/instructions.css')")
+        expect(guide.get_by_text('Skip the batch if you can.')).to_be_visible()
+        expect(guide.get_by_text('Edit PDF notes', exact=True).first).to_be_visible()
+        expect(guide.get_by_text('Pending update', exact=True)).to_have_count(0)
+        assert page.url == origin + '/mod-resulting'
+        expect(notes).to_have_value('Keep this sheet open')
+        assert not service.allow_salesforce_writes and writer.applied == []
+
+
 @pytest.mark.parametrize('viewport', [(320, 740), (390, 844), (844, 390)])
 def test_phone_native_pinch_and_refresh_keep_the_actual_sheet(mod_browser, viewport):
     from playwright.sync_api import expect

@@ -7,11 +7,11 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .sheets{padding:90px 12px 24px;display:flex;flex-direction:column;gap:28px;align-items:center}
 .mod-sheet{position:relative;flex:none;width:min(1460px,max(990px,calc(100vw - 24px)));container-type:inline-size;background:white}
 .printer-sheet{display:block;width:100%;height:100%;user-select:none}
-/* Per-card Result overlays the existing image without changing sheet geometry. */
-.mod-sheet>.submit-sheet{position:absolute;top:.45cqw;right:.45cqw;z-index:22;min-height:clamp(23px,2.4cqw,32px);padding:3px 9px;border:1px solid #202c39;border-radius:5px;background:#fff;color:#182331;font:650 clamp(11px,1.03cqw,14px)/1.2 system-ui,-apple-system,sans-serif;box-shadow:0 1px 5px #0002;cursor:pointer}
-.mod-sheet>.submit-sheet:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+/* Per-card actions overlay the existing image without changing sheet geometry. */
+.mod-sheet>.submit-sheet,.mod-sheet>.edit-pdf-notes{position:absolute;top:.45cqw;right:.45cqw;z-index:22;min-height:clamp(23px,2.4cqw,32px);padding:3px 9px;border:1px solid #202c39;border-radius:5px;background:#fff;color:#182331;font:650 clamp(11px,1.03cqw,14px)/1.2 system-ui,-apple-system,sans-serif;box-shadow:0 1px 5px #0002;cursor:pointer}
+.mod-sheet>.submit-sheet:focus-visible,.mod-sheet>.edit-pdf-notes:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
 .mod-sheet>.submit-sheet:disabled{opacity:.55;cursor:not-allowed}
-.mod-sheet>.submit-sheet[hidden]{display:none}
+.mod-sheet>.submit-sheet[hidden],.mod-sheet>.edit-pdf-notes[hidden]{display:none}
 /* Override occupies the bottom-right of the ORIGINAL MOD Notes cell. */
 .mod-sheet .field-notes>.override-sheet{position:absolute;right:.45cqw;bottom:.4cqw;z-index:21;min-height:clamp(24px,2.2cqw,30px);padding:2px 7px;border:1px solid #444;border-radius:4px;background:#fff;color:#111;font:600 clamp(11px,1.05cqw,13px)/1.1 system-ui,-apple-system,sans-serif;cursor:pointer;pointer-events:auto}
 .mod-sheet .field-notes>.override-sheet:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
@@ -94,7 +94,8 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .floating-controls input[type=search],.floating-controls select{background:white;border:1px solid #bbb;border-radius:5px;padding:6px 8px;font:inherit}
 .floating-controls input[type=search]{width:min(200px,26vw)}
 .floating-controls .mod-choice,.floating-controls .toggle-hide{display:flex;align-items:center;gap:6px;white-space:nowrap}
-.floating-controls button{background:white;border:1px solid #888;border-radius:5px;font:inherit;padding:7px 12px;cursor:pointer}
+.floating-controls button,.floating-controls .mod-instructions-link{background:white;border:1px solid #888;border-radius:5px;font:inherit;padding:7px 12px;cursor:pointer}
+.mod-instructions-link{display:inline-flex;align-items:center;color:inherit;text-decoration:none}
 .floating-controls #submitDay{background:#111;color:#fff}
 .floating-controls .notification-bell{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:38px;min-height:34px;padding:5px 7px}
 .notification-bell svg{display:block;flex:none}
@@ -162,7 +163,10 @@ body.dialog-open{overflow:hidden}
 .price-fields label{display:flex;flex-direction:column;gap:4px}
 .price-fields input{width:100%}
 .redlines-panel{width:min(520px,calc(100vw - 28px))}
-.redlines-panel textarea[data-key=redlines]{width:100%;min-height:180px;max-height:55dvh;resize:vertical;padding:10px;border:1px solid #aeb6c2;border-radius:6px;background:#fff;color:#17212d;font:16px/1.4 system-ui,-apple-system,sans-serif}
+.redlines-panel textarea[data-key=redlines],.pdf-notes-panel textarea{width:100%;min-height:180px;max-height:55dvh;resize:vertical;padding:10px;border:1px solid #aeb6c2;border-radius:6px;background:#fff;color:#17212d;font:16px/1.4 system-ui,-apple-system,sans-serif}
+.pdf-notes-panel{width:min(520px,calc(100vw - 28px))}
+.pdf-notes-panel label{display:grid;gap:4px;margin-top:10px}
+.pdf-notes-panel textarea{min-height:84px}
 .end-dialog{width:min(520px,calc(100vw - 28px))}
 .submission-panel{width:min(520px,calc(100vw - 28px));font:14px system-ui,-apple-system,sans-serif}
 .result-work-order{font-weight:700}
@@ -227,7 +231,7 @@ body.dialog-open{overflow:hidden}
  .floating-controls select{flex:1;min-width:0;width:0;height:44px;font-size:16px}
  .floating-controls .toggle-hide{flex:1;min-height:44px;gap:4px;font-size:12px}
  .floating-controls .toggle-hide input{width:18px;height:18px;margin:0}
- .floating-controls button,.floating-controls .completed-pdf{min-height:44px;padding:8px;font-size:12px}
+ .floating-controls button,.floating-controls .completed-pdf,.floating-controls .mod-instructions-link{min-height:44px;padding:8px;font-size:12px}
  .sheets{width:100%;padding:12px 8px calc(24px + env(safe-area-inset-bottom));
   gap:20px;align-items:flex-start;overflow-x:auto;overscroll-behavior-x:contain}
  .mod-sheet{width:calc(100vw - 16px);-webkit-text-size-adjust:100%;text-size-adjust:100%}
@@ -245,7 +249,12 @@ body.dialog-open{overflow:hidden}
  .product-result-row .individual-sale-fields label{flex-basis:85px}
 }
 
-@media print{.floating-controls,.notification,.editor-dialog,.sheet-message,.time-picker-button,.red-pen,.override-sheet,.submit-sheet,.submission-toast{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}.mod-sheet.submitted{margin-top:0}}
+/* The compact sheet layout also applies to tablets. Hide Info only at phone sizes. */
+@media (max-width:639px), (hover:none) and (pointer:coarse) and (max-height:500px){
+ .mod-instructions-link{display:none}
+}
+
+@media print{.floating-controls,.notification,.editor-dialog,.sheet-message,.time-picker-button,.red-pen,.override-sheet,.edit-pdf-notes,.submit-sheet,.submission-toast{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}.mod-sheet.submitted{margin-top:0}}
 
 /* Cover-first PDFs are available only for fully resulted daily batches. */
 .floating-controls #pdfsButton:disabled{opacity:.42;cursor:not-allowed}
