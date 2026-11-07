@@ -1188,13 +1188,16 @@ def test_legacy_mixed_red_runs_migrate_without_inflating_mod_notes_counter(mod_b
     ident = service.repository.sheets(day)[0]['work_order_id']
     black = 'B' * 240
     red = 'R' * 1000
-    service.save(day, ident, clean_draft({
+    # Source provenance cannot be supplied through the browser-edit service;
+    # seed the trusted saved legacy draft at its persistence boundary.
+    service.repository.save_draft(day, ident, clean_draft({
         'dispo': 'pns', 'numbers': '100', 'notes': black + '\n' + red,
         'note_runs': [{'text': black, 'red': False}, {'text': '\n' + red, 'red': True}],
         'redlines': 'Separate redline',
         'note_origin': {'numbers': '100', 'prefix': '$100.00'},
     }), 0)
     before = service.repository.sheets(day)[0]
+    assert before['draft']['note_origin'] == {'numbers': '100', 'prefix': '$100.00'}
     before_payload = service.submission_payload(dict(before, day=day), MOD)
     expected_comment = red + '\nSeparate redline'
     before_comments = {item['product']: item['comment']
@@ -1202,13 +1205,22 @@ def test_legacy_mixed_red_runs_migrate_without_inflating_mod_notes_counter(mod_b
     assert set(before_comments.values()) == {expected_comment}
     page.goto(origin + '/mod-resulting')
     first = page.locator('.mod-sheet').first
+    assert json.loads(first.get_attribute('data-initial'))['note_origin'] == {
+        'numbers': '100', 'prefix': '$100.00',
+    }
     expect(first.locator('[data-key=notes]')).to_have_value(black)
     expect(first.locator('.manual-redlines')).to_have_text(expected_comment)
     expect(first.locator('.mod-notes-counter')).to_have_text('248 / 255 characters')
     expect(first).to_have_attribute('data-notes-over-limit', 'no')
+    # Merely viewing a legacy draft must not save it. Exercise a real editor
+    # change before Refresh so the existing autosave boundary owns migration.
+    note_input = first.locator('[data-key=notes]')
+    note_input.fill(black + '\n')
+    note_input.fill(black)
     with page.expect_navigation(wait_until='domcontentloaded'):
         page.locator('#refresh').click()
     stored = service.repository.sheets(day)[0]['draft']
+    assert stored['note_origin'] == {'numbers': '100', 'prefix': '$100.00'}
     assert stored['notes'] == black
     assert stored['note_runs'] == []
     assert stored['redlines'] == expected_comment

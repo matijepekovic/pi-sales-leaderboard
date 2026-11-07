@@ -12,6 +12,9 @@ from printer_app.db import Database, SCHEMA, MOD_SUBMISSION_ITEMS_SCHEMA
 from printer_app.mod_resulting.contract import (
     clean_draft, mod_note_text, text_units, user_redline_text,
 )
+from printer_app.mod_resulting.repository import ResultingRepository
+from printer_app.mod_resulting.service import ResultingService
+from printer_app.mod_sheet_contract import ModSheetRecord
 
 
 @pytest.mark.parametrize(('draft', 'expected'), [
@@ -101,6 +104,31 @@ def test_legacy_ink_and_newer_redline_keep_the_same_comment_after_editor_migrati
     migrated = clean_draft(dict(original, notes='Black', note_runs=[], redlines=comment))
     assert user_redline_text(original) == user_redline_text(migrated) == comment
     assert mod_note_text(original) == mod_note_text(migrated) == '$100.00\nBlack'
+
+
+def test_editor_autosave_preserves_trusted_source_prefix_through_legacy_red_migration(tmp_path):
+    day = '2026-11-06'
+    ident = '0WO000000000001AAA'
+    repo = ResultingRepository(Database(tmp_path / 'printer.db'))
+    repo.refresh(day, [ModSheetRecord(source_id=ident, product_interest='Roofing')])
+    service = ResultingService(repo, None, None, None, 'UTC')
+    original = clean_draft({
+        'dispo': 'pns', 'numbers': '100', 'notes': 'Black\nKnown red ink',
+        'note_runs': [{'text': 'Black', 'red': False}, {'text': '\nKnown red ink', 'red': True}],
+        'redlines': 'New redline',
+        'note_origin': {'numbers': '100', 'prefix': '$100.00'},
+    })
+    revision = repo.save_draft(day, ident, original, 0)
+    incoming = clean_draft(dict(original, notes='Black', note_runs=[],
+                                redlines='Known red ink\nNew redline'))
+    incoming.pop('note_origin')  # A browser edit cannot invent source metadata.
+    service.save(day, ident, incoming, revision)
+    saved = repo.sheets(day)[0]['draft']
+    assert saved['note_origin'] == original['note_origin']
+    assert saved['notes'] == 'Black'
+    assert saved['note_runs'] == []
+    assert mod_note_text(saved) == mod_note_text(original) == '$100.00\nBlack'
+    assert user_redline_text(saved) == user_redline_text(original) == 'Known red ink\nNew redline'
 
 
 def test_browser_counter_matches_the_destination_for_authored_red_text():
