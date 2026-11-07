@@ -34,6 +34,7 @@ class ModSheetRecord:
     lead_source_id: str = ''
     # Normalized status of the selected Service Appointment for this MOD card.
     appointment_canceled: bool = False
+    appointment_source_id: str = ''
 
 
 @dataclass(frozen=True)

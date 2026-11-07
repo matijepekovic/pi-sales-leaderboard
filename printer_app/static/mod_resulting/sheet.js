@@ -422,11 +422,12 @@
     return combined;
   }
   function updateModNotesCounter(sheet) {
-    const length = modNotesText(serialize(sheet)).length;
+    const pdfOnly = sheet.dataset.pdfOnly === 'yes';
+    const length = pdfOnly ? 0 : modNotesText(serialize(sheet)).length;
     const limit = Number(root.dataset.noteLimit);
-    const known = Number.isInteger(limit) && limit > 0;
+    const known = !pdfOnly && Number.isInteger(limit) && limit > 0;
     const over = known && length > limit;
-    const counter = sheet.querySelector('.mod-notes-counter');
+    const counter = pdfOnly ? null : sheet.querySelector('.mod-notes-counter');
     if (counter) {
       counter.textContent = known ? length + ' / ' + limit + ' characters' +
         (over ? ' · ' + (length - limit) + ' over limit' : '') :
@@ -1031,7 +1032,8 @@
 
   function eligibleSheets() {
     return sheets.filter(sheet =>
-      sheet.dataset.dispo && sheet.dataset.submitted !== 'yes');
+      (sheet.dataset.dispo || sheet.dataset.pdfOnly === 'yes') &&
+      sheet.dataset.submitted !== 'yes');
   }
   function selectedWorkOrders() {
     return [...selectionList.querySelectorAll('input[type=checkbox]:checked')]
@@ -1060,8 +1062,9 @@
       const name = document.createElement('strong');
       name.textContent = sheet.dataset.customer;
       const detail = document.createElement('small');
-      detail.textContent = sheet.dataset.workNumber + ' · ' +
+      const result = sheet.dataset.pdfOnly === 'yes' ? 'Redlines PDF only' :
         sheet.querySelector('[data-key="dispo"]').selectedOptions[0].textContent;
+      detail.textContent = sheet.dataset.workNumber + ' · ' + result;
       content.append(name, detail);
       label.append(input, content);
       selectionList.append(label);
@@ -1082,6 +1085,7 @@
   });
   function noticeStatus(item) {
     if (item.state === 'submitted') return 'Submitted';
+    if (item.state === 'pdf_only') return 'Saved for PDF';
     if (item.state === 'rejected') return 'Rejected';
     if (item.state === 'uncertain') return 'Needs verification';
     if (item.state === 'not_submitted') return 'Not submitted';
@@ -1091,11 +1095,11 @@
   }
   function terminalNoticeKey(item) {
     const status = noticeStatus(item);
-    return ['Submitted', 'Rejected', 'Needs verification', 'Not submitted'].includes(status)
+    return ['Submitted', 'Saved for PDF', 'Rejected', 'Needs verification', 'Not submitted'].includes(status)
       ? item.job_id + ':' + item.work_order_id + ':' + status : '';
   }
   function noticeError(item) {
-    if (item.state === 'submitted') return '';
+    if (item.state === 'submitted' || item.state === 'pdf_only') return '';
     return item.error || ((item.job_state === 'failed' || item.job_state === 'interrupted')
       ? item.job_error : '') || '';
   }
@@ -1129,10 +1133,11 @@
     if (text) toastTimer = setTimeout(() => { toast.hidden = true; }, 8000);
   }
   function markWorkOrderSubmitted(item) {
-    if (item.day !== root.dataset.day || item.state !== 'submitted') return;
-    if (item.override_active) return;
+    if (item.day !== root.dataset.day || !['submitted', 'pdf_only'].includes(item.state)) return;
+    if (item.override_active || item.completed === false || item.completed === 0) return;
     const sheet = sheets.find(current => current.dataset.id === item.work_order_id);
     if (!sheet || sheet.dataset.submitted === 'yes') return;
+    if ((item.state === 'pdf_only') !== (sheet.dataset.pdfOnly === 'yes')) return;
     sheet.dataset.submitted = 'yes';
     sheet.dataset.overrideActive = 'no';
     sheet.classList.add('submitted');
@@ -1194,9 +1199,11 @@
       showSubmissionToast('Work Order ' + item.work_order_number + ' — ' +
         noticeStatus(item) + (noticeError(item) ? ': ' + noticeError(item) : ''));
     } else if (fresh.length > 1) {
-      const completed = fresh.filter(item => item.state === 'submitted').length;
-      showSubmissionToast(completed + ' submitted, ' +
-        (fresh.length - completed) + ' need attention. Open notifications for details.');
+      const submitted = fresh.filter(item => item.state === 'submitted').length;
+      const pdfOnly = fresh.filter(item => item.state === 'pdf_only').length;
+      const savedForPdf = pdfOnly ? pdfOnly + ' saved for PDF, ' : '';
+      showSubmissionToast(submitted + ' submitted, ' + savedForPdf +
+        (fresh.length - submitted - pdfOnly) + ' need attention. Open notifications for details.');
     }
     knownTerminal = terminal;
     noticesInitialized = true;
@@ -1221,13 +1228,16 @@
     }
     updateSelection();
     if (!submission) return;
-    const completed = submission.submitted;
+    const pdfOnly = submission.pdf_only || 0;
+    const completed = submission.submitted + pdfOnly;
     document.getElementById('submissionCompleted').textContent =
       completed + ' / ' + submission.total;
     const bar = document.getElementById('submissionBar');
     bar.max = Math.max(submission.total, 1);
     bar.value = completed;
-    document.getElementById('submissionSucceeded').textContent = completed;
+    document.getElementById('submissionSucceeded').textContent = submission.submitted;
+    document.getElementById('submissionPdfOnly').textContent = pdfOnly;
+    document.getElementById('submissionPdfOnlySummary').hidden = pdfOnly === 0;
     document.getElementById('submissionPending').textContent =
       submission.pending + submission.processing;
     document.getElementById('submissionFailed').textContent = submission.failed;
@@ -1293,6 +1303,12 @@
   });
   function openSingleResult(sheet) {
     selectedSingleSheet = sheet;
+    const pdfOnly = sheet.dataset.pdfOnly === 'yes';
+    document.getElementById('singleResultHeading').textContent = pdfOnly ?
+      'Finish for PDF' : 'Result Work Order';
+    document.getElementById('singleResultPrompt').textContent = pdfOnly ?
+      'Save this Salesforce-canceled appointment for the Redlines PDF?' :
+      'Are you sure you want to result this Work Order?';
     document.getElementById('singleResultWorkOrder').textContent =
       'Work Order ' + sheet.dataset.workNumber;
     openDialog(singleDialog, '#singleResultNo');
@@ -1302,8 +1318,11 @@
     if (!sheet || singleYes.disabled) return;
     singleYes.disabled = true;
     try {
+      const pdfOnly = sheet.dataset.pdfOnly === 'yes';
       if (!dayMod.value) throw new Error('Select a MOD before resulting.');
-      if (!serialize(sheet).dispo) throw new Error('Select a disposition for this Work Order.');
+      if (!pdfOnly && !serialize(sheet).dispo) {
+        throw new Error('Select a disposition for this Work Order.');
+      }
       await flushSheet(sheet);
       validateModNotes([sheet]);
       const queued = await post(root.dataset.submit, {
@@ -1312,7 +1331,8 @@
       });
       progressJobId = queued.job_id;
       closeDialog(singleDialog);
-      message('Work Order ' + sheet.dataset.workNumber + ' queued for resulting.', sheet);
+      message('Work Order ' + sheet.dataset.workNumber +
+        (pdfOnly ? ' queued to save for PDF.' : ' queued for resulting.'), sheet);
       await refreshSubmission();
     } catch (error) {
       closeDialog(singleDialog);
@@ -1362,9 +1382,12 @@
   });
   document.getElementById('proceedEnd').addEventListener('click', () => {
     closeDialog(confirmation);
+    const eligible = eligibleSheets();
+    const pdfOnly = eligible.filter(sheet => sheet.dataset.pdfOnly === 'yes').length;
     document.getElementById('reviewCount').textContent =
-      eligibleSheets().length + ' eligible Work Order(s). MOD: ' +
-      dayMod.selectedOptions[0].textContent;
+      eligible.length + ' eligible Work Order(s). MOD: ' +
+      dayMod.selectedOptions[0].textContent + (pdfOnly ?
+        '. Salesforce canceled ' + pdfOnly + '. These are saved for the Redlines PDF.' : '');
     openDialog(methodDialog);
   });
   document.getElementById('submitAll').addEventListener('click', event =>

@@ -764,6 +764,60 @@ def test_per_card_result_confirmation_and_notification_bell(mod_browser):
     evidence('per-card-result-bell')
 
 
+def test_salesforce_canceled_card_can_finish_for_pdf_with_hide_completed(mod_browser, monkeypatch):
+    from dataclasses import replace
+    from playwright.sync_api import expect
+
+    page, service, writer, origin, _ = mod_browser
+    day = service.day()
+    canceled = replace(service.source.records_data[0], appointment_canceled=True)
+    service.source.records_data[0] = canceled
+    writer.read_results = lambda records: {
+        row.source_id: {'dispo':'cxl'} if row.source_id == canceled.source_id else {}
+        for row in records
+    }
+    writer.note_field = lambda: {'limit': 255}
+    service.refresh(day)
+
+    page.goto(origin + '/mod-resulting')
+    page.locator('#dailyMod').select_option(MOD)
+    page.locator('#hideCompleted').check()
+    card = page.locator('.mod-sheet').first
+    expect(card).to_be_visible()
+    expect(card.locator('[data-key=dispo]')).to_have_value('cxl')
+    expect(card.locator('[data-key=dispo]')).to_be_disabled()
+    notes = 'Followed up about the Salesforce cancellation. ' * 7
+    card.locator('[data-key=notes]').fill(notes)
+    card.locator('.red-pen').click()
+    popup = card.locator('.redlines-panel')
+    popup.locator('[data-key=redlines]').fill('Cancellation follow-up')
+    popup.locator('.editor-primary').click()
+
+    finish = card.get_by_role('button', name='Finish Work Order 00011111 for PDF')
+    expect(finish).to_be_enabled()
+    finish.click()
+    expect(page.locator('#singleResultConfirm')).to_contain_text('for the Redlines PDF')
+    # Enable the real queue against this fixture's fake Salesforce writer.
+    with monkeypatch.context() as queued:
+        queued.setattr(service, 'allow_salesforce_writes', True)
+        with page.expect_response('**/mod-resulting/api/submit') as submitted:
+            page.locator('#singleResultYes').click()
+        assert submitted.value.status == 202
+        result = service.process_next_submission()
+        assert result['ok'] and result['pdf_only'] == 1 and result['submitted'] == 0
+
+    page.locator('#viewSubmissionProgress').click()
+    expect(page.locator('#submissionNotificationList')).to_contain_text(
+        'Work Order 00011111 — Saved for PDF')
+    expect(page.locator('#submissionPdfOnly')).to_have_text('1')
+    expect(page.locator('#submissionSucceeded')).to_have_text('0')
+    expect(card).to_be_hidden()
+    saved = service.repository.sheets(day)[0]['draft']
+    assert saved['notes'].strip() == notes.strip()
+    assert saved['redlines'] == 'Cancellation follow-up'
+    assert not writer.applied
+
+
 def test_end_of_day_three_popups_submit_only_explicitly_selected_work_order(mod_browser):
     from playwright.sync_api import expect
     from urllib.parse import parse_qs

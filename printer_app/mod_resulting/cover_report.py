@@ -6,7 +6,9 @@ from decimal import Decimal
 from statistics import mean
 
 from .contract import prices
-from .report_facts import decimal_amount as _decimal, sold_entries as _sold, has_sale
+from .report_facts import (
+    decimal_amount as _decimal, has_sale, result_disposition, sold_entries as _sold,
+)
 
 DIVISIONS = (
     ("roof", "Roofing Division"),
@@ -192,12 +194,18 @@ def project_cover(day, sheets, mod_name=""):
     by_key = {section["key"]: section for section in sections}
     counts = {key: {"leads": 0, "pitched": 0, "sales": 0, "nra": 0} for key, _ in DIVISIONS}
     unknown = []
+    excluded_sale_rows = []
     for item in sheets:
         snapshot = item["snapshot"]
         draft = item["draft"]
         key = division_for(snapshot.get("work_type"))
         if key is None:
             unknown.append(str(snapshot.get("work_type") or "Unspecified"))
+            continue
+        if result_disposition(draft) in ("cxl", "oos"):
+            # An older cover may have saved edits to a mixed-result sale row.
+            if _sale(draft):
+                excluded_sale_rows.append(item["work_order_id"])
             continue
         info = counts[key]
         info["leads"] += 1
@@ -219,6 +227,7 @@ def project_cover(day, sheets, mod_name=""):
         "day": day, "mod": str(mod_name or ""),
         "date": date.fromisoformat(day).strftime("%A, %B %-d, %Y"),
         "sections": sections, "counts": counts, "unmapped_work_types": unknown,
+        "excluded_sale_rows": excluded_sale_rows,
         "grand": {}, "totals": {},
     }
     _summary(report, counts)
@@ -232,19 +241,21 @@ def apply_edits(report, edits):
     result = deepcopy(report)
     sections = {section["key"]: section for section in result["sections"]}
     rows = {row["id"]: row for section in result["sections"] for row in section["rows"]}
+    known_rows = rows.keys() | set(report.get("excluded_sale_rows", ()))
     changes = edits.get("rows", {})
     if not isinstance(changes, dict):
         raise ValueError("Invalid cover row edits.")
     for key, fields in changes.items():
-        if key not in rows or not isinstance(fields, dict) or set(fields) - EDITABLE_ROW_FIELDS:
+        if key not in known_rows or not isinstance(fields, dict) or set(fields) - EDITABLE_ROW_FIELDS:
             raise ValueError("Invalid cover row edit.")
         for field, value in fields.items():
             if not isinstance(value, str) or len(value) > 160:
                 raise ValueError("Invalid cover cell value.")
-            rows[key][field] = value
+            if key in rows:
+                rows[key][field] = value
 
     hidden = edits.get("hidden", [])
-    if not isinstance(hidden, list) or any(key not in rows for key in hidden):
+    if not isinstance(hidden, list) or any(key not in known_rows for key in hidden):
         raise ValueError("Invalid removed cover row.")
     for section in result["sections"]:
         section["rows"] = [row for row in section["rows"] if row["id"] not in hidden]

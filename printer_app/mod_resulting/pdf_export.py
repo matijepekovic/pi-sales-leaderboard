@@ -302,6 +302,33 @@ def _overlay_one(c,index,draft):
         c.restoreState()
 
 
+def _draft_for_pdf(sheet):
+    draft = sheet['draft']
+    local = sheet.get('pdf_documentation') or {}
+    if not local:
+        return draft
+    if sheet['snapshot'].get('appointment_canceled'):
+        return dict(draft, **local)
+    # If the appointment was reactivated, keep its local cancellation notes
+    # in this export alongside any later notes from the active appointment.
+    result = dict(draft)
+    if 'notes' in local or 'note_runs' in local:
+        active_runs = note_runs_for_display(dict(draft, redlines=''))
+        local_runs = note_runs_for_display(dict(dict(draft, **local), redlines=''))
+        active_text = ''.join(part['text'] for part in active_runs)
+        local_text = ''.join(part['text'] for part in local_runs)
+        if active_text in local_text:
+            runs = local_runs
+        elif local_text in active_text:
+            runs = active_runs
+        else:
+            runs = active_runs + [{'text': '\n', 'red': False}] + local_runs
+        result.update(notes=''.join(part['text'] for part in runs), note_runs=runs)
+    if local.get('redlines'):
+        result['redlines'] = '\n'.join(filter(None, (draft.get('redlines'), local['redlines'])))
+    return result
+
+
 def render_resulting_pdf(sheets, *, color_code=False):
     """Exactly the Printer sheet as base, with no rebuilt or duplicate template."""
     if not sheets:
@@ -314,7 +341,7 @@ def render_resulting_pdf(sheets, *, color_code=False):
     overlay_pdf=BytesIO()
     c=canvas.Canvas(overlay_pdf,pagesize=letter)
     for index,item in enumerate(sheets):
-        _overlay_one(c,index,item['draft'])
+        _overlay_one(c,index,_draft_for_pdf(item))
         if (index+1)%3==0 and index+1<len(sheets):
             c.showPage()
     c.save()

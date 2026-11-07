@@ -98,7 +98,41 @@ def test_cxl_at_lead_is_not_resulting_and_never_reclassifies_no_pitch():
     ])
     assert report["totals"]["sales"] == "0"
     assert report["totals"]["nra"] == "0"
+    assert report["grand"]["leads"] == "1"
     assert report["grand"]["pitched"] == "0"
+
+
+def test_cover_excludes_cxl_and_oos_and_retains_manual_edits():
+    sale = _card(1, "Roofing", "Sold Customer")
+    canceled = _card(2, "Roofing", "Canceled with a Product Sale")
+    oos = _card(3, "Bath", "Out of Scope from Product Result")
+    report = project_cover(DAY, [
+        _item(sale, _sale(12000, 500, 20000)),
+        _item(canceled, clean_draft({
+            "dispo": "cxl",
+            "product_results": {"Roofing": {"result": "sale", "price": "9000"}},
+        })),
+        _item(oos, clean_draft({"product_results": {"Bath": {"result": "oos"}}})),
+    ])
+    roof, bath = report["sections"][:2]
+    assert [row["id"] for row in roof["rows"]] == [sale.source_id]
+    assert bath["summary"]["leads"] == "0"
+    assert roof["summary"] == report["grand"] == {
+        "leads": "1", "pitched": "1", "pitch_pct": "100%",
+        "closing_pct": "100%", "day_total": "$12,000", "dpl": "$12,000",
+    }
+    assert report["totals"]["sales"] == "1"
+
+    # A prior cover could have saved an edit or removed the now-excluded row.
+    edited = apply_edits(report, {
+        "rows": {canceled.source_id: {"price": "$15,000"}},
+        "hidden": [canceled.source_id],
+        "summary": {"roof": {"leads": "2"}},
+        "manual_rows": [{"id": "manual:sale", "division": "bath", "price": "$6,000"}],
+    })
+    assert edited["grand"]["leads"] == "2"
+    assert edited["grand"]["day_total"] == "$18,000"
+    assert edited["totals"]["sales"] == "2"
 
 
 def test_every_cover_cell_and_summary_is_editable_without_losing_nra():
@@ -154,20 +188,23 @@ def test_durable_cover_first_queue_and_edit_while_eod_runs(tmp_path):
     source = ResultingRepository(db)
     cover = ModPdfRepository(db)
     first = _card(1, "Roofing", "Sold Customer", ("Rep One", "Rep Two"))
-    second = _card(2, "Bath", "No Pitch")
-    source.refresh(DAY, [first, second], external_drafts={
+    second = _card(2, "Bath", "Canceled Customer")
+    third = _card(3, "Bath", "Out of Scope Customer")
+    source.refresh(DAY, [first, second, third], external_drafts={
         first.source_id: _sale(15000, 500, 20000),
-        second.source_id: clean_draft({})
+        second.source_id: clean_draft({}),
+        third.source_id: clean_draft({"dispo": "oos"}),
     }, market_segment="Olympia")
     service = ModPdfService(cover, source, render_resulting_pdf,
                             tmp_path / "pdfs")
     with pytest.raises(ValueError, match="need resulting"):
         service.begin(DAY)
     source.save_draft(DAY, second.source_id,
-                      clean_draft({"dispo": "np"}), 0)
+                      clean_draft({"dispo": "cxl"}), 0)
     queued = service.begin(DAY)
     job_id = queued["job_id"]
-    assert queued["total_sheets"] == 2
+    assert queued["total_sheets"] == 3
+    assert service.editor(DAY, job_id)["report"]["grand"]["leads"] == "1"
     assert cover.job(DAY, job_id)["state"] == "queued"
     assert service.process_next()["state"] == "awaiting_confirmation"
     assert (tmp_path / "pdfs" / str(job_id) / "cover.pdf").exists()
@@ -185,7 +222,10 @@ def test_durable_cover_first_queue_and_edit_while_eod_runs(tmp_path):
     assert len(pdf.pages) == 2  # cover first, then all MOD cards (3/page)
     assert "OLYMPIA" in pdf.pages[0].extract_text()
     assert "$25,000" in pdf.pages[0].extract_text()
-    assert "Sold Customer" in pdf.pages[1].extract_text()
+    sheet_text = pdf.pages[1].extract_text()
+    assert "Sold Customer" in sheet_text
+    assert "Canceled Customer" in sheet_text
+    assert "Out of Scope Customer" in sheet_text
     assert cover.edits(DAY)[0] == edits
     assert source.sheets(DAY)[0]["draft"]["sale_products"]["Roofing"]["price"] == "15000"
 

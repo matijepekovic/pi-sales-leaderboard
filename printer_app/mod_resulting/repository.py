@@ -6,6 +6,17 @@ import json
 import time
 
 
+# A Salesforce cancellation changes the work left on this card to local
+# documentation. Its completion must never stand in for a Salesforce receipt.
+def _completed_at(prefix=''):
+    return (f"CASE WHEN json_extract({prefix}snapshot,'$.appointment_canceled') "
+            f'THEN {prefix}pdf_completed_at ELSE {prefix}submitted_at END')
+
+
+_COMPLETED_AT = _completed_at()
+_PDF_DOCUMENTATION_FIELDS = ('notes', 'redlines', 'note_runs', 'numbers')
+
+
 def _apply_remote_changes(local, previous, incoming):
     """Three-way update: only fields changed remotely can replace local values."""
     if not (isinstance(local, dict) and isinstance(previous, dict)
@@ -60,22 +71,28 @@ class ResultingRepository:
         return value if isinstance(value, str) else ''
 
     def sheets(self, day):
-        rows = self.db.rows('''SELECT work_order_id,snapshot,draft,revision,current,
-                submitted_at,override_active,submit_error FROM mod_result_sheets
+        rows = self.db.rows(f'''SELECT work_order_id,snapshot,draft,revision,current,
+                submitted_at,override_active,submit_error,pdf_documentation,
+                {_COMPLETED_AT} AS completed_at
+                FROM mod_result_sheets
                 WHERE day=? ORDER BY display_order,work_order_id''', (day,))
         for row in rows:
             row['snapshot'] = json.loads(row['snapshot'])
             row['draft'] = json.loads(row['draft'])
+            pdf_documentation = json.loads(row.pop('pdf_documentation'))
+            if row['snapshot'].get('appointment_canceled'):
+                row['draft'].update(pdf_documentation)
         return rows
 
     def print_sheets(self, day):
         """Every card displayed for the day, including previously imported rows."""
-        rows = self.db.rows('''SELECT work_order_id,snapshot,draft
+        rows = self.db.rows('''SELECT work_order_id,snapshot,draft,pdf_documentation
             FROM mod_result_sheets WHERE day=?
             ORDER BY display_order,work_order_id''', (day,))
         return [dict(work_order_id=row['work_order_id'],
                      snapshot=json.loads(row['snapshot']),
-                     draft=json.loads(row['draft'])) for row in rows]
+                     draft=json.loads(row['draft']),
+                     pdf_documentation=json.loads(row['pdf_documentation'])) for row in rows]
 
     def sheet_snapshot(self, day, work_order_id):
         row = self.db.one(
@@ -151,7 +168,8 @@ class ResultingRepository:
                     (market_key, json.dumps(market_segment)))
             prior_rows = {
                 row['work_order_id']: row for row in conn.execute(
-                    'SELECT work_order_id,draft,revision,submitted_at,override_active '
+                    'SELECT work_order_id,snapshot,draft,revision,submitted_at,'
+                    'pdf_completed_at,pdf_documentation,override_active '
                     'FROM mod_result_sheets WHERE day=?', (day,)
                 ).fetchall()
             }
@@ -159,6 +177,8 @@ class ResultingRepository:
             for position, record in enumerate(records):
                 ident = record.source_id
                 old = prior_rows.get(ident)
+                was_canceled = bool(old and json.loads(old['snapshot']).get('appointment_canceled'))
+                cancellation_changed = was_canceled != record.appointment_canceled
                 conn.execute('''INSERT INTO mod_result_sheets
                     (day,work_order_id,snapshot,current,display_order)
                     VALUES(?,?,?,1,?)
@@ -166,14 +186,14 @@ class ResultingRepository:
                     snapshot=excluded.snapshot,current=1,
                     display_order=excluded.display_order''',
                     (day, ident, json.dumps(asdict(record)), position))
-                if ident not in external_drafts:
+                if ident not in external_drafts and not cancellation_changed:
                     continue
-                incoming = dict(external_drafts[ident])
                 previous_local = json.loads(old['draft']) if old else {}
                 baseline_key = 'mod_result_sf_baseline:' + day + ':' + ident
                 baseline_row = conn.execute(
                     'SELECT value FROM meta WHERE key=?', (baseline_key,)).fetchone()
                 baseline = json.loads(baseline_row['value']) if baseline_row else None
+                incoming = dict(external_drafts.get(ident, baseline or {}))
                 notes_key = 'mod_result_sf_notes:' + day + ':' + ident
                 prior_note = conn.execute(
                     'SELECT value FROM meta WHERE key=?', (notes_key,)).fetchone()
@@ -278,6 +298,9 @@ class ResultingRepository:
                     self._archive_notes(
                         conn, day, ident, previous_local,
                         'clear' if clear_local else 'salesforce_refresh')
+                if old and clear_local and old['pdf_documentation'] != '{}':
+                    self._archive_notes(conn, day, ident,
+                                        json.loads(old['pdf_documentation']), 'clear')
 
                 # The remote baseline is updated separately, never from local
                 # drafts. Failed reads never reach this SQLite transaction.
@@ -304,17 +327,30 @@ class ResultingRepository:
                 else:
                     completed = None
 
-                override_active = (0 if (clear_local or
+                pdf_completed_at = (old['pdf_completed_at'] if old and not clear_local
+                                    and not cancellation_changed else None)
+                if cancellation_changed and record.appointment_canceled and receipt and receipt > 0:
+                    attempt_row = conn.execute('SELECT value FROM meta WHERE key=?',
+                                               (self._attempt_key(day, ident),)).fetchone()
+                    attempt = json.loads(attempt_row['value']) if attempt_row else {}
+                    if (attempt.get('state') == 'submitted'
+                            and attempt.get('payload', {}).get('dispo') in ('cxl', 'oos')):
+                        # Our own completed CXL/OOS is still complete when its
+                        # resulting Salesforce cancellation comes back on Refresh.
+                        pdf_completed_at = receipt
+                override_active = (0 if (clear_local or cancellation_changed or
                     (remote_result_changed and remote_resulted)) else
                     int(old['override_active']) if old else 0)
                 revision = old['revision'] if old else 0
-                if old and (merged != previous_local or
+                if old and (cancellation_changed or merged != previous_local or
                             override_active != old['override_active']):
                     revision += 1
                 conn.execute('''UPDATE mod_result_sheets SET
-                    draft=?,revision=?,submitted_at=?,override_active=0,
+                    draft=?,revision=?,submitted_at=?,pdf_completed_at=?,override_active=0,
+                    pdf_documentation=CASE WHEN ? THEN '{}' ELSE pdf_documentation END,
                     submit_error='' WHERE day=? AND work_order_id=?''',
-                    (json.dumps(merged), revision, completed, day, ident))
+                    (json.dumps(merged), revision, completed, pdf_completed_at,
+                     clear_local, day, ident))
                 if override_active:
                     conn.execute('''UPDATE mod_result_sheets SET override_active=1
                         WHERE day=? AND work_order_id=?''', (day, ident))
@@ -351,10 +387,10 @@ class ResultingRepository:
             if state['submitting'] and self._work_order_submission_locked(
                     conn, day, work_order_id):
                 raise ValueError('This Work Order is being submitted.')
-            updated = conn.execute('''UPDATE mod_result_sheets
+            updated = conn.execute(f'''UPDATE mod_result_sheets
                 SET override_active=1,revision=revision+1,submit_error=''
                 WHERE day=? AND work_order_id=?
-                AND submitted_at IS NOT NULL AND override_active=0
+                AND ({_COMPLETED_AT}) IS NOT NULL AND override_active=0
                 AND revision=?''', (day, work_order_id, int(revision)))
             if updated.rowcount != 1:
                 raise ValueError('Sheet changed or is not completed. Refresh and try again.')
@@ -369,20 +405,33 @@ class ResultingRepository:
             if day_state['submitting'] and self._work_order_submission_locked(
                     conn, day, work_order_id):
                 raise ValueError('This Work Order is being submitted.')
-            before = conn.execute('''SELECT draft FROM mod_result_sheets
+            before = conn.execute(f'''SELECT draft,pdf_documentation,
+                    json_extract(snapshot,'$.appointment_canceled') AS pdf_only
+                    FROM mod_result_sheets
                     WHERE day=? AND work_order_id=? AND revision=?
-                    AND (submitted_at IS NULL OR override_active=1)''',
+                    AND (({_COMPLETED_AT}) IS NULL OR override_active=1)''',
                     (day, work_order_id, int(revision))).fetchone()
             if before is None:
                 raise ValueError('Sheet changed or already submitted. Reload before editing.')
             prior = json.loads(before['draft'])
-            if any(prior.get(key) != draft.get(key)
+            pdf_documentation = json.loads(before['pdf_documentation'])
+            previous = dict(prior, **pdf_documentation) if before['pdf_only'] else prior
+            if any(previous.get(key) != draft.get(key)
                    for key in ('notes', 'redlines', 'note_runs')):
-                self._archive_notes(conn, day, work_order_id, prior, 'local_edit')
-            result = conn.execute('''UPDATE mod_result_sheets SET draft=?,revision=revision+1
+                self._archive_notes(conn, day, work_order_id, previous, 'local_edit')
+            if before['pdf_only']:
+                for key in _PDF_DOCUMENTATION_FIELDS:
+                    if draft.get(key) != previous.get(key):
+                        pdf_documentation[key] = draft.get(key, [] if key == 'note_runs' else '')
+                draft = {key: value for key, value in draft.items()
+                         if key not in _PDF_DOCUMENTATION_FIELDS}
+                draft.update({key: prior[key] for key in _PDF_DOCUMENTATION_FIELDS if key in prior})
+            result = conn.execute(f'''UPDATE mod_result_sheets
+                    SET draft=?,pdf_documentation=?,revision=revision+1
                     WHERE day=? AND work_order_id=? AND revision=?
-                    AND (submitted_at IS NULL OR override_active=1)''',
-                (json.dumps(draft), day, work_order_id, int(revision)))
+                    AND (({_COMPLETED_AT}) IS NULL OR override_active=1)''',
+                    (json.dumps(draft), json.dumps(pdf_documentation),
+                     day, work_order_id, int(revision)))
             if result.rowcount != 1:
                 raise ValueError('Sheet changed or already submitted. Reload before editing.')
             row = conn.execute('''SELECT revision FROM mod_result_sheets
@@ -418,15 +467,16 @@ class ResultingRepository:
                 WHERE day=? AND submitting=0 AND mod_user_id!='' ''', (day,))
         if result.rowcount != 1:
             raise ValueError('Select a MOD, or a submission is already underway.')
-        records = conn.execute('''SELECT work_order_id,snapshot,draft
+        records = conn.execute(f'''SELECT work_order_id,snapshot,draft
                 FROM mod_result_sheets WHERE day=?
-                AND (submitted_at IS NULL OR override_active=1)
+                AND (({_COMPLETED_AT}) IS NULL OR override_active=1)
                 ORDER BY display_order,work_order_id''', (day,)).fetchall()
         pending = []
         for row in records:
             draft = json.loads(row['draft'])
             snapshot = json.loads(row['snapshot'])
-            if draft.get('dispo') and (selected is None or row['work_order_id'] in selected):
+            if ((draft.get('dispo') or snapshot.get('appointment_canceled'))
+                    and (selected is None or row['work_order_id'] in selected)):
                 pending.append({
                     'work_order_id': row['work_order_id'],
                     'snapshot': snapshot,
@@ -621,7 +671,8 @@ class ResultingRepository:
                 WHERE job_id=? AND state='processing' ''',
                 (str(error or 'Submission ended before its outcome was recorded.')[:500], job_id))
             incomplete = conn.execute('''SELECT 1 FROM mod_result_submission_items
-                WHERE job_id=? AND state!='submitted' LIMIT 1''', (job_id,)).fetchone()
+                WHERE job_id=? AND state NOT IN ('submitted','pdf_only') LIMIT 1''',
+                (job_id,)).fetchone()
             message = str(error or ('Some Work Orders were not submitted.' if incomplete else ''))[:500]
             conn.execute('''UPDATE mod_result_submission_jobs SET
                 state=?,finished_at=?,error=? WHERE id=? AND state='running' ''',
@@ -657,6 +708,7 @@ class ResultingRepository:
         return {**job, 'items': items, 'stage_elapsed_seconds': elapsed,
                 'total': len(items),
                 'submitted': sum(item['state']=='submitted' for item in items),
+                'pdf_only': sum(item['state']=='pdf_only' for item in items),
                 'pending': sum(item['state']=='pending' for item in items),
                 'processing': sum(item['state']=='processing' for item in items),
                 'rejected': sum(item['state']=='rejected' for item in items),
@@ -670,10 +722,10 @@ class ResultingRepository:
         Submission history is already durable; no second notification store
         and no Salesforce calls are necessary. Include cross-midnight results.
         """
-        return self.db.rows('''SELECT j.id AS job_id, j.day, j.state AS job_state,
+        return self.db.rows(f'''SELECT j.id AS job_id, j.day, j.state AS job_state,
                 j.created_at, j.finished_at, j.error AS job_error,
                 i.work_order_id, i.work_order_number, i.state, i.error,
-                s.override_active
+                s.override_active, ({_completed_at('s.')}) IS NOT NULL AS completed
             FROM mod_result_submission_items i
             JOIN mod_result_submission_jobs j ON j.id=i.job_id
             LEFT JOIN mod_result_sheets s ON s.day=j.day AND s.work_order_id=i.work_order_id
@@ -731,11 +783,30 @@ class ResultingRepository:
                 conn.execute('UPDATE meta SET value=? WHERE key=?',
                              (json.dumps(dict(payload, state='submitted')), key))
 
+    def finish_pdf_only(self, day, work_order_id, job_id):
+        """Finish local documentation without writing a Salesforce receipt."""
+        with self.db.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            updated = conn.execute('''UPDATE mod_result_sheets SET
+                pdf_completed_at=?,override_active=0,submit_error=''
+                WHERE day=? AND work_order_id=?
+                AND json_extract(snapshot,'$.appointment_canceled')=1
+                AND (pdf_completed_at IS NULL OR override_active=1)''',
+                (time.time(), day, work_order_id))
+            if updated.rowcount != 1:
+                raise ValueError('This canceled appointment changed or is already finished for PDF.')
+            if job_id is not None:
+                item = conn.execute('''UPDATE mod_result_submission_items SET state='pdf_only'
+                    WHERE job_id=? AND work_order_id=? AND state='pending' ''',
+                    (job_id, work_order_id))
+                if item.rowcount != 1:
+                    raise ValueError('This canceled appointment is no longer queued.')
+
     def error_item(self, day, work_order_id, message):
         with self.db.connect() as conn:
-            conn.execute('''UPDATE mod_result_sheets SET submit_error=?
+            conn.execute(f'''UPDATE mod_result_sheets SET submit_error=?
                     WHERE day=? AND work_order_id=?
-                    AND (submitted_at IS NULL OR override_active=1)''',
+                    AND (({_COMPLETED_AT}) IS NULL OR override_active=1)''',
                          (str(message)[:500], day, work_order_id))
 
     def finish_submit(self, day):

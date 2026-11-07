@@ -1308,3 +1308,93 @@ def test_batched_preflight_accepts_salesforce_15_or_18_character_ids():
     planned = adapter.prepare([_payload('pns', interest='Roofing')])
     assert len(planned) == 1
     assert any(item[1] == 'WorkOrder' for item in planned[0])
+
+
+def _selected_appointment_adapter(appointment_rows):
+    adapter, calls = _adapter()
+    query = adapter._query
+    appointment_queries = []
+
+    def appointment_query(soql, **kwargs):
+        if ' FROM ServiceAppointment ' not in soql:
+            return query(soql, **kwargs)
+        appointment_queries.append(soql)
+        return appointment_rows
+
+    adapter._query = appointment_query
+    return adapter, calls, appointment_queries
+
+
+def _appointment_guard_row(ident=SA1, *, status='Scheduled', category=None,
+                           work=WORK, parent=WORK):
+    return {'Id': ident, 'Status': status, 'StatusCategory': category or status,
+            'ParentRecordId': parent, SA['work_order']: work}
+
+
+def test_stale_selected_appointment_cancellation_stops_all_writes_for_that_order():
+    adapter, calls, queries = _selected_appointment_adapter([
+        _appointment_guard_row(status='Canceled'),
+        _appointment_guard_row(SA2),
+    ])
+    payload = dict(_payload('pns', interest='Roofing'), appointment_source_id=SA1)
+    with pytest.raises(ResultingSalesforceError, match='canceled in Salesforce.*finish this card locally'):
+        adapter.prepare([payload])
+    assert len(queries) == 1
+    assert f"OR Id IN ('{SA1}')" in queries[0]
+    assert "Status IN ('Scheduled','Dispatched')" in queries[0]
+    assert all(command[1:4] != ['api', 'request', 'rest'] for command in calls)
+
+
+def test_manually_selected_cxl_still_updates_eligible_salesforce_records():
+    adapter, _, queries = _selected_appointment_adapter([
+        _appointment_guard_row(SA1[:15]),
+        _appointment_guard_row(SA2, status='Dispatched'),
+    ])
+    payload = dict(_payload('cxl', interest='Roofing'), appointment_source_id=SA1)
+    plan = adapter.prepare([payload])[0]
+    assert _single(plan, 'WorkOrder')[3]['Status'] == 'Canceled'
+    assert _single(plan, 'Lead')[3]['Status'] == 'Canceled'
+    assert _single(plan, PRODUCT_RESULT)[3]['Result__c'] == 'Canceled'
+    assert {op[2]: op[3]['Status'] for op in plan if op[1] == 'ServiceAppointment'} == {
+        SA1[:15]: 'Canceled', SA2: 'Canceled',
+    }
+    assert len(queries) == 1
+
+
+def test_selected_appointment_read_does_not_add_extra_write_targets():
+    adapter, _, _ = _selected_appointment_adapter([
+        _appointment_guard_row(status='Completed'),
+        _appointment_guard_row(SA2),
+    ])
+    payload = dict(_payload('pns', interest='Roofing'), appointment_source_id=SA1)
+    plan = adapter.prepare([payload])[0]
+    assert [op[2] for op in plan if op[1] == 'ServiceAppointment'] == [SA2]
+
+
+@pytest.mark.parametrize('rows', [
+    [_appointment_guard_row(SA2)],
+    [_appointment_guard_row(work='0WO000000000002AAA')],
+    [{key: value for key, value in _appointment_guard_row().items()
+      if key != 'StatusCategory'}],
+])
+def test_missing_or_mismatched_selected_appointment_cannot_be_written(rows):
+    adapter, calls, _ = _selected_appointment_adapter(rows)
+    payload = dict(_payload('pns', interest='Roofing'), appointment_source_id=SA1)
+    with pytest.raises(ResultingSalesforceError, match='Refresh MOD Sheets'):
+        adapter.prepare([payload])
+    assert all(command[1:4] != ['api', 'request', 'rest'] for command in calls)
+
+
+def test_selected_appointment_checks_share_one_batched_read():
+    other_work = '0WO000000000002AAA'
+    adapter, _, queries = _selected_appointment_adapter([
+        _appointment_guard_row(SA1),
+        _appointment_guard_row(SA2, work=other_work, parent=other_work),
+    ])
+    first = dict(_payload('pns', interest='Roofing'), appointment_source_id=SA1)
+    second = dict(_payload('pns', interest='Roofing'), work_order_id=other_work,
+                  appointment_source_id=SA2)
+    plans = adapter.prepare([first, second])
+    assert [_single(plan, 'ServiceAppointment')[2] for plan in plans] == [SA1, SA2]
+    assert len(queries) == 1
+    assert f"OR Id IN ('{SA1}','{SA2}')" in queries[0]

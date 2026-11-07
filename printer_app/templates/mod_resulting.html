@@ -45,16 +45,19 @@
 <div class="sheets" id="sheets">
 {% for item in data.sheets %}
 {% set sheet=item.snapshot %}{% set d=item.draft %}{% set xs=sheet.product_interest.split(';') %}
-{% set locked = item.submitted_at and not item.override_active %}
+{% set locked = item.completed and not item.override_active %}
 <section class="mod-sheet{% if locked %} submitted{% endif %}" aria-label="MOD sheet for {{ sheet.lead_name }}"
  data-id="{{ item.work_order_id }}" data-revision="{{ item.revision }}"
  data-name="{{ sheet.lead_name|lower }}" data-customer="{{ sheet.lead_name }}" data-work-number="{{ sheet.work_order_number }}" data-reps="{{ sheet.assigned_service_resources|join(' ')|lower }}" data-dispo="{{ d.dispo }}"
  data-submitted="{{ 'yes' if locked else 'no' }}"
+ data-pdf-only="{{ 'yes' if item.pdf_only else 'no' }}"
  data-source-resulted="{{ 'yes' if (d.dispo or d.product_results) else 'no' }}"
  data-override-active="{{ 'yes' if item.override_active else 'no' }}"
  data-initial='{{ d|tojson|forceescape }}'>
  {% if not locked %}
- <button type="button" class="submit-sheet" aria-label="Result Work Order {{ sheet.work_order_number }}" title="Result this Work Order">Result</button>
+ <button type="button" class="submit-sheet"
+  aria-label="{{ 'Finish' if item.pdf_only else 'Result' }} Work Order {{ sheet.work_order_number }}{% if item.pdf_only %} for PDF{% endif %}"
+  title="{{ 'Save this sheet for the Redlines PDF' if item.pdf_only else 'Result this Work Order' }}">{{ 'Finish for PDF' if item.pdf_only else 'Result' }}</button>
  {% endif %}
  <img class="printer-sheet" src="{{ url_for('mod_resulting.sheet_image', day=data.day, work_order_id=item.work_order_id) }}"
   alt="Printer MOD sheet for {{ sheet.lead_name }}, work order {{ sheet.work_order_number }}"
@@ -160,7 +163,11 @@
     <div class="mod-notes-editor">
      <textarea data-key="notes" class="mod-notes-input" aria-label="MOD Notes" spellcheck="false">{{ d.notes }}</textarea>
     </div>
-      <output class="mod-notes-counter" role="status" aria-live="polite" aria-label="MOD notes and numbers character count"></output>
+    {% if item.pdf_only %}
+    <span class="mod-notes-counter">Canceled in Salesforce · Redlines PDF only</span>
+    {% else %}
+    <output class="mod-notes-counter" role="status" aria-live="polite" aria-label="MOD notes and numbers character count"></output>
+    {% endif %}
     <div class="manual-redlines" {% if not d.redlines %}hidden{% endif %}>{{ d.redlines }}</div>
     <div class="result-detail-in-redline" hidden></div>
     <div class="dnr-in-redline" {% if not d.dnr or not d.dnr_reason %}hidden{% endif %}>DNR - {{ d.dnr_reason }}</div>
@@ -183,7 +190,7 @@
   <label class="below-label"><span class="sr-only">Pictures</span><input type="checkbox" data-key="pictures" {% if d.pictures %}checked{% endif %}></label>
  </div>
  <div class="cell field-dispo replacement">
-  <b>Dispo:</b><select data-key="dispo" aria-label="Dispo">
+  <b>Dispo:</b><select data-key="dispo" aria-label="Dispo" {% if item.pdf_only %}disabled{% endif %}>
    <option value=""></option>
    <option value="sale" {% if d.dispo=='sale' %}selected{% endif %}>Sale</option>
    <option value="pns" {% if d.dispo=='pns' %}selected{% endif %}>Pitch No Sale</option>
@@ -357,12 +364,12 @@
   <button type="button" class="editor-primary" id="confirmClear">Clear local edits</button>
  </div>
 </dialog>
-<dialog class="editor-dialog end-dialog" id="singleResultConfirm" aria-label="Confirm individual Work Order result">
- <div class="editor-heading"><h2>Result Work Order</h2>
+<dialog class="editor-dialog end-dialog" id="singleResultConfirm" aria-labelledby="singleResultHeading">
+ <div class="editor-heading"><h2 id="singleResultHeading">Result Work Order</h2>
   <button type="button" class="close-popover editor-close" aria-label="Close individual result confirmation">×</button>
  </div>
  <div class="editor-body">
-  <p>Are you sure you want to result this Work Order?</p>
+  <p id="singleResultPrompt">Are you sure you want to result this Work Order?</p>
   <p id="singleResultWorkOrder" class="result-work-order"></p>
  </div>
  <div class="editor-footer">
@@ -433,6 +440,7 @@
   <progress id="submissionBar" value="0" max="1" aria-label="Submission progress"></progress>
   <div class="submission-counts">
    <span class="submission-succeeded"><strong id="submissionSucceeded">0</strong> Submitted</span>
+   <span id="submissionPdfOnlySummary" class="submission-succeeded" hidden><strong id="submissionPdfOnly">0</strong> Saved for PDF</span>
    <span><strong id="submissionPending">0</strong> Pending</span>
    <span class="submission-failed"><strong id="submissionFailed">0</strong> Failed</span>
   </div>
