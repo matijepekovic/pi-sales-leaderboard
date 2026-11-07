@@ -38,6 +38,8 @@
  </button>
  <button type="button" id="pdfsButton" {% if not pdfs_available or pdfs_remaining %}disabled{% endif %}
     title="{% if pdfs_remaining %}{{ pdfs_remaining }} MOD sheet(s) still need resulting{% elif not pdfs_available %}PDF generation unavailable{% else %}Create Redlines PDFs{% endif %}">PDFs</button>
+ <a class="mod-instructions-link" href="{{ url_for('mod_resulting.instructions') }}"
+    target="_blank" rel="noopener" aria-label="MOD Resulting instructions">Info</a>
  <span id="notice" role="status" aria-live="polite" class="notification" {% if not notice %}hidden{% endif %}>{{ notice }}</span>
 </div>
 {% macro checkbox(key, label, value, cls='') -%}

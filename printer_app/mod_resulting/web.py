@@ -90,6 +90,10 @@ def blueprint(service, surface, *, color_code=None, pdfs=None):
             notice=notice,
         )
 
+    @bp.get('/instructions')
+    def instructions():
+        return render_template('mod_resulting_instructions.html')
+
     @bp.get('/surface.css')
     def surface_styles():
         return Response(overlay_css(), mimetype='text/css')

@@ -94,7 +94,8 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 .floating-controls input[type=search],.floating-controls select{background:white;border:1px solid #bbb;border-radius:5px;padding:6px 8px;font:inherit}
 .floating-controls input[type=search]{width:min(200px,26vw)}
 .floating-controls .mod-choice,.floating-controls .toggle-hide{display:flex;align-items:center;gap:6px;white-space:nowrap}
-.floating-controls button{background:white;border:1px solid #888;border-radius:5px;font:inherit;padding:7px 12px;cursor:pointer}
+.floating-controls button,.floating-controls .mod-instructions-link{background:white;border:1px solid #888;border-radius:5px;font:inherit;padding:7px 12px;cursor:pointer}
+.mod-instructions-link{display:inline-flex;align-items:center;color:inherit;text-decoration:none}
 .floating-controls #submitDay{background:#111;color:#fff}
 .floating-controls .notification-bell{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:38px;min-height:34px;padding:5px 7px}
 .notification-bell svg{display:block;flex:none}
@@ -230,7 +231,7 @@ body.dialog-open{overflow:hidden}
  .floating-controls select{flex:1;min-width:0;width:0;height:44px;font-size:16px}
  .floating-controls .toggle-hide{flex:1;min-height:44px;gap:4px;font-size:12px}
  .floating-controls .toggle-hide input{width:18px;height:18px;margin:0}
- .floating-controls button,.floating-controls .completed-pdf{min-height:44px;padding:8px;font-size:12px}
+ .floating-controls button,.floating-controls .completed-pdf,.floating-controls .mod-instructions-link{min-height:44px;padding:8px;font-size:12px}
  .sheets{width:100%;padding:12px 8px calc(24px + env(safe-area-inset-bottom));
   gap:20px;align-items:flex-start;overflow-x:auto;overscroll-behavior-x:contain}
  .mod-sheet{width:calc(100vw - 16px);-webkit-text-size-adjust:100%;text-size-adjust:100%}
@@ -246,6 +247,11 @@ body.dialog-open{overflow:hidden}
  .sale-product-row{gap:6px}
  .product-result-row>label{flex-basis:100%}
  .product-result-row .individual-sale-fields label{flex-basis:85px}
+}
+
+/* The compact sheet layout also applies to tablets. Hide Info only at phone sizes. */
+@media (max-width:639px), (hover:none) and (pointer:coarse) and (max-height:500px){
+ .mod-instructions-link{display:none}
 }
 
 @media print{.floating-controls,.notification,.editor-dialog,.sheet-message,.time-picker-button,.red-pen,.override-sheet,.edit-pdf-notes,.submit-sheet,.submission-toast{display:none!important}.sheets{padding:0;gap:18pt}.mod-sheet{break-inside:avoid;width:573.65pt}.mod-sheet.submitted{margin-top:0}}
