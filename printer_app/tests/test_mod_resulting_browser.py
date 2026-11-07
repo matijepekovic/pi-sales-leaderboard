@@ -394,6 +394,10 @@ def test_completed_override_button_unlocks_one_sheet_and_refresh_restores_salesf
     expect(first.locator('[data-key=dispo]')).to_be_disabled()
     expect(second.locator('[data-key=dispo]')).to_be_enabled()
     expect(page.locator('.override-sheet')).to_have_count(1)
+    page.locator('#hideCompleted').check()
+    expect(first).to_be_hidden()
+    expect(second).to_be_visible()
+    page.locator('#hideCompleted').uncheck()
     override = first.locator('.override-sheet')
     expect(override).to_be_visible()
     expect(override).to_have_text('Override')
@@ -492,7 +496,7 @@ def test_mod_sheets_search_customers_and_assigned_reps_only(mod_browser):
     expect(first.locator('.manual-redlines')).to_have_text('REDLINE')
     first.locator('[data-key=numbers]').fill('20000\n17000')
     page.locator('#hideCompleted').check()
-    expect(page.locator('.mod-sheet:visible')).to_have_count(1)
+    expect(page.locator('.mod-sheet:visible')).to_have_count(2)
     page.locator('#hideCompleted').uncheck()
 
     with page.expect_navigation(wait_until='domcontentloaded'):
@@ -660,6 +664,8 @@ def test_per_card_result_confirmation_and_notification_bell(mod_browser):
     first, second = page.locator('.mod-sheet').all()
     first.locator('[data-key=dispo]').select_option('pns')
     second.locator('[data-key=dispo]').select_option('np')
+    hide_completed = page.locator('#hideCompleted')
+    hide_completed.check()
     first_button = first.locator('.submit-sheet')
     expect(first_button).to_be_visible()
     expect(second.locator('.submit-sheet')).to_be_visible()
@@ -688,6 +694,7 @@ def test_per_card_result_confirmation_and_notification_bell(mod_browser):
     assert submitted[0]['work_order_ids'] == [
         json.dumps([first.get_attribute('data-id')])
     ]
+    expect(first).to_be_visible()
     assert second.get_attribute('data-submitted') == 'no'
 
     state['job'] = {
@@ -705,7 +712,11 @@ def test_per_card_result_confirmation_and_notification_bell(mod_browser):
     expect(page.locator('#submissionToast')).to_contain_text(
         'Work Order 00011111 — Submitted', timeout=9000)
     expect(first).to_have_attribute('data-submitted', 'yes')
+    expect(first).to_be_hidden()
+    expect(second).to_be_visible()
+    hide_completed.uncheck()
     expect(first.locator('.override-sheet')).to_be_visible()
+    hide_completed.check()
     expect(second).to_have_attribute('data-submitted', 'no')
     expect(page.locator('#submissionNotificationBadge')).to_have_text('1')
     page.locator('#viewSubmissionProgress').click()
@@ -741,6 +752,7 @@ def test_per_card_result_confirmation_and_notification_bell(mod_browser):
     expect(page.locator('#submissionToast')).to_contain_text(
         'Work Order 00022222 — Needs verification: Validation rule rejected', timeout=9000)
     expect(second).to_have_attribute('data-submitted', 'no')
+    expect(second).to_be_visible()
     expect(page.locator('#submissionNotificationBadge')).to_have_text('1')
     page.locator('#viewSubmissionProgress').click()
     expect(page.locator('#submissionNotificationList li')).to_have_count(2)

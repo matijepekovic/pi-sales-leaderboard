@@ -582,13 +582,12 @@
         sheet.dataset.name.includes(needle) ||
         (sheet.dataset.reps || '').includes(needle)
       );
-      const complete = !!sheet.dataset.dispo && sheet.dataset.overrideActive !== 'yes';
-      // Keep the edited sheet visible until its dialog is closed, even if
-      // "Hide completed" is enabled and selecting a dispo completes the sheet.
+      const submitted = sheet.dataset.submitted === 'yes';
+      // Keep the edited sheet visible until its dialog is closed.
       const editorOpen = sheet.dataset.dialogPending === 'yes' ||
         !!sheet.querySelector('.editor-dialog[open]');
       const wasHidden = sheet.hidden;
-      sheet.hidden = !editorOpen && (!nameMatches || (hideCompleted.checked && complete));
+      sheet.hidden = !editorOpen && (!nameMatches || (hideCompleted.checked && submitted));
       if (wasHidden && !sheet.hidden) fitSalePreview(sheet);
     }
   }
