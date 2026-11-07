@@ -318,7 +318,11 @@ def test_later_morning_import_fills_missing_orders_without_replacing_scans(galle
 
 
 def test_reconciliation_keeps_complete_reference_snapshot_for_later_scans(gallery):
-    records = [_record('00000011'), _record('00000022', lead_name='Later Customer', appointment_canceled=True)]
+    records = [
+        _record('00000011'),
+        _record('00000022', lead_name='Later Customer', appointment_canceled=True,
+                appointment_source_id='08p000000000022AAA'),
+    ]
     gallery.publish_reference_snapshot(DAY, 'morning', records, 1.0)
     _publish(gallery, 'morning', [('00000011', DAY), ('00000022', DAY)], morning=True)
     later_id = _row(gallery, '00000022')['id']

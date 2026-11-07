@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS appointment_references (
  product_interest TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '',
  sub_source TEXT NOT NULL DEFAULT '',
  appointment_canceled INTEGER NOT NULL DEFAULT 0,
+ appointment_source_id TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(day,kind,source_id));
 CREATE INDEX IF NOT EXISTS gallery_reference_work_order
  ON appointment_references(day,kind,work_order_key);
@@ -217,7 +218,7 @@ class GalleryRepository:
                     c.execute(f'ALTER TABLE items ADD COLUMN {name} {definition}')
             reference_columns = {row['name'] for row in c.execute('PRAGMA table_info(appointment_references)')}
             for name in ('local_scheduled_start_time', 'canvass_set_by', 'set_by', 'work_type', 'lead_description',
-                         'sales_lead_status', 'lead_source_id'):
+                         'sales_lead_status', 'lead_source_id', 'appointment_source_id'):
                 if name not in reference_columns:
                     c.execute(f"ALTER TABLE appointment_references ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
             if 'appointment_canceled' not in reference_columns:
@@ -1065,8 +1066,8 @@ class GalleryRepository:
                     day,kind,source_id,work_order_number,work_order_key,lead_name,lead_key,
                     address,address_key,phone,scheduled_start,assigned_service_resources,
                     product_interest,source,sub_source,local_scheduled_start_time,canvass_set_by,
-                    set_by,work_type,lead_description,appointment_canceled)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+                    set_by,work_type,lead_description,appointment_canceled,appointment_source_id)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
                     day, kind, record.get('source_id',''),
                     record.get('work_order_number',''), work_order_key(record.get('work_order_number','')),
                     record.get('lead_name',''), lead_key(record.get('lead_name','')),
@@ -1077,6 +1078,7 @@ class GalleryRepository:
                     record.get('local_scheduled_start_time',''), record.get('canvass_set_by',''),
                     record.get('set_by',''), record.get('work_type',''), record.get('lead_description',''),
                     int(record.get('appointment_canceled') is True),
+                    record.get('appointment_source_id',''),
                 ))
             c.execute("""INSERT INTO appointment_reference_snapshots(day,kind,captured,count)
                 VALUES (?,?,?,?) ON CONFLICT(day,kind) DO UPDATE SET
