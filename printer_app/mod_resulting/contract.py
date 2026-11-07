@@ -604,7 +604,7 @@ def final_redline_text(draft):
 
 
 def prices(numbers):
-    """Highest/lowest complete amounts, ignoring surrounding letters.
+    """Highest/lowest complete amounts of at least 100, ignoring letters.
 
     Numbers is a dedicated numerical column. Annotations are allowed, but
     unrelated Notes and incomplete decimal fragments are never inspected.
@@ -617,7 +617,7 @@ def prices(numbers):
                 number = Decimal(value)
             except InvalidOperation:
                 continue
-            if number.is_finite() and number >= 0:
+            if number.is_finite() and number >= 100:
                 result.append(number)
     return {
         'highest': money_text(str(max(result))) if result else '',

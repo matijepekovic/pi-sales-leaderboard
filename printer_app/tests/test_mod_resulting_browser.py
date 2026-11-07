@@ -1438,9 +1438,25 @@ def test_calculated_amount_placeholders_update_and_clear_to_automatic(mod_browse
     page, service, writer, origin, evidence = mod_browser
     page.goto(origin + '/mod-resulting')
     sheet = page.locator('.mod-sheet').first
-    sheet.locator('[data-key=numbers]').fill('Sale 17000\nStarting price 25000\nAdjustment 21000')
+    sheet.locator('[data-key=numbers]').fill(
+        'Sale 17000\nStarting price 25000\nAdjustment 21000\n0\n9\n99.99\n099')
     expect(sheet.locator('[data-price-display=start_price_override]')).to_have_text('$25000')
     expect(sheet.locator('[data-price-display=final_price_override]')).to_have_text('$17000')
+
+    sheet.locator('[data-key=numbers]').fill('0\n9\n99.99\n099')
+    expect(sheet.locator('[data-price-display=start_price_override]')).to_have_text('')
+    expect(sheet.locator('[data-price-display=final_price_override]')).to_have_text('')
+    sheet.locator('[data-key=numbers]').fill('99.99\n100\n100.01')
+    expect(sheet.locator('[data-price-display=start_price_override]')).to_have_text('$100.01')
+    expect(sheet.locator('[data-price-display=final_price_override]')).to_have_text('$100')
+    sheet.locator('[data-price-trigger=final_price_override]').click()
+    price = sheet.locator('.price-panel')
+    price.locator('[data-key=final_price_override]').fill('50')
+    expect(sheet.locator('[data-price-display=final_price_override]')).to_have_text('$50')
+    price.locator('[data-key=final_price_override]').fill('')
+    expect(sheet.locator('[data-price-display=final_price_override]')).to_have_text('$100')
+    price.locator('.editor-primary').click()
+    sheet.locator('[data-key=numbers]').fill('Sale 17000\nStarting price 25000\nAdjustment 21000')
 
     sheet.locator('[data-key=dispo]').select_option('sale')
     sale = sheet.locator('.sale-panel')

@@ -499,12 +499,12 @@
   }
   function numericExtremes(notes) {
     // The Numbers column may contain annotations. Ignore letters, extract
-    // independent valid amounts, and never join or round their digits.
+    // independent amounts of at least 100, and never join or round digits.
     const tokens = String(notes || '').matchAll(
       /(?<![\d.,-])\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?(?![\d.]|,\d)/g
     );
     const values = [...tokens].map(match => moneyCents(match[0]))
-      .filter(value => value !== null);
+      .filter(value => value !== null && value >= 10000);
     return {
       highest: values.length ? centsText(Math.max(...values)) : '',
       lowest: values.length ? centsText(Math.min(...values)) : ''
