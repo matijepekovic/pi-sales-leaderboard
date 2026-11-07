@@ -311,7 +311,7 @@ def test_popup_fits_native_zoom_before_opening_and_allows_zoom_again(mod_browser
     assert page.evaluate('window.modCspViolations') == []
     popup.locator('.sale-done').click()
     expect(popup).to_be_hidden()
-    expect(page.locator('.mod-sheet').first).to_be_hidden()
+    expect(page.locator('.mod-sheet').first).to_be_visible()
 
     # The fit is automatic for popups, but pinch remains available afterward.
     cdp.send('Emulation.setPageScaleFactor', {'pageScaleFactor':2.5})

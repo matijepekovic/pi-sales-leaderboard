@@ -84,6 +84,8 @@ class ResultingService:
         for sheet in self.repository.sheets(day):
             data = source_draft(sheet['draft'])
             sheet['draft'] = data
+            sheet['pdf_only'] = sheet['snapshot'].get('appointment_canceled') is True
+            sheet['completed'] = sheet['completed_at'] is not None
             sheet['result'] = outcome_fields(data)
             sheets.append(sheet)
         return {'day': day, 'state': state, 'sheets': sheets}
@@ -148,6 +150,8 @@ class ResultingService:
             key: value for key, value in row['draft'].items()
             if key not in editor_fields
         })
+        if row['snapshot'].get('appointment_canceled') is True:
+            data['dispo'] = row['draft'].get('dispo', '')
         # A Sale does not expose individual Product Results for editing.
         # Neither does a sheet with one product or individual mode disabled.
         # Preserve the stored Salesforce outcomes in those modes, regardless
@@ -281,6 +285,7 @@ class ResultingService:
             day=sheet['day'], work_order_id=sheet['work_order_id'],
             work_order_number=sheet['snapshot']['work_order_number'],
             lead_id=sheet['snapshot'].get('lead_source_id', ''),
+            appointment_source_id=sheet['snapshot'].get('appointment_source_id', ''),
             mod_id=mod_id, dispo=draft['dispo'], fields=fields,
             draft=draft, product_results=results,
             product_result_context=context,
@@ -299,7 +304,48 @@ class ResultingService:
 
     def _apply_batch(self, day, mod_id, rows, *, job_id=None, resulted_on=None,
                      raise_on_error=True):
-        """Single Salesforce write path for direct and background submissions."""
+        """Finish local-only cards and result the remaining cards in Salesforce."""
+        failures = []
+        counts = {'rejected': 0, 'uncertain': 0, 'not_submitted': 0}
+        pdf_only = 0
+
+        def record_failure(row, state, message):
+            ident = row['work_order_id']
+            self.repository.error_item(day, ident, message)
+            if job_id is not None:
+                self.repository.submission_item(job_id, ident, state, message)
+            counts[state] += 1
+
+        def batch_result(sent):
+            result = {'submitted': sent, 'day': day}
+            if pdf_only:
+                result['pdf_only'] = pdf_only
+            if failures:
+                if raise_on_error:
+                    raise failures[0]
+                result.update(counts, error=str(failures[0])[:500])
+            return result
+
+        remote_rows = []
+        for row in rows:
+            if row['snapshot'].get('appointment_canceled') is not True:
+                if 'appointment_source_id' not in row['snapshot']:
+                    error = ValueError('Refresh MOD Sheets to verify this Salesforce appointment.')
+                    failures.append(error)
+                    record_failure(row, 'rejected', str(error))
+                else:
+                    remote_rows.append(row)
+                continue
+            try:
+                self.repository.finish_pdf_only(day, row['work_order_id'], job_id)
+                pdf_only += 1
+            except Exception as exc:
+                failures.append(exc)
+                record_failure(row, 'not_submitted', str(exc))
+        rows = remote_rows
+        if not rows:
+            return batch_result(0)
+
         resulting_date = resulted_on or self.day()
         if job_id is not None:
             self.repository.submission_stage(job_id, 'Checking saved MOD appointment dates')
@@ -320,17 +366,9 @@ class ResultingService:
         # Plans sharing a Lead depend on one another's history and product
         # interests. Keep that dependency inside one preflight group while
         # allowing unrelated Leads to complete after a confirmed rejection.
-        groups, row_groups, plans, payloads, failures = {}, {}, {}, {}, []
+        groups, row_groups, plans, payloads = {}, {}, {}, {}
         confirmed = set()
         sent = 0
-        counts = {'rejected': 0, 'uncertain': 0, 'not_submitted': 0}
-
-        def record_failure(row, state, message):
-            ident = row['work_order_id']
-            self.repository.error_item(day, ident, message)
-            if job_id is not None:
-                self.repository.submission_item(job_id, ident, state, message)
-            counts[state] += 1
 
         group_key = getattr(self.writer, 'submission_group_key', None)
         for row in rows:
@@ -492,12 +530,7 @@ class ResultingService:
             if job_id is not None:
                 self.repository.submission_item(job_id, ident, 'submitted')
             sent += 1
-        if failures:
-            if raise_on_error:
-                raise failures[0]
-            return {'submitted': sent, 'day': day, **counts,
-                    'error': str(failures[0])[:500]}
-        return {'submitted': sent, 'day': day}
+        return batch_result(sent)
 
     def submit(self, day, work_order_ids=None):
         """Synchronous workflow contract retained for callers and tests."""

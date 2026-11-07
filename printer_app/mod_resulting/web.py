@@ -1,6 +1,7 @@
 """HTTP-only boundary for the independent digital MOD sheet sandbox."""
 from __future__ import annotations
 
+from io import BytesIO
 import json
 
 from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request, send_file, url_for
@@ -176,13 +177,14 @@ def blueprint(service, surface, *, color_code=None, pdfs=None):
         if pdfs is None:
             abort(404)
         try:
-            path = pdfs.calc_pdf_path(service.day(), job_id)
+            day = service.day()
+            png = pdfs.calc_png(day, job_id)
         except LookupError:
             abort(404)
         except ValueError as exc:
             return Response(str(exc), status=409, mimetype='text/plain')
-        response = send_file(path, mimetype='application/pdf', as_attachment=False,
-                             download_name='OLY-Calc-' + service.day() + '.pdf')
+        response = send_file(BytesIO(png), mimetype='image/png', as_attachment=True,
+                             download_name='OLY-Calc-' + day + '.png')
         response.headers['Cache-Control'] = 'no-store'
         response.headers['Content-Security-Policy'] = "sandbox; default-src 'none'"
         return response

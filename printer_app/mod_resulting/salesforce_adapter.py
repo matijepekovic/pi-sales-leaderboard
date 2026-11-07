@@ -964,43 +964,95 @@ class ResultingSalesforceAdapter:
                 for canonical, names in aliases.items() for alias in names}
 
     def _appointments_for_batch(self, payloads):
-        """Select every Scheduled/Dispatched appointment on each Work Order.
+        """Verify selected appointments and select the existing Flow write targets.
 
         Match Flow v30 by ParentRecordId and Status; the MOD sheet day is
         not an additional eligibility filter. A Work Order with no remaining
-        eligible appointments can still have its other results submitted.
+        eligible appointments can still have its other results submitted, provided
+        its selected source appointment has not been canceled in Salesforce.
         """
+        payloads = tuple(payloads)
         ids = list(dict.fromkeys(
             _require_id(payload['work_order_id']) for payload in payloads))
+        selected_by_work = {
+            payload['work_order_id'][:15]: _require_id(payload['appointment_source_id'])
+            for payload in payloads
+            if payload.get('appointment_source_id') not in ('', None)
+        }
+        if len({ident[:15] for ident in selected_by_work.values()}) != len(selected_by_work):
+            raise ResultingSalesforceError('The selected Service Appointment identity is ambiguous.')
         appointments = {key: [] for key in ids}
         seen = set()
         for offset in range(0, len(ids), 40):
             chunk = ids[offset:offset + 40]
             canonical = {ident[:15]: ident for ident in chunk}
+            selected = {ident[:15]: work for work, ident in selected_by_work.items()
+                        if work in canonical}
+            observed = set()
+            where = (SA_PARENT + ' IN ('
+                     + ','.join(_soql(key) for key in chunk) + ')'
+                     + " AND Status IN ('Scheduled','Dispatched')")
+            fields = 'Id,' + SA_PARENT
+            if selected:
+                # The exact selected row is read even when its status took it
+                # out of the write scope. Both reads share this paged query.
+                where = '((' + where + ') OR Id IN (' + ','.join(
+                    _soql(selected_by_work[work]) for work in selected.values()) + '))'
+                fields += ',Status,StatusCategory,' + SA['work_order']
             cursor = ''
             while True:
-                where = (SA_PARENT + ' IN ('
-                         + ','.join(_soql(key) for key in chunk) + ')'
-                         + " AND Status IN ('Scheduled','Dispatched')")
+                page_where = where
                 if cursor:
-                    where += ' AND Id > ' + _soql(cursor)
+                    page_where += ' AND Id > ' + _soql(cursor)
                 rows = self._query(
-                    'SELECT Id,' + SA_PARENT + ' FROM '
-                    + SERVICE_APPOINTMENT + ' WHERE ' + where
+                    'SELECT ' + fields + ' FROM '
+                    + SERVICE_APPOINTMENT + ' WHERE ' + page_where
                     + ' ORDER BY Id LIMIT 2000')
                 for row in rows:
                     ident = _require_id(str(row.get('Id') or ''))
-                    source_id = _require_id(str(row.get(SA_PARENT) or ''))
-                    work_order = canonical.get(source_id[:15])
-                    if work_order is None or ident in seen or (
-                            cursor and ident <= cursor):
+                    key = ident[:15]
+                    if key in seen or (cursor and ident <= cursor):
                         raise ResultingSalesforceError(
                             'Service Appointment identity or paging is invalid.')
-                    seen.add(ident)
+                    seen.add(key)
+                    selected_work = selected.get(key)
+                    status = row.get('Status')
+                    if selected and (not isinstance(status, str) or not status.strip()):
+                        raise ResultingSalesforceError(
+                            'Service Appointment status was unavailable for verification. '
+                            'Refresh MOD Sheets before submitting.')
+                    if selected_work is not None:
+                        source_work = str(row.get(SA['work_order']) or '')
+                        category = row.get('StatusCategory')
+                        if (not ID_RE.fullmatch(source_work) or source_work[:15] != selected_work
+                                or not isinstance(category, str) or not category.strip()):
+                            raise ResultingSalesforceError(
+                                'The selected Service Appointment could not be verified. '
+                                'Refresh MOD Sheets before submitting.')
+                        observed.add(key)
+                        if (category.strip().casefold() == 'canceled'
+                                or status.strip().casefold() == 'canceled'):
+                            raise ResultingSalesforceError(
+                                'The selected Service Appointment was canceled in Salesforce. '
+                                'Refresh MOD Sheets, then finish this card locally.')
+                    source_id = str(row.get(SA_PARENT) or '')
+                    work_order = canonical.get(source_id[:15]) if ID_RE.fullmatch(source_id) else None
+                    if selected and (work_order is None or status not in ('Scheduled', 'Dispatched')):
+                        if selected_work is not None:
+                            # Reading the selected record never adds it to the
+                            # original Flow scope if its parent or status differs.
+                            continue
+                        raise ResultingSalesforceError('Service Appointment write scope is invalid.')
+                    if work_order is None:
+                        raise ResultingSalesforceError('Service Appointment identity is invalid.')
                     appointments[work_order].append(ident)
                 if len(rows) < 2000:
                     break
                 cursor = _require_id(str(rows[-1].get('Id') or ''))
+            if observed != set(selected):
+                raise ResultingSalesforceError(
+                    'The selected Service Appointment was unavailable for verification. '
+                    'Refresh MOD Sheets before submitting.')
         return appointments
 
     def _product_rows_for_batch(self, payloads):

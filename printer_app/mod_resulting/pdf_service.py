@@ -8,7 +8,7 @@ from pathlib import Path
 from pypdf import PdfReader, PdfWriter
 
 from .cover_pdf import render_cover_pdf
-from .calc_pdf import render_calc_pdf
+from .calc_pdf import render_calc_pdf, render_calc_png
 from .calc_report import project_calc, apply_calc_edits
 from .cover_report import apply_edits, has_result, project_cover
 
@@ -59,7 +59,7 @@ class ModPdfService:
     def calc_editor(self, day, job_id):
         job = self.repository.job(day, job_id)
         if job["calc_state"] == "unavailable":
-            raise LookupError("OLY Calc is unavailable for this PDF job.")
+            raise LookupError("OLY Calc is unavailable for this job.")
         return {
             "job_id": job_id, "day": day, "revision": job["calc_revision"],
             "report": apply_calc_edits(job["calc_base"], job["calc_edits"]),
@@ -80,14 +80,20 @@ class ModPdfService:
             "ready": job["calc_state"] == "ready", "error": job["calc_error"],
         }
 
-    def calc_pdf_path(self, day, job_id):
+    def calc_png(self, day, job_id):
         job = self.repository.job(day, job_id)
         if job["calc_state"] != "ready" or not job["calc_confirmed"]:
             raise ValueError("OLY Calc is not ready. Confirm it and check progress.")
-        path = self._job_dir(job_id) / "OLY Calc.pdf"
-        if not path.is_file():
-            raise ValueError("OLY Calc PDF file is missing.")
-        return path
+        directory = self._job_dir(job_id)
+        path = directory / "OLY Calc.png"
+        if path.is_file():
+            return path.read_bytes()
+        if (directory / "OLY Calc.pdf").is_file():
+            # Ready jobs created before PNG exports retain the confirmed report.
+            # Render that report again so the old footer never returns.
+            report = apply_calc_edits(job["calc_base"], job["calc_edits"])
+            return render_calc_png(report)
+        raise ValueError("OLY Calc PNG file is missing.")
 
     def confirm(self, day, job_id, edits, revision):
         job = self.repository.job(day, job_id)
@@ -149,10 +155,10 @@ class ModPdfService:
         return self.repository.mark_ready(job_id, job["revision"])
 
     def _finalize_calc(self, job_id):
-        """Capture the latest confirmed Calc edits and publish its own PDF."""
+        """Capture the latest confirmed Calc edits and publish its PNG."""
         job = self.repository.job_any(job_id)
         report = apply_calc_edits(job["calc_base"], job["calc_edits"])
-        self._write(job_id, "OLY Calc.pdf", render_calc_pdf(report))
+        self._write(job_id, "OLY Calc.png", render_calc_png(report))
         return self.repository.mark_calc_ready(job_id, job["calc_revision"])
 
     def process_next(self):

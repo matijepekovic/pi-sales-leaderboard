@@ -18,7 +18,7 @@
   <a href="{{ url_for('mod_resulting.page') }}">MOD Sheets</a>
   <a href="{{ url_for('mod_resulting.pdfs_cover', job_id=data.job_id) }}">Redlines Cover</a>
   <button class="primary" type="button" id="confirmCalc">Confirm</button>
-  <a id="downloadCalc" href="#" target="_blank" rel="noopener" hidden>Open OLY Calc PDF</a>
+  <a id="downloadCalc" href="#" download hidden>Download OLY Calc PNG</a>
  </div>
 </header>
 <div id="calcStatus" role="status" aria-live="polite"></div>
@@ -52,10 +52,10 @@
   src="{{ url_for('static',filename='mod_resulting/oly_calc_art.svg') }}"
   alt="Original Olympia Capitol illustration with butterflies and stacks of money"
   width="390" height="585">
- <div class="report-footer">{{ data.day }} — CXL and OOS excluded from Leads</div>
+ <div class="report-footer">{{ data.day }}</div>
 </main>
 <footer>
- <button type="button" class="primary" id="bottomConfirm">Confirm OLY Calc and generate PDF</button>
+ <button type="button" class="primary" id="bottomConfirm">Confirm OLY Calc and generate PNG</button>
 </footer>
 </body>
 </html>

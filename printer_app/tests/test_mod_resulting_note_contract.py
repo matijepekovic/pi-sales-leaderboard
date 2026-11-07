@@ -170,7 +170,8 @@ def test_browser_counter_matches_the_destination_for_authored_red_text():
 def test_existing_submission_history_migrates_without_losing_receipts(tmp_path):
     path = tmp_path / 'printer.db'
     legacy = MOD_SUBMISSION_ITEMS_SCHEMA.replace(
-        "'submitted','rejected','uncertain','not_submitted'", "'submitted','uncertain'")
+        "'submitted','rejected','uncertain','not_submitted','pdf_only'",
+        "'submitted','uncertain'")
     with sqlite3.connect(path) as conn:
         conn.executescript(SCHEMA.replace(MOD_SUBMISSION_ITEMS_SCHEMA, legacy))
         conn.execute("INSERT INTO mod_result_days(day) VALUES('2026-11-06')")

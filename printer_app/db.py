@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS mod_result_submission_items (
  work_order_number TEXT NOT NULL DEFAULT '',
  position INTEGER NOT NULL,
  state TEXT NOT NULL CHECK(state IN
-  ('pending','processing','submitted','rejected','uncertain','not_submitted')),
+  ('pending','processing','submitted','rejected','uncertain','not_submitted','pdf_only')),
  error TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(job_id,work_order_id));
 '''
@@ -130,6 +130,8 @@ CREATE TABLE IF NOT EXISTS mod_result_sheets (
  current INTEGER NOT NULL DEFAULT 1,
  display_order INTEGER NOT NULL DEFAULT 0,
  submitted_at REAL,
+ pdf_completed_at REAL,
+ pdf_documentation TEXT NOT NULL DEFAULT '{}',
  override_active INTEGER NOT NULL DEFAULT 0 CHECK(override_active IN (0,1)),
  submit_error TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(day, work_order_id));
@@ -212,7 +214,7 @@ class Database:
             submission_schema = conn.execute(
                 "SELECT sql FROM sqlite_master WHERE type='table' "
                 "AND name='mod_result_submission_items'").fetchone()[0]
-            if "'rejected'" not in submission_schema or "'not_submitted'" not in submission_schema:
+            if "'pdf_only'" not in submission_schema:
                 # Widen the state constraint transactionally without changing
                 # any saved draft, submission receipt, ordering or error text.
                 conn.execute('ALTER TABLE mod_result_submission_items '
@@ -221,9 +223,13 @@ class Database:
                 conn.execute('INSERT INTO mod_result_submission_items '
                              'SELECT * FROM mod_result_submission_items_migration')
                 conn.execute('DROP TABLE mod_result_submission_items_migration')
-            # Existing version-1 printer databases gain one local override flag;
-            # no Salesforce record or draft payload is migrated or rewritten.
+            # Add local completion/override state without rewriting drafts or receipts.
             columns = {row[1] for row in conn.execute('PRAGMA table_info(mod_result_sheets)')}
+            if 'pdf_completed_at' not in columns:
+                conn.execute('ALTER TABLE mod_result_sheets ADD COLUMN pdf_completed_at REAL')
+            if 'pdf_documentation' not in columns:
+                conn.execute("ALTER TABLE mod_result_sheets ADD COLUMN "
+                             "pdf_documentation TEXT NOT NULL DEFAULT '{}'")
             if 'override_active' not in columns:
                 conn.execute(
                     'ALTER TABLE mod_result_sheets ADD COLUMN override_active '

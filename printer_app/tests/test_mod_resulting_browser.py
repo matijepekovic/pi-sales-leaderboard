@@ -394,6 +394,10 @@ def test_completed_override_button_unlocks_one_sheet_and_refresh_restores_salesf
     expect(first.locator('[data-key=dispo]')).to_be_disabled()
     expect(second.locator('[data-key=dispo]')).to_be_enabled()
     expect(page.locator('.override-sheet')).to_have_count(1)
+    page.locator('#hideCompleted').check()
+    expect(first).to_be_hidden()
+    expect(second).to_be_visible()
+    page.locator('#hideCompleted').uncheck()
     override = first.locator('.override-sheet')
     expect(override).to_be_visible()
     expect(override).to_have_text('Override')
@@ -492,7 +496,7 @@ def test_mod_sheets_search_customers_and_assigned_reps_only(mod_browser):
     expect(first.locator('.manual-redlines')).to_have_text('REDLINE')
     first.locator('[data-key=numbers]').fill('20000\n17000')
     page.locator('#hideCompleted').check()
-    expect(page.locator('.mod-sheet:visible')).to_have_count(1)
+    expect(page.locator('.mod-sheet:visible')).to_have_count(2)
     page.locator('#hideCompleted').uncheck()
 
     with page.expect_navigation(wait_until='domcontentloaded'):
@@ -660,6 +664,8 @@ def test_per_card_result_confirmation_and_notification_bell(mod_browser):
     first, second = page.locator('.mod-sheet').all()
     first.locator('[data-key=dispo]').select_option('pns')
     second.locator('[data-key=dispo]').select_option('np')
+    hide_completed = page.locator('#hideCompleted')
+    hide_completed.check()
     first_button = first.locator('.submit-sheet')
     expect(first_button).to_be_visible()
     expect(second.locator('.submit-sheet')).to_be_visible()
@@ -688,6 +694,7 @@ def test_per_card_result_confirmation_and_notification_bell(mod_browser):
     assert submitted[0]['work_order_ids'] == [
         json.dumps([first.get_attribute('data-id')])
     ]
+    expect(first).to_be_visible()
     assert second.get_attribute('data-submitted') == 'no'
 
     state['job'] = {
@@ -705,7 +712,11 @@ def test_per_card_result_confirmation_and_notification_bell(mod_browser):
     expect(page.locator('#submissionToast')).to_contain_text(
         'Work Order 00011111 — Submitted', timeout=9000)
     expect(first).to_have_attribute('data-submitted', 'yes')
+    expect(first).to_be_hidden()
+    expect(second).to_be_visible()
+    hide_completed.uncheck()
     expect(first.locator('.override-sheet')).to_be_visible()
+    hide_completed.check()
     expect(second).to_have_attribute('data-submitted', 'no')
     expect(page.locator('#submissionNotificationBadge')).to_have_text('1')
     page.locator('#viewSubmissionProgress').click()
@@ -741,6 +752,7 @@ def test_per_card_result_confirmation_and_notification_bell(mod_browser):
     expect(page.locator('#submissionToast')).to_contain_text(
         'Work Order 00022222 — Needs verification: Validation rule rejected', timeout=9000)
     expect(second).to_have_attribute('data-submitted', 'no')
+    expect(second).to_be_visible()
     expect(page.locator('#submissionNotificationBadge')).to_have_text('1')
     page.locator('#viewSubmissionProgress').click()
     expect(page.locator('#submissionNotificationList li')).to_have_count(2)
@@ -750,6 +762,60 @@ def test_per_card_result_confirmation_and_notification_bell(mod_browser):
         'Validation rule rejected')
     assert writer.applied == []
     evidence('per-card-result-bell')
+
+
+def test_salesforce_canceled_card_can_finish_for_pdf_with_hide_completed(mod_browser, monkeypatch):
+    from dataclasses import replace
+    from playwright.sync_api import expect
+
+    page, service, writer, origin, _ = mod_browser
+    day = service.day()
+    canceled = replace(service.source.records_data[0], appointment_canceled=True)
+    service.source.records_data[0] = canceled
+    writer.read_results = lambda records: {
+        row.source_id: {'dispo':'cxl'} if row.source_id == canceled.source_id else {}
+        for row in records
+    }
+    writer.note_field = lambda: {'limit': 255}
+    service.refresh(day)
+
+    page.goto(origin + '/mod-resulting')
+    page.locator('#dailyMod').select_option(MOD)
+    page.locator('#hideCompleted').check()
+    card = page.locator('.mod-sheet').first
+    expect(card).to_be_visible()
+    expect(card.locator('[data-key=dispo]')).to_have_value('cxl')
+    expect(card.locator('[data-key=dispo]')).to_be_disabled()
+    notes = 'Followed up about the Salesforce cancellation. ' * 7
+    card.locator('[data-key=notes]').fill(notes)
+    card.locator('.red-pen').click()
+    popup = card.locator('.redlines-panel')
+    popup.locator('[data-key=redlines]').fill('Cancellation follow-up')
+    popup.locator('.editor-primary').click()
+
+    finish = card.get_by_role('button', name='Finish Work Order 00011111 for PDF')
+    expect(finish).to_be_enabled()
+    finish.click()
+    expect(page.locator('#singleResultConfirm')).to_contain_text('for the Redlines PDF')
+    # Enable the real queue against this fixture's fake Salesforce writer.
+    with monkeypatch.context() as queued:
+        queued.setattr(service, 'allow_salesforce_writes', True)
+        with page.expect_response('**/mod-resulting/api/submit') as submitted:
+            page.locator('#singleResultYes').click()
+        assert submitted.value.status == 202
+        result = service.process_next_submission()
+        assert result['ok'] and result['pdf_only'] == 1 and result['submitted'] == 0
+
+    page.locator('#viewSubmissionProgress').click()
+    expect(page.locator('#submissionNotificationList')).to_contain_text(
+        'Work Order 00011111 — Saved for PDF')
+    expect(page.locator('#submissionPdfOnly')).to_have_text('1')
+    expect(page.locator('#submissionSucceeded')).to_have_text('0')
+    expect(card).to_be_hidden()
+    saved = service.repository.sheets(day)[0]['draft']
+    assert saved['notes'].strip() == notes.strip()
+    assert saved['redlines'] == 'Cancellation follow-up'
+    assert not writer.applied
 
 
 def test_end_of_day_three_popups_submit_only_explicitly_selected_work_order(mod_browser):
@@ -1687,6 +1753,10 @@ def test_oly_calc_browser_uses_approved_picture_and_editable_formulas(mod_browse
     page.locator('#pdfChoice #pdfCalc').click()
     page.wait_for_url('**/mod-resulting/pdfs/calc/*')
     expect(page.locator('h1')).to_have_text('OLY Calc')
+    expect(page.locator('.report-footer')).to_have_text(service.day())
+    expect(page.locator('#bottomConfirm')).to_have_text('Confirm OLY Calc and generate PNG')
+    expect(page.locator('#downloadCalc')).to_have_text('Download OLY Calc PNG')
+    expect(page.locator('#downloadCalc')).to_have_attribute('download', '')
     assert page.locator('img.calc-picture').evaluate('(img) => img.naturalWidth') > 0
     expect(page.locator('[data-output="leads"]')).to_have_value('2')
     page.locator('[data-input="sold"]').fill('1')

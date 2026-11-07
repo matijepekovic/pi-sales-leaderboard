@@ -244,6 +244,7 @@ def test_mod_query_and_grouping_match_original_apex_controller():
     assert len(records) == 1
     record = records[0]
     assert record.source_id == '0WO000000000001AAA'
+    assert record.appointment_source_id == '08p000000000002AAA'
     assert record.local_scheduled_start_time == 'SELECTED EARLIER CREATED ROW'
     assert record.assigned_service_resources == ('Sales Rep Two', 'Sales Rep One')
     assert record.scheduled_start == '2026.09.19 ; 10:30:00 AM'
@@ -298,6 +299,7 @@ def test_direct_work_order_lookup_needs_no_date_and_returns_current_normalized_a
     record = records[0]
     assert record.work_order_number == '00012345'
     assert record.appointment_date == '2026-09-21'
+    assert record.appointment_source_id == '08p000000000002AAA'
     assert record.lead_name == 'Jordan Example'
     assert record.address == '123 Main St, Lacey, WA, 98503'
     assert record.assigned_service_resources == ('Current Rep', 'Second Rep')

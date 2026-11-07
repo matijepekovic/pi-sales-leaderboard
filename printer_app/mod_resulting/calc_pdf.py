@@ -1,4 +1,4 @@
-"""Approved compact OLY Calc PDF and original Olympia artwork.
+"""Render the approved compact OLY Calc layout and original Olympia artwork.
 
 A pure presentation adapter: receives normalized report values, never queries
 Salesforce, reads SQLite, or changes resulting/submission state.
@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import date
 import base64
 import re
+import subprocess
 from io import BytesIO
 from pathlib import Path
 
@@ -113,8 +114,22 @@ def render_calc_pdf(report, *, artwork_path=None):
     c.setFillColor(GRAY)
     c.setFont("Helvetica", 8)
     nice_day = date.fromisoformat(report["day"]).strftime("%B %d, %Y")
-    c.drawCentredString(PAGE_W / 2, 12, nice_day +
-                        "  -  CXL and OOS excluded from Leads")
+    c.drawCentredString(PAGE_W / 2, 12, nice_day)
     c.showPage()
     c.save()
     return buffer.getvalue()
+
+
+def render_calc_png(report):
+    """Rasterize the approved layout at twice its point dimensions."""
+    pdf = render_calc_pdf(report)
+    try:
+        result = subprocess.run(
+            ['pdftoppm', '-f', '1', '-l', '1', '-singlefile', '-r', '144', '-png', '-'],
+            input=pdf, capture_output=True, check=False, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError('Printer could not render the OLY Calc PNG.') from exc
+    if result.returncode or not result.stdout.startswith(b'\x89PNG\r\n\x1a\n'):
+        raise ValueError('Printer could not render the OLY Calc PNG.')
+    return result.stdout
