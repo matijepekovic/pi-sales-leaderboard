@@ -1699,6 +1699,10 @@ def test_oly_calc_browser_uses_approved_picture_and_editable_formulas(mod_browse
     page.locator('#pdfChoice #pdfCalc').click()
     page.wait_for_url('**/mod-resulting/pdfs/calc/*')
     expect(page.locator('h1')).to_have_text('OLY Calc')
+    expect(page.locator('.report-footer')).to_have_text(service.day())
+    expect(page.locator('#bottomConfirm')).to_have_text('Confirm OLY Calc and generate PNG')
+    expect(page.locator('#downloadCalc')).to_have_text('Download OLY Calc PNG')
+    expect(page.locator('#downloadCalc')).to_have_attribute('download', '')
     assert page.locator('img.calc-picture').evaluate('(img) => img.naturalWidth') > 0
     expect(page.locator('[data-output="leads"]')).to_have_value('2')
     page.locator('[data-input="sold"]').fill('1')

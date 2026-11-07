@@ -193,7 +193,7 @@ class ModPdfRepository:
                 FROM mod_result_pdf_jobs WHERE day=? AND id=?""",
                 (day, job_id)).fetchone()
             if row is None:
-                raise LookupError("OLY Calc PDF job not found.")
+                raise LookupError("OLY Calc job not found.")
             if row["calc_revision"] != revision:
                 raise ValueError("OLY Calc changed elsewhere. Reload the report.")
             if row["calc_state"] in ("failed", "unavailable"):

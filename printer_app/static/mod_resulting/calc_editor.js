@@ -102,7 +102,7 @@
       if (!response.ok || !result.ok) throw new Error(result.error || 'Could not confirm OLY Calc.');
       root.dataset.revision = String(result.revision);
       dirty = false;
-      status.textContent = 'OLY Calc confirmed. Generating the PDF.';
+      status.textContent = 'OLY Calc confirmed. Generating the PNG.';
       poll();
     } catch (error) {
       status.textContent = error.message;
@@ -118,26 +118,26 @@
       const state = await response.json();
       if (!response.ok || !state.ok) throw new Error(state.error || 'Status unavailable.');
       if (state.state === 'failed') {
-        status.textContent = state.error || 'OLY Calc PDF generation failed.';
+        status.textContent = state.error || 'OLY Calc PNG generation failed.';
         download.hidden = true;
         return;
       }
       if (state.ready && !dirty) {
         download.href = state.download_url;
         download.hidden = false;
-        status.textContent = 'OLY Calc PDF is ready.';
+        status.textContent = 'OLY Calc PNG is ready.';
         return;
       }
       if (!dirty) {
         const stages = {
-          queued:'Queued for background PDF generation.',
+          queued:'Queued for background PNG generation.',
           rendering:'Generating the calculation report.',
           awaiting_confirmation:'Report generated. Confirm your OLY Calc values.',
           pending_finalize:'Applying confirmed edits.',
-          finalizing:'Finalizing OLY Calc PDF.'
+          finalizing:'Finalizing OLY Calc PNG.'
         };
         status.textContent = (state.confirmed ? 'OLY Calc confirmed. ' : '') +
-                             (stages[state.state] || 'Preparing PDF.');
+                             (stages[state.state] || 'Preparing PNG.');
       }
     } catch (error) {
       if (!dirty) status.textContent = error.message;

@@ -1,23 +1,21 @@
-"""OLY Calc mapping, approved PDF layout, and independent report-job tests."""
+"""OLY Calc formulas, artwork, PNG downloads, and independent report jobs."""
 from __future__ import annotations
 
 from dataclasses import asdict
 from io import BytesIO
+import shutil
 
+from PIL import Image
 from pypdf import PdfReader
 import pytest
+from werkzeug.http import parse_options_header
 
-from printer_app.db import Database
 from printer_app.mod_sheet_contract import ModSheetRecord
 from printer_app.mod_resulting.calc_report import (
     apply_calc_edits, project_calc,
 )
-from printer_app.mod_resulting.calc_pdf import render_calc_pdf
+from printer_app.mod_resulting.calc_pdf import render_calc_pdf, render_calc_png
 from printer_app.mod_resulting.contract import clean_draft
-from printer_app.mod_resulting.pdf_export import render_resulting_pdf
-from printer_app.mod_resulting.pdf_repository import ModPdfRepository
-from printer_app.mod_resulting.pdf_service import ModPdfService
-from printer_app.mod_resulting.repository import ResultingRepository
 
 DAY = "2026-10-30"
 
@@ -138,14 +136,28 @@ def test_pdf_contains_compact_oly_calc_and_embedded_original_artwork():
     text = page.extract_text()
     for expected in ("Olympia, WA", "#1 in Puget Sound", "MOD Results",
                      "Total Sale Rev", "$183,475.00", "$10,193.06",
-                     "CXL and OOS excluded"):
+                     "October 30, 2026"):
         assert expected in text
+    assert "CXL and OOS excluded from Leads" not in text
     assert len(page.images) >= 1
 
 
+@pytest.mark.skipif(not shutil.which("pdftoppm"), reason="Poppler required for Calc PNG export")
 def test_calc_confirmation_and_redlines_are_separate_durable_jobs(tmp_path):
-    db = Database(tmp_path / "printer.sqlite")
-    resulting = ResultingRepository(db)
+    from printer_app.app import create_app
+    from printer_app.config import Config
+    from printer_app.tests.auth_helpers import login_admin
+
+    env = tmp_path / "env"
+    env.write_text("EMAIL_ENABLED=0\n")
+    app = create_app(Config(data_dir=tmp_path / "data", env_file=env,
+                            secret_key="s" * 64, email_enabled=False))
+    resulting_service = app.extensions["mod_resulting"]
+    resulting = resulting_service.repository
+    day = resulting_service.day()
+    db = resulting.db
+    service = app.extensions["mod_resulting_pdfs"]
+    repo = service.repository
     cards = sample_cards()
     records = [ModSheetRecord(**dict(
         item["snapshot"],
@@ -153,51 +165,77 @@ def test_calc_confirmation_and_redlines_are_separate_durable_jobs(tmp_path):
             item["snapshot"]["assigned_service_resources"])
     )) for item in cards]
     resulting.refresh(
-        DAY, records,
+        day, records,
         external_drafts={row["work_order_id"]:row["draft"] for row in cards},
         market_segment="Olympia")
-    repo = ModPdfRepository(db)
-    service = ModPdfService(repo, resulting, render_resulting_pdf, tmp_path / "pdf")
-    job_id = service.begin(DAY)["job_id"]
-    assert service.calc_status(DAY, job_id)["state"] == "queued"
+    job_id = service.begin(day)["job_id"]
+    assert service.calc_status(day, job_id)["state"] == "queued"
     assert service.process_next()["state"] == "awaiting_confirmation"
-    assert not service.status(DAY, job_id)["confirmed"]
+    assert not service.status(day, job_id)["confirmed"]
     calc = service.process_next()
     assert calc == {"job_id":job_id, "state":"awaiting_confirmation", "kind":"calc"}
     with pytest.raises(ValueError, match="not ready"):
-        service.calc_pdf_path(DAY, job_id)
+        service.calc_png(day, job_id)
 
     # Cover remains unconfirmed; Calc can confirm while EOD holds the day.
     with db.connect() as conn:
-        conn.execute("UPDATE mod_result_days SET submitting=1 WHERE day=?", (DAY,))
+        conn.execute("UPDATE mod_result_days SET submitting=1 WHERE day=?", (day,))
     edits = {"inputs":{"revenue":"$199999"}, "outputs":{"pitch":"75%"}}
-    assert service.confirm_calc(DAY, job_id, edits, 0) == 1
+    assert service.confirm_calc(day, job_id, edits, 0) == 1
     assert service.process_next()["state"] == "ready"
-    assert service.calc_status(DAY, job_id)["ready"]
-    assert not service.status(DAY, job_id)["ready"]
-    pdf = PdfReader(str(service.calc_pdf_path(DAY, job_id)))
-    assert "$199,999.00" in pdf.pages[0].extract_text()
-    assert "75%" in pdf.pages[0].extract_text()
-    unchanged = resulting.print_sheets(DAY)
+    assert service.calc_status(day, job_id)["ready"]
+    assert not service.status(day, job_id)["ready"]
+
+    client = app.test_client()
+    login_admin(client)
+    status = client.get(f"/mod-resulting/api/pdfs/calc/status?job_id={job_id}")
+    assert status.status_code == 200
+    assert status.json["ready"]
+    download_url = status.json["download_url"]
+    download = client.get(download_url)
+    assert download.status_code == 200
+    assert download.mimetype == "image/png"
+    disposition, options = parse_options_header(download.headers["Content-Disposition"])
+    assert disposition == "attachment"
+    assert options["filename"] == f"OLY-Calc-{day}.png"
+    with Image.open(BytesIO(download.data)) as image:
+        assert image.format == "PNG"
+        assert image.size == (1440, 1300)
+        image.load()
+    original_report = project_calc(day, cards)
+    expected_png = render_calc_png(apply_calc_edits(original_report, edits))
+    assert download.data == expected_png
+
+    # An upgraded job may have only its old-format PDF on disk. Rebuild from
+    # the confirmed edits instead of serving those old PDF bytes.
+    directory = service.output_dir / str(job_id)
+    (directory / "OLY Calc.png").unlink()
+    (directory / "OLY Calc.pdf").write_bytes(render_calc_pdf(original_report))
+    legacy_download = client.get(download_url)
+    assert legacy_download.status_code == 200
+    assert legacy_download.mimetype == "image/png"
+    assert legacy_download.data == expected_png
+
+    unchanged = resulting.print_sheets(day)
     assert len(unchanged) == 21
     assert unchanged[0]["draft"]["sale_products"]["Roofing"]["price"] == "30000"
     assert unchanged[18]["draft"]["dispo"] == "cxl"
-    assert repo.calc_edits(DAY)[0] == edits
+    assert repo.calc_edits(day)[0] == edits
 
-    # Re-confirming Calc invalidates only the Calc PDF.
-    assert service.confirm_calc(DAY, job_id, {"inputs":{"sold":"8"}}, 1) == 2
-    assert not service.calc_status(DAY, job_id)["ready"]
+    # Re-confirming Calc invalidates only the Calc export.
+    assert service.confirm_calc(day, job_id, {"inputs":{"sold":"8"}}, 1) == 2
+    assert not service.calc_status(day, job_id)["ready"]
     assert service.process_next()["state"] == "ready"
     with pytest.raises(ValueError, match="changed"):
-        service.confirm_calc(DAY, job_id, {}, 0)
-    assert service.confirm(DAY, job_id, {}, 0) == 1
+        service.confirm_calc(day, job_id, {}, 0)
+    assert service.confirm(day, job_id, {}, 0) == 1
     assert service.process_next()["state"] == "ready"
-    assert service.status(DAY, job_id)["ready"]
-    assert service.calc_status(DAY, job_id)["ready"]
+    assert service.status(day, job_id)["ready"]
+    assert service.calc_status(day, job_id)["ready"]
 
     # New PDF jobs reuse just the confirmed, report-only Calc edits.
-    new_job = service.begin(DAY)["job_id"]
-    assert service.calc_editor(DAY, new_job)["report"]["inputs"]["sold"] == "8"
+    new_job = service.begin(day)["job_id"]
+    assert service.calc_editor(day, new_job)["report"]["inputs"]["sold"] == "8"
 
 
 def test_calc_and_cover_data_are_platform_neutral():
