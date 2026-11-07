@@ -69,6 +69,11 @@ def blueprint(service, surface, *, color_code=None, pdfs=None):
             # is temporarily unavailable; edits fail closed rather than guess.
             checkbox_specs = {}
             current_app.logger.warning('MOD checkbox field metadata unavailable.')
+        try:
+            note_limit = service.note_field().get('limit')
+        except Exception:
+            note_limit = None
+            current_app.logger.warning('MOD notes field limit unavailable.')
         return render_template(
             'mod_resulting.html',
             data=data, users=users,
@@ -78,6 +83,7 @@ def blueprint(service, surface, *, color_code=None, pdfs=None):
             live_writes_enabled=service.allow_salesforce_writes,
             color_code=bool(color_code()) if color_code else False,
             checkbox_specs=checkbox_specs,
+            note_limit=note_limit,
             pdfs_remaining=sum(not has_result(sheet["draft"]) for sheet in data["sheets"]),
             pdfs_available=bool(data["sheets"]) and pdfs is not None,
             notice=notice,

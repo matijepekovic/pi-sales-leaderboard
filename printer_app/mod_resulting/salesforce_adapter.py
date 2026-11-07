@@ -12,6 +12,8 @@ import re
 import subprocess
 from zoneinfo import ZoneInfo
 
+from .contract import ResultingWriteRejected, mod_note_text, text_units
+
 
 ID_RE = re.compile(r'[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?\Z')
 NAME_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,254}\Z')
@@ -108,6 +110,10 @@ class ResultingSalesforceError(RuntimeError):
     pass
 
 
+class ResultingSalesforceRejected(ResultingSalesforceError, ResultingWriteRejected):
+    """A complete atomic Salesforce response confirms that nothing committed."""
+
+
 def _require_id(value):
     if not isinstance(value, str) or not ID_RE.fullmatch(value):
         raise ResultingSalesforceError('Salesforce record identity is missing or invalid.')
@@ -140,6 +146,11 @@ class ResultingSalesforceAdapter:
         self.zone = ZoneInfo(timezone_name)
         self.runner = runner
         self._describes = {}
+
+    @staticmethod
+    def submission_group_key(payload):
+        """Salesforce's case-sensitive 15-character Lead identity owns grouping."""
+        return _require_id(payload['lead_id'])[:15]
 
     def _run(self, parts, *, timeout=60, input_body=None):
         # JSON writes travel through stdin, never through the CLI's fragile
@@ -209,6 +220,12 @@ class ResultingSalesforceAdapter:
         for name in (WORK_ORDER, LEAD, SERVICE_APPOINTMENT, PRODUCT_RESULT):
             self._describe(name)
 
+    def note_field(self):
+        """Expose only the normalized live MOD-note limit to the application."""
+        field = self._field(
+            self._describe(WORK_ORDER), WO['notes'], types=('textarea', 'string'))
+        return {'limit': self._text_limit(field)}
+
     def _describe(self, name):
         if not NAME_RE.fullmatch(name):
             raise ResultingSalesforceError('Invalid Salesforce object name.')
@@ -275,6 +292,14 @@ class ResultingSalesforceAdapter:
             )
         return actual
 
+    @staticmethod
+    def _text_limit(field):
+        limit = field.get('length')
+        if limit is not None and (type(limit) is not int or limit < 0):
+            raise ResultingSalesforceError(
+                'Invalid Salesforce text limit for ' + field['name'] + '.')
+        return limit or None
+
     @classmethod
     def _value(cls, field, value):
         if value is None:
@@ -292,7 +317,19 @@ class ResultingSalesforceAdapter:
             if not re.fullmatch(r'\d+(?:\.\d{1,2})?', str(value)):
                 raise ResultingSalesforceError('Invalid numeric value for ' + field['name'] + '.')
             return str(value)
-        if kind in ('textarea', 'string', 'date', 'datetime', 'time', 'phone'):
+        if kind in ('textarea', 'string', 'phone', 'email', 'url', 'encryptedstring'):
+            text = str(value)
+            limit = cls._text_limit(field)
+            count = text_units(text)
+            if limit and count > limit:
+                label = str(field.get('label') or field['name'])
+                raise ResultingSalesforceError(
+                    label + ' (' + field['name'] + ') has ' + str(count)
+                    + ' characters; Salesforce allows ' + str(limit)
+                    + '. Shorten this field before submitting.'
+                )
+            return text
+        if kind in ('date', 'datetime', 'time'):
             return str(value)
         raise ResultingSalesforceError(
             'Unsupported Salesforce type for ' + field['name'] + ': ' + str(kind)
@@ -787,11 +824,15 @@ class ResultingSalesforceAdapter:
         """Read same-batch Lead history together, with bounded keyset pages."""
         leads = list(dict.fromkeys(
             _require_id(payload['lead_id']) for payload in payloads))
-        history = {lead: [] for lead in leads}
+        aliases = {}
+        for lead in leads:
+            aliases.setdefault(lead[:15], []).append(lead)
+        canonical_history = {lead: [] for lead in aliases}
+        canonical_leads = list(aliases)
         seen = set()
-        for offset in range(0, len(leads), 40):
-            group = leads[offset:offset + 40]
-            canonical = {ident[:15]: ident for ident in group}
+        for offset in range(0, len(canonical_leads), 40):
+            group = canonical_leads[offset:offset + 40]
+            expected = set(group)
             cursor = ''
             while True:
                 where = WO_LEAD + ' IN (' + ','.join(_soql(lead) for lead in group) + ')'
@@ -806,16 +847,17 @@ class ResultingSalesforceAdapter:
                 for row in rows:
                     ident = _require_id(str(row.get('Id') or ''))
                     lead_id = _require_id(str(row.get(WO_LEAD) or ''))
-                    lead = canonical.get(lead_id[:15])
-                    if lead is None or ident in seen or (cursor and ident <= cursor):
+                    lead = lead_id[:15]
+                    if lead not in expected or ident in seen or (cursor and ident <= cursor):
                         raise ResultingSalesforceError(
                             'Historical Work Order identity or paging is invalid.')
                     seen.add(ident)
-                    history[lead].append(row)
+                    canonical_history[lead].append(row)
                 if len(rows) < 2000:
                     break
                 cursor = _require_id(str(rows[-1].get('Id') or ''))
-        return history
+        return {alias: canonical_history[canonical]
+                for canonical, names in aliases.items() for alias in names}
 
     def _appointments_for_batch(self, payloads):
         """Select every Scheduled/Dispatched appointment on each Work Order.
@@ -901,8 +943,11 @@ class ResultingSalesforceAdapter:
     def _lead_rows_for_batch(self, payloads, product_rows_by_work):
         """Load Lead attribution only for new PIRs; interests only for sales."""
         needs_attribution, needs_interest = set(), set()
+        aliases = {}
         for payload in payloads:
             lead_id = _require_id(payload['lead_id'])
+            canonical_lead = lead_id[:15]
+            aliases.setdefault(canonical_lead, set()).add(lead_id)
             work_id = _require_id(payload['work_order_id'])
             existing = {
                 str(row.get(PR['product']) or '').casefold()
@@ -910,10 +955,11 @@ class ResultingSalesforceAdapter:
             }
             if any(str(item['product']).casefold() not in existing
                    for item in payload['product_results']):
-                needs_attribution.add(lead_id)
+                needs_attribution.add(canonical_lead)
             if any(item['result'] == 'sale' for item in payload['product_results']):
-                needs_interest.add(lead_id)
+                needs_interest.add(canonical_lead)
         rows_by_lead = {}
+        seen = set()
         for leads, fields in (
             (sorted(needs_attribution),
              sorted(set(PIR_LEAD_COPY.values())) + [LEAD_FIELDS['product_interest']]),
@@ -922,19 +968,21 @@ class ResultingSalesforceAdapter:
         ):
             for offset in range(0, len(leads), 40):
                 chunk = leads[offset:offset + 40]
-                canonical = {ident[:15]: ident for ident in chunk}
+                expected = set(chunk)
                 found = self._query(
                     'SELECT Id,' + ','.join(fields) + ' FROM ' + LEAD
                     + ' WHERE Id IN (' + ','.join(_soql(key) for key in chunk)
                     + ') ORDER BY Id LIMIT 2000')
                 for row in found:
                     source_id = _require_id(str(row.get('Id') or ''))
-                    ident = canonical.get(source_id[:15])
-                    if ident is None or ident in rows_by_lead:
+                    ident = source_id[:15]
+                    if ident not in expected or ident in seen:
                         raise ResultingSalesforceError(
                             'Lead preflight returned unexpected identities.')
-                    rows_by_lead[ident] = row
-                if any(key not in rows_by_lead for key in chunk):
+                    seen.add(ident)
+                    for alias in aliases[ident]:
+                        rows_by_lead[alias] = row
+                if any(key not in seen for key in chunk):
                     raise ResultingSalesforceError(
                         'Lead preflight is incomplete; no writes were performed.')
         return rows_by_lead
@@ -1062,11 +1110,7 @@ class ResultingSalesforceAdapter:
                 WO['mod']: self._value(wo_fields['mod'], mod_id),
                 WO['notes']: self._value(
                     wo_fields['notes'],
-                    '\n'.join(part for part in (
-                        payload['draft']['numbers'],
-                        payload['draft']['notes'],
-                        payload['final_redlines'],
-                    ) if part).strip(),
+                    mod_note_text(payload['draft']),
                 ),
                 WO['need']: self._value(wo_fields['need'], payload['draft']['need']),
                 WO['want']: self._value(wo_fields['want'], payload['draft']['want']),
@@ -1183,12 +1227,13 @@ class ResultingSalesforceAdapter:
                 if entry['result'] == 'sale'
             ]
             if sold:
-                current = lead_interest_in_batch.get(lead_id)
+                canonical_lead = lead_id[:15]
+                current = lead_interest_in_batch.get(canonical_lead)
                 if current is None:
                     current = str(
                         lead_rows[lead_id].get(LEAD_FIELDS['product_interest']) or '')
                 merged, changed = self._merge_products(current, sold)
-                lead_interest_in_batch[lead_id] = merged
+                lead_interest_in_batch[canonical_lead] = merged
                 if changed:
                     lead_values[LEAD_FIELDS['product_interest']] = self._choice(
                         lead_fields['product_interest'], merged
@@ -1202,6 +1247,138 @@ class ResultingSalesforceAdapter:
             raise ResultingSalesforceError(
                 'A Work Order exceeds the Salesforce Composite 25-step limit.')
         return operations
+
+    def reconcile_submission(self, payload, *, verification=None):
+        """Read an uncertain attempt before permitting an operator retry.
+
+        The frozen original plan retains appointment IDs and creation-only
+        fields even after the source marks them completed. Only a complete
+        match can recover a receipt. Legacy attempts without that plan receive
+        fresh identity checks but cannot be declared completed by inference.
+        """
+        if verification is None:
+            plans = self.prepare([payload])
+            if len(plans) != 1:
+                raise ResultingSalesforceError('Retry verification produced an incomplete plan.')
+            operations = plans[0]
+            matched = False
+        else:
+            operations = verification
+            if not isinstance(operations, (list, tuple)) or not 0 < len(operations) <= 25:
+                raise ResultingSalesforceError('The original submission plan is unavailable.')
+            matched = True
+        rows = self._product_rows_for_batch([payload])
+        existing = self._existing_product_results(
+            payload['lead_id'], payload['work_order_id'], rows=rows[payload['work_order_id']])
+        expected = {}
+        product_position = 0
+        for action, object_name, ident, values in operations:
+            if (object_name not in (WORK_ORDER, LEAD, SERVICE_APPOINTMENT, PRODUCT_RESULT)
+                    or action not in ('create', 'update') or not isinstance(values, dict)):
+                raise ResultingSalesforceError('The original submission plan is invalid.')
+            if action == 'create':
+                if (object_name != PRODUCT_RESULT
+                        or str(values.get(PR['work_order']) or '')[:15] != payload['work_order_id'][:15]
+                        or str(values.get(PR['lead']) or '')[:15] != payload['lead_id'][:15]):
+                    raise ResultingSalesforceError('The original product result identity is invalid.')
+                product = existing.get(str(values.get(PR['product']) or '').casefold())
+                if product is None:
+                    matched = False
+                else:
+                    ident = product['id']
+            if object_name == PRODUCT_RESULT and PR['result'] in values:
+                # This adapter emits chosen results in payload order, followed
+                # by issued-flag-only cleanup. Freeze the chosen product's
+                # identity for verification without writing that field again.
+                products = payload['product_results']
+                if product_position >= len(products):
+                    raise ResultingSalesforceError('The original product result plan is invalid.')
+                values = dict(values, **{PR['product']: products[product_position]['product']})
+                product_position += 1
+            if action == 'create' and not ident:
+                continue
+            _require_id(ident)
+            expected.setdefault(object_name, {}).setdefault(ident, {}).update(values)
+        if product_position != len(payload['product_results']):
+            raise ResultingSalesforceError('The original product result plan is incomplete.')
+        for object_name, identities in expected.items():
+            schema = self._describe(object_name)
+            metadata = {field['name']: field for field in schema.get('fields', ())}
+            keys = list(identities)
+            for offset in range(0, len(keys), 40):
+                chunk = keys[offset:offset + 40]
+                canonical = {ident[:15]: ident for ident in chunk}
+                fields = set().union(*(identities[ident] for ident in chunk))
+                if any(not isinstance(name, str) or not NAME_RE.fullmatch(name)
+                       or name not in metadata for name in fields):
+                    raise ResultingSalesforceError('The original submission fields are invalid.')
+                if object_name == WORK_ORDER:
+                    fields.add(WO_LEAD)
+                elif object_name == PRODUCT_RESULT:
+                    fields.update((PR['work_order'], PR['lead']))
+                elif object_name == SERVICE_APPOINTMENT:
+                    fields.add(SA_PARENT)
+                rows = self._query(
+                    'SELECT Id,' + ','.join(sorted(fields)) + ' FROM ' + object_name
+                    + ' WHERE Id IN (' + ','.join(_soql(ident) for ident in chunk)
+                    + ') ORDER BY Id LIMIT 2000')
+                seen = set()
+                for row in rows:
+                    raw_id = _require_id(str(row.get('Id') or ''))
+                    ident = canonical.get(raw_id[:15])
+                    if ident is None or ident in seen or not fields.issubset(row):
+                        raise ResultingSalesforceError(
+                            'Retry verification returned incomplete or unexpected records.')
+                    seen.add(ident)
+                    if object_name == WORK_ORDER and (
+                            _require_id(str(row.get(WO_LEAD) or ''))[:15]
+                            != _require_id(payload['lead_id'])[:15]):
+                        raise ResultingSalesforceError(
+                            'Work Order Lead changed; verify it before retrying.')
+                    if object_name == PRODUCT_RESULT and (
+                            _require_id(str(row.get(PR['work_order']) or ''))[:15]
+                            != payload['work_order_id'][:15]
+                            or _require_id(str(row.get(PR['lead']) or ''))[:15]
+                            != payload['lead_id'][:15]):
+                        raise ResultingSalesforceError(
+                            'Product result identity changed; verify it before retrying.')
+                    if object_name == SERVICE_APPOINTMENT and (
+                            _require_id(str(row.get(SA_PARENT) or ''))[:15]
+                            != payload['work_order_id'][:15]):
+                        raise ResultingSalesforceError(
+                            'Service Appointment identity changed; verify it before retrying.')
+                    for name, value in identities[ident].items():
+                        if not self._same_remote_value(metadata[name], row[name], value):
+                            matched = False
+                if seen != set(chunk) and object_name == PRODUCT_RESULT:
+                    matched = False
+                elif seen != set(chunk):
+                    raise ResultingSalesforceError(
+                        'A submitted record is unavailable; retry verification is incomplete.')
+        return 'submitted' if matched else 'ready'
+
+    @staticmethod
+    def _same_remote_value(field, actual, expected):
+        if actual in (None, '') or expected in (None, ''):
+            return actual in (None, '') and expected in (None, '')
+        kind = field.get('type')
+        if kind in ('currency', 'double', 'percent', 'int', 'long'):
+            try:
+                return Decimal(str(actual)) == Decimal(str(expected))
+            except (ArithmeticError, ValueError):
+                return False
+        if kind == 'reference':
+            return (isinstance(actual, str) and ID_RE.fullmatch(actual) is not None
+                    and actual[:15] == str(expected)[:15])
+        if kind == 'boolean':
+            return type(actual) is bool and actual is expected
+        if kind == 'datetime':
+            try:
+                return (datetime.fromisoformat(str(actual).replace('Z', '+00:00'))
+                        == datetime.fromisoformat(str(expected).replace('Z', '+00:00')))
+            except ValueError:
+                return False
+        return actual == expected
 
     @staticmethod
     def _rest_error(body):
@@ -1238,17 +1415,18 @@ class ResultingSalesforceAdapter:
             raise ResultingSalesforceError(
                 'Salesforce metadata is unavailable for the planned update.'
             )
-        types = {
-            field.get('name'): field.get('type')
+        fields = {
+            field.get('name'): field
             for field in schema.get('fields', [])
             if isinstance(field, dict)
         }
         result = {}
         for field, value in values.items():
-            if not NAME_RE.fullmatch(field) or field not in types:
+            if not NAME_RE.fullmatch(field) or field not in fields:
                 raise ResultingSalesforceError(
                     'Unknown Salesforce write field on ' + object_name + '.')
-            kind = types[field]
+            metadata = fields[field]
+            kind = metadata.get('type')
             if value is None:
                 result[field] = None
             elif kind in ('currency', 'double', 'percent', 'int', 'long'):
@@ -1263,6 +1441,8 @@ class ResultingSalesforceAdapter:
                     int(number) if number == number.to_integral_value()
                     else float(number)
                 )
+            elif kind in ('textarea', 'string', 'phone', 'email', 'url', 'encryptedstring'):
+                result[field] = self._value(metadata, value)
             else:
                 result[field] = value
         return result
@@ -1345,18 +1525,36 @@ class ResultingSalesforceAdapter:
                 raise ResultingSalesforceError(
                     'Salesforce Composite returned an invalid response.')
             reference = item.get('referenceId')
-            if reference not in expected or reference in by_ref:
+            if (not isinstance(reference, str) or reference not in expected
+                    or reference in by_ref):
                 raise ResultingSalesforceError(
                     'Salesforce Composite returned mismatched operations.')
             by_ref[reference] = item
 
         failures = []
+        concrete_rejection = False
         for index, step in enumerate(operations, 1):
             item = by_ref['step_' + str(index)]
             status = item.get('httpStatusCode')
-            if type(status) is not int or not 200 <= status < 300:
+            if type(status) is not int or not 100 <= status < 600:
+                raise ResultingSalesforceError(
+                    'Salesforce Composite returned an invalid operation status; '
+                    'verify the Work Order before retrying.')
+            if not 200 <= status < 300:
                 detail = self._rest_error(item.get('body'))
                 failures.append((step, detail))
+                errors = item.get('body')
+                if isinstance(errors, dict):
+                    errors = errors.get('errors', [errors])
+                if status >= 400 and isinstance(errors, list):
+                    concrete_rejection = concrete_rejection or any(
+                        isinstance(error, dict)
+                        and isinstance(error.get('errorCode'), str)
+                        and error['errorCode']
+                        and error['errorCode'] not in (
+                            'ALL_OR_NONE_OPERATION_ROLLED_BACK', 'PROCESSING_HALTED')
+                        for error in errors
+                    )
         if failures:
             # In an allOrNone rollback Salesforce can report a generic
             # ALL_OR_NONE_OPERATION_ROLLED_BACK/PROCESSING_HALTED for other
@@ -1369,7 +1567,12 @@ class ResultingSalesforceAdapter:
                 failures[0],
             )
             step, detail = actual
-            raise ResultingSalesforceError(
+            rejection = (ResultingSalesforceRejected if concrete_rejection
+                         and all(200 <= item['httpStatusCode'] < 300
+                                 or 400 <= item['httpStatusCode'] < 600
+                                 for item in by_ref.values())
+                         else ResultingSalesforceError)
+            raise rejection(
                 step[1] + ' ' + step[0] + ' rejected: ' + detail
             )
         # No success receipt can be issued until every expected subrequest

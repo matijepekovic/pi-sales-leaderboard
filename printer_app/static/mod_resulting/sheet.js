@@ -396,6 +396,54 @@
     sheet.saleSelectionOrder = draft.sale_selection_order;
     return draft;
   }
+  function modNotesText(draft) {
+    const numbers = String(draft.numbers || '').replace(/\r\n?/g, '\n').trim();
+    const notes = String(draft.notes || '').replace(/\r\n?/g, '\n');
+    const origin = draft.note_origin;
+    let combined;
+    if (origin && typeof origin === 'object') {
+      const sourceNumbers = String(origin.numbers || '').replace(/\r\n?/g, '\n').trim();
+      if (numbers === sourceNumbers) {
+        const prefix = String(origin.prefix || '').replace(/\r\n?/g, '\n');
+        combined = [prefix, notes].filter(Boolean).join('\n').trim();
+      }
+    }
+    if (combined === undefined) {
+      combined = numbers && (notes === numbers || notes.startsWith(numbers + '\n')) ?
+        notes.trim() : [numbers, notes].filter(Boolean).join('\n').trim();
+    }
+    const manual = String(draft.redlines || '').replace(/\r\n?/g, '\n').trim();
+    if (manual && combined !== manual && !combined.endsWith('\n' + manual)) {
+      combined = [combined, manual].filter(Boolean).join('\n');
+    }
+    return combined;
+  }
+  function updateModNotesCounter(sheet) {
+    const length = modNotesText(serialize(sheet)).length;
+    const limit = Number(root.dataset.noteLimit);
+    const known = Number.isInteger(limit) && limit > 0;
+    const over = known && length > limit;
+    const counter = sheet.querySelector('.mod-notes-counter');
+    if (counter) {
+      counter.textContent = known ? length + ' / ' + limit + ' characters' +
+        (over ? ' · ' + (length - limit) + ' over limit' : '') :
+        length + ' characters · limit checked before submission';
+      counter.classList.toggle('is-over-limit', over);
+    }
+    sheet.dataset.notesOverLimit = over ? 'yes' : 'no';
+    const button = sheet.querySelector('.submit-sheet');
+    if (button) button.disabled = over || sheet.dataset.submitted === 'yes' ||
+      root.dataset.submissionActive === 'yes';
+    return {length, limit, over};
+  }
+  function validateModNotes(selected) {
+    for (const sheet of selected) {
+      const count = updateModNotesCounter(sheet);
+      if (count.over) throw new Error('Work Order ' + sheet.dataset.workNumber +
+        ' MOD Notes use ' + count.length + ' characters; the limit is ' +
+        count.limit + '. Your draft is saved. Shorten it before submitting.');
+    }
+  }
   function manualRedlinePreview(sheet, draft) {
     const display = sheet.querySelector('.manual-redlines');
     if (!display) return;
@@ -697,6 +745,7 @@
       redlineInput.value = [init.redlines || '', oldRed].filter(Boolean).join('\n');
     }
     manualRedlinePreview(sheet, {redlines:redlineInput.value});
+    updateModNotesCounter(sheet);
     const product = sheet.querySelector('.product-panel');
     const dnr = sheet.querySelector('.dnr-panel');
     const detail = sheet.querySelector('.detail-panel');
@@ -805,6 +854,7 @@
     }
     function redraw() {
       const draft = serialize(sheet);
+      updateModNotesCounter(sheet);
       sheet.dataset.dispo = draft.dispo;
       manualRedlinePreview(sheet,draft);
       dnrPreview(sheet,draft);
@@ -1027,14 +1077,16 @@
   });
   function noticeStatus(item) {
     if (item.state === 'submitted') return 'Submitted';
-    if (item.state === 'uncertain') return 'Failed';
+    if (item.state === 'rejected') return 'Rejected';
+    if (item.state === 'uncertain') return 'Needs verification';
+    if (item.state === 'not_submitted') return 'Not submitted';
     if (['failed', 'interrupted'].includes(item.job_state)) return 'Not submitted';
     if (item.state === 'processing') return 'In progress';
     return 'Queued';
   }
   function terminalNoticeKey(item) {
     const status = noticeStatus(item);
-    return ['Submitted', 'Failed', 'Not submitted'].includes(status)
+    return ['Submitted', 'Rejected', 'Needs verification', 'Not submitted'].includes(status)
       ? item.job_id + ':' + item.work_order_id + ':' + status : '';
   }
   function noticeError(item) {
@@ -1073,6 +1125,7 @@
   }
   function markWorkOrderSubmitted(item) {
     if (item.day !== root.dataset.day || item.state !== 'submitted') return;
+    if (item.override_active) return;
     const sheet = sheets.find(current => current.dataset.id === item.work_order_id);
     if (!sheet || sheet.dataset.submitted === 'yes') return;
     sheet.dataset.submitted = 'yes';
@@ -1119,7 +1172,7 @@
       }
       markWorkOrderSubmitted(item);
       const row = document.createElement('li');
-      row.className = status === 'Failed' || status === 'Not submitted' ? 'failed' : '';
+      row.className = ['Rejected', 'Needs verification', 'Not submitted'].includes(status) ? 'failed' : '';
       const label = document.createElement('strong');
       label.textContent = 'Work Order ' + item.work_order_number + ' — ' + status;
       const detail = document.createElement('span');
@@ -1138,7 +1191,7 @@
     } else if (fresh.length > 1) {
       const completed = fresh.filter(item => item.state === 'submitted').length;
       showSubmissionToast(completed + ' submitted, ' +
-        (fresh.length - completed) + ' failed or not submitted. Open notifications for details.');
+        (fresh.length - completed) + ' need attention. Open notifications for details.');
     }
     knownTerminal = terminal;
     noticesInitialized = true;
@@ -1152,13 +1205,14 @@
     details.hidden = !submission;
     state.hidden = !submission;
     submissionActive = !!submission && ['queued', 'running'].includes(submission.state);
+    root.dataset.submissionActive = submissionActive ? 'yes' : 'no';
     // The End of Day review may open in sandbox mode; only actual writes
     // remain gated by the existing submit controls.
     submitButton.disabled = submissionActive;
     for (const sheet of sheets) {
       const button = sheet.querySelector('.submit-sheet');
       if (button) button.disabled = submissionActive ||
-        sheet.dataset.submitted === 'yes';
+        sheet.dataset.submitted === 'yes' || sheet.dataset.notesOverLimit === 'yes';
     }
     updateSelection();
     if (!submission) return;
@@ -1189,12 +1243,13 @@
     error.hidden = !submission.error;
     const errors = document.getElementById('submissionErrors');
     errors.replaceChildren();
-    for (const item of submission.items.filter(item => item.state === 'uncertain')) {
+    for (const item of submission.items.filter(item =>
+      ['rejected', 'uncertain', 'not_submitted'].includes(item.state))) {
       const row = document.createElement('li');
       const name = document.createElement('strong');
-      name.textContent = 'Work Order ' + item.work_order_number;
+      name.textContent = 'Work Order ' + item.work_order_number + ' — ' + noticeStatus(item);
       const explanation = document.createElement('span');
-      explanation.textContent = item.error || 'Submission failed';
+      explanation.textContent = item.error || noticeStatus(item);
       row.append(name, explanation);
       errors.append(row);
     }
@@ -1245,6 +1300,7 @@
       if (!dayMod.value) throw new Error('Select a MOD before resulting.');
       if (!serialize(sheet).dispo) throw new Error('Select a disposition for this Work Order.');
       await flushSheet(sheet);
+      validateModNotes([sheet]);
       const queued = await post(root.dataset.submit, {
         mode:'selected',
         work_order_ids:JSON.stringify([sheet.dataset.id]),
@@ -1266,6 +1322,8 @@
     button.disabled = true;
     try {
       await flushAll();
+      validateModNotes(eligibleSheets().filter(sheet =>
+        selected === null || selected.includes(sheet.dataset.id)));
       const fields = selected === null ? {mode:'all'} :
         {mode:'selected',work_order_ids:JSON.stringify(selected)};
       const queued = await post(root.dataset.submit, fields);

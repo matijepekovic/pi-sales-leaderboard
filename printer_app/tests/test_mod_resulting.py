@@ -100,7 +100,7 @@ class Source:
 
 
 class Writer:
-    def __init__(self): self.plans=[];self.applied=[];self.date_lookups=[]
+    def __init__(self): self.plans=[];self.applied=[];self.date_lookups=[];self.verifications=[]
     def mod_users(self, market_segment): return [{'id':USER,'name':'MOD Example'}]
     def lead_appointment_dates(self, lead_ids):
         self.date_lookups.append(tuple(lead_ids))
@@ -109,6 +109,9 @@ class Writer:
         self.plans.extend(batch)
         return [{'work_order_id':item['work_order_id']} for item in batch]
     def apply(self,plan): self.applied.append(plan)
+    def reconcile_submission(self, payload, *, verification=None):
+        self.verifications.append(payload)
+        return 'ready'
 
 
 def _service(tmp_path):

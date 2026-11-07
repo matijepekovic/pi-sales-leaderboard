@@ -739,13 +739,13 @@ def test_per_card_result_confirmation_and_notification_bell(mod_browser):
         'error':'Validation rule rejected',
     })
     expect(page.locator('#submissionToast')).to_contain_text(
-        'Work Order 00022222 — Failed: Validation rule rejected', timeout=9000)
+        'Work Order 00022222 — Needs verification: Validation rule rejected', timeout=9000)
     expect(second).to_have_attribute('data-submitted', 'no')
     expect(page.locator('#submissionNotificationBadge')).to_have_text('1')
     page.locator('#viewSubmissionProgress').click()
     expect(page.locator('#submissionNotificationList li')).to_have_count(2)
     expect(page.locator('#submissionNotificationList li').first).to_contain_text(
-        'Work Order 00022222 — Failed')
+        'Work Order 00022222 — Needs verification')
     expect(page.locator('#submissionNotificationList li').first).to_contain_text(
         'Validation rule rejected')
     assert writer.applied == []

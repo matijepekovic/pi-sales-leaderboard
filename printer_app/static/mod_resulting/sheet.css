@@ -54,6 +54,9 @@ body{font-family:"Times New Roman",Times,serif;color:#000}
 /* Black MOD Notes and separate redline previews occupy the original box. */
 .notes-text{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;overflow:hidden;padding:0 .4cqw .65cqw 0}
 .mod-notes-editor{position:relative;flex:1;min-height:0;min-width:0}
+.mod-notes-counter{flex:none;text-align:right;font-size:clamp(10px,1.15cqw,14px);line-height:1.2;color:#444}
+.mod-notes-counter.is-over-limit{color:#b00000;font-weight:700}
+@media print{.mod-notes-counter{display:none}}
 .notes-text .mod-notes-editor textarea[data-key=notes]{display:block;height:100%;width:100%;color:#000;font-size:1.57cqw;font-weight:400;line-height:1.15;resize:none;white-space:pre-wrap;overflow-wrap:break-word}
 .notes-text .manual-redlines,.notes-text .result-detail-in-redline,.notes-text .dnr-in-redline,.notes-text .sale-in-redline{font-size:1.85cqw;font-weight:700;color:#b00000;line-height:1.1;flex:none;min-width:0;max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere}
 .notes-text .sale-in-redline{width:100%;font-size:1.65cqw;line-height:1.08}

@@ -3,11 +3,52 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 import re
 
+from .contract import prices as numeric_prices
 from .salesforce_adapter import (
     LEAD_FIELDS, PR, PR_ISSUED_COUNT, WO, REVIEW_FIELD, PRODUCT_RESULT_VALUE,
     WORK_ORDER_DISPO,
     ResultingSalesforceError,
 )
+
+
+def _number_line(value):
+    text = value.strip()
+    if not re.fullmatch(r'\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?', text):
+        return None
+    return Decimal(text.replace('$', '').replace(',', '').strip())
+
+
+def _separate_numeric_prefix(draft):
+    """Preserve source note serialization and separate proven numeric prefixes.
+
+    The writer stores Numbers followed by MOD Notes. Recognize only a
+    complete leading numeric block corroborated by dedicated source prices;
+    retain its original spelling for the next write. Dedicated price bounds
+    cannot reconstruct an annotated or longer Numbers column. In that case,
+    the source note remains authoritative rather than having reconstructed
+    prices prepended again. A trailing result phrase is never removed.
+    """
+    baseline = draft.get('numbers', '')
+    origin = draft['note_origin'] = {'numbers': baseline, 'prefix': ''}
+    numbers = baseline.splitlines()
+    if not numbers:
+        return
+    expected = [_number_line(value) for value in numbers]
+    if any(value is None for value in expected):
+        return
+    original = draft['notes']
+    lines = original.splitlines(keepends=True)
+    changed = False
+    while len(lines) >= len(numbers):
+        prefix = [_number_line(value) for value in lines[:len(numbers)]]
+        if prefix != expected:
+            break
+        if not changed:
+            origin['prefix'] = ''.join(lines[:len(numbers)]).rstrip('\r\n')
+        lines = lines[len(numbers):]
+        changed = True
+    if changed:
+        draft['notes'] = ''.join(lines)
 
 
 def _money(value):
@@ -79,8 +120,8 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
         content = str(work.get(WO['notes']) or '')
         draft = {
             'dispo': dispo,
-            # Salesforce has one MOD_Notes__c text field. Dispo only affects
-            # its visual styling in the digital MOD sheet.
+            # Source MOD Notes remain verbatim. A corroborated leading
+            # Numbers block is separated below to avoid adding it twice.
             'notes': content,
             'redlines': '',
             'call_1': _clock(work.get(WO['call_1']), zone),
@@ -100,7 +141,26 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
             }
             draft['review'] = _checked(review)
         prices = [_money(work.get(WO[key])) for key in ('start_price', 'final_price')]
-        draft['numbers'] = '\n'.join(price for price in prices if price)
+        # One entered amount populates both dedicated price fields. It is
+        # still one number in the MOD field, not two copies on every Refresh.
+        numeric_values, displayed_prices = set(), []
+        for price in prices:
+            number = _number_line(price)
+            if price and (number is None or number not in numeric_values):
+                displayed_prices.append(price)
+            if number is not None:
+                numeric_values.add(number)
+        draft['numbers'] = '\n'.join(displayed_prices)
+        derived_prices = numeric_prices(draft['numbers'])
+        for source_price, override, bound in (
+            (prices[0], 'start_price_override', 'highest'),
+            (prices[1], 'final_price_override', 'lowest'),
+        ):
+            number = _number_line(source_price)
+            if number is not None and number != _number_line(derived_prices[bound]):
+                # Independently edited source prices need not be max/min.
+                # Preserve those exact fields on unchanged resubmission.
+                draft[override] = source_price
         # This is an existing Salesforce text value, not a Stats manual edit.
         remote_deposit = work.get(WO['deposit'])
         draft['deposit_override'] = '' if remote_deposit is None else str(remote_deposit)
@@ -253,5 +313,6 @@ def project_salesforce_drafts(zone, identities, works, leads, products):
                 if len(parts) == 2 and parts[1]:
                     sold['payment'] = parts[1]
             draft['sale_products'] = sales
+        _separate_numeric_prefix(draft)
         output[work_id] = draft
     return output

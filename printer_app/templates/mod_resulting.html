@@ -16,7 +16,8 @@
  data-submit="{{ url_for('mod_resulting.submit') }}"
  data-pdfs-start="{{ url_for('mod_resulting.pdfs_start') }}"
  data-submission-status="{{ url_for('mod_resulting.submission_status') }}"
- data-checkbox-specs='{{ checkbox_specs|tojson|forceescape }}'>
+ data-checkbox-specs='{{ checkbox_specs|tojson|forceescape }}'
+ data-note-limit="{{ note_limit if note_limit is not none else '' }}">
 <div class="floating-controls" aria-label="MOD sheet controls">
  <input id="nameSearch" type="search" placeholder="Search customer or rep" aria-label="Search customer or assigned service resource">
  <label class="mod-choice">MOD
@@ -159,6 +160,7 @@
     <div class="mod-notes-editor">
      <textarea data-key="notes" class="mod-notes-input" aria-label="MOD Notes" spellcheck="false">{{ d.notes }}</textarea>
     </div>
+      <output class="mod-notes-counter" role="status" aria-live="polite" aria-label="MOD notes and numbers character count"></output>
     <div class="manual-redlines" {% if not d.redlines %}hidden{% endif %}>{{ d.redlines }}</div>
     <div class="result-detail-in-redline" hidden></div>
     <div class="dnr-in-redline" {% if not d.dnr or not d.dnr_reason %}hidden{% endif %}>DNR - {{ d.dnr_reason }}</div>
