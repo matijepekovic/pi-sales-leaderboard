@@ -818,6 +818,50 @@ def test_salesforce_canceled_card_can_finish_for_pdf_with_hide_completed(mod_bro
     assert not writer.applied
 
 
+def test_locked_cxl_card_can_edit_pdf_notes_without_override(mod_browser):
+    from playwright.sync_api import expect
+
+    page, service, writer, origin, _ = mod_browser
+    canceled = service.source.records_data[0]
+    assert not canceled.appointment_canceled
+    writer.read_results = lambda records: {
+        row.source_id: {'dispo':'cxl', 'notes':'Original note'}
+        if row.source_id == canceled.source_id else {}
+        for row in records
+    }
+    service.refresh(service.day())
+
+    page.goto(origin + '/mod-resulting')
+    posts = []
+    page.on('request', lambda request: posts.append(request.url) if request.method == 'POST' else None)
+    card = page.locator('.mod-sheet').first
+    disposition = card.locator('[data-key=dispo]')
+    expect(card).to_have_attribute('data-submitted', 'yes')
+    expect(disposition).to_have_value('cxl')
+    expect(disposition).to_be_disabled()
+    expect(card.locator('[data-key=notes]')).to_have_value('Original note')
+    expect(card.locator('[data-key=notes]')).to_be_disabled()
+    edit = card.get_by_role('button', name='Edit PDF notes for Work Order 00011111')
+    edit.click()
+    dialog = page.locator('#pdfNotesDialog')
+    expect(dialog.get_by_label('Additional Notes')).to_have_value('')
+    dialog.get_by_label('Additional Notes').fill('Followed up about the cancellation')
+    dialog.get_by_label('Additional redlines').fill('PDF-only redline')
+    with page.expect_response('**/mod-resulting/api/pdf-notes') as saved:
+        dialog.get_by_role('button', name='Save', exact=True).click()
+    assert saved.value.ok
+    expect(dialog).to_be_hidden()
+    expect(card).to_have_attribute('data-submitted', 'yes')
+    expect(disposition).to_be_disabled()
+    assert posts == [origin + '/mod-resulting/api/pdf-notes']
+
+    page.reload()
+    edit.click()
+    expect(dialog.get_by_label('Additional Notes')).to_have_value('Followed up about the cancellation')
+    expect(dialog.get_by_label('Additional redlines')).to_have_value('PDF-only redline')
+    assert not writer.applied
+
+
 def test_end_of_day_three_popups_submit_only_explicitly_selected_work_order(mod_browser):
     from playwright.sync_api import expect
     from urllib.parse import parse_qs

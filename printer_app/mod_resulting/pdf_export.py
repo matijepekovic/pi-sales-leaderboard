@@ -302,12 +302,10 @@ def _overlay_one(c,index,draft):
         c.restoreState()
 
 
-def _draft_for_pdf(sheet):
-    draft = sheet['draft']
-    local = sheet.get('pdf_documentation') or {}
+def _with_cancellation_documentation(draft, local, canceled):
     if not local:
         return draft
-    if sheet['snapshot'].get('appointment_canceled'):
+    if canceled:
         return dict(draft, **local)
     # If the appointment was reactivated, keep its local cancellation notes
     # in this export alongside any later notes from the active appointment.
@@ -326,6 +324,25 @@ def _draft_for_pdf(sheet):
         result.update(notes=''.join(part['text'] for part in runs), note_runs=runs)
     if local.get('redlines'):
         result['redlines'] = '\n'.join(filter(None, (draft.get('redlines'), local['redlines'])))
+    return result
+
+
+def _draft_for_pdf(sheet):
+    local = dict(sheet.get('pdf_documentation') or {})
+    supplement = local.pop('supplement', {})
+    draft = _with_cancellation_documentation(
+        sheet['draft'], local, sheet['snapshot'].get('appointment_canceled'))
+    if not any(supplement.values()):
+        return draft
+    result = dict(draft)
+    if supplement.get('notes'):
+        runs = note_runs_for_display(dict(draft, redlines=''))
+        if runs:
+            runs.append({'text': '\n', 'red': False})
+        runs.append({'text': supplement['notes'], 'red': False})
+        result.update(notes=''.join(part['text'] for part in runs), note_runs=runs)
+    if supplement.get('redlines'):
+        result['redlines'] = '\n'.join(filter(None, (draft.get('redlines'), supplement['redlines'])))
     return result
 
 

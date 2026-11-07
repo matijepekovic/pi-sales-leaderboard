@@ -285,6 +285,17 @@ def blueprint(service, surface, *, color_code=None, pdfs=None):
             return jsonify(ok=False, error=str(exc)), 409
         return jsonify(ok=True, revision=result)
 
+    @bp.post('/api/pdf-notes')
+    def save_pdf_notes():
+        try:
+            revision = service.save_pdf_notes(
+                service.day(), request.form.get('work_order_id', ''),
+                int(request.form.get('revision', '-1')),
+                request.form.get('notes', ''), request.form.get('redlines', ''))
+        except (ValueError, TypeError, LookupError) as exc:
+            return jsonify(ok=False, error=str(exc)), 409
+        return jsonify(ok=True, revision=revision)
+
     @bp.get('/api/submission-status')
     def submission_status():
         job_id = request.args.get('job_id', type=int)

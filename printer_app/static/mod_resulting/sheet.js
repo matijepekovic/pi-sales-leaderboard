@@ -332,6 +332,50 @@
     if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
     return data;
   }
+  const pdfNotesDialog = document.getElementById('pdfNotesDialog');
+  const pdfOnlyNotes = document.getElementById('pdfOnlyNotes');
+  const pdfOnlyRedlines = document.getElementById('pdfOnlyRedlines');
+  const pdfNotesError = document.getElementById('pdfNotesError');
+  const savePdfNotes = document.getElementById('savePdfNotes');
+  let pdfNotesSheet = null;
+
+  function openPdfNotes(sheet) {
+    if (sheet.dataset.submitted !== 'yes' || sheet.dataset.pdfNotesEditable !== 'yes') return;
+    const notes = JSON.parse(sheet.dataset.pdfNotes || '{}');
+    pdfNotesSheet = sheet;
+    pdfOnlyNotes.value = notes.notes || '';
+    pdfOnlyRedlines.value = notes.redlines || '';
+    pdfNotesError.hidden = true;
+    document.getElementById('pdfNotesWorkOrder').textContent =
+      'Work Order ' + sheet.dataset.workNumber;
+    openDialog(pdfNotesDialog, '#pdfOnlyNotes');
+  }
+  pdfNotesDialog.addEventListener('close', () => { pdfNotesSheet = null; });
+  savePdfNotes.addEventListener('click', async () => {
+    const sheet = pdfNotesSheet;
+    if (!sheet || savePdfNotes.disabled) return;
+    savePdfNotes.disabled = true;
+    pdfNotesError.hidden = true;
+    const notes = {notes:pdfOnlyNotes.value, redlines:pdfOnlyRedlines.value};
+    try {
+      const result = await post(root.dataset.savePdfNotes, {
+        work_order_id:sheet.dataset.id, revision:sheet.dataset.revision, ...notes,
+      });
+      sheet.dataset.revision = String(result.revision);
+      sheet.dataset.pdfNotes = JSON.stringify(notes);
+      if (pdfNotesSheet === sheet) closeDialog(pdfNotesDialog);
+      message('PDF notes saved.', sheet);
+    } catch (error) {
+      if (pdfNotesSheet === sheet) {
+        pdfNotesError.textContent = error.message;
+        pdfNotesError.hidden = false;
+      } else {
+        message(error.message, sheet);
+      }
+    } finally {
+      savePdfNotes.disabled = false;
+    }
+  });
   function serialize(sheet) {
     const draft = JSON.parse(sheet.dataset.initial || '{}');
     for (const input of sheet.querySelectorAll('[data-key]')) {
@@ -676,6 +720,13 @@
       }
     });
   }
+  function lockSheetControls(sheet, override) {
+    const pdfNotesButton = sheet.querySelector('.edit-pdf-notes');
+    if (pdfNotesButton) pdfNotesButton.hidden = sheet.dataset.pdfNotesEditable !== 'yes';
+    for (const input of sheet.querySelectorAll('input,select,textarea,button')) {
+      if (input !== override && input !== pdfNotesButton) input.disabled = true;
+    }
+  }
   function setup(sheet) {
     const background = sheet.querySelector('.printer-sheet');
     const showSurface = () => {
@@ -806,6 +857,7 @@
     sheet.querySelector('.submit-sheet')?.addEventListener('click', () => {
       if (sheet.dataset.submitted !== 'yes') openSingleResult(sheet);
     });
+    sheet.querySelector('.edit-pdf-notes')?.addEventListener('click', () => openPdfNotes(sheet));
     // Inspectors are installed before completed-sheet inputs are disabled:
     // locked sheets still support reading, but never saving raw values.
     for (const input of sheet.querySelectorAll('input[type="checkbox"][data-key]')) {
@@ -818,9 +870,7 @@
     }
     bindOverride(sheet, overrideButton);
     if (sheet.dataset.submitted === 'yes') {
-      for (const input of sheet.querySelectorAll('input,select,textarea,button')) {
-        if (input !== overrideButton) input.disabled = true;
-      }
+      lockSheetControls(sheet, overrideButton);
       return;
     }
     const reasonSelect = sheet.querySelector('[data-key="dnr_reason"]');
@@ -1140,6 +1190,9 @@
     if ((item.state === 'pdf_only') !== (sheet.dataset.pdfOnly === 'yes')) return;
     sheet.dataset.submitted = 'yes';
     sheet.dataset.overrideActive = 'no';
+    if (item.state === 'pdf_only' || sheet.dataset.dispo === 'cxl') {
+      sheet.dataset.pdfNotesEditable = 'yes';
+    }
     sheet.classList.add('submitted');
     const button = sheet.querySelector('.submit-sheet');
     if (button) button.hidden = true;
@@ -1159,9 +1212,7 @@
         bindOverride(sheet, override);
       }
     }
-    for (const input of sheet.querySelectorAll('input,select,textarea,button')) {
-      if (input !== override) input.disabled = true;
-    }
+    lockSheetControls(sheet, override);
     applyVisibility();
   }
   function renderNotifications(items) {

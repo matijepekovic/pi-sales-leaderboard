@@ -12,6 +12,7 @@
  data-clear="{{ url_for('mod_resulting.clear_local') }}"
  data-override="{{ url_for('mod_resulting.override') }}"
  data-save="{{ url_for('mod_resulting.save') }}"
+ data-save-pdf-notes="{{ url_for('mod_resulting.save_pdf_notes') }}"
  data-mod="{{ url_for('mod_resulting.choose_mod') }}"
  data-submit="{{ url_for('mod_resulting.submit') }}"
  data-pdfs-start="{{ url_for('mod_resulting.pdfs_start') }}"
@@ -51,6 +52,8 @@
  data-name="{{ sheet.lead_name|lower }}" data-customer="{{ sheet.lead_name }}" data-work-number="{{ sheet.work_order_number }}" data-reps="{{ sheet.assigned_service_resources|join(' ')|lower }}" data-dispo="{{ d.dispo }}"
  data-submitted="{{ 'yes' if locked else 'no' }}"
  data-pdf-only="{{ 'yes' if item.pdf_only else 'no' }}"
+ data-pdf-notes-editable="{{ 'yes' if item.pdf_notes_editable else 'no' }}"
+ data-pdf-notes='{{ item.pdf_notes|default({})|tojson|forceescape }}'
  data-source-resulted="{{ 'yes' if (d.dispo or d.product_results) else 'no' }}"
  data-override-active="{{ 'yes' if item.override_active else 'no' }}"
  data-initial='{{ d|tojson|forceescape }}'>
@@ -59,6 +62,8 @@
   aria-label="{{ 'Finish' if item.pdf_only else 'Result' }} Work Order {{ sheet.work_order_number }}{% if item.pdf_only %} for PDF{% endif %}"
   title="{{ 'Save this sheet for the Redlines PDF' if item.pdf_only else 'Result this Work Order' }}">{{ 'Finish for PDF' if item.pdf_only else 'Result' }}</button>
  {% endif %}
+ <button type="button" class="edit-pdf-notes" aria-label="Edit PDF notes for Work Order {{ sheet.work_order_number }}"
+  {% if not (locked and item.pdf_notes_editable) %}hidden{% endif %}>Edit PDF notes</button>
  <img class="printer-sheet" src="{{ url_for('mod_resulting.sheet_image', day=data.day, work_order_id=item.work_order_id) }}"
   alt="Printer MOD sheet for {{ sheet.lead_name }}, work order {{ sheet.work_order_number }}"
   loading="{{ 'eager' if loop.first else 'lazy' }}" decoding="async" draggable="false">
@@ -309,6 +314,22 @@
 <p class="no-sheets">No MOD sheets loaded for today. Use Refresh to pull from Salesforce.</p>
 {% endfor %}
 </div>
+<dialog class="editor-dialog pdf-notes-panel" id="pdfNotesDialog" aria-labelledby="pdfNotesHeading">
+ <div class="editor-heading">
+  <div><h2 id="pdfNotesHeading">Edit PDF notes</h2><p id="pdfNotesWorkOrder"></p></div>
+  <button type="button" class="close-popover editor-close" aria-label="Close PDF notes">×</button>
+ </div>
+ <div class="editor-body">
+  <p>These additions appear on this Work Order’s page in the Redlines PDF.</p>
+  <label>Additional Notes<textarea id="pdfOnlyNotes" rows="3" spellcheck="false"></textarea></label>
+  <label>Additional redlines<textarea id="pdfOnlyRedlines" rows="3" spellcheck="false"></textarea></label>
+  <p id="pdfNotesError" class="submission-error" role="alert" hidden></p>
+ </div>
+ <div class="editor-footer">
+  <button type="button" class="close-popover editor-secondary">Cancel</button>
+  <button type="button" class="editor-primary" id="savePdfNotes">Save</button>
+ </div>
+</dialog>
 <dialog class="editor-dialog checkbox-dialog" id="checkboxDialog" aria-label="Checkbox value">
   <div class="editor-body">
     <div id="checkboxCurrent" class="checkbox-current" aria-live="polite"></div>

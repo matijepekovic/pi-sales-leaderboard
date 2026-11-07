@@ -14,6 +14,7 @@ from .contract import (
     individual_product_sales, deposit_payment_text, product_result_context,
     user_redline_text,
 )
+from .report_facts import result_disposition
 
 
 class ResultingService:
@@ -86,6 +87,7 @@ class ResultingService:
             sheet['draft'] = data
             sheet['pdf_only'] = sheet['snapshot'].get('appointment_canceled') is True
             sheet['completed'] = sheet['completed_at'] is not None
+            sheet['pdf_notes_editable'] = self._allows_pdf_notes(sheet)
             sheet['result'] = outcome_fields(data)
             sheets.append(sheet)
         return {'day': day, 'state': state, 'sheets': sheets}
@@ -132,6 +134,24 @@ class ResultingService:
     def override(self, day, work_order_id, revision):
         """Unlock an explicitly selected completed sheet; never write yet."""
         return self.repository.override(day, work_order_id, revision)
+
+    @staticmethod
+    def _allows_pdf_notes(sheet):
+        return (sheet['snapshot'].get('appointment_canceled') is True
+                or result_disposition(sheet['draft']) == 'cxl')
+
+    def save_pdf_notes(self, day, work_order_id, revision, notes, redlines):
+        """Edit the Redlines PDF supplement independently of Salesforce resulting."""
+        sheet = next((row for row in self.repository.sheets(day)
+                      if row['work_order_id'] == work_order_id), None)
+        if sheet is None:
+            raise LookupError('This MOD sheet is not part of the selected day.')
+        if not self._allows_pdf_notes(sheet):
+            raise ValueError('PDF notes are available for completed canceled sheets.')
+        draft = clean_draft({'notes': notes, 'redlines': redlines})
+        return self.repository.save_pdf_notes(day, work_order_id, revision, {
+            'notes': draft['notes'], 'redlines': draft['redlines'],
+        })
 
     def save(self, day, work_order_id, data, revision):
         # Saving an editable sheet cannot revalidate untouched Salesforce
